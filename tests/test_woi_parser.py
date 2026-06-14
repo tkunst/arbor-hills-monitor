@@ -98,3 +98,65 @@ def test_to_measurements_emits_temp_o2_methane_and_skips_adj():
     assert temp["value"] == 177.0 and temp["basis"] == "measured"
     assert temp["well_id"] == "AHW272R4" and temp["as_of_date"] == "2025-03-14"
     assert w.to_measurements(_r("AHW272R4", 177.0, 7.0, 8.1, adj=True)) == []
+
+
+# --- CO (Attachment 2) ---
+
+CO_PAGE = [
+    "Wells of Interest Per May 6, 2019 HOV Approval Letter",
+    "Attachment 2 - June 2025 CO Data",
+    "Well ID", "Date", "ppm",
+    "AHWW0279", "6/24/2025", "110",
+    "AHW272R4**", "6/23/2025", "70",
+    "AHWW258R", "6/24/2025", "70",
+]
+
+
+def test_co_page_parses_triples_and_canonicalizes():
+    rs = w._parse_co_page(CO_PAGE, page=152)
+    assert len(rs) == 3
+    assert rs[0].well_id == "AHWW0279" and rs[0].ppm == 110.0 and rs[0].month == "June 2025"
+    assert rs[1].well_id == "AHW272R4"   # asterisks stripped
+
+
+def test_co_page_skips_malformed_percent_table():
+    # The '%' double-tables (no standalone 'ppm' header) must yield nothing.
+    messy = ["Attachment 2 - March 2025 CO Data", "Well ID", "Date", "%",
+             "AHWW258R", "3/24/2025", "0", "45658.00", "AHWW258R", "NA"]
+    assert w._parse_co_page(messy, page=156) == []
+
+
+def test_co_implausible_serial_value_dropped():
+    page = ["Attachment 2 - March 2025 CO Data", "Well ID", "Date", "ppm",
+            "AHWW258R", "3/24/2025", "45658.00",     # Excel serial -> dropped
+            "AHWW0279", "3/24/2025", "5"]            # real -> kept
+    rs = w._parse_co_page(page, page=149)
+    assert len(rs) == 1 and rs[0].well_id == "AHWW0279"
+
+
+def test_co_dedupe_keeps_first_per_well_month():
+    a = w.COReading("AHW1", "AHW1", "6/1/2025", "June 2025", 110, 152)
+    b = w.COReading("AHW1", "AHW1", "6/1/2025", "June 2025", 0, 159)  # messy dup
+    assert [r.ppm for r in w._dedupe_co([a, b])] == [110]
+
+
+def test_per_well_co_summary_orders_and_computes_rise():
+    rs = [
+        w.COReading("AHWW0279", "AHWW0279", "1/1/2025", "January 2025", 5, 147),
+        w.COReading("AHWW0279", "AHWW0279", "6/1/2025", "June 2025", 110, 152),
+    ]
+    summ = w.per_well_co_summary(rs)
+    assert summ[0]["well"] == "AHWW0279"
+    assert summ[0]["max_ppm"] == 110
+    assert summ[0]["first_ppm"] == 5 and summ[0]["last_ppm"] == 110
+    assert summ[0]["rise"] == 105
+    assert summ[0]["series"][0][0] == "January 2025"   # chronological
+
+
+def test_co_to_measurements():
+    r = w.COReading("AHW272R4", "AHW272R4**", "6/23/2025", "June 2025", 70, 152)
+    ms = w.co_to_measurements(r)
+    assert len(ms) == 1
+    assert ms[0]["metric"] == "carbon_monoxide" and ms[0]["value"] == 70
+    assert ms[0]["unit"] == "ppm" and ms[0]["basis"] == "measured"
+    assert ms[0]["as_of_date"] == "2025-06-23"

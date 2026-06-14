@@ -191,6 +191,128 @@ def _to_iso(dt: str) -> Optional[str]:
     return f"{int(m[3]):04d}-{int(m[1]):02d}-{int(m[2]):02d}"
 
 
+# ---------------------------------------------------------------------------
+# Attachment 2 — carbon monoxide (CO) data
+# ---------------------------------------------------------------------------
+#
+# CO is a direct product of combustion, so rising CO in landfill gas is an
+# early-warning signal for subsurface oxidation. Attachment 2 lists CO (ppm) by
+# month for the Wells of Interest only (so every CO reading is a WOI well).
+#
+# Row shape (canonical monthly tables): Well ID / Date(no time) / ppm. The page
+# header is "Attachment 2 - <Month> <Year> CO Data" with a standalone "ppm"
+# column header. The report also contains a second, malformed representation
+# (a "%" double-table with Excel date-serial leaks like 45658.00) — we parse
+# ONLY pages that carry a standalone "ppm" header line, which excludes those.
+
+CO_IMPLAUSIBLE_PPM = 10000  # backstop against Excel-serial leaks (real CO << this)
+
+_MONTH_RE = re.compile(r"Attachment\s*2\s*-\s*([A-Za-z]+)\s+(\d{4})\s*CO Data")
+
+
+@dataclass
+class COReading:
+    well_id: str        # canonical (asterisks stripped, alias applied)
+    raw_well_id: str
+    date: str           # "M/D/YYYY"
+    month: str          # e.g. "January 2025" (from the page header)
+    ppm: float
+    page: int
+
+
+def _parse_co_page(page_lines: list[str], page: int, alias_map: Optional[dict] = None) -> list[COReading]:
+    """Parse one canonical CO page (pure). Returns [] for the malformed '%'
+    double-table pages (no standalone 'ppm' header)."""
+    if "ppm" not in page_lines:
+        return []
+    mm = _MONTH_RE.search(" ".join(page_lines))
+    month = f"{mm.group(1)} {mm.group(2)}" if mm else f"page {page}"
+    out: list[COReading] = []
+    i = page_lines.index("ppm") + 1
+    n = len(page_lines)
+    while i < n:
+        s = page_lines[i]
+        if (WELL_RE.match(s) and i + 2 < n and DATE_ONLY_RE.match(page_lines[i + 1])
+                and FLOAT_RE.match(page_lines[i + 2])):
+            ppm = float(page_lines[i + 2])
+            if ppm < CO_IMPLAUSIBLE_PPM:  # drop Excel-serial leaks
+                out.append(COReading(
+                    well_id=canonicalize(s, alias_map), raw_well_id=s,
+                    date=page_lines[i + 1], month=month, ppm=ppm, page=page,
+                ))
+            i += 3
+        else:
+            i += 1
+    return out
+
+
+def _dedupe_co(readings: list[COReading]) -> list[COReading]:
+    """Keep the first reading per (well, month) — canonical pages come first."""
+    seen = set()
+    out = []
+    for r in readings:
+        key = (r.well_id, r.month)
+        if key not in seen:
+            seen.add(key)
+            out.append(r)
+    return out
+
+
+def parse_co_data(pdf_path: str, alias_map: Optional[dict] = None) -> list[COReading]:
+    """Parse the monthly CO (ppm) tables from Attachment 2 (WOI wells only)."""
+    doc = fitz.open(pdf_path)
+    try:
+        out: list[COReading] = []
+        for p in range(len(doc)):
+            t = doc[p].get_text()
+            if "Attachment 2" not in t or "CO Data" not in t:
+                continue
+            page_lines = [ln.strip() for ln in t.split("\n") if ln.strip()]
+            out.extend(_parse_co_page(page_lines, p + 1, alias_map))
+        return _dedupe_co(out)
+    finally:
+        doc.close()
+
+
+def co_to_measurements(reading: COReading) -> list[dict]:
+    return [{"metric": "carbon_monoxide", "value": reading.ppm, "unit": "ppm",
+             "basis": "measured", "well_id": reading.well_id,
+             "as_of_date": _to_iso(reading.date + " 00:00"), "note": f"CO, {reading.month}"}]
+
+
+# Chronological month ordering for trend display.
+_MONTH_ORDER = {m: i for i, m in enumerate(
+    ["January", "February", "March", "April", "May", "June",
+     "July", "August", "September", "October", "November", "December"])}
+
+
+def per_well_co_summary(co_readings: list[COReading]) -> list[dict]:
+    """One row per well: the monthly CO series (chronological), max ppm, and the
+    rise from the well's first to last reported month (trend signal)."""
+    by_well: dict[str, list[COReading]] = {}
+    for r in co_readings:
+        by_well.setdefault(r.well_id, []).append(r)
+    rows = []
+    for well, rs in by_well.items():
+        def mkey(r):
+            parts = r.month.split()
+            return (parts[-1], _MONTH_ORDER.get(parts[0], 99)) if len(parts) == 2 else ("", 99)
+        rs_sorted = sorted(rs, key=mkey)
+        series = [(r.month, r.ppm) for r in rs_sorted]
+        ppms = [r.ppm for r in rs_sorted]
+        rows.append({
+            "well": well,
+            "series": series,
+            "max_ppm": max(ppms),
+            "first_ppm": ppms[0],
+            "last_ppm": ppms[-1],
+            "rise": ppms[-1] - ppms[0],
+            "n_months": len(series),
+        })
+    rows.sort(key=lambda d: (d["max_ppm"], d["rise"]), reverse=True)
+    return rows
+
+
 def per_well_summary(
     readings: list[WOIReading],
     woi_set: Optional[set] = None,

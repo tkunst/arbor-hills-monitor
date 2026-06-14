@@ -55,6 +55,19 @@ as-found reading is what the well was actually doing. Low CH₄ + elevated temp 
 some O₂ at the same well is the subsurface-oxidation signature (e.g. AHW272R4 =
 177°F, 7% O₂, 8% CH₄).
 
+## CO (Attachment 2)
+
+`parse_co_data()` extracts the monthly carbon-monoxide (ppm) tables from
+Attachment 2 (WOI wells only — Attachment 2 *is* the WOI list). Rows are
+`Well ID / Date / ppm`; only canonical pages with a standalone `ppm` header are
+parsed, which excludes a malformed second copy of the tables that carries Excel
+date-serial leaks (a backstop also drops any value ≥ 10000 ppm). `co_to_measurements()`
+emits `carbon_monoxide` measurements; `per_well_co_summary()` gives the monthly
+series + first→last rise. On the 2025 report: 16 WOI wells, max 150 ppm
+(AHW272R4 — the same well that is hottest), with CO rising at 14 of 16 wells into
+June 2025. CO is a combustion product, so this is the early-warning row of the
+matrix. `scripts/co_summary.py` is the hand-to-EGLE generator.
+
 ## Integration (follow-up, not in this ADR)
 
 `woi_table_parser` is standalone and unit-tested. Wiring it into
