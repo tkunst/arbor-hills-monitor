@@ -258,6 +258,7 @@ def _classify_with_claude(
     risk_register: list[dict],
     model: str,
     client=None,
+    max_tokens: int = 8192,
 ) -> dict:
     """Call Claude and return a dict with the 5 model-derived fields. Isolated
     so tests can monkeypatch it without an API key. Uses structured output so
@@ -294,7 +295,7 @@ def _classify_with_claude(
     )
     response = client.messages.parse(
         model=model,
-        max_tokens=1024,
+        max_tokens=max_tokens,
         system=[
             {
                 "type": "text",
@@ -312,10 +313,16 @@ def _classify_with_claude(
     )
     parsed = response.parsed_output
     if parsed is None:
-        raise RuntimeError(
-            f"Classification returned no parsed output "
-            f"(stop_reason={getattr(response, 'stop_reason', '?')})"
-        )
+        stop = getattr(response, "stop_reason", "?")
+        if stop == "max_tokens":
+            # Output hit the cap before the JSON closed — measurements[] on a
+            # large multi-well report can be long. Raise classification_max_tokens
+            # in config rather than letting this look like a generic failure.
+            raise RuntimeError(
+                f"Classification truncated at max_tokens={max_tokens} "
+                f"(stop_reason=max_tokens) — raise classification_max_tokens."
+            )
+        raise RuntimeError(f"Classification returned no parsed output (stop_reason={stop})")
     return parsed.model_dump()
 
 
@@ -333,6 +340,7 @@ def parse_document(
     signal_keywords: Optional[list[str]] = None,
     page_threshold: int = 30,
     max_keyword_pages: int = 10,
+    max_tokens: int = 8192,
     client=None,
 ) -> ParsedDoc:
     """Parse one PDF end-to-end. OCRs in place if needed, extracts text
@@ -354,7 +362,9 @@ def parse_document(
     finally:
         doc.close()
 
-    fields = _classify_with_claude(text, metadata, risk_register, model, client=client)
+    fields = _classify_with_claude(
+        text, metadata, risk_register, model, client=client, max_tokens=max_tokens
+    )
 
     valid_ids = {r["id"] for r in risk_register}
     risks = [r for r in fields.get("risks", []) if r in valid_ids]

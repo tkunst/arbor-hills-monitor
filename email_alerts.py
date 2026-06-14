@@ -64,9 +64,19 @@ def is_urgent(parsed, cfg: dict) -> bool:
     if measured is not None:
         return measured >= threshold
 
-    # Fallback only when the parser produced no structured temperature: scan
-    # free text. Less safe (can't tell measured from permitted), so it is a last
-    # resort, not the primary path.
+    # If the parser extracted ANY temperature reading at all (even a permitted
+    # ceiling or unknown-basis one), trust the structured path and do NOT regex
+    # free text — otherwise a permitted 180F ceiling mentioned in the text would
+    # falsely fire, which is the exact conflation this whole design avoids.
+    has_any_temp = any(
+        (m.get("metric") == "temperature")
+        for m in (getattr(parsed, "measurements", []) or [])
+    )
+    if has_any_temp:
+        return False
+
+    # Last resort, ONLY when the parser produced no structured temperature at
+    # all: scan free text. Less safe (can't tell measured from permitted).
     hay = f"{parsed.key_data_point}\n{parsed.summary}\n{parsed.full_text}"
     temp = _max_temperature_f(hay)
     return temp is not None and temp >= threshold

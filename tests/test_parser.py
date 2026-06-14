@@ -70,7 +70,7 @@ def _fake_classification(**over):
 def test_parse_document_assembles_full_dataclass(monkeypatch, text_pdf):
     monkeypatch.setattr(
         p, "_classify_with_claude",
-        lambda text, metadata, rr, model, client=None: _fake_classification(),
+        lambda *a, **k: _fake_classification(),
     )
     meta = {"document_name": "Test Doc", "date_filed": "2025-02-05", "type_name": "VN"}
     parsed = p.parse_document(text_pdf, meta, RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)

@@ -11,6 +11,10 @@ srn: "N2688"
 # routine monitoring is a few docs/day, essentially free. Override here if you
 # want a more capable model for live monitoring vs. backfill.
 anthropic_model: "claude-haiku-4-5"
+# Output cap for the classification call. Generous enough that measurements[]
+# on a multi-well WOI report isn't truncated mid-JSON. If a doc ever fails with
+# "Classification truncated at max_tokens", raise this.
+classification_max_tokens: 8192
 
 # Large-document handling: docs with more pages than this get targeted
 # keyword-window extraction instead of full text (saves tokens, better

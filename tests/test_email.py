@@ -25,10 +25,17 @@ def test_measured_temp_at_or_above_threshold_fires():
 
 
 def test_permitted_ceiling_does_not_fire():
-    # The credibility test: a 180F PERMITTED ceiling must NOT trigger urgent.
+    # The credibility test: a 180F PERMITTED ceiling must NOT trigger urgent --
+    # even though the document text literally says "180 F" (the regex fallback
+    # must NOT run once any structured temperature was extracted).
     m = [{"metric": "temperature", "value": 180, "unit": "F",
           "basis": "permitted_limit", "well_id": "AHW263"}]
-    assert ea.is_urgent(_doc(severity="notable", measurements=m), CFG) is False
+    doc = _doc(
+        severity="notable",
+        measurements=m,
+        full_text="HOV waiver requested: ceiling of 180 F for well AHW263.",
+    )
+    assert ea.is_urgent(doc, CFG) is False
 
 
 def test_measured_below_threshold_does_not_fire():

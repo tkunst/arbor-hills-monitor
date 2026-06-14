@@ -63,7 +63,12 @@ pytest -q               # hermetic: synthetic PDFs, all APIs mocked, no secrets
    meeting) and set `mmpc.minutes_url` in `config.yml`.
 5. **Set the real alert recipients** in `config.yml`.
 6. **Branch protection** on `main` (require the CI checks).
-7. Trigger `backfill` manually (`workflow_dispatch`) once to confirm end-to-end,
+7. **Smoke-test one document live first** (~$0.01, needs only
+   `ANTHROPIC_API_KEY`): `python scripts/smoke_one.py` — validates the live
+   `messages.parse` shape and surfaces any output truncation before you commit
+   to a 50-doc batch. If it ever reports "Classification truncated at
+   max_tokens", raise `classification_max_tokens` in `config.yml`.
+8. Trigger `backfill` manually (`workflow_dispatch`) once to confirm end-to-end,
    then let the schedules run.
 
 ## Scheduling

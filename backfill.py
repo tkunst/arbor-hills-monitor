@@ -83,6 +83,7 @@ def run() -> int:
                 local, d, RISK_REGISTER,
                 model=model, signal_keywords=SIGNAL_KEYWORDS,
                 page_threshold=page_threshold, max_keyword_pages=max_kw_pages,
+                max_tokens=cfg["classification_max_tokens"],
             )
 
             file_id = dc.upload_file(drive, folder_id, local, canonical)

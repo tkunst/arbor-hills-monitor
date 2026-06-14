@@ -106,6 +106,7 @@ def run() -> int:
                 signal_keywords=SIGNAL_KEYWORDS,
                 page_threshold=cfg["large_doc_page_threshold"],
                 max_keyword_pages=cfg["large_doc_max_keyword_pages"],
+                max_tokens=cfg["classification_max_tokens"],
             )
             file_id = dc.upload_file(drive, folder_id, local, canonical)
             link = drive_view_link(file_id)
