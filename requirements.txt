@@ -7,6 +7,9 @@ PyYAML>=6.0              # config.yml
 # Google Drive + Sheets (service-account auth; no local mount)
 google-api-python-client>=2.130
 google-auth>=2.30
+# OAuth-as-user flow for the durable PDF archive (archiver.py / oauth_setup.py).
+# Only needed for the optional archive job; the core monitor doesn't import it.
+google-auth-oauthlib>=1.2
 
 # requests is used by nsite_client (ported from the EGLE scraper)
 requests>=2.32

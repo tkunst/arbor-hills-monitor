@@ -1,0 +1,51 @@
+name: archive
+
+# Durable PDF mirror (ADR 007): copies each processed N2688 PDF into Trisha's
+# Drive (OAuth-as-user) as insurance against nSITE link rot, and records it in
+# the "Archived PDFs" tab. Self-terminating and idempotent.
+#
+# Safe to leave scheduled from day one: if the GOAUTH_* secrets aren't set yet,
+# the job is a quiet no-op (exit 0). Once they're set it mirrors whatever the
+# backfill has processed so far, growing alongside it. No OCR, no Claude, no
+# email — just download + upload.
+on:
+  schedule:
+    - cron: "0 8 * * *"    # 3am ET (8am UTC), after the 2am backfill.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: archive
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Mirror a batch of PDFs
+        env:
+          # Sheets I/O uses the service account (drive.file grants no Sheets
+          # access); the Drive upload uses the OAuth user client. Hence both.
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}
+          GOAUTH_ARCHIVE_FOLDER_ID: ${{ secrets.GOAUTH_ARCHIVE_FOLDER_ID }}
+        run: python archiver.py

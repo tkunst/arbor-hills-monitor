@@ -89,6 +89,14 @@ pytest -q               # hermetic: synthetic PDFs, all APIs mocked, no secrets
    history is unprocessed would flood the live feed with historical docs and
    fire urgent alerts on years-old exceedances (the watcher has a
    `max_new_docs_per_run` backstop, but disabling the schedule is the clean fix).
+10. **(Optional) Durable PDF mirror** — insurance against nSITE link rot
+    (ADR 007). Run `python scripts/oauth_setup.py <oauth-client.json>` once (it
+    walks you through enabling the Drive API, an OAuth "Desktop app" client, and
+    publishing the consent screen), set the four `GOAUTH_*` secrets it prints,
+    and share the mirror folder it creates as "Anyone with the link → Viewer".
+    The `archive.yml` schedule is already on and no-ops until those secrets
+    exist, then mirrors each processed PDF into your Drive and fills the
+    **Archived PDFs** tab. Full steps: `scripts/setup_gcp.md` §9.
 
 ## Scheduling
 
@@ -96,6 +104,8 @@ pytest -q               # hermetic: synthetic PDFs, all APIs mocked, no secrets
 - `daily.yml` — 6am ET daily (new docs + MMPC + alerts). **Schedule starts
   DISABLED** (only `workflow_dispatch`); uncomment the `schedule:` block after
   backfill completes — see deploy step 9.
+- `archive.yml` — 3am ET daily (optional durable PDF mirror). Safe to leave on:
+  it no-ops until the `GOAUTH_*` secrets are set — see deploy step 10.
 
 ## Cost
 
@@ -108,12 +118,14 @@ docs/day) is essentially free. Model is configurable in `config.yml`.
   **GitHub's workflow-failure emails** — confirm those are enabled for the repo
   owner (GitHub → Settings → Notifications → Actions). Recovery: re-run the
   failed workflow; runs are idempotent and resume from the Sheet's `_state` tab.
-- **No durable PDF archive (ADR 006).** Sheet rows link to the canonical nSITE
-  source rather than a Drive copy, because the service account has no Drive
-  quota. If EGLE removes or renames a document, that link dies. Recovery: a
-  fast-follow OAuth-as-user archive job can mirror PDFs into Drive and add an
-  `Archive Link` column, driven off the doc IDs already in `_state`, without
-  reprocessing anything.
+- **nSITE link rot (mitigated by the optional archive, ADR 007).** Sheet rows
+  link to the canonical nSITE source rather than a Drive copy, because the
+  service account has no Drive quota (ADR 006). If EGLE removes or renames a
+  document, that link dies. The optional OAuth archiver (deploy step 10) closes
+  this by mirroring every PDF into your own Drive and recording it in the
+  **Archived PDFs** tab. While the archiver is left disabled, this remains an
+  accepted residual risk; the window of unmirrored docs is whatever the archiver
+  hasn't caught up on, so run it early.
 - **MMPC minutes URL is best-effort.** We poll a hard-coded URL within the
   computed window; if the county changes where minutes land, polling silently
   finds nothing. Mitigation: the Conservancy attends every meeting, so a missed

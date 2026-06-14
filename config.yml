@@ -25,6 +25,16 @@ large_doc_max_keyword_pages: 10
 # --- Backfill ---
 backfill_batch_size: 50          # docs per nightly run
 
+# --- Archive (optional durable PDF mirror — ADR 007) ---
+# The archiver mirrors processed PDFs into a Drive folder Trisha owns (OAuth),
+# as insurance against nSITE link rot. No Claude/OCR, just download + upload, so
+# a larger batch than the backfill is fine. folder_name is used ONCE by
+# scripts/oauth_setup.py when it creates the folder; the archiver then uses the
+# GOAUTH_ARCHIVE_FOLDER_ID secret.
+archive:
+  batch_size: 100
+  folder_name: "Arbor Hills EGLE Document Mirror"
+
 # --- Watcher (daily) ---
 # The daily watcher handles INCREMENTAL new filings only (normal volume is 0-5).
 # If it ever sees more unprocessed docs than this, the historical backlog is not

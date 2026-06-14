@@ -53,12 +53,20 @@ MEASUREMENTS_HEADERS = [
 # three small global singletons as one JSON cell each.
 STATE_HEADERS = ["Doc ID", "Status", "Error Count", "Processed At", "Payload JSON"]
 META_HEADERS = ["Key", "Value JSON"]
+# Durable PDF mirror index (written by the optional archiver, see ADR 007). One
+# row per mirrored doc; the "Archive Link" is a Drive copy that survives EGLE
+# removing/renaming the nSITE source. Append-only and keyed by Doc ID for dedup.
+ARCHIVE_HEADERS = [
+    "Doc ID", "Document Name", "Date Filed", "Risks",
+    "Source (nSITE) Link", "Archive Link", "Archived At",
+]
 
 TAB_NEW = "New Documents"
 TAB_HISTORICAL = "Historical Documents"
 TAB_EVIDENCE = "Evidence by Risk"
 TAB_REGISTER = "Risk Register"
 TAB_MEASUREMENTS = "Measurements"
+TAB_ARCHIVE = "Archived PDFs"
 TAB_STATE = "_state"
 TAB_META = "_meta"
 
@@ -68,6 +76,7 @@ _TAB_HEADERS = {
     TAB_EVIDENCE: EVIDENCE_HEADERS,
     TAB_REGISTER: REGISTER_HEADERS,
     TAB_MEASUREMENTS: MEASUREMENTS_HEADERS,
+    TAB_ARCHIVE: ARCHIVE_HEADERS,
     TAB_STATE: STATE_HEADERS,
     TAB_META: META_HEADERS,
 }
@@ -340,3 +349,28 @@ def _load_json(raw: str, fallback):
 def _copy_default(key: str):
     """A fresh mutable copy of a _meta default (never share the module-level one)."""
     return json.loads(json.dumps(_META_DEFAULTS[key]))
+
+
+# ---------------------------------------------------------------------------
+# Durable PDF archive index (written by the optional archiver — see ADR 007)
+# ---------------------------------------------------------------------------
+
+
+def archived_doc_ids(service, sheet_id: str) -> set:
+    """The set of Doc IDs already mirrored to Drive (col A of the Archived PDFs
+    tab). Used by the archiver to skip docs it has already uploaded."""
+    return {r[0] for r in _tab_rows(service, sheet_id, TAB_ARCHIVE, "A2:A") if r[0]}
+
+
+def append_archive_row(
+    service, sheet_id: str, doc_id: str, document_name: str, date_filed: str,
+    risks, source_link: str, archive_link: str, archived_at: str,
+) -> None:
+    """Append one row to the Archived PDFs index AFTER the Drive upload succeeds
+    (crash-safe: a kill before this re-uploads next run, and the find-in-folder
+    check makes that idempotent). risks may be a list or a pre-joined string."""
+    risks_str = ", ".join(risks) if isinstance(risks, (list, tuple)) else (risks or "")
+    append_rows(service, sheet_id, TAB_ARCHIVE, [[
+        doc_id, document_name, date_filed, risks_str,
+        source_link, archive_link, archived_at,
+    ]])
