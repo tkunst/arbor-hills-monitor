@@ -27,6 +27,7 @@ def build(pdf_path: str, label: str) -> str:
     hot = [d for d in summ if (d["max_temp_f"] or 0) >= EPA]
     n_woi_hot = sum(1 for d in hot if d["is_woi"])
     n_mact = sum(1 for d in summ if (d["max_temp_f"] or 0) >= MACT)
+    n_woi_mact = sum(1 for d in summ if (d["max_temp_f"] or 0) >= MACT and d["is_woi"])
 
     def fnum(x, p=1):
         return "" if x is None else f"{x:.{p}f}"
@@ -56,14 +57,15 @@ def build(pdf_path: str, label: str) -> str:
     lines.append("")
     lines.append(f"- **{len(hot)} wells** reached at least 131 deg F "
                  f"(**{n_woi_hot}** of them on the formal WOI list).")
-    lines.append(f"- **{n_mact} wells** reached at least the 145 deg F MACT limit.")
+    lines.append(f"- **{n_mact} wells** reached at least the 145 deg F MACT limit "
+                 f"(**{n_woi_mact}** of them on the formal WOI list).")
     if hot:
         top = hot[0]
         lines.append(f"- Hottest well: **{top['well']}** at "
                      f"**{fnum(top['max_temp_f'])} deg F** on {top['max_temp_date']} "
                      f"(O2 {fnum(top['o2_at_max_temp'])}%, CH4 {fnum(top['ch4_at_max_temp'])}% "
                      "at that reading). Elevated temperature with low methane and some "
-                     "oxygen is the signature of subsurface oxidation.")
+                     "oxygen is consistent with subsurface oxidation.")
     lines.append("")
     lines.append("## Wells at or above 131 deg F (as-found)")
     lines.append("")
