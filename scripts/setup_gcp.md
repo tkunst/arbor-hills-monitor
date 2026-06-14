@@ -105,10 +105,12 @@ this app creates, never the rest of your Drive.
 3. **Create an OAuth client:** Credentials → Create credentials → **OAuth client
    ID** → type **Desktop app**. Download its JSON.
 4. **Run the one-time consent + folder setup locally** (needs a browser):
+
    ```sh
    pip install -r requirements.txt          # provides google-auth-oauthlib
    python scripts/oauth_setup.py ~/Downloads/client_secret_XXXX.json
    ```
+
    Sign in as yourself and approve. The script creates the mirror folder and
    prints four values.
 5. **Set the four secrets** it prints (the prompt form keeps them out of shell
