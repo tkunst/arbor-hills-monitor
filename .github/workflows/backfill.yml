@@ -1,10 +1,9 @@
 name: backfill
 
 # Processes the existing ~754 N2688 documents in batches of 50, one batch per
-# nightly run, resuming from the Drive-stored state file. Self-terminating:
-# once the state file shows every doc processed, the run logs "Backfill
-# complete" and exits 0 — it just becomes a no-op. No human action needed to
-# shut it off.
+# nightly run, resuming from the Sheet's _state tab. Self-terminating: once
+# _state shows every doc processed, the run logs "Backfill complete" and exits
+# 0 — it just becomes a no-op. No human action needed to shut it off.
 on:
   schedule:
     - cron: "0 7 * * *"   # 2am ET (7am UTC). DST drift is fine for a backfill.
@@ -41,7 +40,8 @@ jobs:
       - name: Run one backfill batch
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          # GDRIVE_FOLDER_ID is vestigial since ADR 006 (state + links no longer
+          # use a Drive folder); left unset. State lives in the Sheet's tabs.
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}

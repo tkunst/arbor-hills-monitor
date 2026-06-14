@@ -1,6 +1,12 @@
 # ADR 001 — Data store: state file in Drive + Google Sheets (not SQLite)
 
-*Status: accepted — 2026-06-13*
+*Status: SUPERSEDED by [ADR 006](006-state-in-sheet-no-drive-archive.md) — 2026-06-14.*
+*The "case file is a Google Sheet" decision still holds; the "processing state is
+a JSON file in Drive" decision does not — a service account on a personal Gmail
+has no Drive storage quota and cannot create that file. State moved into _state /
+_meta tabs of the same Sheet. The rest of this ADR is kept for the record.*
+
+*Status (original): accepted — 2026-06-13*
 
 ## Context
 

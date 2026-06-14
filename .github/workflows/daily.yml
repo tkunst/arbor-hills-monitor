@@ -4,8 +4,14 @@ name: daily
 # runs the MMPC second-Wednesday / minutes-polling logic, and sends alerts
 # (urgent same-day; procedural + everything else into the Sunday digest).
 on:
-  schedule:
-    - cron: "0 11 * * *"   # 6am ET (11am UTC). DST drift of +/-1h is acceptable.
+  # DISABLED until backfill logs "Backfill complete". If the daily watcher runs
+  # while the ~754-doc history is still unprocessed, it would treat hundreds of
+  # historical docs as "new" — wrong tab, and urgent alerts on years-old
+  # exceedances. (The watcher also has a max_new_docs_per_run backstop, but
+  # leaving the schedule off until backfill finishes is the clean fix.)
+  # Uncomment the two lines below once backfill is complete:
+  # schedule:
+  #   - cron: "0 11 * * *"   # 6am ET (11am UTC). DST drift of +/-1h is acceptable.
   workflow_dispatch: {}
 
 permissions:
@@ -39,7 +45,8 @@ jobs:
       - name: Run the watcher
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          # GDRIVE_FOLDER_ID is vestigial since ADR 006 (state + links no longer
+          # use a Drive folder); left unset. State lives in the Sheet's tabs.
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}

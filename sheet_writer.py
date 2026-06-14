@@ -1,19 +1,30 @@
 """
-sheet_writer.py — Google Sheets case file (four tabs).
+sheet_writer.py — Google Sheets case file (the human-facing tabs + the internal
+processing-state tabs).
 
-Tabs:
+Human tabs:
   - "New Documents"        live feed of incoming docs (watcher writes here)
   - "Historical Documents" backfilled docs (backfill writes here; same schema)
   - "Evidence by Risk"     THE case file: evidence-type docs only, one row per
                            (risk, doc) — fan-out, so a doc tagged R4+R8 makes
                            two rows. Filter to R8, print, hand to EGLE.
   - "Risk Register"        R1-R8 with auto-counted evidence + most-recent date.
+  - "Measurements"         atomic structured readings, one row per (doc, reading).
+
+Internal tabs (prefixed "_", ignored by the Conservancy):
+  - "_state"               per-document processing event log (append-only).
+  - "_meta"                global singletons (pending digest, MMPC, last run).
+
+Both internal tabs replace the old Drive JSON state file: a Google service
+account on a personal Gmail has no Drive storage quota and cannot CREATE files,
+but it CAN write cells in a Sheet the user already owns and shared. See ADR 006.
 
 The routing/fan-out logic is pure (feed_row / evidence_rows) so it's unit-tested
 without touching the Sheets API. Tab creation is idempotent (create-if-absent).
 """
 from __future__ import annotations
 
+import json
 from typing import Iterable
 
 FEED_HEADERS = [
@@ -36,12 +47,20 @@ MEASUREMENTS_HEADERS = [
     "As-Of Date", "Well ID", "Metric", "Value", "Unit", "Basis",
     "Date Filed", "Document Name", "Note", "Link",
 ]
+# Internal processing-state tabs. "_state" is an APPEND-ONLY event log — one row
+# per processing attempt — so there is never a read-modify-write race and the
+# 754-doc backfill never has to rewrite a 150k-char JSON blob. "_meta" holds the
+# three small global singletons as one JSON cell each.
+STATE_HEADERS = ["Doc ID", "Status", "Error Count", "Processed At", "Payload JSON"]
+META_HEADERS = ["Key", "Value JSON"]
 
 TAB_NEW = "New Documents"
 TAB_HISTORICAL = "Historical Documents"
 TAB_EVIDENCE = "Evidence by Risk"
 TAB_REGISTER = "Risk Register"
 TAB_MEASUREMENTS = "Measurements"
+TAB_STATE = "_state"
+TAB_META = "_meta"
 
 _TAB_HEADERS = {
     TAB_NEW: FEED_HEADERS,
@@ -49,6 +68,15 @@ _TAB_HEADERS = {
     TAB_EVIDENCE: EVIDENCE_HEADERS,
     TAB_REGISTER: REGISTER_HEADERS,
     TAB_MEASUREMENTS: MEASUREMENTS_HEADERS,
+    TAB_STATE: STATE_HEADERS,
+    TAB_META: META_HEADERS,
+}
+
+# The _meta keys, with the defaults used when a key has never been written.
+_META_DEFAULTS = {
+    "pending_digest": [],
+    "mmpc_minutes_found": {},
+    "last_run": "",
 }
 
 
@@ -212,3 +240,103 @@ def rebuild_risk_register_tab(service, sheet_id: str, risk_register: list[dict])
         valueInputOption="RAW",
         body={"values": body_rows},
     ).execute()
+
+
+# ---------------------------------------------------------------------------
+# Processing state (lives in the Sheet, not a Drive file — see ADR 006)
+# ---------------------------------------------------------------------------
+
+
+def read_state(service, sheet_id: str) -> dict:
+    """Reconstruct the processing-state dict by reducing the _state event log and
+    the _meta singletons. Returns the same shape the old Drive JSON state did:
+    {processed: {doc_id: payload}, errors: {doc_id: count},
+     pending_digest: [...], mmpc_minutes_found: {...}, last_run: "..."}.
+
+    _state is append-only and chronological, so a doc's 'error' rows always
+    precede its 'processed' row: we count errors as we go and clear them when the
+    'processed' row arrives. Missing tabs (first run) reduce to an empty state."""
+    state = {"processed": {}, "errors": {}}
+    state.update({k: _copy_default(k) for k in _META_DEFAULTS})
+
+    for r in _tab_rows(service, sheet_id, TAB_STATE, "A2:E"):
+        doc_id = r[0]
+        status = r[1] if len(r) > 1 else ""
+        if status == "processed":
+            state["processed"][doc_id] = _load_json(r[4] if len(r) > 4 else "", {})
+            state["errors"].pop(doc_id, None)
+        elif status == "error" and doc_id not in state["processed"]:
+            state["errors"][doc_id] = state["errors"].get(doc_id, 0) + 1
+
+    for r in _tab_rows(service, sheet_id, TAB_META, "A2:B"):
+        key = r[0]
+        if key in _META_DEFAULTS and len(r) > 1 and r[1]:
+            state[key] = _load_json(r[1], _copy_default(key))
+    return state
+
+
+def mark_processed(service, sheet_id: str, doc_id: str, payload: dict, processed_at: str) -> None:
+    """Append a 'processed' event for one doc. Append-only: crash-safe, no race."""
+    _append_state_row(
+        service, sheet_id,
+        [doc_id, "processed", 0, processed_at, json.dumps(payload, sort_keys=True)],
+    )
+
+
+def mark_error(service, sheet_id: str, doc_id: str, error_count: int, processed_at: str) -> None:
+    """Append an 'error' event for one doc (error_count is the running count)."""
+    _append_state_row(service, sheet_id, [doc_id, "error", error_count, processed_at, ""])
+
+
+def write_meta(service, sheet_id: str, state: dict) -> None:
+    """Persist the three global singletons as one JSON cell each. Tiny by
+    construction (the digest is cleared every Sunday), so each value stays far
+    under the 50k-char cell cap — unlike the 754-entry processed map, which is
+    why per-doc state is rows in _state and these three are cells in _meta."""
+    rows = [
+        [k, json.dumps(state.get(k, _copy_default(k)), sort_keys=True)]
+        for k in _META_DEFAULTS
+    ]
+    service.spreadsheets().values().update(
+        spreadsheetId=sheet_id,
+        range=f"'{TAB_META}'!A2",
+        valueInputOption="RAW",
+        body={"values": rows},
+    ).execute()
+
+
+def _append_state_row(service, sheet_id: str, row: list) -> None:
+    service.spreadsheets().values().append(
+        spreadsheetId=sheet_id,
+        range=f"'{TAB_STATE}'!A1",
+        valueInputOption="RAW",
+        insertDataOption="INSERT_ROWS",
+        body={"values": [row]},
+    ).execute()
+
+
+def _tab_rows(service, sheet_id: str, tab: str, a1: str) -> list[list]:
+    """Return the non-empty value rows of a tab range, or [] if the tab is absent
+    (a fresh Sheet before ensure_tabs, or a transient read error)."""
+    try:
+        resp = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=sheet_id, range=f"'{tab}'!{a1}")
+            .execute()
+        )
+    except Exception:  # noqa: BLE001 — missing tab / transient API error
+        return []
+    return [r for r in resp.get("values", []) if r]
+
+
+def _load_json(raw: str, fallback):
+    try:
+        return json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return fallback
+
+
+def _copy_default(key: str):
+    """A fresh mutable copy of a _meta default (never share the module-level one)."""
+    return json.loads(json.dumps(_META_DEFAULTS[key]))

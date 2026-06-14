@@ -25,6 +25,17 @@ large_doc_max_keyword_pages: 10
 # --- Backfill ---
 backfill_batch_size: 50          # docs per nightly run
 
+# --- Watcher (daily) ---
+# The daily watcher handles INCREMENTAL new filings only (normal volume is 0-5).
+# If it ever sees more unprocessed docs than this, the historical backlog is not
+# cleared yet: it DEFERS to the backfill job (processes no docs this run, still
+# runs MMPC + digest housekeeping) rather than stampeding hundreds of historical
+# docs into the live feed and firing urgent alerts on years-old exceedances. The
+# daily schedule should stay disabled until backfill logs "Backfill complete"
+# anyway (see README); this cap is the belt-and-suspenders backstop.
+watcher:
+  max_new_docs_per_run: 25
+
 # --- MMPC (Washtenaw County Materials Management Planning Committee) ---
 # Deterministic schedule: 2nd Wednesday of every month, 10:00am, Washtenaw
 # County Learning Resource Center, Superior Room. We calculate meeting dates;

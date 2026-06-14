@@ -1,21 +1,23 @@
 """
-drive_client.py — Google Drive API access (service account, folder ID).
+drive_client.py — Google auth + the two API service builders used on the deploy
+path, plus Drive file helpers kept for a future archive job.
 
-GitHub Actions runners cannot see a local Mac Drive mount, so ALL file I/O goes
-through the Drive API:
-  - download Documents-folder PDFs by listing the folder,
-  - upload downloaded + OCR'd PDFs back to the same folder,
-  - read/write the canonical state file (egle-n2688-state.json) in that folder.
-
-Auth: a service-account key JSON whose path is in GDRIVE_SA_KEY. Share the folder
-(and the .gsheet) with the service-account email — no OAuth dance, no per-user
+Auth: a service-account key JSON whose path is in GDRIVE_SA_KEY. Share the target
+Sheet with the service-account email as Editor — no OAuth dance, no per-user
 credential in the repo. The service-account email is not sensitive; only the key
 JSON is. See scripts/setup_gcp.md.
+
+DEPLOY PATH = SHEETS ONLY. A service account on a personal Gmail has NO Drive
+storage quota: it can edit a Sheet the user owns, but it CANNOT create files in
+that user's My Drive. So the monitor neither archives PDFs to Drive nor stores a
+JSON state file there — Sheet rows link to the canonical nSITE source URL, and
+processing state lives in the Sheet's _state/_meta tabs (see ADR 006, which
+supersedes ADR 001). The Drive helpers below (list/find/download/upload) are
+intentionally OFF the deploy path; they are retained for a future OAuth-as-user
+archive job that would re-add a durable PDF mirror without the quota limit.
 """
 from __future__ import annotations
 
-import io
-import json
 import os
 from typing import Optional
 
@@ -23,8 +25,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/spreadsheets",
 ]
-
-STATE_FILENAME = "egle-n2688-state.json"
 
 
 def _credentials():
@@ -127,35 +127,3 @@ def upload_file(
         .execute()
     )
     return f["id"]
-
-
-# ---------------------------------------------------------------------------
-# State file (canonical copy lives in Drive, so it survives across runners)
-# ---------------------------------------------------------------------------
-
-
-def read_state(service, folder_id: str) -> dict:
-    """Return the state dict, or a fresh empty state if the file doesn't exist."""
-    file_id = find_file_by_name(service, folder_id, STATE_FILENAME)
-    if not file_id:
-        return {"processed": {}}
-    buf = io.BytesIO()
-    from googleapiclient.http import MediaIoBaseDownload
-
-    request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
-    downloader = MediaIoBaseDownload(buf, request)
-    done = False
-    while not done:
-        _status, done = downloader.next_chunk()
-    try:
-        return json.loads(buf.getvalue().decode("utf-8"))
-    except Exception:
-        return {"processed": {}}
-
-
-def write_state(service, folder_id: str, state: dict, tmp_dir: str = "/tmp") -> str:
-    """Write the state dict back to Drive (create or update). Returns file ID."""
-    local = os.path.join(tmp_dir, STATE_FILENAME)
-    with open(local, "w") as f:
-        json.dump(state, f, indent=2, sort_keys=True)
-    return upload_file(service, folder_id, local, STATE_FILENAME, mime_type="application/json")

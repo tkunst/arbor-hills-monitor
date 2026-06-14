@@ -1,15 +1,23 @@
 # GCP service-account + GitHub Secrets setup (one-time)
 
 This is the deploy-day setup. None of it is needed to develop or run the tests —
-only to actually read/write the Drive folder + Sheet and send mail.
+only to actually write the case-file Sheet and send mail.
 
-## 1. Create a GCP project + enable APIs
+> **Sheet only, no Drive folder (ADR 006).** A service account on a personal
+> `@gmail.com` Drive has **no storage quota** and cannot create files there, so
+> the monitor does not archive PDFs to Drive and does not keep a Drive state
+> file. It links Sheet rows to the canonical nSITE source URL and stores state
+> in the Sheet's own `_state` / `_meta` tabs. So you only enable the **Sheets**
+> API and only share the **Sheet** — there is no folder to share, and
+> `GDRIVE_FOLDER_ID` is not used.
+
+## 1. Create a GCP project + enable the Sheets API
 
 1. <https://console.cloud.google.com> → create a project (e.g.
    `arbor-hills-monitor`).
-2. APIs & Services → Library → enable both:
-   - **Google Drive API**
+2. APIs & Services → Library → enable:
    - **Google Sheets API**
+   - (The Drive API can stay off — nothing on the deploy path calls it.)
 
 ## 2. Create a service account + key
 
@@ -22,17 +30,15 @@ only to actually read/write the Drive folder + Sheet and send mail.
 4. Note the service-account **email** (looks like
    `arbor-monitor-sa@<project>.iam.gserviceaccount.com`). It is not sensitive.
 
-## 3. Share the folder + Sheet with the service account
+## 3. Share the Sheet with the service account
 
 The service account starts with access to nothing. Grant exactly what it needs:
 
-1. In Google Drive, open the **EGLE Documents folder** → Share → add the
-   service-account email as **Editor**.
-2. Open the **case-file Sheet** → Share → add the same email as **Editor**.
+1. Open the **case-file Sheet** → Share → add the service-account email as
+   **Editor** (Editor, not Viewer — it has to write rows and the `_state` tab).
 
-Copy the IDs from their URLs:
+Copy the Sheet ID from its URL:
 
-- Folder ID: `https://drive.google.com/drive/folders/<THIS_IS_THE_FOLDER_ID>`
 - Sheet ID: `https://docs.google.com/spreadsheets/d/<THIS_IS_THE_SHEET_ID>/edit`
 
 ## 4. SMTP app password (Gmail example)
@@ -55,7 +61,6 @@ each:
 |---|---|
 | `ANTHROPIC_API_KEY` | your Anthropic key |
 | `GDRIVE_SA_KEY` | the **entire contents** of the service-account JSON file |
-| `GDRIVE_FOLDER_ID` | the Drive folder ID |
 | `GSHEET_ID` | the Sheet ID |
 | `SMTP_HOST` | `smtp.gmail.com` |
 | `SMTP_PORT` | `587` |

@@ -3,18 +3,23 @@ backfill.py — process the existing ~754 N2688 documents, one batch per run.
 
 Seeds from the AUTHORITATIVE nSITE document list (not the unseen Documents.csv —
 see docs/decisions/003-seed-from-nsite.md). For each not-yet-processed doc:
-  download from nSITE -> parse (OCR + classify) -> upload OCR'd PDF to Drive ->
-  write the Sheet row -> THEN record state (so a kill between the two double-
-  writes the row on resume, never silently drops it).
+  download from nSITE -> parse (OCR + classify) -> write the Sheet row (linking
+  to the canonical nSITE URL) -> THEN append the 'processed' state event (so a
+  kill between the two double-writes the row on resume, never silently drops it).
 
-Self-terminating: when the state file shows every doc processed, it logs
-"Backfill complete" and exits 0 — a no-op. Runs nightly at 2am ET.
+No PDFs are uploaded to Drive: the service account has no Drive quota and the
+nSITE download URLs resolve unauthenticated, so the Sheet links straight to the
+source (see ADR 006). State is the Sheet's _state tab, not a Drive file.
+
+Self-terminating: when _state shows every doc processed, it logs "Backfill
+complete" and exits 0 — a no-op. Runs nightly at 2am ET.
 """
 from __future__ import annotations
 
 import os
 import sys
 import tempfile
+from datetime import datetime
 
 import drive_client as dc
 import sheet_writer as sw
@@ -26,26 +31,22 @@ from config_loader import load_config
 MAX_ERRORS_PER_DOC = 3  # give up on a poison doc after this many failures
 
 
-def drive_view_link(file_id: str) -> str:
-    return f"https://drive.google.com/file/d/{file_id}/view"
+def _now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
 
 
 def run() -> int:
     cfg = load_config()
-    folder_id = os.environ["GDRIVE_FOLDER_ID"]
     sheet_id = os.environ["GSHEET_ID"]
     model = cfg["anthropic_model"]
     batch_size = cfg["backfill_batch_size"]
     page_threshold = cfg["large_doc_page_threshold"]
     max_kw_pages = cfg["large_doc_max_keyword_pages"]
 
-    drive = dc.drive_service()
     sheets = dc.sheets_service()
     sw.ensure_tabs(sheets, sheet_id)
 
-    state = dc.read_state(drive, folder_id)
-    state.setdefault("processed", {})
-    state.setdefault("errors", {})
+    state = sw.read_state(sheets, sheet_id)
 
     session = nc.make_session()
     docs = nc.fetch_site_documents(session, cfg["facility_id"])
@@ -69,15 +70,9 @@ def run() -> int:
 
     for d in batch:
         did = d["doc_id"]
-        canonical = f"N2688_{did}.pdf"
-        local = os.path.join(tmp, canonical)
+        local = os.path.join(tmp, f"N2688_{did}.pdf")
         try:
-            # Skip the nSITE download if a prior run already uploaded this PDF.
-            existing = dc.find_file_by_name(drive, folder_id, canonical)
-            if existing:
-                dc.download_file(drive, existing, local)
-            else:
-                nc.download_pdf(session, d, local)
+            nc.download_pdf(session, d, local)
 
             parsed = parse_document(
                 local, d, RISK_REGISTER,
@@ -86,15 +81,14 @@ def run() -> int:
                 max_tokens=cfg["classification_max_tokens"],
             )
 
-            file_id = dc.upload_file(drive, folder_id, local, canonical)
-            link = drive_view_link(file_id)
+            link = d["doc_url"]  # canonical nSITE source (resolves unauthenticated)
 
             # Sheet row FIRST, then state — order matters for crash-safety.
             sw.write_document(
                 sheets, sheet_id, parsed, d, link, RISK_NAMES,
                 feed_tab=sw.TAB_HISTORICAL,
             )
-            state["processed"][did] = {
+            payload = {
                 "document_name": d["document_name"],
                 "date_filed": d["date_filed"],
                 "doc_type": parsed.doc_type,
@@ -103,16 +97,18 @@ def run() -> int:
                 "ocr_applied": parsed.ocr_applied,
                 "page_count": parsed.page_count,
             }
+            state["processed"][did] = payload
             state["errors"].pop(did, None)
-            dc.write_state(drive, folder_id, state)
+            sw.mark_processed(sheets, sheet_id, did, payload, _now())
             processed_this_run += 1
             print(f"  ok  {d['date_filed']}  [{parsed.doc_type}/{parsed.severity}]  "
                   f"{d['document_name'][:50]}")
         except Exception as e:  # noqa: BLE001
-            state["errors"][did] = state["errors"].get(did, 0) + 1
-            dc.write_state(drive, folder_id, state)
+            cnt = state["errors"].get(did, 0) + 1
+            state["errors"][did] = cnt
+            sw.mark_error(sheets, sheet_id, did, cnt, _now())
             print(f"  ERR {d['document_name'][:50]}: {e} "
-                  f"(attempt {state['errors'][did]}/{MAX_ERRORS_PER_DOC})")
+                  f"(attempt {cnt}/{MAX_ERRORS_PER_DOC})")
         finally:
             if os.path.exists(local):
                 os.remove(local)
