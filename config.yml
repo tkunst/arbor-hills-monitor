@@ -41,8 +41,9 @@ mmpc:
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 alert_recipients:
-  - hello@trishakunst.com        # placeholder — replace with your actual address
-  - info@theconservancyinitiative.org
+  - hello@trishakunst.com        # alerts go to Trisha (forwards to daily-driver Gmail)
+  # Uncomment to loop in the Conservancy once it's running well for just Trisha:
+  # - info@theconservancyinitiative.org
 
 # Urgent triggers -> same-day email. Procedural items -> weekly digest as action
 # items. Everything else -> weekly Sunday digest.
