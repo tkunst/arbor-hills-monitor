@@ -1,0 +1,8 @@
+# cli2-specific config. Rules live in .markdownlint.yaml (auto-merged).
+# Ignore vendored markdown so a local virtualenv / node_modules doesn't pollute
+# the lint. (CI's markdownlint job is checkout-only and never creates these, but
+# contributors who run setup.sh will have a .venv.)
+ignores:
+  - ".venv/**"
+  - "venv/**"
+  - "node_modules/**"

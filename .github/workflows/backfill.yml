@@ -1,0 +1,50 @@
+name: backfill
+
+# Processes the existing ~754 N2688 documents in batches of 50, one batch per
+# nightly run, resuming from the Drive-stored state file. Self-terminating:
+# once the state file shows every doc processed, the run logs "Backfill
+# complete" and exits 0 — it just becomes a no-op. No human action needed to
+# shut it off.
+on:
+  schedule:
+    - cron: "0 7 * * *"   # 2am ET (7am UTC). DST drift is fine for a backfill.
+  workflow_dispatch: {}    # allow manual runs while iterating
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backfill          # never overlap two backfill runs
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60     # a 50-doc batch is ~20 min; well under the 6h cap
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install system OCR tooling
+        run: sudo apt-get update && sudo apt-get install -y ocrmypdf
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Run one backfill batch
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: python backfill.py

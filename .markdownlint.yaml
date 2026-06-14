@@ -1,0 +1,11 @@
+# Prose docs, not code style. Relax rules that fight reasonable formatting in
+# long-form architecture docs.
+default: true
+MD013: false   # line length — prose paragraphs aren't reflowed to 80
+MD033: false   # inline HTML — some docs use <details>, <br>, tables
+MD041: false   # first line need not be a top-level heading (metadata headers)
+MD024:
+  siblings_only: true   # duplicate headings allowed under different parents
+MD040: false   # code fences without a language (ASCII diagrams, dir trees)
+MD036: false   # emphasis-as-heading (docs use *Created: <date>* footers)
+MD060: false   # table column style — pad-vs-compact is stylistic

@@ -1,0 +1,15 @@
+# Treat these as success even if unreachable from CI.
+exclude = [
+  "^/Volumes/",
+  "^file://",
+  "^mailto:",
+]
+
+exclude_path = []
+
+max_retries = 2
+retry_wait_time = 2
+timeout = 20
+
+# Accept these status codes as OK (some sites 403/429 bots).
+accept = ["200..=299", "403", "429"]

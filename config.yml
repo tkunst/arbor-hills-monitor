@@ -1,0 +1,58 @@
+# Arbor Hills Document Monitor — non-secret configuration.
+# Secrets live in .env / GitHub Secrets, never here. See .env.example.
+
+# --- nSITE / EGLE source ---
+# SRN N2688 (Arbor Hills Landfill) — facility ID on the nSITE explorer API.
+facility_id: "8094300008956198244"
+srn: "N2688"
+
+# --- Document classification ---
+# Haiku is the deliberate cost choice for the 754-doc backfill (~$2-4 total);
+# routine monitoring is a few docs/day, essentially free. Override here if you
+# want a more capable model for live monitoring vs. backfill.
+anthropic_model: "claude-haiku-4-5"
+
+# Large-document handling: docs with more pages than this get targeted
+# keyword-window extraction instead of full text (saves tokens, better
+# key_data_point). The two WOI Status Reports are 181 and 323 pages.
+large_doc_page_threshold: 30
+large_doc_max_keyword_pages: 10
+
+# --- Backfill ---
+backfill_batch_size: 50          # docs per nightly run
+
+# --- MMPC (Washtenaw County Materials Management Planning Committee) ---
+# Deterministic schedule: 2nd Wednesday of every month, 10:00am, Washtenaw
+# County Learning Resource Center, Superior Room. We calculate meeting dates;
+# we do NOT scrape a calendar page.
+mmpc:
+  meeting_weekday: 2             # 0=Mon ... 2=Wed
+  meeting_week_of_month: 2       # 2nd occurrence
+  poll_start_days_after: 3       # start checking for minutes 3 days after meeting
+  poll_window_days: 10           # keep checking daily up to 10 days, then stop
+  # VERIFY WITH THE CONSERVANCY BEFORE FIRST DEPLOY (they attend every meeting
+  # and know where minutes land). Hard-code the confirmed URL here.
+  minutes_url: "VERIFY_BEFORE_DEPLOY"
+
+# --- Alerts ---
+# Add/remove addresses by editing this list — no code change needed.
+alert_recipients:
+  - hello@trishakunst.com        # placeholder — replace with your actual address
+  - info@theconservancyinitiative.org
+
+# Urgent triggers -> same-day email. Procedural items -> weekly digest as action
+# items. Everything else -> weekly Sunday digest.
+urgent:
+  severity_is_urgent: true       # any doc the parser marks "urgent"
+  # Urgency fires only on a MEASURED temperature at/above this (deg F). A
+  # permitted ceiling / HOV-waiver limit at this value does NOT fire — that
+  # conflation would discredit the artifact. See docs/decisions/004.
+  measured_temp_urgent_f: 145    # MACT limit
+  # Lower watch threshold: EPA gas-well operating limit. Tracked for trend
+  # comparison and (future) a Watch tier; does not fire an urgent alert today.
+  measured_temp_watch_f: 131
+
+# Temperature reference thresholds (deg F), for downstream trend/tier logic.
+temperature_thresholds:
+  epa_gas_operating_f: 131       # EPA gas-well operating limit (watch)
+  mact_f: 145                    # MACT limit (urgent)

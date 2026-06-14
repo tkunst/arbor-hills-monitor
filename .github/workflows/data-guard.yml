@@ -1,0 +1,47 @@
+name: data-guard
+
+on:
+  pull_request:
+
+jobs:
+  block-data-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Block sensitive data file types
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          added=$(git diff --name-only --diff-filter=A "$BASE_SHA" "$HEAD_SHA" || true)
+          if [ -z "$added" ]; then
+            echo "No new files added."
+            exit 0
+          fi
+          blocked=""
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            bn=$(basename "$f")
+            case "$bn" in
+              *.csv|*.xml|*.json|*.pdf|.env|.env.*)
+                case "$bn" in
+                  package.json|package-lock.json|.markdownlint.json|.markdownlint.jsonc)
+                    ;;
+                  *)
+                    blocked="$blocked$f"$'\n'
+                    ;;
+                esac
+                ;;
+            esac
+          done <<< "$added"
+          if [ -n "$blocked" ]; then
+            echo "::error::PR adds files matching banned patterns (*.csv, *.xml, *.json, *.pdf, .env*)."
+            echo "Test fixtures use synthetic PDFs built in conftest.py — never commit PDFs or data files."
+            echo "If a file is legitimate config, add it to the allowlist in .github/workflows/data-guard.yml and .gitignore."
+            printf '%s' "$blocked"
+            exit 1
+          fi
+          echo "No banned data files added."

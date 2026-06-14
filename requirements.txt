@@ -1,0 +1,16 @@
+# Core
+anthropic>=0.69          # Claude API (egle_doc_parser classification)
+PyMuPDF>=1.24            # fitz — PDF text-layer detection (needs_ocr vs has_text)
+ocrmypdf>=16.0           # adds a searchable text layer in place (--skip-text)
+PyYAML>=6.0              # config.yml
+
+# Google Drive + Sheets (service-account auth; no local mount)
+google-api-python-client>=2.130
+google-auth>=2.30
+
+# requests is used by nsite_client (ported from the EGLE scraper)
+requests>=2.32
+
+# Tests: synthetic PDFs are built with PyMuPDF (already a dep) — no extra
+# PDF library needed. pytest is the only test-time addition.
+pytest>=8.0

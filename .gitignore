@@ -1,0 +1,31 @@
+.DS_Store
+.claude/
+*.pyc
+__pycache__/
+.venv/
+venv/
+node_modules/
+*.log
+
+# Secrets / credentials — never commit
+.env
+.env.*
+!.env.example
+service-account*.json
+*-sa-key.json
+gdrive-sa-key.json
+
+# Local working copy of state (canonical copy lives in Google Drive)
+egle-n2688-state.json
+
+# Downloaded / OCR'd PDFs — never commit (uploaded to Drive instead)
+*.pdf
+
+# Data file types — never commit by default. The data-guard CI check enforces
+# this; allowlist legitimate config below if you add it.
+*.csv
+*.xml
+*.json
+!package.json
+!.markdownlint.json
+!.markdownlint.jsonc
