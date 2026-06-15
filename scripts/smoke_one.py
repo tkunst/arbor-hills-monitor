@@ -29,7 +29,7 @@ def main() -> int:
         return 2
     cfg = load_config()
     session = nc.make_session()
-    docs = nc.fetch_site_documents(session, cfg["facility_id"])
+    docs = nc.fetch_all_documents(session, cfg)
     if not docs:
         print("nSITE returned 0 documents.")
         return 1

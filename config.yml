@@ -2,9 +2,16 @@
 # Secrets live in .env / GitHub Secrets, never here. See .env.example.
 
 # --- nSITE / EGLE source ---
-# SRN N2688 (Arbor Hills Landfill) — facility ID on the nSITE explorer API.
-facility_id: "8094300008956198244"
-srn: "N2688"
+# The facilities to track. Each entry is one nSITE facility profile; the monitor
+# fetches all of them and tags every document with its facility (the "Facility"
+# column in the Sheet). nSITE doc_ids are GLOBALLY UNIQUE across these facilities
+# (verified 0 pairwise overlap, 2026-06-15), so they safely share one Sheet and
+# one _state tab with no composite key. See docs/decisions/008-multi-facility.md.
+facilities:
+  - {srn: "N2688", name: "Arbor Hills Landfill",         id: "8094300008956198244"}   # the landfill (754 docs)
+  - {srn: "RA",    name: "Arbor Hills Remediation Area",  id: "-714792003991405124"}   # Water/RRD record — R5/PFAS (740 docs)
+  - {srn: "N1504", name: "Arbor Hills Energy",            id: "-4937599654678851055"}   # SO2 turbine power plant (54 docs)
+  - {srn: "P1488", name: "Emerald RNG",                   id: "-5064275074930604158"}   # OPAL/GFL RNG plant (16 docs)
 
 # --- Document classification ---
 # Haiku is the deliberate cost choice for the 754-doc backfill (~$2-4 total);

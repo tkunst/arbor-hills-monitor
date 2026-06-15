@@ -9,8 +9,9 @@ stripped to the three things this monitor needs:
 
 Deliberately DOES NOT inherit the scraper's `doc_date == today` filter — that was
 for a daily all-facilities sweep. Backfill needs the full history; the watcher
-filters by checkpoint date itself. We also dropped the pandas / CSV-merge /
-multi-facility machinery: there is one known facility here.
+filters by checkpoint date itself. We also dropped the pandas / CSV-merge
+machinery. fetch_all_documents() loops the facilities configured in config.yml
+and tags each doc with its facility (the multi-facility design, ADR 008).
 """
 from __future__ import annotations
 
@@ -113,6 +114,24 @@ def fetch_site_documents(session: requests.Session, nsite_id: str) -> list[dict]
                 return []
             time.sleep(2 ** attempt)
     return []
+
+
+def fetch_all_documents(session: requests.Session, cfg: dict) -> list[dict]:
+    """Fetch and concatenate the document lists for every facility in
+    cfg["facilities"], tagging each doc with facility_srn / facility_name.
+
+    nSITE doc_ids are globally unique across these facilities (verified 0 pairwise
+    overlap), so the combined list safely shares one Sheet + one _state tab with
+    no composite key (ADR 008). A facility that returns [] (transient error /
+    empty record) simply contributes nothing; it never aborts the others.
+    """
+    docs: list[dict] = []
+    for f in cfg["facilities"]:
+        for d in fetch_site_documents(session, f["id"]):
+            d["facility_srn"] = f["srn"]
+            d["facility_name"] = f["name"]
+            docs.append(d)
+    return docs
 
 
 def download_pdf(session: requests.Session, doc: dict, dest_path: str, timeout: int = 120) -> str:

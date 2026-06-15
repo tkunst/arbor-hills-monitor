@@ -65,7 +65,7 @@ def run() -> int:
     # Join processed doc IDs to the live nSITE list for the download URL + names.
     # (_state stores classification metadata but not doc_url — ADR 007.)
     session = nc.make_session()
-    docs = nc.fetch_site_documents(session, cfg["facility_id"])
+    docs = nc.fetch_all_documents(session, cfg)
     if not docs:
         print("[archive] nSITE returned 0 documents — aborting (transient?).")
         return 1
@@ -90,12 +90,13 @@ def run() -> int:
             missing += 1
             print(f"  skip {did}: not in current nSITE list (cannot download).")
             continue
-        local = os.path.join(tmp, f"N2688_{did}.pdf")
+        srn = meta.get("facility_srn", "N2688")
+        local = os.path.join(tmp, f"{srn}_{did}.pdf")
         try:
             nc.download_pdf(session, meta, local)
             # Upload (durable copy) FIRST, then record the index row — a crash
             # between them re-uploads next run, made idempotent by find_in_folder.
-            link = ac.upload_pdf(drive, local, f"N2688_{did}.pdf")
+            link = ac.upload_pdf(drive, local, f"{srn}_{did}.pdf")
             sw.append_archive_row(
                 sheets, sheet_id, did,
                 payload.get("document_name") or meta.get("document_name", ""),

@@ -29,11 +29,11 @@ from typing import Iterable
 
 FEED_HEADERS = [
     "Date Filed", "Document Name", "Type", "Risks", "Severity",
-    "Summary", "Key Data Point", "Link",
+    "Summary", "Key Data Point", "Link", "Facility",
 ]
 EVIDENCE_HEADERS = [
     "Risk", "Risk Name", "Date Filed", "Document Name",
-    "Key Data Point", "Full Summary", "Link",
+    "Key Data Point", "Full Summary", "Link", "Facility",
 ]
 REGISTER_HEADERS = [
     "Risk", "Risk Name", "Description", "Evidence Count",
@@ -45,7 +45,7 @@ REGISTER_HEADERS = [
 # to derive a per-well time series WITHOUT reprocessing source documents.
 MEASUREMENTS_HEADERS = [
     "As-Of Date", "Well ID", "Metric", "Value", "Unit", "Basis",
-    "Date Filed", "Document Name", "Note", "Link",
+    "Date Filed", "Document Name", "Note", "Link", "Facility",
 ]
 # Internal processing-state tabs. "_state" is an APPEND-ONLY event log — one row
 # per processing attempt — so there is never a read-modify-write race and the
@@ -105,6 +105,7 @@ def feed_row(parsed, metadata: dict, link: str) -> list:
         parsed.summary,
         parsed.key_data_point,
         link,
+        metadata.get("facility_name", ""),
     ]
 
 
@@ -124,6 +125,7 @@ def measurement_rows(parsed, metadata: dict, link: str) -> list[list]:
             metadata.get("document_name", ""),
             m.get("note") or "",
             link,
+            metadata.get("facility_name", ""),
         ])
     return rows
 
@@ -143,6 +145,7 @@ def evidence_rows(parsed, metadata: dict, link: str, risk_names: dict) -> list[l
             parsed.key_data_point,
             parsed.summary,
             link,
+            metadata.get("facility_name", ""),
         ])
     return rows
 
@@ -153,8 +156,10 @@ def evidence_rows(parsed, metadata: dict, link: str, risk_names: dict) -> list[l
 
 
 def ensure_tabs(service, sheet_id: str) -> None:
-    """Create any of the four tabs that don't exist, and write its header row.
-    Idempotent — safe on every run."""
+    """Create any missing tabs and reconcile each tab's header row (row 1) on
+    EVERY run. Rewriting row 1 from _TAB_HEADERS is idempotent — it touches only
+    the header, never data rows — so a newly-added column (e.g. "Facility")
+    appears on already-created tabs and any header drift self-heals. See ADR 008."""
     meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     requests = [
@@ -166,10 +171,9 @@ def ensure_tabs(service, sheet_id: str) -> None:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id, body={"requests": requests}
         ).execute()
-    # Write headers for any tab that was just created (or is empty).
+    # Reconcile the header row on every tab (created or pre-existing) each run.
     for title, headers in _TAB_HEADERS.items():
-        if title not in existing:
-            _set_header(service, sheet_id, title, headers)
+        _set_header(service, sheet_id, title, headers)
 
 
 def _set_header(service, sheet_id: str, tab: str, headers: list) -> None:

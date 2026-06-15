@@ -1,19 +1,23 @@
 # Arbor Hills Document Monitor
 
 Automated monitoring of Michigan EGLE regulatory filings for the **Arbor Hills
-Landfill (SRN N2688)**, built for the [Conservancy
-Initiative](https://theconservancyinitiative.org). It backfills the ~754 existing
-documents and watches for new filings, classifies each against the Conservancy's
-risk register, maintains a full-text-searchable PDF archive plus a Google Sheet
-case file, and emails alerts.
+complex**, built for the [Conservancy
+Initiative](https://theconservancyinitiative.org). It tracks four co-located,
+EGLE-regulated facilities — the **Landfill (N2688)**, the **Remediation Area**
+(water/PFAS), **Arbor Hills Energy (N1504)** (the SO2 turbine plant), and
+**Emerald RNG (P1488)** — backfilling the existing documents and watching for new
+filings, classifying each against the Conservancy's risk register, maintaining a
+full-text-searchable PDF archive plus a Google Sheet case file, and emailing
+alerts. Each document is tagged with its facility (see
+`docs/decisions/008-multi-facility.md`).
 
 All inputs are **public regulatory data** from EGLE's nSITE portal. No credentials
 live in the repo — cloud secrets are GitHub Secrets / local `.env`.
 
 ## What it does
 
-1. **Backfill** (nightly, self-terminating): processes the existing N2688
-   documents in batches of 50, then becomes a no-op once done.
+1. **Backfill** (nightly, self-terminating): processes the existing documents
+   across the tracked facilities in batches of 50, then becomes a no-op once done.
 2. **Daily watcher**: picks up new filings, classifies them, and runs the MMPC
    meeting-minutes polling logic.
 3. **Classify**: each document is OCR'd if needed, then sent to Claude with the

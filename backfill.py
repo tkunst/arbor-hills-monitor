@@ -49,7 +49,7 @@ def run() -> int:
     state = sw.read_state(sheets, sheet_id)
 
     session = nc.make_session()
-    docs = nc.fetch_site_documents(session, cfg["facility_id"])
+    docs = nc.fetch_all_documents(session, cfg)
     if not docs:
         print("[backfill] nSITE returned 0 documents — aborting (transient?).")
         return 1
@@ -70,7 +70,7 @@ def run() -> int:
 
     for d in batch:
         did = d["doc_id"]
-        local = os.path.join(tmp, f"N2688_{did}.pdf")
+        local = os.path.join(tmp, f"{d.get('facility_srn', 'N2688')}_{did}.pdf")
         try:
             nc.download_pdf(session, d, local)
 
