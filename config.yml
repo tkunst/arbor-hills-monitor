@@ -69,9 +69,15 @@ mmpc:
   meeting_week_of_month: 2       # 2nd occurrence
   poll_start_days_after: 3       # start checking for minutes 3 days after meeting
   poll_window_days: 10           # keep checking daily up to 10 days, then stop
-  # VERIFY WITH THE CONSERVANCY BEFORE FIRST DEPLOY (they attend every meeting
-  # and know where minutes land). Hard-code the confirmed URL here.
-  minutes_url: "VERIFY_BEFORE_DEPLOY"
+  # CivicClerk portal, MMPC category (category_id=72). Verified 2026-06-15.
+  # This is a JS single-page app: documents (agenda/minutes/"other"=presentations)
+  # are behind a download-arrow -> accessible-PDF-viewer -> "Download Original PDF"
+  # flow that a plain HTTP GET can't drive. So the watcher uses this URL as a
+  # REMINDER target, not a scraper: during each meeting's polling window it fires
+  # one "minutes likely posted, go check" email with this link, and Trisha does
+  # the manual download. (A future upgrade could hit CivicClerk's JSON API to
+  # detect/auto-download the published PDFs; not needed for the R1 reminder.)
+  minutes_url: "https://washtenawcomi.portal.civicclerk.com/?category_id=72"
 
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
