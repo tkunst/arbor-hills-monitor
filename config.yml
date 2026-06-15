@@ -69,6 +69,23 @@ mmpc:
   meeting_week_of_month: 2       # 2nd occurrence
   poll_start_days_after: 3       # start checking for minutes 3 days after meeting
   poll_window_days: 10           # keep checking daily up to 10 days, then stop
+  # Authoritative published meeting dates — when present these OVERRIDE the
+  # 2nd-Wednesday rule above. The committee meets ">= quarterly unless otherwise
+  # noted": it skips months (no Nov 2026), moves some meetings off the 2nd
+  # Wednesday (Aug is the 19th = 3rd Wed), and cancels others — so the computed
+  # rule fires phantom/early reminders. List ONLY real (non-cancelled) meetings;
+  # refresh yearly from the WCMMPC schedule PDF. Source: "WCMMPC 2026 Meeting
+  # Schedule" (Apr 8 + May 20 CANCELLED; no November meeting).
+  meeting_dates:
+    - "2026-01-14"
+    - "2026-02-11"
+    - "2026-03-11"
+    - "2026-06-10"
+    - "2026-07-08"
+    - "2026-08-19"
+    - "2026-09-09"
+    - "2026-10-14"
+    - "2026-12-09"
   # CivicClerk portal, MMPC category (category_id=72). Verified 2026-06-15.
   # This is a JS single-page app: documents (agenda/minutes/"other"=presentations)
   # are behind a download-arrow -> accessible-PDF-viewer -> "Download Original PDF"

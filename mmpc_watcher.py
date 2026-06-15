@@ -1,9 +1,13 @@
 """
 mmpc_watcher.py — Washtenaw County MMPC meeting calculator + minutes poller.
 
-The MMPC schedule is a deterministic rule, not a page to scrape: second
-Wednesday of every month, 10:00am, Washtenaw County Learning Resource Center,
-Superior Room. We calculate meeting dates mathematically, then poll for minutes
+Meeting dates come from the authoritative published calendar (config
+`meeting_dates`, refreshed yearly from the WCMMPC schedule PDF) when present;
+otherwise we fall back to a deterministic rule (second Wednesday of every month,
+10:00am, Washtenaw County Learning Resource Center, Superior Room). The explicit
+calendar is preferred because the committee meets ">= quarterly unless otherwise
+noted" — it skips months, moves some meetings off the 2nd Wednesday, and cancels
+others, all of which the computed rule gets wrong. We then poll for minutes
 starting `poll_start_days_after` days after each meeting, daily, up to
 `poll_window_days` days, stopping when notes appear.
 
@@ -40,17 +44,38 @@ def _prev_month(year: int, month: int) -> tuple[int, int]:
     return (year - 1, 12) if month == 1 else (year, month - 1)
 
 
+def _explicit_meeting_dates(cfg: dict) -> list[date]:
+    """Parse cfg['meeting_dates'] into a sorted list of dates. Accepts ISO
+    'YYYY-MM-DD' strings or date objects (PyYAML auto-parses unquoted dates).
+    Returns [] when unset, so callers fall back to the computed rule."""
+    out: list[date] = []
+    for d in cfg.get("meeting_dates") or []:
+        if isinstance(d, date):
+            out.append(d)
+        else:
+            try:
+                out.append(date.fromisoformat(str(d)))
+            except ValueError:
+                continue
+    return sorted(out)
+
+
 def active_polling_meeting(today: date, cfg: dict) -> Optional[date]:
     """Return the meeting date whose minutes-polling window contains `today`,
-    or None. Checks this month's and last month's meetings (a late-month meeting
-    + a multi-day window can roll into the next month, and an early-month `today`
-    can still be polling last month's meeting)."""
-    candidates = [
+    or None.
+
+    Prefers the authoritative published calendar (cfg['meeting_dates']) when
+    present — it reflects cancellations, skipped months, and meetings moved off
+    the 2nd Wednesday, which the computed rule gets wrong. Falls back to the
+    2nd-Wednesday rule (this month + last month — a late meeting plus a multi-day
+    window can roll into the next month) when no explicit calendar is set."""
+    start_after = cfg["poll_start_days_after"]
+    window = cfg["poll_window_days"]
+
+    candidates = _explicit_meeting_dates(cfg) or [
         meeting_date_for_month(today.year, today.month, cfg),
         meeting_date_for_month(*_prev_month(today.year, today.month), cfg),
     ]
-    start_after = cfg["poll_start_days_after"]
-    window = cfg["poll_window_days"]
     for mtg in candidates:
         start = mtg + timedelta(days=start_after)
         end = start + timedelta(days=window)
