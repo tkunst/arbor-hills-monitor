@@ -7,11 +7,18 @@
 # column in the Sheet). nSITE doc_ids are GLOBALLY UNIQUE across these facilities
 # (verified 0 pairwise overlap, 2026-06-15), so they safely share one Sheet and
 # one _state tab with no composite key. See docs/decisions/008-multi-facility.md.
+#
+# ORDER MATTERS for backfill: it concatenates the facilities in THIS order and
+# processes the next `backfill_batch_size` unprocessed docs each run, so whatever
+# is listed first gets pulled first. The Remediation Area (R5/PFAS) leads so it
+# clears first; N2688's ~704 not-yet-processed docs are listed LAST so they don't
+# block it (its ~50 already-processed docs are skipped regardless). The watcher
+# and archiver are order-independent.
 facilities:
-  - {srn: "N2688", name: "Arbor Hills Landfill",         id: "8094300008956198244"}   # the landfill (754 docs)
-  - {srn: "RA",    name: "Arbor Hills Remediation Area",  id: "-714792003991405124"}   # Water/RRD record — R5/PFAS (740 docs)
+  - {srn: "RA",    name: "Arbor Hills Remediation Area",  id: "-714792003991405124"}   # Water/RRD — R5/PFAS, process FIRST (740 docs)
   - {srn: "N1504", name: "Arbor Hills Energy",            id: "-4937599654678851055"}   # SO2 turbine power plant (54 docs)
   - {srn: "P1488", name: "Emerald RNG",                   id: "-5064275074930604158"}   # OPAL/GFL RNG plant (16 docs)
+  - {srn: "N2688", name: "Arbor Hills Landfill",         id: "8094300008956198244"}    # the landfill — ~704 remaining, finish AFTER
 
 # --- Document classification ---
 # Haiku is the deliberate cost choice for the 754-doc backfill (~$2-4 total);

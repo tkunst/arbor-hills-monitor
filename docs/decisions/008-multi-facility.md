@@ -31,11 +31,19 @@ fetch + concatenate all of them, **tagging every document with its facility**.
 
 ```yaml
 facilities:
-  - {srn: "N2688", name: "Arbor Hills Landfill",         id: "8094300008956198244"}
-  - {srn: "RA",    name: "Arbor Hills Remediation Area",  id: "-714792003991405124"}
+  - {srn: "RA",    name: "Arbor Hills Remediation Area",  id: "-714792003991405124"}  # first
   - {srn: "N1504", name: "Arbor Hills Energy",            id: "-4937599654678851055"}
   - {srn: "P1488", name: "Emerald RNG",                   id: "-5064275074930604158"}
+  - {srn: "N2688", name: "Arbor Hills Landfill",         id: "8094300008956198244"}   # last
 ```
+
+**Order is significant for backfill priority.** Backfill processes the
+concatenated list in config order (`todo[:batch_size]` per run), so the facility
+listed first is pulled first. The Remediation Area (the R5/PFAS record) leads;
+N2688's ~704 not-yet-processed docs are listed last so they don't block it (its
+~50 already-processed docs are skipped by `done_or_poisoned` regardless). The
+watcher and archiver are order-independent (the watcher handles only the small
+daily delta; the archiver mirrors `processed` docs, which inherit this order).
 
 **One Sheet, one `_state` tab, no composite key.** The load-bearing fact:
 **nSITE doc_ids are globally unique across these four facilities — verified 0
