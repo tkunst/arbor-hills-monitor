@@ -134,10 +134,23 @@ def format_digest_body(items: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def resolve_recipients(cfg: dict) -> list:
+    """Recipients = config.yml `alert_recipients` PLUS any in the
+    ALERT_RECIPIENTS_EXTRA env (comma/semicolon-separated). The env is how a
+    PRIVATE address (e.g. a personal stopgap inbox) gets added WITHOUT committing
+    it to this PUBLIC repo's config.yml. Order preserved, de-duplicated."""
+    out = list(cfg.get("alert_recipients", []) or [])
+    for addr in (os.environ.get("ALERT_RECIPIENTS_EXTRA", "") or "").replace(";", ",").split(","):
+        addr = addr.strip()
+        if addr and addr not in out:
+            out.append(addr)
+    return out
+
+
 def send_email(subject: str, body: str, cfg: dict) -> None:
     """Send to all configured recipients via SMTP (TLS). No-op with a warning if
     SMTP env vars are missing (so a dry/local run doesn't crash)."""
-    recipients = cfg.get("alert_recipients", [])
+    recipients = resolve_recipients(cfg)
     host = os.environ.get("SMTP_HOST")
     user = os.environ.get("SMTP_USER")
     password = os.environ.get("SMTP_PASSWORD")

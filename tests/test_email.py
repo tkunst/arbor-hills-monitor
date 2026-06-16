@@ -60,3 +60,23 @@ def test_celsius_measured_is_converted():
 def test_free_text_fallback_when_no_structured_measurements():
     # No structured measurements -> fall back to scanning text.
     assert ea.is_urgent(_doc(full_text="probe read 165 F at the wellhead"), CFG) is True
+
+
+# --- recipient resolution: config.yml + private ALERT_RECIPIENTS_EXTRA env ---
+
+def test_resolve_recipients_config_only(monkeypatch):
+    monkeypatch.delenv("ALERT_RECIPIENTS_EXTRA", raising=False)
+    assert ea.resolve_recipients({"alert_recipients": ["a@x.com"]}) == ["a@x.com"]
+
+
+def test_resolve_recipients_merges_env_and_dedups(monkeypatch):
+    # The env carries PRIVATE addresses kept out of the public repo's config.yml.
+    monkeypatch.setenv("ALERT_RECIPIENTS_EXTRA", "a@x.com, b@yahoo.com ; c@x.com")
+    assert ea.resolve_recipients({"alert_recipients": ["a@x.com"]}) == [
+        "a@x.com", "b@yahoo.com", "c@x.com",
+    ]
+
+
+def test_resolve_recipients_blank_env_is_noop(monkeypatch):
+    monkeypatch.setenv("ALERT_RECIPIENTS_EXTRA", "  ")
+    assert ea.resolve_recipients({"alert_recipients": ["a@x.com"]}) == ["a@x.com"]
