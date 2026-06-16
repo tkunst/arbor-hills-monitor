@@ -148,7 +148,12 @@ def send_email(subject: str, body: str, cfg: dict) -> None:
 
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = user
+    # From defaults to the SMTP login, but SMTP_FROM can override it (e.g. a
+    # hello@trishakunst.com "send as" alias) so the login address — which
+    # contains "martinez" — isn't the visible sender once non-Trisha recipients
+    # (the Conservancy) are added. Requires the alias be verified in the sending
+    # account, or the provider will rewrite/reject it.
+    msg["From"] = os.environ.get("SMTP_FROM") or user
     msg["To"] = ", ".join(recipients)
     msg.set_content(body)
 
@@ -157,6 +162,18 @@ def send_email(subject: str, body: str, cfg: dict) -> None:
         server.login(user, password)
         server.send_message(msg)
     print(f"[email_alerts] sent {subject!r} to {len(recipients)} recipient(s)")
+
+
+def send_test_email(cfg: dict) -> None:
+    """Send a one-off test message to the configured recipients to verify SMTP is
+    wired up end-to-end. Triggered by the daily workflow's `send_test` input."""
+    send_email(
+        "[TEST] Arbor Hills monitor — email is working",
+        "If you're reading this, the monitor's SMTP alerts are configured "
+        "correctly. Urgent alerts (same-day) and the weekly digest will arrive "
+        "this way. This is a manual test send; no action needed.",
+        cfg,
+    )
 
 
 def send_urgent_alert(parsed, metadata: dict, link: str, cfg: dict) -> None:

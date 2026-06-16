@@ -9,7 +9,12 @@ on:
   # is the backstop against any historical-doc surprise.
   schedule:
     - cron: "0 11 * * *"   # 6am ET (11am UTC). DST drift of +/-1h is acceptable.
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      send_test:
+        description: "Send a test email to the configured recipients (verifies SMTP), then run the watcher"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -39,6 +44,16 @@ jobs:
         run: |
           printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
           echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Send test email (manual send_test runs only)
+        if: ${{ inputs.send_test == true }}
+        env:
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+        run: python -c "import email_alerts, config_loader; email_alerts.send_test_email(config_loader.load_config())"
       - name: Run the watcher
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -49,4 +64,5 @@ jobs:
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
         run: python watcher.py
