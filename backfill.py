@@ -35,6 +35,44 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _retry_poisoned() -> bool:
+    """Whether to re-attempt already-poisoned docs (>= MAX_ERRORS_PER_DOC errors)
+    this run — e.g. after raising classification_max_tokens to fix a truncation.
+    Opt-in via the RETRY_POISONED env (a backfill workflow_dispatch input) so
+    normal scheduled runs keep skipping poison docs and stay self-terminating."""
+    return os.environ.get("RETRY_POISONED", "").strip().lower() in {"1", "true", "yes"}
+
+
+def select_todo(docs: list, state: dict, retry_poisoned: bool = False) -> list:
+    """Docs still needing work. Normal mode skips both processed and poisoned
+    docs (poisoned = at least MAX_ERRORS_PER_DOC failures). retry_poisoned mode
+    skips only processed docs, so poison docs are re-attempted this run; a later
+    success appends a 'processed' row that clears their error count in
+    read_state's reducer, while a renewed failure just pushes the count higher
+    (still poisoned)."""
+    out = []
+    for d in docs:
+        did = d["doc_id"]
+        if did in state["processed"]:
+            continue
+        if not retry_poisoned and state["errors"].get(did, 0) >= MAX_ERRORS_PER_DOC:
+            continue
+        out.append(d)
+    return out
+
+
+def count_remaining(docs: list, state: dict) -> int:
+    """Poison-aware remaining count: docs neither processed nor poisoned. This is
+    the normal completion signal, used for the end-of-run log line even during a
+    retry run — so "0 remaining" still means "a normal scheduled run has no work
+    left," and the job stays self-terminating regardless of stuck poison docs."""
+    return sum(
+        1 for d in docs
+        if d["doc_id"] not in state["processed"]
+        and state["errors"].get(d["doc_id"], 0) < MAX_ERRORS_PER_DOC
+    )
+
+
 def run() -> int:
     cfg = load_config()
     sheet_id = os.environ["GSHEET_ID"]
@@ -54,12 +92,10 @@ def run() -> int:
         print("[backfill] nSITE returned 0 documents — aborting (transient?).")
         return 1
 
-    def done_or_poisoned(d):
-        did = d["doc_id"]
-        return did in state["processed"] or state["errors"].get(did, 0) >= MAX_ERRORS_PER_DOC
-
-    todo = [d for d in docs if not done_or_poisoned(d)]
-    print(f"[backfill] {len(docs)} total, {len(state['processed'])} done, {len(todo)} remaining.")
+    retry_poisoned = _retry_poisoned()
+    todo = select_todo(docs, state, retry_poisoned)
+    mode = " (retrying poisoned)" if retry_poisoned else ""
+    print(f"[backfill] {len(docs)} total, {len(state['processed'])} done, {len(todo)} remaining{mode}.")
     if not todo:
         print("[backfill] Backfill complete — nothing to do.")
         return 0
@@ -119,7 +155,7 @@ def run() -> int:
     except Exception as e:  # noqa: BLE001
         print(f"[backfill] risk-register rebuild skipped: {e}")
 
-    remaining = len([d for d in docs if not done_or_poisoned(d)])
+    remaining = count_remaining(docs, state)
     print(f"[backfill] processed {processed_this_run} this run; {remaining} remaining.")
     return 0
 

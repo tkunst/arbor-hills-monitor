@@ -28,7 +28,12 @@ anthropic_model: "claude-haiku-4-5"
 # Output cap for the classification call. Generous enough that measurements[]
 # on a multi-well WOI report isn't truncated mid-JSON. If a doc ever fails with
 # "Classification truncated at max_tokens", raise this.
-classification_max_tokens: 8192
+# Raised 8192 -> 16384 on 2026-06-15: 17 large OCR/water docs (e.g. a 2022
+# methane perimeter-monitoring report) overflowed an 8192-token classification
+# JSON and poisoned out; 16384 recovers them (re-run backfill with
+# RETRY_POISONED=1). Haiku output is $5/1M tok, so the headroom is ~$0.08/1k
+# extra tokens only on docs that actually need it.
+classification_max_tokens: 16384
 
 # Large-document handling: docs with more pages than this get targeted
 # keyword-window extraction instead of full text (saves tokens, better

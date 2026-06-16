@@ -7,7 +7,12 @@ name: backfill
 on:
   schedule:
     - cron: "0 7 * * *"   # 2am ET (7am UTC). DST drift is fine for a backfill.
-  workflow_dispatch: {}    # allow manual runs while iterating
+  workflow_dispatch:       # allow manual runs while iterating
+    inputs:
+      retry_poisoned:
+        description: "Re-attempt poisoned docs (>=3 failures) this run — use after raising classification_max_tokens"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -47,4 +52,6 @@ jobs:
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          # Default false; set true via "Run workflow" to re-attempt poison docs.
+          RETRY_POISONED: ${{ inputs.retry_poisoned }}
         run: python backfill.py
