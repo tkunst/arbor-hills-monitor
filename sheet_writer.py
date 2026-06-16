@@ -25,6 +25,7 @@ without touching the Sheets API. Tab creation is idempotent (create-if-absent).
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Iterable
 
 FEED_HEADERS = [
@@ -269,7 +270,7 @@ def read_state(service, sheet_id: str) -> dict:
     _state is append-only and chronological, so a doc's 'error' rows always
     precede its 'processed' row: we count errors as we go and clear them when the
     'processed' row arrives. Missing tabs (first run) reduce to an empty state."""
-    state = {"processed": {}, "errors": {}}
+    state = {"processed": {}, "errors": {}, "skipped": {}}
     state.update({k: _copy_default(k) for k in _META_DEFAULTS})
 
     for r in _tab_rows(service, sheet_id, TAB_STATE, "A2:E"):
@@ -278,7 +279,13 @@ def read_state(service, sheet_id: str) -> dict:
         if status == "processed":
             state["processed"][doc_id] = _load_json(r[4] if len(r) > 4 else "", {})
             state["errors"].pop(doc_id, None)
-        elif status == "error" and doc_id not in state["processed"]:
+        elif status == "skipped":
+            # Terminal: an unprocessable-source doc, made visible as a stub feed
+            # row instead of being silently dropped. Not "processed" (never
+            # classified), but done — no retries, excluded from remaining.
+            state["skipped"][doc_id] = _load_json(r[4] if len(r) > 4 else "", {})
+            state["errors"].pop(doc_id, None)
+        elif status == "error" and doc_id not in state["processed"] and doc_id not in state["skipped"]:
             state["errors"][doc_id] = state["errors"].get(doc_id, 0) + 1
 
     for r in _tab_rows(service, sheet_id, TAB_META, "A2:B"):
@@ -299,6 +306,32 @@ def mark_processed(service, sheet_id: str, doc_id: str, payload: dict, processed
 def mark_error(service, sheet_id: str, doc_id: str, error_count: int, processed_at: str) -> None:
     """Append an 'error' event for one doc (error_count is the running count)."""
     _append_state_row(service, sheet_id, [doc_id, "error", error_count, processed_at, ""])
+
+
+def mark_skipped(service, sheet_id: str, doc_id: str, payload: dict, processed_at: str) -> None:
+    """Append a terminal 'skipped' event for a doc whose source can't be parsed
+    (legacy/encrypted .doc, zip, raw image). Pairs with a write_stub_row() so the
+    doc is visible in the feed; clears its error count so it isn't retried."""
+    _append_state_row(
+        service, sheet_id,
+        [doc_id, "skipped", "", processed_at, json.dumps(payload, sort_keys=True)],
+    )
+
+
+def write_stub_row(service, sheet_id: str, metadata: dict, link: str, reason: str,
+                   feed_tab: str = TAB_HISTORICAL) -> None:
+    """Append a minimal feed row for an unprocessable-source document, so it shows
+    up in the case-file Sheet (title, date, facility, link) instead of being
+    silently absent. No classification, no measurements — just a visible pointer.
+    `link` should be the native downloadfile URL so a human can open the source."""
+    stub = SimpleNamespace(
+        doc_type="(unprocessable source)",
+        risks=[],
+        severity="skipped",
+        summary=reason,
+        key_data_point="",
+    )
+    append_rows(service, sheet_id, feed_tab, [feed_row(stub, metadata, link)])
 
 
 def write_meta(service, sheet_id: str, state: dict) -> None:

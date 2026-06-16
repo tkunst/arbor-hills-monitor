@@ -14,8 +14,10 @@ def _docs(*ids):
     return [{"doc_id": i} for i in ids]
 
 
-def _state(processed=(), errors=None):
-    return {"processed": {p: {} for p in processed}, "errors": dict(errors or {})}
+def _state(processed=(), errors=None, skipped=()):
+    return {"processed": {p: {} for p in processed},
+            "errors": dict(errors or {}),
+            "skipped": {s: {} for s in skipped}}
 
 
 def test_select_todo_skips_processed_and_poisoned():
@@ -51,6 +53,21 @@ def test_count_remaining_zero_when_all_done_or_poisoned():
     docs = _docs("a", "b")
     state = _state(processed=["a"], errors={"b": ME})
     assert bf.count_remaining(docs, state) == 0  # "Backfill complete" condition
+
+
+def test_select_todo_excludes_skipped_even_under_retry():
+    # A 'skipped' doc is terminal (stubbed + visible): never re-attempted, even
+    # in retry mode — unlike a poison doc, which retry re-includes.
+    docs = _docs("a", "b", "c")
+    state = _state(skipped=["a"], errors={"b": ME})
+    assert [d["doc_id"] for d in bf.select_todo(docs, state)] == ["c"]
+    assert [d["doc_id"] for d in bf.select_todo(docs, state, retry_poisoned=True)] == ["b", "c"]
+
+
+def test_count_remaining_excludes_skipped():
+    docs = _docs("a", "b")
+    state = _state(skipped=["a"])  # a terminal-skipped, b fresh
+    assert bf.count_remaining(docs, state) == 1
 
 
 def test_retry_poisoned_env_parsing(monkeypatch):

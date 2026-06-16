@@ -105,6 +105,18 @@ def test_poison_doc_accumulates_error_count():
     assert "doc-3" not in state["processed"]
 
 
+def test_skipped_event_is_terminal_and_clears_errors():
+    svc = FakeSheets()
+    # Errors then a terminal 'skipped' (unprocessable source, stubbed into feed).
+    sw.mark_error(svc, "SID", "doc-s", 1, "2026-06-15T01:00:00")
+    sw.mark_error(svc, "SID", "doc-s", 2, "2026-06-15T01:00:01")
+    sw.mark_skipped(svc, "SID", "doc-s", {"reason": "encrypted .doc"}, "2026-06-15T01:00:02")
+    state = sw.read_state(svc, "SID")
+    assert state["skipped"]["doc-s"] == {"reason": "encrypted .doc"}
+    assert "doc-s" not in state["errors"]      # errors cleared on skip
+    assert "doc-s" not in state["processed"]   # skipped != classified
+
+
 def test_meta_round_trips_and_defaults_are_isolated():
     svc = FakeSheets()
     state = sw.read_state(svc, "SID")

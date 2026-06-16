@@ -50,10 +50,11 @@ def select_todo(docs: list, state: dict, retry_poisoned: bool = False) -> list:
     success appends a 'processed' row that clears their error count in
     read_state's reducer, while a renewed failure just pushes the count higher
     (still poisoned)."""
+    skipped = state.get("skipped", {})
     out = []
     for d in docs:
         did = d["doc_id"]
-        if did in state["processed"]:
+        if did in state["processed"] or did in skipped:
             continue
         if not retry_poisoned and state["errors"].get(did, 0) >= MAX_ERRORS_PER_DOC:
             continue
@@ -66,9 +67,11 @@ def count_remaining(docs: list, state: dict) -> int:
     the normal completion signal, used for the end-of-run log line even during a
     retry run — so "0 remaining" still means "a normal scheduled run has no work
     left," and the job stays self-terminating regardless of stuck poison docs."""
+    skipped = state.get("skipped", {})
     return sum(
         1 for d in docs
         if d["doc_id"] not in state["processed"]
+        and d["doc_id"] not in skipped
         and state["errors"].get(d["doc_id"], 0) < MAX_ERRORS_PER_DOC
     )
 
@@ -145,6 +148,26 @@ def run() -> int:
             sw.mark_error(sheets, sheet_id, did, cnt, _now())
             print(f"  ERR {d['document_name'][:50]}: {e} "
                   f"(attempt {cnt}/{MAX_ERRORS_PER_DOC})")
+            # On the terminal failure, make the doc VISIBLE instead of silently
+            # dropping it: write a stub feed row (title/date/native-download link)
+            # and mark it 'skipped' so it isn't retried. The link uses the
+            # downloadfile endpoint (serves the original bytes for legacy .doc /
+            # zips / images that downloadpdf 400s on), so a human can open it.
+            if cnt >= MAX_ERRORS_PER_DOC and did not in state["skipped"]:
+                reason = f"Source not classifiable after {cnt} attempts: {str(e)[:140]}"
+                link = nc.native_download_url(did)
+                try:
+                    sw.write_stub_row(sheets, sheet_id, d, link, reason)
+                    sw.mark_skipped(sheets, sheet_id, did,
+                                    {"document_name": d["document_name"],
+                                     "date_filed": d["date_filed"], "reason": reason},
+                                    _now())
+                    state["skipped"][did] = {"reason": reason}
+                    state["errors"].pop(did, None)
+                    print(f"  ->  stubbed + skipped (now visible in feed): "
+                          f"{d['document_name'][:50]}")
+                except Exception as e2:  # noqa: BLE001
+                    print(f"  ->  stub/skip write failed: {e2}")
         finally:
             if os.path.exists(local):
                 os.remove(local)

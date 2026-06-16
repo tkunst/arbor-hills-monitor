@@ -30,6 +30,15 @@ DOCS_ENDPOINT = (
     "/profiles/4-documents/1-documents"
 )
 DOWNLOAD_BASE = f"{NSITE_BASE}/ncore/downloadpdf"
+# Native-file endpoint: serves the document's ORIGINAL bytes (legacy .doc, zips,
+# images) where downloadpdf returns HTTP 400 "PDF content could not be found"
+# for any non-PDF source. Used for stub links to docs the parser can't ingest.
+DOWNLOAD_FILE_BASE = f"{NSITE_BASE}/ncore/downloadfile"
+
+
+def native_download_url(doc_id: str) -> str:
+    """The downloadfile URL for a doc_id — the original bytes, not a PDF render."""
+    return f"{DOWNLOAD_FILE_BASE}/{doc_id}"
 
 
 def make_session() -> requests.Session:
