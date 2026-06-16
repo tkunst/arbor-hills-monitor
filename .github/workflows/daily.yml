@@ -4,14 +4,11 @@ name: daily
 # runs the MMPC second-Wednesday / minutes-polling logic, and sends alerts
 # (urgent same-day; procedural + everything else into the Sunday digest).
 on:
-  # DISABLED until backfill logs "Backfill complete". If the daily watcher runs
-  # while the ~754-doc history is still unprocessed, it would treat hundreds of
-  # historical docs as "new" — wrong tab, and urgent alerts on years-old
-  # exceedances. (The watcher also has a max_new_docs_per_run backstop, but
-  # leaving the schedule off until backfill finishes is the clean fix.)
-  # Uncomment the two lines below once backfill is complete:
-  # schedule:
-  #   - cron: "0 11 * * *"   # 6am ET (11am UTC). DST drift of +/-1h is acceptable.
+  # ENABLED 2026-06-15 — backfill is complete (1547/1564 processed; the rest are
+  # poison docs the watcher also skips). The watcher's max_new_docs_per_run cap
+  # is the backstop against any historical-doc surprise.
+  schedule:
+    - cron: "0 11 * * *"   # 6am ET (11am UTC). DST drift of +/-1h is acceptable.
   workflow_dispatch: {}
 
 permissions:
