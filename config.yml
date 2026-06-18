@@ -107,7 +107,7 @@ mmpc:
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 alert_recipients:
-  - hello@trishakunst.com        # alerts go to Trisha (forwards to daily-driver Gmail)
+  - trishakmartinez@gmail.com     # alerts go to Trisha's daily-driver Gmail
   # Uncomment to loop in the Conservancy once it's running well for just Trisha:
   # - info@theconservancyinitiative.org
 
