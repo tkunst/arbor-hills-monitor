@@ -159,21 +159,17 @@ def send_email(subject: str, body: str, cfg: dict) -> None:
         print(f"[email_alerts] SMTP not configured / no recipients — would send: {subject!r}")
         return
 
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    # From defaults to the SMTP login, but SMTP_FROM can override it (e.g. a
-    # hello@trishakunst.com "send as" alias) so the login address — which
-    # contains "martinez" — isn't the visible sender once non-Trisha recipients
-    # (the Conservancy) are added. Requires the alias be verified in the sending
-    # account, or the provider will rewrite/reject it.
-    msg["From"] = os.environ.get("SMTP_FROM") or user
-    msg["To"] = ", ".join(recipients)
-    msg.set_content(body)
-
+    sender = os.environ.get("SMTP_FROM") or user
     with smtplib.SMTP(host, port, timeout=30) as server:
         server.starttls()
         server.login(user, password)
-        server.send_message(msg)
+        for recipient in recipients:
+            msg = EmailMessage()
+            msg["Subject"] = subject
+            msg["From"] = sender
+            msg["To"] = recipient
+            msg.set_content(body)
+            server.send_message(msg)
     print(f"[email_alerts] sent {subject!r} to {len(recipients)} recipient(s)")
 
 
