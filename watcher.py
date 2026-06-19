@@ -88,12 +88,15 @@ def run() -> int:
         print("[watcher] nSITE returned 0 documents — aborting (transient?).")
         return 1
 
-    # Skip docs already processed AND poison docs that have failed
-    # MAX_ERRORS_PER_DOC times — without the cap, a doc that fails to
-    # download/parse would reprocess (and re-spend tokens) every single day.
+    # Skip docs already processed, terminally skipped (unprocessable source —
+    # legacy .doc, encrypted PDF, raw image), AND poison docs that have failed
+    # MAX_ERRORS_PER_DOC times. Without the skipped check, mark_skipped() clears
+    # error counts in read_state(), so skipped docs slip through as "new" on
+    # every run and trigger fresh download-fail retry loops.
     def done_or_poisoned(d):
         did = d["doc_id"]
-        return did in state["processed"] or state["errors"].get(did, 0) >= MAX_ERRORS_PER_DOC
+        return (did in state["processed"] or did in state["skipped"]
+                or state["errors"].get(did, 0) >= MAX_ERRORS_PER_DOC)
 
     new_docs = [d for d in docs if not done_or_poisoned(d)]
 

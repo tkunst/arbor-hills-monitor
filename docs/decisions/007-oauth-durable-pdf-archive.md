@@ -1,6 +1,9 @@
 # ADR 007 — Durable PDF archive via OAuth-as-user (optional, automated)
 
-*Status: accepted — 2026-06-14.*
+*Status: accepted — 2026-06-14; **activated in production 2026-06-15** — the four
+`GOAUTH_*` secrets are set, the mirror folder ("Arbor Hills EGLE Document Mirror")
+is created and shared "Anyone with the link → Viewer", and `archive.yml` runs
+daily. Mid-backfill as of 2026-06-17 (~1,249 PDFs remaining).*
 
 ## Context
 

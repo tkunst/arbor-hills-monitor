@@ -65,7 +65,10 @@ whole map on every doc.
 
 - **No durable PDF mirror.** If EGLE ever removes or renames a document, the
   Sheet link dies and the evidence is only as durable as nSITE. This is the one
-  real loss vs. ADR 001 and is an **accepted residual risk** for v1.
+  real loss vs. ADR 001 and was an **accepted residual risk** for v1.
+  *(Resolved: the fast-follow OAuth archive job below was specified in
+  [ADR 007](007-oauth-durable-pdf-archive.md) and activated in production
+  2026-06-15.)*
   - *Detection:* the CI `lychee` link-checker runs over committed docs, and a
     future watcher health-check can periodically HEAD a sample of `_state` doc
     URLs and alert on 404s.

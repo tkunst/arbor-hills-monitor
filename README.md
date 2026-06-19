@@ -59,11 +59,13 @@ pytest -q               # hermetic: synthetic PDFs, all APIs mocked, no secrets
 1. **GCP service account** — create project, enable the Sheets API, make a
    service account, download its key JSON. Full steps: `scripts/setup_gcp.md`.
 2. **Share** the case-file Sheet with the service-account email **as Editor**.
-   (No Drive folder share is needed — a service account on a personal Gmail has
-   no Drive storage quota and cannot create files there, so the monitor links
-   Sheet rows to the canonical nSITE source URL instead of archiving PDFs, and
-   keeps processing state in the Sheet's own `_state` / `_meta` tabs. See
-   `docs/decisions/006-state-in-sheet-no-drive-archive.md`.)
+   (No Drive folder share is needed for the *service account* — it has no Drive
+   storage quota on a personal Gmail and cannot create files there, so the main
+   Sheet rows link to the canonical nSITE source URL and processing state lives
+   in the Sheet's own `_state` / `_meta` tabs. See
+   `docs/decisions/006-state-in-sheet-no-drive-archive.md`. Durable PDF archiving
+   is handled separately by the OAuth archiver — step 10, active since
+   2026-06-15.)
 3. **GitHub Secrets**: `ANTHROPIC_API_KEY`, `GDRIVE_SA_KEY` (the key JSON
    contents), `GSHEET_ID`, and (for email) `SMTP_HOST`, `SMTP_PORT`,
    `SMTP_USER`, `SMTP_PASSWORD`. `GDRIVE_FOLDER_ID` is no longer used and can be
@@ -93,14 +95,17 @@ pytest -q               # hermetic: synthetic PDFs, all APIs mocked, no secrets
    history is unprocessed would flood the live feed with historical docs and
    fire urgent alerts on years-old exceedances (the watcher has a
    `max_new_docs_per_run` backstop, but disabling the schedule is the clean fix).
-10. **(Optional) Durable PDF mirror** — insurance against nSITE link rot
-    (ADR 007). Run `python scripts/oauth_setup.py <oauth-client.json>` once (it
-    walks you through enabling the Drive API, an OAuth "Desktop app" client, and
-    publishing the consent screen), set the four `GOAUTH_*` secrets it prints,
-    and share the mirror folder it creates as "Anyone with the link → Viewer".
-    The `archive.yml` schedule is already on and no-ops until those secrets
-    exist, then mirrors each processed PDF into your Drive and fills the
-    **Archived PDFs** tab. Full steps: `scripts/setup_gcp.md` §9.
+10. **Durable PDF mirror — ACTIVE since 2026-06-15** (was optional; now set up).
+    Insurance against nSITE link rot (ADR 007). The four `GOAUTH_*` secrets are
+    set, the mirror folder ("Arbor Hills EGLE Document Mirror") is created and
+    shared "Anyone with the link → Viewer", and `archive.yml` runs daily,
+    mirroring each processed PDF into Trisha's Drive and filling the **Archived
+    PDFs** tab. As of 2026-06-17 it is mid-backfill (~100 PDFs/run, ~1,249
+    remaining; expected complete ~June 30), so not every Sheet row has an
+    Archive Link yet. To re-do the setup (e.g. after a token revoke): run
+    `python scripts/oauth_setup.py <oauth-client.json>`, re-set the `GOAUTH_*`
+    secrets it prints, and re-share the mirror folder. Full steps:
+    `scripts/setup_gcp.md` §9.
 
 ## Scheduling
 
@@ -108,8 +113,8 @@ pytest -q               # hermetic: synthetic PDFs, all APIs mocked, no secrets
 - `daily.yml` — 6am ET daily (new docs + MMPC + alerts). **Schedule starts
   DISABLED** (only `workflow_dispatch`); uncomment the `schedule:` block after
   backfill completes — see deploy step 9.
-- `archive.yml` — 3am ET daily (optional durable PDF mirror). Safe to leave on:
-  it no-ops until the `GOAUTH_*` secrets are set — see deploy step 10.
+- `archive.yml` — 3am ET daily (durable PDF mirror). **ACTIVE since 2026-06-15**
+  (the `GOAUTH_*` secrets are set); mid-backfill — see deploy step 10.
 
 ## Cost
 
@@ -122,14 +127,14 @@ docs/day) is essentially free. Model is configurable in `config.yml`.
   **GitHub's workflow-failure emails** — confirm those are enabled for the repo
   owner (GitHub → Settings → Notifications → Actions). Recovery: re-run the
   failed workflow; runs are idempotent and resume from the Sheet's `_state` tab.
-- **nSITE link rot (mitigated by the optional archive, ADR 007).** Sheet rows
-  link to the canonical nSITE source rather than a Drive copy, because the
-  service account has no Drive quota (ADR 006). If EGLE removes or renames a
-  document, that link dies. The optional OAuth archiver (deploy step 10) closes
-  this by mirroring every PDF into your own Drive and recording it in the
-  **Archived PDFs** tab. While the archiver is left disabled, this remains an
-  accepted residual risk; the window of unmirrored docs is whatever the archiver
-  hasn't caught up on, so run it early.
+- **nSITE link rot (now actively mitigated by the archive, ADR 007).** The
+  Evidence/New/Historical Sheet rows link to the canonical nSITE source rather
+  than a Drive copy, because the service account has no Drive quota (ADR 006). If
+  EGLE removes or renames a document, that link dies. The OAuth archiver (deploy
+  step 10) closes this by mirroring every PDF into Trisha's Drive and recording
+  it in the **Archived PDFs** tab — **active since 2026-06-15**. The residual
+  window is now just whatever the archiver hasn't caught up on (mid-backfill as
+  of 2026-06-17, ~1,249 remaining), shrinking daily until backfill completes.
 - **MMPC minutes URL is best-effort.** We poll a hard-coded URL within the
   computed window; if the county changes where minutes land, polling silently
   finds nothing. Mitigation: the Conservancy attends every meeting, so a missed
