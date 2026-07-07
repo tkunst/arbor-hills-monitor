@@ -143,22 +143,48 @@ def fetch_all_documents(session: requests.Session, cfg: dict) -> list[dict]:
     return docs
 
 
+def _looks_like_pdf(body: bytes) -> bool:
+    """A cheap 'is this a PDF' check. Readers tolerate junk before the %PDF
+    header, so scan the first 1 KB rather than requiring it at byte 0."""
+    return b"%PDF" in body[:1024]
+
+
 def download_pdf(session: requests.Session, doc: dict, dest_path: str, timeout: int = 120) -> str:
-    """Download one document's PDF to dest_path. Returns dest_path. Raises on
-    HTTP error or empty body."""
-    url = doc["doc_url"]
+    """Download one document to dest_path as a PDF the parser can open. Returns
+    dest_path; raises on HTTP error, empty body, or if no source yields a PDF.
+
+    nSITE's per-record link (`doc_url`) usually points at a PDF, but for some
+    documents it points at the ORIGINAL file — an Outlook .msg, an image, an
+    nForm submission — which PyMuPDF cannot open. When the record's own link is
+    not a PDF, fall back to nSITE's `downloadpdf/<id>` render endpoint, which
+    rasterizes the source into a PDF. (Legacy Word .doc has no render — that
+    endpoint 400s — so those still fail here and accrue a poison strike, which is
+    correct: the monitor can't read them without a .doc converter. See ADR / the
+    2026-07-07 handoff.)"""
+    doc_id = doc["doc_id"]
+    primary = doc["doc_url"]
+    render = f"{DOWNLOAD_BASE}/{doc_id}"
+    # The record's own link first, then the render endpoint (unless identical).
+    urls = [primary] + ([render] if render != primary else [])
     referer = f"{NSITE_BASE}/nsite/DEFAULT/map/results"
     last_exc: Optional[Exception] = None
-    for attempt in range(3):
-        try:
-            r = session.get(url, headers={"Referer": referer}, timeout=timeout)
-            r.raise_for_status()
-            if not r.content:
-                raise RuntimeError("empty response body")
-            with open(dest_path, "wb") as f:
-                f.write(r.content)
-            return dest_path
-        except Exception as e:  # noqa: BLE001
-            last_exc = e
-            time.sleep(2 ** attempt)
-    raise RuntimeError(f"download failed for {url}: {last_exc}")
+    for url in urls:
+        for attempt in range(3):
+            try:
+                r = session.get(url, headers={"Referer": referer}, timeout=timeout)
+                r.raise_for_status()
+                if not r.content:
+                    raise RuntimeError("empty response body")
+            except Exception as e:  # noqa: BLE001 — transient HTTP/network: retry this url
+                last_exc = e
+                time.sleep(2 ** attempt)
+                continue
+            if _looks_like_pdf(r.content):
+                with open(dest_path, "wb") as f:
+                    f.write(r.content)
+                return dest_path
+            # A valid response that isn't a PDF (the .msg / image / nForm case).
+            # Retrying the same URL won't help — fall through to the next source.
+            last_exc = RuntimeError(f"non-PDF response from {url} (starts {r.content[:8]!r})")
+            break
+    raise RuntimeError(f"download failed for doc {doc_id}: {last_exc}")
