@@ -32,6 +32,7 @@ import sheet_writer as sw
 import nsite_client as nc
 import email_alerts as ea
 import mmpc_watcher as mw
+import retry_policy as rp
 from egle_doc_parser import parse_document
 from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
 from config_loader import load_config
@@ -160,6 +161,13 @@ def run() -> int:
             print(f"  ok  {d['date_filed']}  [{parsed.doc_type}/{parsed.severity}]  "
                   f"{d['document_name'][:50]}")
         except Exception as e:  # noqa: BLE001
+            if rp.is_transient(e):
+                # Infrastructure/quota error (API cap, 429, 5xx, network) — not the
+                # document's fault. Retry next run WITHOUT a poison strike, so a
+                # capped or outage window can't silently skip a real filing (the
+                # 2026-07-07 false-poison incident). The doc stays unprocessed.
+                print(f"  RETRY (transient, no strike) {d['document_name'][:50]}: {e}")
+                continue
             cnt = state["errors"].get(did, 0) + 1
             state["errors"][did] = cnt
             sw.mark_error(sheets, sheet_id, did, cnt, _now())
