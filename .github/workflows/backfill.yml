@@ -5,8 +5,17 @@ name: backfill
 # _state shows every doc processed, the run logs "Backfill complete" and exits
 # 0 — it just becomes a no-op. No human action needed to shut it off.
 on:
-  schedule:
-    - cron: "0 7 * * *"   # 2am ET (7am UTC). DST drift is fine for a backfill.
+  # SCHEDULE DISABLED 2026-07-07 — historical backfill is complete (0 remaining).
+  # The daily cron was RACING the watcher: backfill ran 4h earlier (2am vs the
+  # watcher's 6am ET), so it claimed each new nSITE filing and processed it
+  # WITHOUT sending email (backfill has no alert path). The watcher then saw
+  # "0 new" and no alert ever fired — e.g. the 2026-06-26 SEM inspection package
+  # (2 evidence/urgent docs) landed silently in the Sheet. With the cron off, the
+  # watcher (daily.yml) is the sole processor of new filings and its urgent/digest
+  # emails work again. Kept as workflow_dispatch for manual RETRY_POISONED runs and
+  # future new-facility backfills. See handoffs/2026-07-07-arbor-hills-no-email-diagnosis.md
+  # schedule:
+  #   - cron: "0 7 * * *"   # 2am ET (7am UTC). DST drift is fine for a backfill.
   workflow_dispatch:       # allow manual runs while iterating
     inputs:
       retry_poisoned:
