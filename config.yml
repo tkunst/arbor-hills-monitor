@@ -107,9 +107,11 @@ mmpc:
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 alert_recipients:
-  - arbor-hills@trishakunst.com   # alerts go to Trisha (Cloudflare catch-all → Gmail)
-  # Uncomment to loop in the Conservancy once it's running well for just Trisha:
-  # - info@theconservancyinitiative.org
+  - arbor-hills@trishakunst.com          # alerts go to Trisha (Cloudflare catch-all → Gmail)
+  - info@theconservancyinitiative.org    # The Conservancy Initiative (general)
+  - ddrinan@theconservancyinitiative.org # David Drinan — Conservancy VP; MMPC opposition seat
+  - leslievans@comcast.net               # Leslie Evans — Conservancy board member; downwind resident
+  - hwangr@umich.edu                     # Roland Hwang — voting MMPC member (adjacent-community seat), Northville
 
 # Urgent triggers -> same-day email. Procedural items -> weekly digest as action
 # items. Everything else -> weekly Sunday digest.
