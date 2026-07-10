@@ -349,10 +349,12 @@ def write_stub_row(service, sheet_id: str, metadata: dict, link: str, reason: st
 
 
 def write_meta(service, sheet_id: str, state: dict) -> None:
-    """Persist the three global singletons as one JSON cell each. Tiny by
-    construction (the digest is cleared every Sunday), so each value stays far
-    under the 50k-char cell cap — unlike the 754-entry processed map, which is
-    why per-doc state is rows in _state and these three are cells in _meta."""
+    """Persist each _meta singleton as one JSON cell. Each stays far under the
+    50k-char cell cap — but for a different reason per key: pending_digest is
+    cleared every Sunday; mmpc_minutes_found and last_run are tiny; wds_seen is
+    bounded by record count (~420 short id/hash pairs, grows only as EGLE files
+    new records). That's unlike the 754-entry processed map, which is why per-doc
+    state is rows in _state and these singletons are cells in _meta."""
     rows = [
         [k, json.dumps(state.get(k, _copy_default(k)), sort_keys=True)]
         for k in _META_DEFAULTS
@@ -414,7 +416,9 @@ def _copy_default(key: str):
 
 def ensure_wds_tab(service, sheet_id: str) -> None:
     """Create the WDS tab + header if absent. Called only from an enabled Stream C
-    run, so the tab never appears until Trisha turns Stream C on."""
+    run, so the tab never appears until Trisha turns Stream C on. Header is written
+    only when the tab is first created, so a subsequent manual header edit isn't
+    stomped (and we skip a redundant write every run)."""
     meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     if TAB_WDS not in existing:
@@ -422,11 +426,13 @@ def ensure_wds_tab(service, sheet_id: str) -> None:
             spreadsheetId=sheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": TAB_WDS}}}]},
         ).execute()
-    _set_header(service, sheet_id, TAB_WDS, WDS_HEADERS)
+        _set_header(service, sheet_id, TAB_WDS, WDS_HEADERS)
 
 
 def wds_event_row(ev: dict) -> list:
-    """One WDS tab row from a wds_watcher event dict (pure — unit-tested)."""
+    """One WDS tab row from a wds_watcher event dict (pure — unit-tested). The link
+    is site-aware (set by check_wds from wds.site_id); falls back to the dashboard
+    root only if an event was built without one."""
     return [
         ev.get("date", ""),
         ev.get("kind", ""),
@@ -435,7 +441,7 @@ def wds_event_row(ev: dict) -> list:
         ", ".join(ev.get("risks", []) or []),
         ev.get("label", ""),
         ev.get("detail", ""),
-        f"https://www.egle.state.mi.us/wdspi/Dashboard.aspx?w=475946",
+        ev.get("link", "https://www.egle.state.mi.us/wdspi/"),
     ]
 
 

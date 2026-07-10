@@ -101,14 +101,20 @@ def _classify_compliance_action(r, changed):
     """CME enforcement action. Urgent ONLY on a genuine adverse action — a
     violation notice, an assessed/demanded penalty, a compliance order, a consent
     judgment, civil/criminal action. NOT on a 'PAID/RESOLVED/CLOSED' row (good
-    news) and not on routine correspondence (-> notable)."""
+    news) and not on routine correspondence (-> notable).
+
+    A *changed* (vs new) adverse action is a backfill on an action we already
+    alerted: the Type is part of the record identity, so `changed` can never mean
+    the severity rose — only that a mutable field (e.g. Company Response Date)
+    was filled in later. So downgrade a changed adverse action to notable rather
+    than re-firing a duplicate URGENT for a case we already flagged."""
     t = _g(r, "Compliance Action Type").upper()
     if any(w in t for w in ("PAID", "RESOLVED", "CLOSED", "WITHDRAWN", "RESCIND")):
         return "watch", "procedural", ["R2"]
     if any(w in t for w in ("VIOLATION", "PENALTY DEMAND", "COMPLIANCE ORDER",
                             "CONSENT", "CIVIL", "CRIMINAL", "ENFORCEMENT",
                             "FINAL MONETARY")):
-        return "urgent", "evidence", ["R2"]
+        return ("notable" if changed else "urgent"), "evidence", ["R2"]
     return "notable", "procedural", ["R2"]
 
 
@@ -178,10 +184,13 @@ def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict
     ({"records": {idkey: hash}, "last_count": N}).
 
     Returns (events, new_seen_entry, note). `events` is a list of
-    {name, kind: new|changed, severity, doc_type, risks, label, detail, date, idkey}.
-    Enforces rules A (bad-fetch guard) and B (silent baseline / over-cap) here so
-    the orchestrator stays simple. A baseline/guard result yields events=[] and a
-    fully-updated seen entry (records everything, alerts nothing)."""
+    {name, kind: new|changed, severity, doc_type, risks, label, detail, date,
+    idkey, prev_hash, hash}. `prev_hash`/`hash` let the orchestrator revert a
+    record's seen-state if its urgent alert fails to send (so it re-alerts next
+    run rather than being silently buried). Enforces rules A (bad-fetch guard)
+    and B (silent baseline / over-cap) here so the orchestrator stays simple. A
+    baseline/guard result yields events=[] and a fully-updated seen entry (records
+    everything, alerts nothing)."""
     spec = COLLECTIONS[name]
     records = dict(seen_entry.get("records") or {})
     last_count = int(seen_entry.get("last_count") or 0)
@@ -209,18 +218,17 @@ def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict
 
     # Diff.
     events = []
+    floor = float(cfg_wds.get("years_remaining_floor", 3.0))
     for r in rows:
         k = _idkey(spec, r)
         h = _content_hash(spec, r)
         if k not in records:
-            kind = "new"
+            kind, prev = "new", None
         elif records[k] != h:
-            kind = "changed"
+            kind, prev = "changed", records[k]
         else:
-            records[k] = h
             continue
         records[k] = h
-        floor = float(cfg_wds.get("years_remaining_floor", 3.0))
         if name == "annual":
             sev, dtype, risks = _classify_annual(r, kind == "changed", floor)
         else:
@@ -228,7 +236,7 @@ def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict
         events.append({
             "name": name, "kind": kind, "severity": sev, "doc_type": dtype,
             "risks": risks, "label": spec["label"](r), "detail": spec["detail"](r),
-            "date": spec["date"](r), "idkey": k,
+            "date": spec["date"](r), "idkey": k, "prev_hash": prev, "hash": h,
         })
 
     # Rule B(ii) — over-cap defense. If a single run produced more alert events
@@ -251,8 +259,8 @@ def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict
 _SITE = "475946"
 
 
-def _wds_link() -> str:
-    return f"https://www.egle.state.mi.us/wdspi/Dashboard.aspx?w={_SITE}"
+def _wds_link(site: str = _SITE) -> str:
+    return f"https://www.egle.state.mi.us/wdspi/Dashboard.aspx?w={site}"
 
 
 def format_urgent_body(ev: dict) -> str:
@@ -262,7 +270,7 @@ def format_urgent_body(ev: dict) -> str:
         f"{ev['label']}{changed}\n"
         f"Risks: {', '.join(ev['risks'])}\n\n"
         f"{ev['detail']}\n\n"
-        f"Source (EGLE Waste Data System, site {_SITE}):\n  {_wds_link()}\n"
+        f"Source (EGLE Waste Data System):\n  {ev.get('link') or _wds_link()}\n"
     )
 
 
@@ -276,7 +284,7 @@ def digest_record(ev: dict) -> dict:
         "severity": ev["severity"],
         "risks": ev["risks"],
         "key_data_point": ev["detail"],
-        "link": _wds_link(),
+        "link": ev.get("link") or _wds_link(),
     }
 
 
@@ -310,7 +318,9 @@ def check_wds(state: dict, cfg: dict, send_email, fetchers=None, on_row=None) ->
         seen[name] = new_entry
         print(f"[wds] {note}")
 
+        link = _wds_link(w)
         for ev in events:
+            ev["link"] = link
             if on_row:
                 try:
                     on_row(ev)
@@ -322,6 +332,16 @@ def check_wds(state: dict, cfg: dict, send_email, fetchers=None, on_row=None) ->
                     send_email(subject, format_urgent_body(ev), cfg)
                     print(f"[wds]   URGENT emailed: {ev['label']}")
                 except Exception as ae:  # noqa: BLE001 — notification best-effort
-                    print(f"[wds]   URGENT send FAILED (change still recorded): {ae}")
+                    # Don't bury an urgent signal on a transient SMTP fault: revert
+                    # this record's seen-hash so the NEXT run re-alerts, instead of
+                    # committing it as 'seen' and never firing again. (prev_hash is
+                    # None for a brand-new record -> drop it entirely.)
+                    recs = new_entry["records"]
+                    if ev.get("prev_hash") is None:
+                        recs.pop(ev["idkey"], None)
+                    else:
+                        recs[ev["idkey"]] = ev["prev_hash"]
+                    new_entry["last_count"] = len(recs)
+                    print(f"[wds]   URGENT send FAILED — reverted seen-state to re-alert next run: {ae}")
             else:
                 state.setdefault("pending_digest", []).append(digest_record(ev))

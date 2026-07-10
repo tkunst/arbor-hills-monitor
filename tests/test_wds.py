@@ -175,6 +175,21 @@ def test_compliance_action_violation_is_urgent():
     assert sev == "urgent"
 
 
+def test_compliance_action_changed_violation_is_not_repeat_urgent():
+    # Type is part of the record identity, so a `changed` adverse action is a
+    # backfill (e.g. Company Response Date filled in) on a case we already
+    # alerted urgent — it must NOT re-fire urgent.
+    v = {"Compliance Action Type": "115 - VIOLATION NOTICE",
+         "Compliance Action Date": "3/1/2026",
+         "Corrective Action Component": "", "Company Response Date": ""}
+    _e, entry, _n = ww.diff_collection("compliance_actions", [v], _empty(), {})
+    v2 = dict(v, **{"Company Response Date": "4/1/2026"})   # WDS backfills a field
+    events, _e2, _n2 = ww.diff_collection("compliance_actions", [v2], entry, {})
+    assert len(events) == 1
+    assert events[0]["kind"] == "changed"
+    assert events[0]["severity"] == "notable"    # downgraded, not a duplicate urgent
+
+
 def test_operating_license_is_notable_construction_permit_urgent():
     assert ww._classify_application({"Application Type": "Operating License"}, False)[0] == "notable"
     assert ww._classify_application({"Application Type": "Construction Permit"}, False)[0] == "urgent"
@@ -199,3 +214,73 @@ def test_wds_event_row_shape():
     assert row[0] == "4/30/2025"
     assert row[3] == "notable"
     assert row[4] == "R5"
+
+
+def test_wds_event_row_uses_site_aware_link():
+    ev = {"date": "6/1/2026", "kind": "new", "name": "applications", "severity": "urgent",
+          "risks": ["R1"], "label": "Construction Permit", "detail": "pending",
+          "link": "https://www.egle.state.mi.us/wdspi/Dashboard.aspx?w=999999"}
+    assert sw.wds_event_row(ev)[7] == "https://www.egle.state.mi.us/wdspi/Dashboard.aspx?w=999999"
+
+
+# ---------------------------------------------------------------------------
+# Annual parser: attribute-order tolerant, reads capacity/years (the strict
+# single-regex used to blank these on class-first rows and kill the R1 alert)
+# ---------------------------------------------------------------------------
+
+def test_parse_annual_tolerates_attr_order_and_reads_capacity():
+    def span(title, val):  # class BEFORE title — the order that broke the old regex
+        return (f'<span class="detailControl plainText2ca" '
+                f'id="ctl00_Body_ReportList_R_ctl00_x" title="{title}:">{val}</span>')
+    waste = ("<table><tr>"
+             "<td>2025</td><td>1 CYDS</td><td>2 CYDS</td><td>3 CYDS</td>"
+             "<td>4 CYDS</td><td>5 CYDS</td><td>3,662,137.11 CYDS</td>"
+             "</tr></table>")
+    h = ("<html><body>"
+         '<span id="ctl00_Body_ReportList_R_ctl00_container"></span>'   # row anchor
+         + waste
+         + span("Total Permitted Capacity", "63560000")
+         + span("Estimated years of capacity remaining at end of year", "2.5")
+         + "</body></html>")
+    rows = wc._parse_annual(h)
+    assert len(rows) == 1
+    assert rows[0]["Year"] == "2025"
+    assert rows[0]["Waste_Total"] == "3,662,137.11"
+    # These two are the whole point — they must survive class-first attribute order.
+    assert rows[0]["Total Permitted Capacity"] == "63560000"
+    assert rows[0]["Yrs Remaining End"] == "2.5"
+    # And the parsed years-remaining drives the R1 floor classifier.
+    assert ww._classify_annual(rows[0], False, floor=3.0)[0] == "notable"
+
+
+# ---------------------------------------------------------------------------
+# Orchestration: a failed urgent email must NOT bury the signal
+# ---------------------------------------------------------------------------
+
+def test_urgent_send_failure_reverts_seen_state_so_it_re_alerts():
+    spec = ww.COLLECTIONS["applications"]
+    old = {"Application Type": "Operating License", "Receipt Date": "1/1/2020",
+           "Closure Type": "Issued", "Closure Date": "2/1/2020"}
+    new_cp = {"Application Type": "Construction Permit", "Receipt Date": "6/1/2026",
+              "Closure Type": "", "Closure Date": ""}
+    # Pre-seed so `old` is already seen (records non-empty -> a real diff, not the
+    # first-run baseline), then a new Construction Permit (urgent) shows up.
+    seed = {"records": {ww._idkey(spec, old): ww._content_hash(spec, old)}, "last_count": 1}
+    state = {"wds_seen": {"applications": seed}, "pending_digest": []}
+    cfg = {"wds": {"collections": ["applications"], "site_id": "475946"}}
+    fetch = {"applications": lambda w: [old, new_cp]}
+
+    def boom(subject, body, cfg):
+        raise RuntimeError("smtp down")
+
+    ww.check_wds(state, cfg, boom, fetchers=fetch)
+    recs = state["wds_seen"]["applications"]["records"]
+    assert ww._idkey(spec, new_cp) not in recs      # NOT committed as seen
+    assert ww._idkey(spec, old) in recs             # untouched record stays seen
+
+    # Next run with a working mailer re-alerts and delivers it.
+    sent = []
+    ww.check_wds(state, cfg, lambda s, b, c: sent.append(s), fetchers=fetch)
+    assert len(sent) == 1
+    assert "Construction Permit" in sent[0]
+    assert ww._idkey(spec, new_cp) in state["wds_seen"]["applications"]["records"]

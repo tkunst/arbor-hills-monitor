@@ -162,7 +162,11 @@ def _parse_evaluations(h: str) -> list[dict]:
     starts = [m.start() for m in re.finditer(r"Responsible Person:", txt)]
     rows = []
     for k, s in enumerate(starts):
-        e = starts[k + 1] if k + 1 < len(starts) else s + 1500
+        # Non-tail records are bounded by the next record's start. The tail record
+        # has no successor, so bound it with a generous fixed window (12 short
+        # label:value fields fit easily); capping it (vs. running to end-of-text)
+        # keeps page-footer chrome from bleeding into the last field's value.
+        e = starts[k + 1] if k + 1 < len(starts) else min(s + 2500, len(txt))
         rows.append(_fields_from_text(txt[s:e], _EVAL_LABELS))
     return [r for r in rows if r.get("Evaluation Date")]
 
@@ -206,51 +210,73 @@ def fetch_applications(w: str) -> list[dict]:
     return _paged_detail(_opener(), f"{_BASE}/SolidWaste/Default.aspx?w={w}", "ApplicationList")
 
 
-def fetch_annual(w: str) -> list[dict]:
-    """Annual Landfill Reports: waste-volume grid joined to per-report capacity
-    detail-spans (permitted capacity + years-remaining). One row per year."""
-    op = _opener()
-    h = _get(op, f"{_BASE}/SolidWaste/AnnualLandfillReports.aspx?w={w}")
+def _annual_detail_value(block: str, title: str) -> str:
+    """Read one detailControl span value by title from an annual-report block.
+    Attribute-order tolerant (matches the span first, then reads title/value) —
+    the same tolerance _detail_rows() has, because the WDS annual grid renders
+    these spans in varying attribute orders too (class-first vs title-first). A
+    strict single regex that required title-before-class silently returned '' on
+    the class-first rows, which blanked capacity / years-remaining and killed the
+    R1 airspace alert (see docs/decisions/009-wds-stream-c.md)."""
+    want = title.rstrip(":").strip()
+    for m in re.finditer(
+        r'<span\b([^>]*\bclass="[^"]*detailControl[^"]*"[^>]*)>(.*?)</span>',
+        block, re.S | re.I,
+    ):
+        attrs, inner = m.group(1), m.group(2)
+        t = re.search(r'title="([^"]*)"', attrs)
+        if t and t.group(1).rstrip(":").strip() == want:
+            return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", inner))).strip()
+    return ""
+
+
+def _annual_waste_row(block: str):
+    """The (year, {waste-type: volume}) tuple from a report block's tonnage table."""
+    for tr in re.findall(r"<tr\b.*?</tr>", block, re.S | re.I):
+        cells = [re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", c))).strip()
+                 for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S | re.I)]
+        cells = [c for c in cells if c]
+        if len(cells) >= 7 and re.fullmatch(r"\d{4}", cells[0]):
+            return cells[0], dict(zip(
+                ["MCW", "IW", "C&D", "ADC", "Other", "Waste_Total"],
+                [c.replace(" CYDS", "") for c in cells[1:7]]))
+    return None, {}
+
+
+def _parse_annual(h: str) -> list[dict]:
+    """Pure parse of an AnnualLandfillReports page: per-report block -> row dict
+    joining the waste-tonnage table to the capacity/years-remaining detail-spans.
+    One row per year. Split out from fetch_annual so the parser is unit-testable
+    (the strict-regex attribute-order bug lived exactly here, untested)."""
     starts = []
     for m in re.finditer(r'id="ctl00_Body_ReportList_R_ctl(\d+)_', h):
         if not starts or starts[-1][0] != m.group(1):
             starts.append((m.group(1), m.start()))
 
-    def dv(b, title):
-        m = re.search(
-            r'title="' + re.escape(title)
-            + r'"[^>]*class="[^"]*detailControl[^"]*"[^>]*>([^<]*)</span>', b)
-        return m.group(1).strip() if m else ""
-
-    def waste_row(b):
-        for tr in re.findall(r"<tr\b.*?</tr>", b, re.S | re.I):
-            cells = [re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", c))).strip()
-                     for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S | re.I)]
-            cells = [c for c in cells if c]
-            if len(cells) >= 7 and re.fullmatch(r"\d{4}", cells[0]):
-                return cells[0], dict(zip(
-                    ["MCW", "IW", "C&D", "ADC", "Other", "Waste_Total"],
-                    [c.replace(" CYDS", "") for c in cells[1:7]]))
-        return None, {}
-
     rows = []
     for k, (_ri, pos) in enumerate(starts):
         b = h[pos:(starts[k + 1][1] if k + 1 < len(starts) else len(h))]
-        wyr, wvol = waste_row(b)
+        wyr, wvol = _annual_waste_row(b)
         ym = re.search(r">(\d{4})<", b)
         yr = wyr or (ym.group(1) if ym else "")
         if not yr:
             continue
         rec = {
             "Year": yr,
-            "Total Permitted Capacity": dv(b, "Total Permitted Capacity:"),
-            "Capacity Used This Year": dv(b, "Capacity used during this reporting year:"),
-            "Yrs Remaining Start": dv(b, "Estimated years of capacity remaining at start of year:"),
-            "Yrs Remaining End": dv(b, "Estimated years of capacity remaining at end of year:"),
+            "Total Permitted Capacity": _annual_detail_value(b, "Total Permitted Capacity:"),
+            "Capacity Used This Year": _annual_detail_value(b, "Capacity used during this reporting year:"),
+            "Yrs Remaining Start": _annual_detail_value(b, "Estimated years of capacity remaining at start of year:"),
+            "Yrs Remaining End": _annual_detail_value(b, "Estimated years of capacity remaining at end of year:"),
         }
         rec.update(wvol)
         rows.append(rec)
     return rows
+
+
+def fetch_annual(w: str) -> list[dict]:
+    """Annual Landfill Reports: waste-volume grid joined to per-report capacity
+    detail-spans (permitted capacity + years-remaining). One row per year."""
+    return _parse_annual(_get(_opener(), f"{_BASE}/SolidWaste/AnnualLandfillReports.aspx?w={w}"))
 
 
 def fetch_evaluations(w: str) -> list[dict]:
