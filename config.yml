@@ -83,7 +83,7 @@ watcher:
 #   3. set `enabled: true` here and commit.
 # Until `enabled: true` is on main, the watcher's WDS block is a no-op.
 wds:
-  enabled: false
+  enabled: true
   site_id: "475946"                 # Arbor Hills Landfill, Inc. (MIK114185416)
   # Collections to poll + their alert tiers (wds_watcher classifier):
   #   applications       new Construction Permit / -> Issued = URGENT (R1 expansion);
