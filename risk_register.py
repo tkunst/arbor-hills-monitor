@@ -56,7 +56,7 @@ RISK_REGISTER = [
         "name": "Water quality",
         "description": (
             "Potential leachate / groundwater contamination. Named as a "
-            "concern; no dedicated tracker yet."
+            "concern."
         ),
     },
     {
