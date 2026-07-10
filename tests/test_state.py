@@ -134,3 +134,28 @@ def test_meta_round_trips_and_defaults_are_isolated():
     fresh = sw.read_state(FakeSheets(), "SID2")
     assert fresh["pending_digest"] == []
     assert fresh["mmpc_minutes_found"] == {}
+
+
+def test_read_meta_matches_read_state_meta_slice():
+    # read_meta() is read_state()'s _meta half, factored out so callers that
+    # never touch _state (wds_archiver.py, dump_wds_historical.py) don't pay
+    # for a full _state scan just to reach one _meta key.
+    svc = FakeSheets()
+    sw.mark_processed(svc, "SID", "doc-1", {"severity": "urgent"}, "2026-06-14T02:00:00")
+    state = sw.read_state(svc, "SID")
+    state["wds_seen"]["qmr"] = {"records": {"k": "h"}, "last_count": 1}
+    sw.write_meta(svc, "SID", state)
+
+    meta = sw.read_meta(svc, "SID")
+    assert "processed" not in meta and "errors" not in meta   # _state-only keys absent
+    assert meta["wds_seen"] == {"qmr": {"records": {"k": "h"}, "last_count": 1}}
+    assert meta == {k: state[k] for k in sw._META_DEFAULTS}
+
+
+def test_read_meta_empty_when_tab_absent():
+    svc = FakeSheets()
+    svc._values._tabs.clear()
+    meta = sw.read_meta(svc, "SID")
+    assert meta["wds_seen"] == {}
+    assert meta["wds_snapshot_hashes"] == {}
+    assert meta["last_run"] == ""

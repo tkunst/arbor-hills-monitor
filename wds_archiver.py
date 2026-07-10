@@ -20,9 +20,17 @@ last snapshot taken (state["wds_snapshot_hashes"][collection][page]) — so a
 nightly run doesn't pile up ~5-20 near-identical files every single night
 forever. The job still polls nightly; it just doesn't always write.
 
-  - Not configured (no GOAUTH_*): quiet no-op, exit 0 (snapshotting is optional).
-  - Configured but the token is dead: loud failure, exit 1 — a silent skip would
-    let the mirror fall behind invisibly, defeating the whole point.
+GATED ON wds.enabled, same as every other Stream C entry point (check_wds,
+the WDS tabs, the historical dump). The workflow is scheduled from day one and
+GOAUTH_* is already configured (the sibling PDF archiver has used it for
+weeks), so without this gate merging this file would start creating WDS tabs
+and writing to the live Sheet on the very next nightly tick — before Trisha
+ever flips `enabled: true`. See _should_run() below.
+
+  - wds.enabled is false, or GOAUTH_* not set: quiet no-op, exit 0 (both are
+    "not activated yet", not an error).
+  - GOAUTH_* configured but the token is dead: loud failure, exit 1 — a silent
+    skip would let the mirror fall behind invisibly, defeating the whole point.
 
 Runs nightly (see .github/workflows/wds-archive.yml). Self-terminating.
 """
@@ -54,13 +62,29 @@ def _hash(html: str) -> str:
     return hashlib.sha1(html.encode("utf-8", "ignore")).hexdigest()[:12]
 
 
+def _should_run(cfg: dict, oauth_configured: bool) -> tuple[bool, str]:
+    """Pure gate check — testable without any Sheets/Drive/network mocking, so
+    the exact bug this guards against (the job silently doing real work before
+    Trisha ever sets wds.enabled: true) has a direct unit test rather than
+    depending on someone noticing in a live run. wds.enabled is checked FIRST:
+    that's the primary Stream C activation switch every other entry point
+    (check_wds, the WDS tabs, the historical dump) already respects; OAuth
+    being configured is a separate, secondary precondition."""
+    if not (cfg.get("wds") or {}).get("enabled"):
+        return False, "wds.enabled is false — skipping (no-op)."
+    if not oauth_configured:
+        return False, ("GOAUTH_* not set — snapshotting disabled (no-op). "
+                       "See scripts/oauth_setup.py + docs/decisions/007.")
+    return True, ""
+
+
 def run() -> int:
-    if not ac.is_configured():
-        print("[wds-archive] GOAUTH_* not set — snapshotting disabled (no-op). "
-              "See scripts/oauth_setup.py + docs/decisions/007.")
+    cfg = load_config()
+    should_run, reason = _should_run(cfg, ac.is_configured())
+    if not should_run:
+        print(f"[wds-archive] {reason}")
         return 0
 
-    cfg = load_config()
     wds_cfg = cfg.get("wds") or {}
     w = str(wds_cfg.get("site_id", "475946"))
     enabled_collections = wds_cfg.get("collections") or list(ww.COLLECTIONS)
@@ -78,8 +102,9 @@ def run() -> int:
               f"and update the GOAUTH_REFRESH_TOKEN secret.")
         return 1
 
-    state = sw.read_state(sheets, sheet_id)
-    hashes = state.setdefault("wds_snapshot_hashes", {})
+    # Only _meta is needed here (never _state) — read_meta() avoids scanning the
+    # whole processed-doc event log for a job that doesn't use it.
+    hashes = sw.read_meta(sheets, sheet_id).get("wds_snapshot_hashes", {})
     today = _today()
     tmp = tempfile.gettempdir()
 
@@ -119,9 +144,16 @@ def run() -> int:
             finally:
                 if os.path.exists(local):
                     os.remove(local)
-        # Persist per-collection so a crash mid-run only loses the current
-        # collection's not-yet-uploaded pages, not everything so far.
-        sw.write_meta(sheets, sheet_id, state)
+        # Re-read _meta FRESH right before writing and patch in only our own key
+        # (wds_snapshot_hashes) — never write back the run-start snapshot of
+        # keys this job doesn't own. A concurrent job (the daily watcher, run
+        # manually or overlapping via scheduling drift) can still race with
+        # this exact read-then-write, but this shrinks the clobber window from
+        # "the whole run" to "one read+write per collection" instead of writing
+        # a single stale copy of everything at the very end.
+        fresh_meta = sw.read_meta(sheets, sheet_id)
+        fresh_meta["wds_snapshot_hashes"] = hashes
+        sw.write_meta(sheets, sheet_id, fresh_meta)
 
     print(f"[wds-archive] {uploaded} page(s) snapshotted (content changed), "
           f"{skipped} unchanged (skipped) this run.")

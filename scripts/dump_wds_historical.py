@@ -64,8 +64,6 @@ def main() -> int:
 
     sheets = dc.sheets_service()
     sw.ensure_wds_tabs(sheets, sheet_id)
-    state = sw.read_state(sheets, sheet_id)
-    seen = state.setdefault("wds_seen", {})
 
     already = sw.wds_historical_collections_dumped(sheets, sheet_id)
     link = ww.wds_link(w)
@@ -98,10 +96,16 @@ def main() -> int:
 
         # Re-baseline from the SAME fetch just dumped, so wds_seen matches exactly
         # what's now visible in WDS Historical Documents (not a possibly-stale
-        # earlier baseline from an unrelated seed_wds_state.py run).
+        # earlier baseline from an unrelated seed_wds_state.py run). Re-read
+        # _meta FRESH right before writing and patch in only this collection's
+        # entry, rather than holding one read_state() snapshot across the whole
+        # run — this is a one-off manual tool, but if it's ever run alongside
+        # the daily watcher, a stale multi-collection snapshot could clobber a
+        # concurrent _meta change (e.g. pending_digest) on write.
         _events, entry, _note = ww.diff_collection(name, rows, {"records": {}, "last_count": 0}, wds_cfg)
-        seen[name] = entry
-        sw.write_meta(sheets, sheet_id, state)
+        fresh_meta = sw.read_meta(sheets, sheet_id)
+        fresh_meta.setdefault("wds_seen", {})[name] = entry
+        sw.write_meta(sheets, sheet_id, fresh_meta)
 
         total_hist += len(hist_rows)
         total_ev += len(ev_rows)

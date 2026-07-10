@@ -42,10 +42,21 @@ only after review.
   `wds_seen` cell (ADR 006 pattern; ~420 id/hash pairs stay far under the 50k cell cap).
 - `watcher.py` — a gated hook after the MMPC block; the `wds_watcher` import is inside
   the gate so a fault there can't affect the nSITE/MMPC path while disabled.
-- `sheet_writer.py` — `wds_seen` added to `_META_DEFAULTS` (read/write for free) and a
-  `WDS (Solid Waste)` tab created **on demand only when enabled** (deliberately not in
-  `_TAB_HEADERS`, so the Conservancy-visible Sheet gains no empty tab until activation).
-- `scripts/seed_wds_state.py` — optional one-shot baseline.
+- `sheet_writer.py` — `wds_seen` added to `_META_DEFAULTS` (read/write for free) and four
+  tabs — `WDS New Documents` / `WDS Historical Documents` / `WDS Evidence by Risk` /
+  `WDS Page Snapshots` — created **on demand only when enabled/dumped** via
+  `ensure_wds_tabs()` (deliberately not in `_TAB_HEADERS`, so the Conservancy-visible
+  Sheet gains no empty tab until activation). Structurally parallel to the nSITE New/
+  Historical/Evidence/Archived-PDFs tabs (added 2026-07-10, see Addendum below).
+- `scripts/seed_wds_state.py` — optional one-shot baseline (hash-only, no visible rows).
+- `scripts/dump_wds_historical.py` — one-off bulk dump of the ~420 pre-existing records
+  as visible rows in `WDS Historical Documents` + `WDS Evidence by Risk`, idempotent
+  per collection. Supersedes `seed_wds_state.py` for the "make history visible" case;
+  `seed_wds_state.py` remains for a hash-only re-baseline.
+- `wds_archiver.py` — nightly, content-hash-gated raw-HTML snapshot of the 5 collection
+  pages into Drive, logged in `WDS Page Snapshots`. The real analog of `archiver.py`'s
+  PDF mirror for a portal with no per-record PDFs (the record IS the page). Gated on
+  `wds.enabled` exactly like every other Stream C entry point — see Addendum.
 
 ### Four safety rules (each learned the hard way)
 
@@ -103,8 +114,25 @@ the existing Sunday digest (shaped to the nSITE digest record).
 ## Activation (all Trisha's call)
 
 1. Review + merge the `stream-c-wds` branch to `main`.
-2. (Optional) `python scripts/seed_wds_state.py` once to baseline — or let the first
-   enabled run self-baseline (rule B).
+2. (Optional) `python scripts/dump_wds_historical.py` once to make the ~420 existing
+   records visible as rows in `WDS Historical Documents` + `WDS Evidence by Risk`
+   (this also baselines `wds_seen`) — or let the first enabled run self-baseline
+   silently instead (rule B), if visible historical rows aren't wanted yet.
 3. Set `wds.enabled: true` in `config.yml` and commit.
 
-Until `enabled: true` is on `main`, the WDS block is a no-op.
+Until `enabled: true` is on `main`, the WDS block is a no-op — this now applies to
+`wds_archiver.py` too (see Addendum): every Stream C entry point checks `wds.enabled`
+before doing any work.
+
+## Addendum — tab parity + page-snapshot archive (2026-07-10)
+
+Added structural parity with the nSITE tabs (`WDS New/Historical Documents`, `WDS
+Evidence by Risk`) and a page-snapshot archive (`WDS Page Snapshots`, via
+`wds_archiver.py`) — see the updated file list above. One correctness issue was
+caught and fixed before merge: `wds_archiver.py`'s first draft only checked that
+OAuth was configured, not `wds.enabled` — since the sibling PDF archiver's
+`GOAUTH_*` secrets are already live in this repo, that draft would have started
+creating WDS tabs and writing to the live Sheet on its first nightly cron tick
+after merge, regardless of the `enabled` flag. Fixed with a `_should_run()` gate
+(checked first, before OAuth) plus a direct unit test, so this class of gap is
+caught by the test suite rather than by inspection next time.

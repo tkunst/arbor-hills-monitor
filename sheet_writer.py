@@ -345,6 +345,23 @@ def rebuild_risk_register_tab(service, sheet_id: str, risk_register: list[dict])
 # ---------------------------------------------------------------------------
 
 
+def read_meta(service, sheet_id: str) -> dict:
+    """Read just the _meta singletons (pending_digest, mmpc_minutes_found,
+    wds_seen, wds_snapshot_hashes, last_run) — no _state scan. For a caller that
+    only touches _meta (e.g. wds_archiver.py, scripts/dump_wds_historical.py),
+    read_state()'s full _state event-log scan is pure overhead. Also lets such a
+    caller re-read FRESH right before each write_meta() call instead of writing
+    back a stale run-start snapshot of keys it doesn't own — shrinks (doesn't
+    eliminate) the window where a concurrent job's _meta write could be
+    clobbered, since write_meta() always overwrites every key at once."""
+    state = {k: _copy_default(k) for k in _META_DEFAULTS}
+    for r in _tab_rows(service, sheet_id, TAB_META, "A2:B"):
+        key = r[0]
+        if key in _META_DEFAULTS and len(r) > 1 and r[1]:
+            state[key] = _load_json(r[1], _copy_default(key))
+    return state
+
+
 def read_state(service, sheet_id: str) -> dict:
     """Reconstruct the processing-state dict by reducing the _state event log and
     the _meta singletons. Returns the same shape the old Drive JSON state did:
@@ -355,7 +372,6 @@ def read_state(service, sheet_id: str) -> dict:
     precede its 'processed' row: we count errors as we go and clear them when the
     'processed' row arrives. Missing tabs (first run) reduce to an empty state."""
     state = {"processed": {}, "errors": {}, "skipped": {}}
-    state.update({k: _copy_default(k) for k in _META_DEFAULTS})
 
     for r in _tab_rows(service, sheet_id, TAB_STATE, "A2:E"):
         doc_id = r[0]
@@ -372,10 +388,7 @@ def read_state(service, sheet_id: str) -> dict:
         elif status == "error" and doc_id not in state["processed"] and doc_id not in state["skipped"]:
             state["errors"][doc_id] = state["errors"].get(doc_id, 0) + 1
 
-    for r in _tab_rows(service, sheet_id, TAB_META, "A2:B"):
-        key = r[0]
-        if key in _META_DEFAULTS and len(r) > 1 and r[1]:
-            state[key] = _load_json(r[1], _copy_default(key))
+    state.update(read_meta(service, sheet_id))
     return state
 
 
@@ -495,11 +508,12 @@ _WDS_TAB_HEADERS = {
 def ensure_wds_tabs(service, sheet_id: str) -> None:
     """Create any missing WDS tabs (all four together — mirrors ensure_tabs()
     creating New+Historical+Evidence together for nSITE even though only some
-    are written on a given run). Called only from an enabled Stream C run or the
-    one-off dump/archiver scripts, so no WDS tab appears until Stream C is
-    actually used. Header is written only when a tab is first created, so a
-    subsequent manual header edit isn't stomped (and we skip a redundant write
-    every run)."""
+    are written on a given run) and reconcile each tab's header row on EVERY
+    run — same self-healing policy ensure_tabs() uses for nSITE (ADR 008), so a
+    newly-added column in WDS_HEADERS/WDS_EVIDENCE_HEADERS/WDS_SNAPSHOT_HEADERS
+    reaches already-created tabs too, not just ones created after the change.
+    Called only from an enabled Stream C run or the one-off dump/archiver
+    scripts, so no WDS tab appears until Stream C is actually used."""
     meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     requests = [
@@ -512,8 +526,7 @@ def ensure_wds_tabs(service, sheet_id: str) -> None:
             spreadsheetId=sheet_id, body={"requests": requests}
         ).execute()
     for title, headers in _WDS_TAB_HEADERS.items():
-        if title not in existing:
-            _set_header(service, sheet_id, title, headers)
+        _set_header(service, sheet_id, title, headers)
 
 
 def wds_event_row(ev: dict) -> list:
