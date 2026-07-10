@@ -70,6 +70,14 @@ TAB_MEASUREMENTS = "Measurements"
 TAB_ARCHIVE = "Archived PDFs"
 TAB_STATE = "_state"
 TAB_META = "_meta"
+# Stream C (WDS solid-waste) case-file tab. Deliberately NOT in _TAB_HEADERS:
+# ensure_tabs() must not create it, so the Conservancy-visible Sheet gains no
+# empty "WDS" tab until Stream C is actually enabled. wds_watcher creates it
+# on demand via ensure_wds_tab() only inside an enabled run.
+TAB_WDS = "WDS (Solid Waste)"
+WDS_HEADERS = [
+    "Date", "Change", "Collection", "Severity", "Risks", "Item", "Detail", "Link",
+]
 
 _TAB_HEADERS = {
     TAB_NEW: FEED_HEADERS,
@@ -83,9 +91,15 @@ _TAB_HEADERS = {
 }
 
 # The _meta keys, with the defaults used when a key has never been written.
+# `wds_seen` holds Stream C's per-collection seen-set + last_count (see
+# wds_watcher). It is a JSON singleton like the others — ~420 short id/hash pairs
+# stay well under the 50k-char cell cap. Present in defaults so read_state loads
+# it and write_meta persists it with zero extra plumbing, even while Stream C is
+# disabled (it just stays {}).
 _META_DEFAULTS = {
     "pending_digest": [],
     "mmpc_minutes_found": {},
+    "wds_seen": {},
     "last_run": "",
 }
 
@@ -391,6 +405,43 @@ def _copy_default(key: str):
 # ---------------------------------------------------------------------------
 # Durable PDF archive index (written by the optional archiver — see ADR 007)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Stream C — WDS case-file tab (created on demand only when Stream C is enabled)
+# ---------------------------------------------------------------------------
+
+
+def ensure_wds_tab(service, sheet_id: str) -> None:
+    """Create the WDS tab + header if absent. Called only from an enabled Stream C
+    run, so the tab never appears until Trisha turns Stream C on."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_WDS not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_WDS}}}]},
+        ).execute()
+    _set_header(service, sheet_id, TAB_WDS, WDS_HEADERS)
+
+
+def wds_event_row(ev: dict) -> list:
+    """One WDS tab row from a wds_watcher event dict (pure — unit-tested)."""
+    return [
+        ev.get("date", ""),
+        ev.get("kind", ""),
+        ev.get("name", ""),
+        ev.get("severity", ""),
+        ", ".join(ev.get("risks", []) or []),
+        ev.get("label", ""),
+        ev.get("detail", ""),
+        f"https://www.egle.state.mi.us/wdspi/Dashboard.aspx?w=475946",
+    ]
+
+
+def write_wds_event(service, sheet_id: str, ev: dict) -> None:
+    """Append one new/changed WDS record to the WDS tab."""
+    append_rows(service, sheet_id, TAB_WDS, [wds_event_row(ev)])
 
 
 def archived_doc_ids(service, sheet_id: str) -> set:

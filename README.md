@@ -19,7 +19,11 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
 1. **Backfill** (nightly, self-terminating): processes the existing documents
    across the tracked facilities in batches of 50, then becomes a no-op once done.
 2. **Daily watcher**: picks up new filings, classifies them, and runs the MMPC
-   meeting-minutes polling logic.
+   meeting-minutes polling logic. Optionally (when `wds.enabled: true`) it also
+   polls **Stream C** — the EGLE Waste Data System (Part-115 solid waste, site
+   475946): quarterly groundwater reports (R5), annual capacity/airspace (R1),
+   permit/license applications (R1), and enforcement (R2). Off by default; see
+   `docs/decisions/009-wds-stream-c.md` for activation.
 3. **Classify**: each document is OCR'd if needed, then sent to Claude with the
    risk register and signal keywords. Output per doc:
    - `summary`, `key_data_point`

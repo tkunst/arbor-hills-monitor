@@ -194,6 +194,25 @@ def run() -> int:
                 )
                 sw.write_meta(sheets, sheet_id, state)
 
+    # --- WDS (Stream C — EGLE solid-waste system) polling, only when enabled ---
+    # Off by default (cfg.wds.enabled). Gated import so a fault in the WDS modules
+    # cannot affect the main nSITE/MMPC path while Stream C is disabled. check_wds
+    # is self-protecting: first run silently baselines (no alert flood), a
+    # bad/short fetch is skipped not diffed, and it uses its OWN classifier (never
+    # the temperature-oriented is_urgent). Its notable/watch items land in
+    # pending_digest below; urgent items email immediately inside check_wds.
+    if (cfg.get("wds") or {}).get("enabled"):
+        try:
+            import wds_watcher as ww
+            sw.ensure_wds_tab(sheets, sheet_id)
+            ww.check_wds(
+                state, cfg, ea.send_email,
+                on_row=lambda ev: sw.write_wds_event(sheets, sheet_id, ev),
+            )
+            sw.write_meta(sheets, sheet_id, state)  # persist wds_seen + digest adds
+        except Exception as e:  # noqa: BLE001 — Stream C must never break the watcher
+            print(f"[watcher] WDS (Stream C) step skipped: {e}")
+
     # --- Sunday digest ---
     if today.weekday() == 6 and state["pending_digest"]:
         items = [_record_to_item(r) for r in state["pending_digest"]]

@@ -68,6 +68,44 @@ archive:
 watcher:
   max_new_docs_per_run: 25
 
+# --- WDS (Stream C — EGLE Waste Data System, Part 115 solid waste) ---
+# OFF BY DEFAULT. WDS is the solid-waste system of record for the landfill
+# (site 475946) — a different portal from nSITE (Air, the `facilities` feed
+# above). When enabled, the daily watcher polls the collections below, diffs
+# against stored state (Sheet _meta `wds_seen`), and alerts on NEW/CHANGED
+# records using wds_watcher's OWN classifier. See docs/decisions/009-wds-stream-c.md.
+#
+# ACTIVATION — all three steps are Trisha's call (see the Stream C PR):
+#   1. review + merge the stream-c-wds branch to main,
+#   2. (optional) run `python scripts/seed_wds_state.py` ONCE to baseline — if you
+#      skip it, the FIRST enabled run self-baselines silently (records all current
+#      rows, alerts on none), so enabling is safe either way,
+#   3. set `enabled: true` here and commit.
+# Until `enabled: true` is on main, the watcher's WDS block is a no-op.
+wds:
+  enabled: false
+  site_id: "475946"                 # Arbor Hills Landfill, Inc. (MIK114185416)
+  # Collections to poll + their alert tiers (wds_watcher classifier):
+  #   applications       new Construction Permit / -> Issued = URGENT (R1 expansion);
+  #                      Operating License = notable
+  #   compliance_actions new violation notice / assessed penalty = URGENT (R2);
+  #                      PAID/RESOLVED/withdrawn = watch
+  #   qmr                Statistical Exceedence = Yes -> notable (R5 groundwater);
+  #                      No -> watch
+  #   annual             new report = watch; years-remaining < floor -> notable (R1)
+  #   evaluations        new inspection = watch
+  collections:
+    - applications
+    - compliance_actions
+    - qmr
+    - annual
+    - evaluations
+  years_remaining_floor: 3.0        # annual report: below this (yrs) -> notable
+  # Anti-stampede: if one run yields more alert events than this, treat it as a
+  # first-enable-without-seed or a data anomaly and silently re-baseline instead
+  # of blasting the list (mirrors watcher.max_new_docs_per_run).
+  max_new_wds_alerts_per_run: 20
+
 # --- MMPC (Washtenaw County Materials Management Planning Committee) ---
 # Deterministic schedule: 2nd Wednesday of every month, 10:00am, Washtenaw
 # County Learning Resource Center, Superior Room. We calculate meeting dates;
