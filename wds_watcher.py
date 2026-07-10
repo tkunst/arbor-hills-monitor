@@ -139,10 +139,11 @@ COLLECTIONS = {
     "annual": {
         "identity": lambda r: (_g(r, "Year"),),
         "content": lambda r: (_g(r, "Yrs Remaining End"), _g(r, "Waste_Total"),
-                              _g(r, "Total Permitted Capacity")),
+                              _g(r, "Waste_Tons"), _g(r, "Total Permitted Capacity")),
         "date": lambda r: _g(r, "Year"),
         "label": lambda r: f"Annual Landfill Report — FY{_g(r, 'Year') or '?'}",
-        "detail": lambda r: (f"Total waste {_g(r, 'Waste_Total') or '?'} CYDS; "
+        "detail": lambda r: (f"Total waste {_g(r, 'Waste_Total') or '?'} CYDS "
+                             f"({_g(r, 'Waste_Tons') or '?'} tons); "
                              f"years capacity remaining (end) {_g(r, 'Yrs Remaining End') or '?'}; "
                              f"permitted capacity {_g(r, 'Total Permitted Capacity') or '?'}"),
         "classify": _classify_annual,

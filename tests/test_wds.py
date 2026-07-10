@@ -228,27 +228,37 @@ def test_wds_event_row_uses_site_aware_link():
 # single-regex used to blank these on class-first rows and kill the R1 alert)
 # ---------------------------------------------------------------------------
 
-def test_parse_annual_tolerates_attr_order_and_reads_capacity():
-    def span(title, val):  # class BEFORE title — the order that broke the old regex
+def test_parse_annual_reads_capacity_and_sums_waste_inputs():
+    # Real WDS markup shapes, reproduced: capacity/years render as detailControl
+    # spans in CLASS-FIRST attribute order (the order that returned '' from the old
+    # strict regex), and per-stream waste figures render as editable-grid <input>
+    # values (WasteVolumeCYTextBox / WasteAmtTonsTextBox) — NOT <td> text, which is
+    # why the old <td>-cell reader produced no tonnage at all.
+    def span(title, val):  # class BEFORE title
         return (f'<span class="detailControl plainText2ca" '
                 f'id="ctl00_Body_ReportList_R_ctl00_x" title="{title}:">{val}</span>')
-    waste = ("<table><tr>"
-             "<td>2025</td><td>1 CYDS</td><td>2 CYDS</td><td>3 CYDS</td>"
-             "<td>4 CYDS</td><td>5 CYDS</td><td>3,662,137.11 CYDS</td>"
-             "</tr></table>")
+
+    def stream(cyds, tons):  # one waste row, value-before-name to prove tolerance
+        return (f'<input value="{cyds}" type="text" name="ctl00$Body$WasteVolumeCYTextBox" />'
+                f'<input type="text" name="ctl00$Body$WasteAmtTonsTextBox" value="{tons}" />')
+
     h = ("<html><body>"
          '<span id="ctl00_Body_ReportList_R_ctl00_container"></span>'   # row anchor
-         + waste
+         + stream("1000.00", "500.00") + stream("234.50", "120.25")
+         + stream("", "")              # empty add-a-row template must not break the sum
          + span("Total Permitted Capacity", "63560000")
          + span("Estimated years of capacity remaining at end of year", "2.5")
+         + "<span>2025</span>"          # the year, for the >(\\d{4})< pick-up
          + "</body></html>")
     rows = wc._parse_annual(h)
     assert len(rows) == 1
     assert rows[0]["Year"] == "2025"
-    assert rows[0]["Waste_Total"] == "3,662,137.11"
-    # These two are the whole point — they must survive class-first attribute order.
+    # Capacity/years must survive class-first attribute order (the R1 signal).
     assert rows[0]["Total Permitted Capacity"] == "63560000"
     assert rows[0]["Yrs Remaining End"] == "2.5"
+    # Waste totals are summed from the <input> values (thousands-formatted).
+    assert rows[0]["Waste_Total"] == "1,234.50"    # 1000.00 + 234.50
+    assert rows[0]["Waste_Tons"] == "620.25"       # 500.00 + 120.25
     # And the parsed years-remaining drives the R1 floor classifier.
     assert ww._classify_annual(rows[0], False, floor=3.0)[0] == "notable"
 

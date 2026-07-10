@@ -230,17 +230,42 @@ def _annual_detail_value(block: str, title: str) -> str:
     return ""
 
 
-def _annual_waste_row(block: str):
-    """The (year, {waste-type: volume}) tuple from a report block's tonnage table."""
-    for tr in re.findall(r"<tr\b.*?</tr>", block, re.S | re.I):
-        cells = [re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", c))).strip()
-                 for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S | re.I)]
-        cells = [c for c in cells if c]
-        if len(cells) >= 7 and re.fullmatch(r"\d{4}", cells[0]):
-            return cells[0], dict(zip(
-                ["MCW", "IW", "C&D", "ADC", "Other", "Waste_Total"],
-                [c.replace(" CYDS", "") for c in cells[1:7]]))
-    return None, {}
+def _annual_waste_totals(block: str) -> dict:
+    """Total waste volume (CYDS) and amount (TONS) for one annual report block.
+
+    The waste grid is an editable WebForms table: each stream's figures live in
+    <input value="..."> attributes (WasteVolumeCYTextBox / WasteAmtTonsTextBox),
+    NOT in <td> text — so we sum the input values across the block's rows. (The
+    original <td>-cell reader matched a 7-column `year + 6 volumes` layout the
+    page never renders, so it silently produced no tonnage at all — verified
+    against the live 475946 page 2026-07-10.) Empty add-a-row template inputs are
+    skipped; an all-empty field yields no key (graceful for pre-tonnage reports).
+    Input-attribute-order tolerant (name/value read independently)."""
+    def _sum(field: str):
+        total, seen = 0.0, False
+        for tag in re.findall(r"<input\b[^>]*>", block, re.I):
+            nm = re.search(r'name="([^"]*)"', tag)
+            if not nm or field not in nm.group(1):
+                continue
+            vm = re.search(r'value="([^"]*)"', tag)
+            v = (vm.group(1) if vm else "").replace(",", "").strip()
+            if not v:
+                continue
+            try:
+                total += float(v)
+                seen = True
+            except ValueError:
+                pass
+        return total if seen else None
+
+    out = {}
+    cy = _sum("WasteVolumeCYTextBox")
+    tons = _sum("WasteAmtTonsTextBox")
+    if cy is not None:
+        out["Waste_Total"] = f"{cy:,.2f}"
+    if tons is not None:
+        out["Waste_Tons"] = f"{tons:,.2f}"
+    return out
 
 
 def _parse_annual(h: str) -> list[dict]:
@@ -256,9 +281,8 @@ def _parse_annual(h: str) -> list[dict]:
     rows = []
     for k, (_ri, pos) in enumerate(starts):
         b = h[pos:(starts[k + 1][1] if k + 1 < len(starts) else len(h))]
-        wyr, wvol = _annual_waste_row(b)
         ym = re.search(r">(\d{4})<", b)
-        yr = wyr or (ym.group(1) if ym else "")
+        yr = ym.group(1) if ym else ""
         if not yr:
             continue
         rec = {
@@ -268,7 +292,7 @@ def _parse_annual(h: str) -> list[dict]:
             "Yrs Remaining Start": _annual_detail_value(b, "Estimated years of capacity remaining at start of year:"),
             "Yrs Remaining End": _annual_detail_value(b, "Estimated years of capacity remaining at end of year:"),
         }
-        rec.update(wvol)
+        rec.update(_annual_waste_totals(b))
         rows.append(rec)
     return rows
 
