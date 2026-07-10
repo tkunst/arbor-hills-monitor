@@ -1,0 +1,38 @@
+graph LR
+  %% program -> data store lineage; dotted = read, bold = write
+  ds_conservancy_sheet[("Conservancy Case-File Sheet")]
+  ds_drive_archive[("Google Drive PDF Archive")]
+  ds_nsite[("EGLE nSITE Portal (Air)")]
+  ds_wds[("EGLE WDS Portal (Solid Waste)")]
+  ds_mmpc[("Washtenaw County MMPC Site")]
+  ds_smtp[("Email Recipients (SMTP)")]
+  ds_anthropic[("Anthropic Claude API")]
+  ds_config[("config.yml (risk register + settings)")]
+  sheet_writer["sheet_writer"]
+  sheet_writer -. read .-> ds_conservancy_sheet
+  sheet_writer ==>|write| ds_conservancy_sheet
+  archive_client["archive_client"]
+  archive_client ==>|write| ds_drive_archive
+  nsite_client["nsite_client"]
+  nsite_client -. read .-> ds_nsite
+  wds_client["wds_client"]
+  wds_client -. read .-> ds_wds
+  mmpc_watcher["mmpc_watcher"]
+  mmpc_watcher -. read .-> ds_mmpc
+  email_alerts["email_alerts"]
+  email_alerts ==>|write| ds_smtp
+  egle_doc_parser["egle_doc_parser"]
+  egle_doc_parser -. read .-> ds_anthropic
+  config_loader["config_loader"]
+  config_loader -. read .-> ds_config
+  wds_archiver["wds_archiver"]
+  wds_archiver -. read .-> ds_wds
+  wds_archiver ==>|write| ds_drive_archive
+  style ds_conservancy_sheet fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_drive_archive fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_nsite fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_wds fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_mmpc fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_smtp fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_anthropic fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_config fill:#f59e0b,color:#000,stroke:#b45309
