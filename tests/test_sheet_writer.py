@@ -98,6 +98,48 @@ def test_wds_evidence_rows_empty_when_no_risks():
 
 
 # ---------------------------------------------------------------------------
+# all_evidence_rows(): merges nSITE + WDS Evidence-by-Risk rows into one
+# common schema (ALL_EVIDENCE_HEADERS), tagged with Source for provenance.
+# ---------------------------------------------------------------------------
+
+def test_all_evidence_rows_maps_nsite_row():
+    nsite_row = ["R4", "Groundwater", "2025-02-05", "WOI Status Report",
+                 "180F at AHW272.", "A summary.", LINK, "Arbor Hills Landfill"]
+    rows = sw.all_evidence_rows([nsite_row], [])
+    assert len(rows) == 1
+    assert len(rows[0]) == len(sw.ALL_EVIDENCE_HEADERS)
+    assert rows[0][0] == "R4"
+    assert rows[0][3] == "nSITE"
+    assert rows[0][4] == "WOI Status Report"
+    assert rows[0][5] == "180F at AHW272. — A summary."  # Key Data Point + Summary
+    assert rows[0][6] == "Arbor Hills Landfill"           # Facility
+    assert rows[0][7] == LINK
+
+
+def test_all_evidence_rows_maps_wds_row():
+    wds_row = ["R5", "Groundwater", "2025-04-28", "new", "qmr", "notable",
+               "QMR groundwater report", "Statistical Exceedence: Yes.", "link"]
+    rows = sw.all_evidence_rows([], [wds_row])
+    assert len(rows) == 1
+    assert rows[0][3] == "WDS"
+    assert rows[0][4] == "QMR groundwater report"          # Item
+    assert rows[0][5] == "Statistical Exceedence: Yes."     # Detail
+    assert rows[0][6] == "qmr"                              # Collection
+    assert rows[0][7] == "link"
+
+
+def test_all_evidence_rows_preserves_order_nsite_then_wds():
+    nsite_row = ["R1", "n", "2025-01-01", "d", "k", "s", "l", "f"]
+    wds_row = ["R1", "n", "2026-01-01", "new", "annual", "watch", "i", "de", "li"]
+    rows = sw.all_evidence_rows([nsite_row], [wds_row])
+    assert [r[3] for r in rows] == ["nSITE", "WDS"]
+
+
+def test_all_evidence_rows_empty_when_both_empty():
+    assert sw.all_evidence_rows([], []) == []
+
+
+# ---------------------------------------------------------------------------
 # WDS tab-parity: Sheets-API-dependent helpers, against a tiny fake service
 # (modeled on tests/test_archive.py's FakeSheets, extended with .update()).
 # ---------------------------------------------------------------------------
@@ -139,6 +181,12 @@ class _Values:
         tab = self._tab(range)
         header = self._tabs.get(tab, [["hdr"]])[:1]
         self._tabs[tab] = header + body["values"]
+        return _Req({})
+
+    def clear(self, spreadsheetId, range, body):
+        tab = self._tab(range)
+        header = self._tabs.get(tab, [["hdr"]])[:1]
+        self._tabs[tab] = header
         return _Req({})
 
 
@@ -203,6 +251,38 @@ def test_rebuild_risk_register_tab_unions_nsite_and_wds_evidence():
     r1_row = next(r for r in body if r[0] == "R1")
     assert r1_row[3] == 2                # counted from BOTH tabs
     assert r1_row[4] == "2026-06-01"     # most recent date wins across both
+
+
+def test_rebuild_all_evidence_tab_merges_both_sources():
+    tabs = {
+        sw.TAB_EVIDENCE: [sw.EVIDENCE_HEADERS, [
+            "R1", "Expansion eligibility", "2025-01-01", "doc", "kdp", "summary", "link", "fac",
+        ]],
+        sw.TAB_WDS_EVIDENCE: [sw.WDS_EVIDENCE_HEADERS, [
+            "R1", "Expansion eligibility", "2026-06-01", "new", "applications",
+            "urgent", "item", "detail", "link",
+        ]],
+        sw.TAB_ALL_EVIDENCE: [sw.ALL_EVIDENCE_HEADERS],
+    }
+    svc = FakeSheets(tabs)
+    sw.rebuild_all_evidence_tab(svc, "SID")
+    body = svc._values._tabs[sw.TAB_ALL_EVIDENCE][1:]
+    assert len(body) == 2
+    assert {r[3] for r in body} == {"nSITE", "WDS"}
+
+
+def test_rebuild_all_evidence_tab_clears_stale_rows_on_shrink():
+    # A prior, larger run's leftover row must not survive once the source
+    # tabs no longer back it (e.g. after a manual re-dump shrinks WDS Evidence).
+    tabs = {
+        sw.TAB_EVIDENCE: [sw.EVIDENCE_HEADERS],
+        sw.TAB_WDS_EVIDENCE: [sw.WDS_EVIDENCE_HEADERS],
+        sw.TAB_ALL_EVIDENCE: [sw.ALL_EVIDENCE_HEADERS,
+                              ["R1", "n", "2020-01-01", "nSITE", "i", "d", "f", "l"]],
+    }
+    svc = FakeSheets(tabs)
+    sw.rebuild_all_evidence_tab(svc, "SID")
+    assert svc._values._tabs[sw.TAB_ALL_EVIDENCE] == [sw.ALL_EVIDENCE_HEADERS]
 
 
 def test_fetch_all_documents_tags_facility(monkeypatch):

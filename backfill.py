@@ -186,6 +186,12 @@ def run() -> int:
     except Exception as e:  # noqa: BLE001
         print(f"[backfill] risk-register rebuild skipped: {e}")
 
+    if (cfg.get("wds") or {}).get("enabled"):
+        try:
+            sw.rebuild_all_evidence_tab(sheets, sheet_id)
+        except Exception as e:  # noqa: BLE001
+            print(f"[backfill] all-evidence rebuild skipped: {e}")
+
     remaining = count_remaining(docs, state)
     print(f"[backfill] processed {processed_this_run} this run; {remaining} remaining.")
     return 0

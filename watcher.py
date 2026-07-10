@@ -227,6 +227,12 @@ def run() -> int:
     except Exception as e:  # noqa: BLE001
         print(f"[watcher] risk-register rebuild skipped: {e}")
 
+    if (cfg.get("wds") or {}).get("enabled"):
+        try:
+            sw.rebuild_all_evidence_tab(sheets, sheet_id)
+        except Exception as e:  # noqa: BLE001
+            print(f"[watcher] all-evidence rebuild skipped: {e}")
+
     state["last_run"] = _now()
     sw.write_meta(sheets, sheet_id, state)
     return 0

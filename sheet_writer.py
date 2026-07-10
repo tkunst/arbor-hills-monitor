@@ -31,6 +31,11 @@ same no-empty-tab-pre-activation policy the single WDS tab had before. WDS
 shares the existing "_state"/"_meta" internal tabs (more _meta keys: wds_seen,
 wds_snapshot_hashes) — no separate WDS internal tabs.
 
+A fifth tab created alongside those four, "All Evidence by Risk", merges BOTH
+Evidence-by-Risk tabs into one common schema (see all_evidence_rows() /
+rebuild_all_evidence_tab()) — so filtering/sorting by Risk shows every risk's
+evidence in one place, not split by which portal it came from.
+
 The routing/fan-out logic is pure (feed_row / evidence_rows) so it's unit-tested
 without touching the Sheets API. Tab creation is idempotent (create-if-absent).
 """
@@ -92,6 +97,13 @@ TAB_WDS_NEW = "WDS New Documents"
 TAB_WDS_HISTORICAL = "WDS Historical Documents"
 TAB_WDS_EVIDENCE = "WDS Evidence by Risk"
 TAB_WDS_SNAPSHOTS = "WDS Page Snapshots"
+# Unified view across BOTH Evidence-by-Risk tabs: one row per (risk, evidence
+# item) regardless of source, so filtering/sorting by Risk shows everything —
+# not just whichever portal's own tab you happened to open. Not itself WDS
+# data (it carries nSITE rows too), but it only earns its keep once WDS
+# evidence exists to merge in, so it's created alongside the WDS tabs (see
+# _WDS_TAB_HEADERS) rather than unconditionally by ensure_tabs().
+TAB_ALL_EVIDENCE = "All Evidence by Risk"
 # Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
 # TAB_NEW/TAB_HISTORICAL. "Change" is new/changed (live) or historical (dump).
 WDS_HEADERS = [
@@ -102,6 +114,15 @@ WDS_HEADERS = [
 # a WDS record isn't a filed document).
 WDS_EVIDENCE_HEADERS = [
     "Risk", "Risk Name", "Date", "Change", "Collection", "Severity", "Item", "Detail", "Link",
+]
+# Merged nSITE + WDS evidence (see TAB_ALL_EVIDENCE). The two source tabs don't
+# line up column-for-column (nSITE: Document Name/Key Data Point/Full Summary/
+# Facility; WDS: Item/Detail/Severity/Collection), so this is a deliberately
+# smaller common schema, not a superset — "Source" preserves provenance and
+# "Facility / Collection" folds in whichever of those two the row's source
+# tab actually has.
+ALL_EVIDENCE_HEADERS = [
+    "Risk", "Risk Name", "Date", "Source", "Item", "Detail", "Facility / Collection", "Link",
 ]
 # Raw-HTML page snapshots (wds_archiver.py) — portal-drift insurance for a
 # 2001-era ASP.NET app with no per-record PDFs to mirror. One row per
@@ -225,6 +246,43 @@ def wds_evidence_rows(ev: dict, risk_names: dict) -> list[list]:
     return rows
 
 
+def all_evidence_rows(nsite_rows: list[list], wds_rows: list[list]) -> list[list]:
+    """Merge nSITE's Evidence by Risk rows + WDS's Evidence by Risk rows into one
+    common ALL_EVIDENCE_HEADERS schema, tagged with a Source column so
+    provenance survives even though the two tabs' native schemas don't line up
+    column-for-column. Pure — takes plain row lists (as read from either tab),
+    no Sheets API — so it's unit-tested directly, same as evidence_rows() /
+    wds_evidence_rows(). Row order is nSITE rows then WDS rows; the caller
+    sorts/filters in the Sheet UI (dates are ISO-normalized on both sides, so a
+    plain sort now works — see wds_watcher._iso_date)."""
+    out = []
+    for r in nsite_rows:
+        if not r:
+            continue
+        risk = r[0]
+        risk_name = r[1] if len(r) > 1 else ""
+        date = r[2] if len(r) > 2 else ""
+        item = r[3] if len(r) > 3 else ""
+        kdp = r[4] if len(r) > 4 else ""
+        summary = r[5] if len(r) > 5 else ""
+        link = r[6] if len(r) > 6 else ""
+        facility = r[7] if len(r) > 7 else ""
+        detail = f"{kdp} — {summary}".strip(" —")
+        out.append([risk, risk_name, date, "nSITE", item, detail, facility, link])
+    for r in wds_rows:
+        if not r:
+            continue
+        risk = r[0]
+        risk_name = r[1] if len(r) > 1 else ""
+        date = r[2] if len(r) > 2 else ""
+        collection = r[4] if len(r) > 4 else ""
+        item = r[6] if len(r) > 6 else ""
+        detail = r[7] if len(r) > 7 else ""
+        link = r[8] if len(r) > 8 else ""
+        out.append([risk, risk_name, date, "WDS", item, detail, collection, link])
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Sheets API
 # ---------------------------------------------------------------------------
@@ -338,6 +396,34 @@ def rebuild_risk_register_tab(service, sheet_id: str, risk_register: list[dict])
         valueInputOption="RAW",
         body={"values": body_rows},
     ).execute()
+
+
+def rebuild_all_evidence_tab(service, sheet_id: str) -> None:
+    """Recompute 'All Evidence by Risk' from BOTH Evidence-by-Risk tabs (nSITE +
+    WDS) via all_evidence_rows(). Unlike rebuild_risk_register_tab() (a fixed
+    8-row register, safe to blind-overwrite), this tab's row count tracks total
+    evidence and only grows under normal operation — but isn't GUARANTEED to
+    (e.g. a manual re-dump can shrink the source tabs), so the range is
+    cleared before writing rather than assuming monotonic growth."""
+    nsite_resp = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_EVIDENCE}'!A2:H")
+        .execute()
+    )
+    wds_rows = _tab_rows(service, sheet_id, TAB_WDS_EVIDENCE, "A2:I")
+    body_rows = all_evidence_rows(nsite_resp.get("values", []), wds_rows)
+
+    service.spreadsheets().values().clear(
+        spreadsheetId=sheet_id, range=f"'{TAB_ALL_EVIDENCE}'!A2:H", body={}
+    ).execute()
+    if body_rows:
+        service.spreadsheets().values().update(
+            spreadsheetId=sheet_id,
+            range=f"'{TAB_ALL_EVIDENCE}'!A2",
+            valueInputOption="RAW",
+            body={"values": body_rows},
+        ).execute()
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +588,7 @@ _WDS_TAB_HEADERS = {
     TAB_WDS_HISTORICAL: WDS_HEADERS,
     TAB_WDS_EVIDENCE: WDS_EVIDENCE_HEADERS,
     TAB_WDS_SNAPSHOTS: WDS_SNAPSHOT_HEADERS,
+    TAB_ALL_EVIDENCE: ALL_EVIDENCE_HEADERS,
 }
 
 
