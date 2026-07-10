@@ -202,12 +202,23 @@ def _paged_cme(op, url: str, grid: str, parser) -> list[dict]:
 # silent []), so the watcher can tell "0 records" from "couldn't read it".
 
 
+# URL builders, one per collection — shared by the parsed fetchers below and by
+# fetch_raw_snapshot() (archival raw-HTML snapshots, no parsing; see wds_archiver.py).
+_URLS = {
+    "qmr": lambda w: f"{_BASE}/SolidWaste/QMRReports.aspx?w={w}",
+    "applications": lambda w: f"{_BASE}/SolidWaste/Default.aspx?w={w}",
+    "annual": lambda w: f"{_BASE}/SolidWaste/AnnualLandfillReports.aspx?w={w}",
+    "evaluations": lambda w: f"{_BASE}/Cme/Evaluations.aspx?w={w}",
+    "compliance_actions": lambda w: f"{_BASE}/Cme/ComplianceActions.aspx?w={w}",
+}
+
+
 def fetch_qmr(w: str) -> list[dict]:
-    return _paged_detail(_opener(), f"{_BASE}/SolidWaste/QMRReports.aspx?w={w}", "QMRReportList")
+    return _paged_detail(_opener(), _URLS["qmr"](w), "QMRReportList")
 
 
 def fetch_applications(w: str) -> list[dict]:
-    return _paged_detail(_opener(), f"{_BASE}/SolidWaste/Default.aspx?w={w}", "ApplicationList")
+    return _paged_detail(_opener(), _URLS["applications"](w), "ApplicationList")
 
 
 def _annual_detail_value(block: str, title: str) -> str:
@@ -300,16 +311,15 @@ def _parse_annual(h: str) -> list[dict]:
 def fetch_annual(w: str) -> list[dict]:
     """Annual Landfill Reports: waste-volume grid joined to per-report capacity
     detail-spans (permitted capacity + years-remaining). One row per year."""
-    return _parse_annual(_get(_opener(), f"{_BASE}/SolidWaste/AnnualLandfillReports.aspx?w={w}"))
+    return _parse_annual(_get(_opener(), _URLS["annual"](w)))
 
 
 def fetch_evaluations(w: str) -> list[dict]:
-    return _paged_cme(_opener(), f"{_BASE}/Cme/Evaluations.aspx?w={w}",
-                      "EvalL", _parse_evaluations)
+    return _paged_cme(_opener(), _URLS["evaluations"](w), "EvalL", _parse_evaluations)
 
 
 def fetch_compliance_actions(w: str) -> list[dict]:
-    return _paged_cme(_opener(), f"{_BASE}/Cme/ComplianceActions.aspx?w={w}",
+    return _paged_cme(_opener(), _URLS["compliance_actions"](w),
                       "ComplianceActionsL", _parse_compliance_actions)
 
 
@@ -320,3 +330,20 @@ FETCHERS = {
     "evaluations": fetch_evaluations,
     "compliance_actions": fetch_compliance_actions,
 }
+
+
+def fetch_raw_snapshot(name: str, w: str) -> list[str]:
+    """Raw HTML for every page of collection `name` — archival snapshot only, no
+    parsing. Used by wds_archiver.py as portal-drift insurance (WDS has no
+    per-record PDFs to mirror the way nSITE does; a dated raw-HTML copy of the
+    page itself is the real analog). Shares the exact pager/URL logic the parsed
+    fetchers use, so a page this returns is byte-identical to what they parsed."""
+    op = _opener()
+    url = _URLS[name](w)
+    h = _get(op, url)
+    prefix, pe = _pager(h)
+    pages = [h]
+    sep = "&" if "?" in url else "?"
+    for n in range(1, pe + 1):
+        pages.append(_get(op, url + sep + f"{prefix}={n}*_*0*0"))
+    return pages

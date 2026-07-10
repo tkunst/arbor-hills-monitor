@@ -85,10 +85,12 @@ def find_in_folder(service, name: str) -> str | None:
     return files[0]["id"] if files else None
 
 
-def upload_pdf(service, local_path: str, name: str) -> str:
-    """Upload (or reuse) one PDF in the mirror folder. Returns its webViewLink —
-    the durable, shareable URL recorded in the Archived PDFs tab. Idempotent:
-    if a file of that name already exists it is reused, not duplicated."""
+def upload_file(service, local_path: str, name: str, mimetype: str) -> str:
+    """Upload (or reuse) one file in the mirror folder. Returns its webViewLink —
+    the durable, shareable URL recorded in the Archived PDFs / WDS Page Snapshots
+    tabs. Idempotent: if a file of that name already exists it is reused, not
+    duplicated. Shared by archiver.py (PDFs) and wds_archiver.py (HTML page
+    snapshots) — same folder, same drive.file scope, different mimetype."""
     from googleapiclient.http import MediaFileUpload
 
     existing = find_in_folder(service, name)
@@ -96,7 +98,7 @@ def upload_pdf(service, local_path: str, name: str) -> str:
         got = service.files().get(fileId=existing, fields="webViewLink").execute()
         return got["webViewLink"]
 
-    media = MediaFileUpload(local_path, mimetype="application/pdf", resumable=True)
+    media = MediaFileUpload(local_path, mimetype=mimetype, resumable=True)
     meta = {"name": name, "parents": [folder_id()]}
     f = (
         service.files()
@@ -104,3 +106,8 @@ def upload_pdf(service, local_path: str, name: str) -> str:
         .execute()
     )
     return f["webViewLink"]
+
+
+def upload_pdf(service, local_path: str, name: str) -> str:
+    """Thin wrapper over upload_file() for the PDF mirror (archiver.py)."""
+    return upload_file(service, local_path, name, "application/pdf")

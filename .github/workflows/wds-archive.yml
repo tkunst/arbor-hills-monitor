@@ -1,0 +1,55 @@
+name: wds-archive
+
+# Stream C page-snapshot archive (ADR 009 residual risk #1, "legacy portal
+# drift"): saves raw HTML of the 5 WDS collection pages into Trisha's Drive
+# (OAuth-as-user) whenever a page's content changes, and records it in the
+# "WDS Page Snapshots" tab. WDS has no per-record PDFs to mirror the way
+# archive.yml mirrors nSITE PDFs — this is the real analog for a portal where
+# the record IS the page. Self-terminating and idempotent (content-hash gated).
+#
+# Safe to leave scheduled from day one: if the GOAUTH_* secrets aren't set yet,
+# the job is a quiet no-op (exit 0). Scheduled between archive.yml (3am ET) and
+# the daily watcher (6am ET) so it never overlaps either — both also touch the
+# Sheet's _meta cell, and _meta writes aren't safe to run concurrently (each job
+# overwrites all _meta keys from its own in-memory snapshot).
+on:
+  schedule:
+    - cron: "0 9 * * *"    # 4am ET (9am UTC).
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wds-archive
+  cancel-in-progress: false
+
+jobs:
+  wds-archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Snapshot WDS pages that changed
+        env:
+          # Sheets I/O uses the service account (drive.file grants no Sheets
+          # access); the Drive upload uses the OAuth user client. Hence both.
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}
+          GOAUTH_ARCHIVE_FOLDER_ID: ${{ secrets.GOAUTH_ARCHIVE_FOLDER_ID }}
+        run: python wds_archiver.py

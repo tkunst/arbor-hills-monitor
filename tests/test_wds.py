@@ -267,6 +267,57 @@ def test_parse_annual_reads_capacity_and_sums_waste_inputs():
 # Orchestration: a failed urgent email must NOT bury the signal
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# historical_events(): the one-off bulk-dump path — same classification as
+# diff_collection(), but no seen-state, no alerts, kind='historical' always.
+# ---------------------------------------------------------------------------
+
+def test_historical_events_one_per_row_matches_live_classification():
+    rows = [
+        {"Due Date": "4/30/2025", "Date Received": "4/28/2025",
+         "Statistical Exceedence?": "Yes", "Review Notes": "Boron trend."},
+        {"Due Date": "1/31/2025", "Date Received": "1/30/2025",
+         "Statistical Exceedence?": "No", "Review Notes": ""},
+    ]
+    events = ww.historical_events("qmr", rows, {})
+    assert len(events) == 2
+    assert all(e["kind"] == "historical" for e in events)
+    # Severity matches what the live classifier independently produces for the
+    # same rows — historical_events reuses _classify_qmr, doesn't reimplement it.
+    assert events[0]["severity"] == "notable"   # exceedance = Yes
+    assert events[1]["severity"] == "watch"
+
+
+def test_historical_events_drops_identity_less_rows():
+    # The trailing blank add-a-record template row diff_collection() also drops.
+    rows = [
+        {"Application Type": "Construction Permit", "Receipt Date": "6/1/2020",
+         "Closure Type": "Issued", "Closure Date": "9/1/2020"},
+        {"Application Type": "", "Receipt Date": ""},
+    ]
+    events = ww.historical_events("applications", rows, {})
+    assert len(events) == 1
+
+
+def test_historical_events_annual_uses_floor():
+    rows = [{"Year": "2025", "Yrs Remaining End": "2.5", "Waste_Total": "1000",
+             "Total Permitted Capacity": "63560000"}]
+    events = ww.historical_events("annual", rows, {"years_remaining_floor": 3.0})
+    assert events[0]["severity"] == "notable"    # below the floor
+
+
+def test_historical_events_ignores_seen_state_and_never_alerts():
+    # No seen-state parameter at all -- calling it repeatedly on the same rows
+    # must produce the same events every time (no diffing, no mutation).
+    rows = [{"Due Date": "4/30/2025", "Date Received": "4/28/2025",
+             "Statistical Exceedence?": "Yes", "Review Notes": "x"}]
+    e1 = ww.historical_events("qmr", rows, {})
+    e2 = ww.historical_events("qmr", rows, {})
+    assert len(e1) == len(e2) == 1
+    assert e1[0]["hash"] == e2[0]["hash"]
+    assert e1[0]["prev_hash"] is None
+
+
 def test_urgent_send_failure_reverts_seen_state_so_it_re_alerts():
     spec = ww.COLLECTIONS["applications"]
     old = {"Application Type": "Operating License", "Receipt Date": "1/1/2020",

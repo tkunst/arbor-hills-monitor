@@ -176,6 +176,37 @@ def _content_hash(spec, r) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
+def _event_from_row(name: str, r: dict, kind: str, cfg_wds: dict, prev_hash=None) -> dict:
+    """Build one event dict for a single row, shared by diff_collection() (live
+    new/changed path) and historical_events() (one-off bulk-dump path) — the
+    ONLY place classification happens, so the two paths can never drift."""
+    spec = COLLECTIONS[name]
+    floor = float(cfg_wds.get("years_remaining_floor", 3.0))
+    if name == "annual":
+        sev, dtype, risks = _classify_annual(r, kind == "changed", floor)
+    else:
+        sev, dtype, risks = spec["classify"](r, kind == "changed")
+    return {
+        "name": name, "kind": kind, "severity": sev, "doc_type": dtype,
+        "risks": risks, "label": spec["label"](r), "detail": spec["detail"](r),
+        "date": spec["date"](r), "idkey": _idkey(spec, r), "prev_hash": prev_hash,
+        "hash": _content_hash(spec, r),
+    }
+
+
+def historical_events(name: str, rows: list[dict], cfg_wds: dict) -> list[dict]:
+    """One kind='historical' event per currently-fetched row of `name`, regardless
+    of any seen-state. Used ONLY by the one-off scripts/dump_wds_historical.py —
+    never by check_wds — so it never touches _meta.wds_seen and never alerts.
+    kind='historical' (not 'new') so a WDS Historical Documents row is never
+    mistaken for something the live watcher observed today. Applies the same
+    identity-less-row filter diff_collection() does (the trailing blank
+    add-a-record template row WDS grids carry)."""
+    spec = COLLECTIONS[name]
+    rows = [r for r in rows if any(str(x).strip() for x in spec["identity"](r))]
+    return [_event_from_row(name, r, "historical", cfg_wds) for r in rows]
+
+
 # ---------------------------------------------------------------------------
 # Pure diff engine (no network, no email — unit-tested directly)
 # ---------------------------------------------------------------------------
@@ -219,7 +250,6 @@ def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict
 
     # Diff.
     events = []
-    floor = float(cfg_wds.get("years_remaining_floor", 3.0))
     for r in rows:
         k = _idkey(spec, r)
         h = _content_hash(spec, r)
@@ -230,15 +260,7 @@ def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict
         else:
             continue
         records[k] = h
-        if name == "annual":
-            sev, dtype, risks = _classify_annual(r, kind == "changed", floor)
-        else:
-            sev, dtype, risks = spec["classify"](r, kind == "changed")
-        events.append({
-            "name": name, "kind": kind, "severity": sev, "doc_type": dtype,
-            "risks": risks, "label": spec["label"](r), "detail": spec["detail"](r),
-            "date": spec["date"](r), "idkey": k, "prev_hash": prev, "hash": h,
-        })
+        events.append(_event_from_row(name, r, kind, cfg_wds, prev_hash=prev))
 
     # Rule B(ii) — over-cap defense. If a single run produced more alert events
     # than the cap, this is almost certainly a first-enable-without-seed or a WDS
@@ -260,7 +282,7 @@ def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict
 _SITE = "475946"
 
 
-def _wds_link(site: str = _SITE) -> str:
+def wds_link(site: str = _SITE) -> str:
     return f"https://www.egle.state.mi.us/wdspi/Dashboard.aspx?w={site}"
 
 
@@ -271,7 +293,7 @@ def format_urgent_body(ev: dict) -> str:
         f"{ev['label']}{changed}\n"
         f"Risks: {', '.join(ev['risks'])}\n\n"
         f"{ev['detail']}\n\n"
-        f"Source (EGLE Waste Data System):\n  {ev.get('link') or _wds_link()}\n"
+        f"Source (EGLE Waste Data System):\n  {ev.get('link') or wds_link()}\n"
     )
 
 
@@ -285,7 +307,7 @@ def digest_record(ev: dict) -> dict:
         "severity": ev["severity"],
         "risks": ev["risks"],
         "key_data_point": ev["detail"],
-        "link": ev.get("link") or _wds_link(),
+        "link": ev.get("link") or wds_link(),
     }
 
 
@@ -319,7 +341,7 @@ def check_wds(state: dict, cfg: dict, send_email, fetchers=None, on_row=None) ->
         seen[name] = new_entry
         print(f"[wds] {note}")
 
-        link = _wds_link(w)
+        link = wds_link(w)
         for ev in events:
             ev["link"] = link
             if on_row:

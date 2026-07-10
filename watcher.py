@@ -204,10 +204,11 @@ def run() -> int:
     if (cfg.get("wds") or {}).get("enabled"):
         try:
             import wds_watcher as ww
-            sw.ensure_wds_tab(sheets, sheet_id)
+            sw.ensure_wds_tabs(sheets, sheet_id)
             ww.check_wds(
                 state, cfg, ea.send_email,
-                on_row=lambda ev: sw.write_wds_event(sheets, sheet_id, ev),
+                on_row=lambda ev: sw.write_wds_event(
+                    sheets, sheet_id, ev, RISK_NAMES, feed_tab=sw.TAB_WDS_NEW),
             )
             sw.write_meta(sheets, sheet_id, state)  # persist wds_seen + digest adds
         except Exception as e:  # noqa: BLE001 — Stream C must never break the watcher

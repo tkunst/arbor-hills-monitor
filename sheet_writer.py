@@ -19,6 +19,18 @@ Both internal tabs replace the old Drive JSON state file: a Google service
 account on a personal Gmail has no Drive storage quota and cannot CREATE files,
 but it CAN write cells in a Sheet the user already owns and shared. See ADR 006.
 
+Stream C (WDS solid-waste, ADR 009) gets its own tabs, structurally parallel to
+the four above: "WDS New Documents" / "WDS Historical Documents" (same
+WDS_HEADERS schema — live feed vs. one-off backfill dump, see
+scripts/dump_wds_historical.py) / "WDS Evidence by Risk" (fan-out, same shape
+as Evidence by Risk) / "WDS Page Snapshots" (raw-HTML portal-drift insurance,
+see wds_archiver.py — WDS has no per-record PDFs to mirror the way Archived
+PDFs does for nSITE, so a page snapshot is the real analog). All four are
+created on demand via ensure_wds_tabs() only once Stream C is enabled/dumped —
+same no-empty-tab-pre-activation policy the single WDS tab had before. WDS
+shares the existing "_state"/"_meta" internal tabs (more _meta keys: wds_seen,
+wds_snapshot_hashes) — no separate WDS internal tabs.
+
 The routing/fan-out logic is pure (feed_row / evidence_rows) so it's unit-tested
 without touching the Sheets API. Tab creation is idempotent (create-if-absent).
 """
@@ -70,13 +82,33 @@ TAB_MEASUREMENTS = "Measurements"
 TAB_ARCHIVE = "Archived PDFs"
 TAB_STATE = "_state"
 TAB_META = "_meta"
-# Stream C (WDS solid-waste) case-file tab. Deliberately NOT in _TAB_HEADERS:
-# ensure_tabs() must not create it, so the Conservancy-visible Sheet gains no
-# empty "WDS" tab until Stream C is actually enabled. wds_watcher creates it
-# on demand via ensure_wds_tab() only inside an enabled run.
-TAB_WDS = "WDS (Solid Waste)"
+# Stream C (WDS solid-waste) case-file tabs — structurally parallel to the
+# nSITE New/Historical/Evidence tabs above. Deliberately NOT in _TAB_HEADERS:
+# ensure_tabs() must not create them, so the Conservancy-visible Sheet gains no
+# empty "WDS" tabs until Stream C is actually enabled/dumped. wds_watcher +
+# scripts/dump_wds_historical.py + wds_archiver.py create them on demand via
+# ensure_wds_tabs().
+TAB_WDS_NEW = "WDS New Documents"
+TAB_WDS_HISTORICAL = "WDS Historical Documents"
+TAB_WDS_EVIDENCE = "WDS Evidence by Risk"
+TAB_WDS_SNAPSHOTS = "WDS Page Snapshots"
+# Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
+# TAB_NEW/TAB_HISTORICAL. "Change" is new/changed (live) or historical (dump).
 WDS_HEADERS = [
     "Date", "Change", "Collection", "Severity", "Risks", "Item", "Detail", "Link",
+]
+# WDS analog of EVIDENCE_HEADERS: leads with the fan-out key (Risk), then reuses
+# WDS_HEADERS' own column names (Item/Detail, not Document Name/Key Data Point —
+# a WDS record isn't a filed document).
+WDS_EVIDENCE_HEADERS = [
+    "Risk", "Risk Name", "Date", "Change", "Collection", "Severity", "Item", "Detail", "Link",
+]
+# Raw-HTML page snapshots (wds_archiver.py) — portal-drift insurance for a
+# 2001-era ASP.NET app with no per-record PDFs to mirror. One row per
+# (collection, page) actually uploaded — content-hash-gated (wds_snapshot_hashes
+# below), not written every night regardless of whether the page changed.
+WDS_SNAPSHOT_HEADERS = [
+    "Date", "Collection", "Page", "Content Hash", "Drive Link", "Fetched At",
 ]
 
 _TAB_HEADERS = {
@@ -92,14 +124,19 @@ _TAB_HEADERS = {
 
 # The _meta keys, with the defaults used when a key has never been written.
 # `wds_seen` holds Stream C's per-collection seen-set + last_count (see
-# wds_watcher). It is a JSON singleton like the others — ~420 short id/hash pairs
-# stay well under the 50k-char cell cap. Present in defaults so read_state loads
-# it and write_meta persists it with zero extra plumbing, even while Stream C is
-# disabled (it just stays {}).
+# wds_watcher). `wds_snapshot_hashes` holds wds_archiver.py's per-(collection,
+# page) last-uploaded content hash, so a nightly run only uploads + logs a page
+# whose HTML actually changed since last time (not ~5-20 near-identical files
+# every single night forever). Both are JSON singletons like the others — small
+# by construction (~420 short id/hash pairs; 5 collections x a few pages each)
+# — well under the 50k-char cell cap. Present in defaults so read_state loads
+# them and write_meta persists them with zero extra plumbing, even while Stream C
+# is disabled (they just stay {}).
 _META_DEFAULTS = {
     "pending_digest": [],
     "mmpc_minutes_found": {},
     "wds_seen": {},
+    "wds_snapshot_hashes": {},
     "last_run": "",
 }
 
@@ -161,6 +198,29 @@ def evidence_rows(parsed, metadata: dict, link: str, risk_names: dict) -> list[l
             parsed.summary,
             link,
             metadata.get("facility_name", ""),
+        ])
+    return rows
+
+
+def wds_evidence_rows(ev: dict, risk_names: dict) -> list[list]:
+    """WDS analog of evidence_rows(): zero or more rows for WDS Evidence by Risk,
+    one per risk, for a doc_type=='evidence' wds_watcher event. Consumes the
+    event's own (severity, doc_type, risks, label, detail, date) fields as-is —
+    no reclassification here."""
+    if ev.get("doc_type") != "evidence" or not ev.get("risks"):
+        return []
+    rows = []
+    for rid in ev["risks"]:
+        rows.append([
+            rid,
+            risk_names.get(rid, rid),
+            ev.get("date", ""),
+            ev.get("kind", ""),
+            ev.get("name", ""),
+            ev.get("severity", ""),
+            ev.get("label", ""),
+            ev.get("detail", ""),
+            ev.get("link", ""),
         ])
     return rows
 
@@ -230,26 +290,36 @@ def write_document(
 
 
 def rebuild_risk_register_tab(service, sheet_id: str, risk_register: list[dict]) -> None:
-    """Recompute the Risk Register summary from the Evidence-by-Risk tab:
-    per-risk evidence count + most recent evidence date. Overwrites the tab body
-    (rows 2+) so it always reflects current evidence."""
-    resp = (
+    """Recompute the Risk Register summary from BOTH Evidence-by-Risk tabs (nSITE
+    + WDS): per-risk evidence count + most recent evidence date, unioned across
+    the two tabs so R1/R2/R5 etc. aren't silently undercounted once WDS Evidence
+    by Risk exists. Both tabs put their date in column C (index 2) despite
+    different remaining schemas, so one _tally() helper serves both. Overwrites
+    the tab body (rows 2+) so it always reflects current evidence from both
+    streams."""
+    counts: dict[str, int] = {}
+    latest: dict[str, str] = {}
+
+    def _tally(rows: list[list], date_col: int) -> None:
+        for r in rows:
+            if not r:
+                continue
+            rid = r[0]
+            date_val = r[date_col] if len(r) > date_col else ""
+            counts[rid] = counts.get(rid, 0) + 1
+            if date_val and date_val > latest.get(rid, ""):
+                latest[rid] = date_val
+
+    nsite_resp = (
         service.spreadsheets()
         .values()
         .get(spreadsheetId=sheet_id, range=f"'{TAB_EVIDENCE}'!A2:G")
         .execute()
     )
-    rows = resp.get("values", [])
-    counts: dict[str, int] = {}
-    latest: dict[str, str] = {}
-    for r in rows:
-        if not r:
-            continue
-        rid = r[0]
-        date_filed = r[2] if len(r) > 2 else ""
-        counts[rid] = counts.get(rid, 0) + 1
-        if date_filed and date_filed > latest.get(rid, ""):
-            latest[rid] = date_filed
+    _tally(nsite_resp.get("values", []), date_col=2)
+
+    wds_resp = _tab_rows(service, sheet_id, TAB_WDS_EVIDENCE, "A2:I")
+    _tally(wds_resp, date_col=2)
 
     body_rows = []
     for risk in risk_register:
@@ -410,29 +480,48 @@ def _copy_default(key: str):
 
 
 # ---------------------------------------------------------------------------
-# Stream C — WDS case-file tab (created on demand only when Stream C is enabled)
+# Stream C — WDS case-file tabs (created on demand only when Stream C is
+# enabled/dumped)
 # ---------------------------------------------------------------------------
 
+_WDS_TAB_HEADERS = {
+    TAB_WDS_NEW: WDS_HEADERS,
+    TAB_WDS_HISTORICAL: WDS_HEADERS,
+    TAB_WDS_EVIDENCE: WDS_EVIDENCE_HEADERS,
+    TAB_WDS_SNAPSHOTS: WDS_SNAPSHOT_HEADERS,
+}
 
-def ensure_wds_tab(service, sheet_id: str) -> None:
-    """Create the WDS tab + header if absent. Called only from an enabled Stream C
-    run, so the tab never appears until Trisha turns Stream C on. Header is written
-    only when the tab is first created, so a subsequent manual header edit isn't
-    stomped (and we skip a redundant write every run)."""
+
+def ensure_wds_tabs(service, sheet_id: str) -> None:
+    """Create any missing WDS tabs (all four together — mirrors ensure_tabs()
+    creating New+Historical+Evidence together for nSITE even though only some
+    are written on a given run). Called only from an enabled Stream C run or the
+    one-off dump/archiver scripts, so no WDS tab appears until Stream C is
+    actually used. Header is written only when a tab is first created, so a
+    subsequent manual header edit isn't stomped (and we skip a redundant write
+    every run)."""
     meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_WDS not in existing:
+    requests = [
+        {"addSheet": {"properties": {"title": title}}}
+        for title in _WDS_TAB_HEADERS
+        if title not in existing
+    ]
+    if requests:
         service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_WDS}}}]},
+            spreadsheetId=sheet_id, body={"requests": requests}
         ).execute()
-        _set_header(service, sheet_id, TAB_WDS, WDS_HEADERS)
+    for title, headers in _WDS_TAB_HEADERS.items():
+        if title not in existing:
+            _set_header(service, sheet_id, title, headers)
 
 
 def wds_event_row(ev: dict) -> list:
-    """One WDS tab row from a wds_watcher event dict (pure — unit-tested). The link
-    is site-aware (set by check_wds from wds.site_id); falls back to the dashboard
-    root only if an event was built without one."""
+    """One WDS New/Historical Documents row from a wds_watcher event dict (pure —
+    unit-tested). Works identically whether ev['kind'] is new/changed (live) or
+    historical (bulk dump). The link is site-aware (set by check_wds, or by the
+    dump/archiver scripts, from wds.site_id); falls back to the dashboard root
+    only if an event was built without one."""
     return [
         ev.get("date", ""),
         ev.get("kind", ""),
@@ -445,9 +534,35 @@ def wds_event_row(ev: dict) -> list:
     ]
 
 
-def write_wds_event(service, sheet_id: str, ev: dict) -> None:
-    """Append one new/changed WDS record to the WDS tab."""
-    append_rows(service, sheet_id, TAB_WDS, [wds_event_row(ev)])
+def write_wds_event(service, sheet_id: str, ev: dict, risk_names: dict,
+                    feed_tab: str = TAB_WDS_NEW) -> None:
+    """Append one WDS event to its feed tab (WDS New Documents by default; the
+    live watcher never passes anything else — the historical dump script calls
+    the lower-level wds_event_row()/wds_evidence_rows() + append_rows() directly
+    for batching, not this function) and, if doc_type=='evidence', fan it out to
+    WDS Evidence by Risk — same two-tabs-in-one-call shape as write_document()."""
+    append_rows(service, sheet_id, feed_tab, [wds_event_row(ev)])
+    append_rows(service, sheet_id, TAB_WDS_EVIDENCE, wds_evidence_rows(ev, risk_names))
+
+
+def wds_historical_collections_dumped(service, sheet_id: str) -> set:
+    """The set of WDS collections (col C = Collection) already present in WDS
+    Historical Documents. Modeled on archived_doc_ids(): lets
+    scripts/dump_wds_historical.py skip a collection it already wrote instead of
+    double-appending its rows on a re-run."""
+    return {r[2] for r in _tab_rows(service, sheet_id, TAB_WDS_HISTORICAL, "A2:C") if len(r) > 2 and r[2]}
+
+
+def append_wds_snapshot_row(
+    service, sheet_id: str, date: str, collection: str, page: int,
+    content_hash: str, drive_link: str, fetched_at: str,
+) -> None:
+    """Append one row to WDS Page Snapshots, AFTER the Drive upload succeeds
+    (crash-safe: a kill before this re-uploads next run — see wds_archiver.py's
+    content-hash gate for why a re-upload of unchanged content is itself rare)."""
+    append_rows(service, sheet_id, TAB_WDS_SNAPSHOTS, [[
+        date, collection, page, content_hash, drive_link, fetched_at,
+    ]])
 
 
 def archived_doc_ids(service, sheet_id: str) -> set:

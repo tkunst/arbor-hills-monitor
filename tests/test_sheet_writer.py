@@ -1,8 +1,10 @@
 """Sheet routing: feed row, evidence fan-out (one row per risk), measurements."""
+import re
+
 import nsite_client as nc
 import sheet_writer as sw
 from egle_doc_parser import ParsedDoc
-from risk_register import RISK_NAMES
+from risk_register import RISK_NAMES, RISK_REGISTER
 
 
 def _doc(doc_type="evidence", risks=("R4", "R8"), measurements=None):
@@ -60,6 +62,147 @@ def test_measurement_rows_fallback_date_and_shape():
 
 def test_measurement_rows_empty_when_none():
     assert sw.measurement_rows(_doc(measurements=[]), META, LINK) == []
+
+
+# ---------------------------------------------------------------------------
+# WDS (Stream C) tab-parity: wds_evidence_rows fan-out — the WDS analog of
+# evidence_rows, tested the same way.
+# ---------------------------------------------------------------------------
+
+def _wds_ev(doc_type="evidence", risks=("R5",), **overrides):
+    ev = {
+        "date": "4/30/2025", "kind": "new", "name": "qmr", "severity": "notable",
+        "doc_type": doc_type, "risks": list(risks),
+        "label": "QMR groundwater report", "detail": "Yes; boron.",
+        "link": "https://www.egle.state.mi.us/wdspi/Dashboard.aspx?w=475946",
+    }
+    ev.update(overrides)
+    return ev
+
+
+def test_wds_evidence_rows_fan_out_one_per_risk():
+    rows = sw.wds_evidence_rows(_wds_ev(risks=("R1", "R5")), RISK_NAMES)
+    assert len(rows) == 2
+    assert len(rows[0]) == len(sw.WDS_EVIDENCE_HEADERS)
+    assert rows[0][0] == "R1"
+    assert rows[1][0] == "R5"
+    assert rows[1][1] == RISK_NAMES["R5"]
+
+
+def test_wds_evidence_rows_empty_for_non_evidence():
+    assert sw.wds_evidence_rows(_wds_ev(doc_type="procedural"), RISK_NAMES) == []
+
+
+def test_wds_evidence_rows_empty_when_no_risks():
+    assert sw.wds_evidence_rows(_wds_ev(risks=()), RISK_NAMES) == []
+
+
+# ---------------------------------------------------------------------------
+# WDS tab-parity: Sheets-API-dependent helpers, against a tiny fake service
+# (modeled on tests/test_archive.py's FakeSheets, extended with .update()).
+# ---------------------------------------------------------------------------
+
+class _Req:
+    def __init__(self, result):
+        self._result = result
+
+    def execute(self):
+        return self._result
+
+
+class _Values:
+    def __init__(self, tabs):
+        self._tabs = tabs  # {tab: [header_row, data_row, ...]}
+
+    @staticmethod
+    def _tab(rng):
+        return re.match(r"'([^']+)'", rng).group(1)
+
+    @staticmethod
+    def _ncols(rng):
+        m = re.search(r"![A-Z](\d+):([A-Z])", rng)
+        return (ord(m.group(2)) - ord("A") + 1) if m else None
+
+    def get(self, spreadsheetId, range):
+        rows = self._tabs.get(self._tab(range), [])
+        n = self._ncols(range)
+        out = [list(r) for r in rows[1:]]
+        if n:
+            out = [r[:n] for r in out]
+        return _Req({"values": out})
+
+    def append(self, spreadsheetId, range, valueInputOption, insertDataOption, body):
+        self._tabs.setdefault(self._tab(range), [["hdr"]]).extend(body["values"])
+        return _Req({})
+
+    def update(self, spreadsheetId, range, valueInputOption, body):
+        tab = self._tab(range)
+        header = self._tabs.get(tab, [["hdr"]])[:1]
+        self._tabs[tab] = header + body["values"]
+        return _Req({})
+
+
+class FakeSheets:
+    def __init__(self, tabs=None):
+        self._values = _Values(tabs or {})
+
+    def spreadsheets(self):
+        return self
+
+    def values(self):
+        return self._values
+
+
+def test_wds_historical_collections_dumped_empty_when_tab_absent():
+    assert sw.wds_historical_collections_dumped(FakeSheets(), "SID") == set()
+
+
+def test_wds_historical_collections_dumped_reads_collection_column():
+    tabs = {sw.TAB_WDS_HISTORICAL: [sw.WDS_HEADERS, [
+        "4/30/2025", "historical", "qmr", "notable", "R5", "label", "detail", "link",
+    ]]}
+    assert sw.wds_historical_collections_dumped(FakeSheets(tabs), "SID") == {"qmr"}
+
+
+def test_write_wds_event_evidence_writes_feed_and_evidence_tabs():
+    svc = FakeSheets()
+    sw.write_wds_event(svc, "SID", _wds_ev(), RISK_NAMES)
+    assert len(svc._values._tabs[sw.TAB_WDS_NEW]) == 2       # header + 1 row
+    assert len(svc._values._tabs[sw.TAB_WDS_EVIDENCE]) == 2  # header + 1 fan-out row
+
+
+def test_write_wds_event_procedural_only_writes_feed_tab():
+    svc = FakeSheets()
+    sw.write_wds_event(svc, "SID", _wds_ev(doc_type="procedural"), RISK_NAMES)
+    assert len(svc._values._tabs[sw.TAB_WDS_NEW]) == 2
+    assert sw.TAB_WDS_EVIDENCE not in svc._values._tabs      # append_rows no-ops on []
+
+
+def test_write_wds_event_respects_feed_tab_override():
+    svc = FakeSheets()
+    sw.write_wds_event(svc, "SID", _wds_ev(kind="historical"), RISK_NAMES,
+                       feed_tab=sw.TAB_WDS_HISTORICAL)
+    assert sw.TAB_WDS_HISTORICAL in svc._values._tabs
+    assert sw.TAB_WDS_NEW not in svc._values._tabs
+
+
+def test_rebuild_risk_register_tab_unions_nsite_and_wds_evidence():
+    tabs = {
+        sw.TAB_EVIDENCE: [sw.EVIDENCE_HEADERS, [
+            "R1", "Expansion eligibility", "2025-01-01", "doc", "kdp", "summary", "link", "fac",
+        ]],
+        sw.TAB_WDS_EVIDENCE: [sw.WDS_EVIDENCE_HEADERS, [
+            "R1", "Expansion eligibility", "2026-06-01", "new", "applications",
+            "urgent", "item", "detail", "link",
+        ]],
+        sw.TAB_REGISTER: [sw.REGISTER_HEADERS],
+    }
+    svc = FakeSheets(tabs)
+    sw.rebuild_risk_register_tab(svc, "SID", RISK_REGISTER)
+    body = svc._values._tabs[sw.TAB_REGISTER][1:]
+    r1_row = next(r for r in body if r[0] == "R1")
+    assert r1_row[3] == 2                # counted from BOTH tabs
+    assert r1_row[4] == "2026-06-01"     # most recent date wins across both
 
 
 def test_fetch_all_documents_tags_facility(monkeypatch):
