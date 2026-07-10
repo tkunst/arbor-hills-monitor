@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 
 import wds_client as wc
 
@@ -58,6 +59,27 @@ def _g(r, *keys):
         if r.get(k):
             return r[k]
     return ""
+
+
+_MDY_RE = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
+
+
+def _iso_date(s: str) -> str:
+    """Normalize WDS's unpadded M/D/YYYY dates (e.g. '4/30/2025', straight from
+    the scraped page) to ISO 'YYYY-MM-DD', matching nsite_client.py's own
+    isoformat() convention. Every Sheet write uses valueInputOption=RAW (stored
+    as literal text, never a native Sheets date), so unpadded M/D/YYYY sorts by
+    leading digit — i.e. by MONTH, not by year — both for a human sorting the
+    Sheet and for rebuild_risk_register_tab()'s '>' string comparison that picks
+    the 'most recent evidence' date. ISO text sorts correctly either way.
+    Anything that doesn't match M/D/YYYY (blank, or a bare Year for annual
+    reports, which already sorts fine on its own) passes through unchanged —
+    a parse miss on this 2001-era portal must never raise."""
+    m = _MDY_RE.match(s.strip()) if s else None
+    if not m:
+        return s
+    mm, dd, yyyy = m.groups()
+    return f"{yyyy}-{int(mm):02d}-{int(dd):02d}"
 
 
 def _classify_qmr(r, changed):
@@ -122,7 +144,7 @@ COLLECTIONS = {
     "qmr": {
         "identity": lambda r: (_g(r, "Due Date"), _g(r, "Date Received")),
         "content": lambda r: (_g(r, "Statistical Exceedence?"), _g(r, "Review Notes")),
-        "date": lambda r: _g(r, "Date Received", "Due Date"),
+        "date": lambda r: _iso_date(_g(r, "Date Received", "Due Date")),
         "label": lambda r: f"QMR groundwater report (due {_g(r, 'Due Date') or '?'})",
         "detail": lambda r: (f"Statistical Exceedence: {_g(r, 'Statistical Exceedence?') or '-'}. "
                              f"{_g(r, 'Review Notes')}").strip(),
@@ -131,7 +153,7 @@ COLLECTIONS = {
     "applications": {
         "identity": lambda r: (_g(r, "Application Type"), _g(r, "Receipt Date")),
         "content": lambda r: (_g(r, "Closure Type"), _g(r, "Closure Date")),
-        "date": lambda r: _g(r, "Receipt Date"),
+        "date": lambda r: _iso_date(_g(r, "Receipt Date")),
         "label": lambda r: f"{_g(r, 'Application Type') or 'Application'} (received {_g(r, 'Receipt Date') or '?'})",
         "detail": lambda r: f"Closure: {_g(r, 'Closure Type') or 'pending'} {_g(r, 'Closure Date')}".strip(),
         "classify": _classify_application,
@@ -151,7 +173,7 @@ COLLECTIONS = {
     "evaluations": {
         "identity": lambda r: (_g(r, "Evaluation Date"), _g(r, "Responsible Person")),
         "content": lambda r: (_g(r, "Evaluation Status"),),
-        "date": lambda r: _g(r, "Evaluation Date"),
+        "date": lambda r: _iso_date(_g(r, "Evaluation Date")),
         "label": lambda r: f"EGLE evaluation ({_g(r, 'Evaluation Date') or '?'})",
         "detail": lambda r: f"{_g(r, 'Primary Reason')} — {_g(r, 'Evaluation Status')}".strip(" —"),
         "classify": _classify_evaluation,
@@ -159,7 +181,7 @@ COLLECTIONS = {
     "compliance_actions": {
         "identity": lambda r: (_g(r, "Compliance Action Date"), _g(r, "Compliance Action Type")),
         "content": lambda r: (_g(r, "Corrective Action Component"), _g(r, "Company Response Date")),
-        "date": lambda r: _g(r, "Compliance Action Date"),
+        "date": lambda r: _iso_date(_g(r, "Compliance Action Date")),
         "label": lambda r: f"Compliance action — {_g(r, 'Compliance Action Type') or '?'} ({_g(r, 'Compliance Action Date') or '?'})",
         "detail": lambda r: f"Lead program {_g(r, 'Lead Program')}; determined by {_g(r, 'Determined By')}".strip("; "),
         "classify": _classify_compliance_action,

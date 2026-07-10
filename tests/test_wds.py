@@ -57,6 +57,47 @@ def test_detail_rows_extracts_and_tolerates_attr_order():
 
 
 # ---------------------------------------------------------------------------
+# Date normalization — WDS's unpadded M/D/YYYY must become ISO YYYY-MM-DD so it
+# sorts correctly both in the Sheet UI and in rebuild_risk_register_tab()'s
+# string '>' comparison for "most recent evidence" (nsite_client.py already
+# does this via .isoformat(); WDS scraped the raw string verbatim until now).
+# ---------------------------------------------------------------------------
+
+def test_iso_date_pads_single_digit_month_and_day():
+    assert ww._iso_date("4/30/2025") == "2025-04-30"
+    assert ww._iso_date("1/1/2000") == "2000-01-01"
+    assert ww._iso_date("12/9/2026") == "2026-12-09"
+
+
+def test_iso_date_passes_through_blank_and_unrecognized():
+    assert ww._iso_date("") == ""
+    assert ww._iso_date("2025") == "2025"  # annual report's bare Year
+
+
+def test_diff_collection_emits_iso_dates_for_mdy_collections():
+    r1 = {"Due Date": "4/30/2025", "Date Received": "4/28/2025",
+          "Statistical Exceedence?": "No", "Review Notes": ""}
+    _e, entry, _n = ww.diff_collection("qmr", [r1], _empty(), {})
+    r2 = {"Due Date": "7/30/2025", "Date Received": "7/28/2025",
+          "Statistical Exceedence?": "Yes", "Review Notes": "y"}
+    events, _entry2, _n2 = ww.diff_collection("qmr", [r1, r2], entry, {})
+    assert events[0]["date"] == "2025-07-28"
+
+
+def test_historical_events_emits_iso_dates_for_mdy_collections():
+    rows = [{"Application Type": "Construction Permit", "Receipt Date": "6/1/2020",
+             "Closure Type": "Issued", "Closure Date": "9/1/2020"}]
+    events = ww.historical_events("applications", rows, {})
+    assert events[0]["date"] == "2020-06-01"
+
+
+def test_annual_date_stays_bare_year_unchanged():
+    rows = [{"Year": "2025", "Yrs Remaining End": "4.0"}]
+    events = ww.historical_events("annual", rows, {"years_remaining_floor": 3.0})
+    assert events[0]["date"] == "2025"
+
+
+# ---------------------------------------------------------------------------
 # Diff engine
 # ---------------------------------------------------------------------------
 
