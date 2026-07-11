@@ -1,6 +1,6 @@
 # ADR 009 — Stream C: EGLE Waste Data System (WDS) solid-waste monitoring
 
-*Status: proposed — 2026-07-09 (dormant, behind `wds.enabled: false`; awaiting review + activation).*
+*Status: active — 2026-07-10 (`wds.enabled: true`; built out and activated same-day, see Addendum below).*
 
 ## Context
 

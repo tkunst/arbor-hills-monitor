@@ -97,6 +97,10 @@ TAB_WDS_NEW = "WDS New Documents"
 TAB_WDS_HISTORICAL = "WDS Historical Documents"
 TAB_WDS_EVIDENCE = "WDS Evidence by Risk"
 TAB_WDS_SNAPSHOTS = "WDS Page Snapshots"
+# Mirror D (ADR 010) — same "created on demand, not by ensure_tabs()" treatment
+# as the WDS tabs above, so the Sheet gains no empty tab until mmpc_archive is
+# actually enabled/run.
+TAB_MMPC_ARCHIVE = "MMPC Archived Files"
 # Unified view across BOTH Evidence-by-Risk tabs: one row per (risk, evidence
 # item) regardless of source, so filtering/sorting by Risk shows everything —
 # not just whichever portal's own tab you happened to open. Not itself WDS
@@ -130,6 +134,16 @@ ALL_EVIDENCE_HEADERS = [
 # below), not written every night regardless of whether the page changed.
 WDS_SNAPSHOT_HEADERS = [
     "Date", "Collection", "Page", "Content Hash", "Drive Link", "Fetched At",
+]
+# Mirror D (ADR 010) — MMPC agenda/minutes/other PDFs auto-pulled from
+# CivicClerk. One row per archived file, keyed by File ID for dedup (same
+# idiom as ARCHIVE_HEADERS/archived_doc_ids(), not the WDS content-hash
+# pattern — these are static per-ID PDFs like nSITE's, not a live page).
+# Deliberately NOT in _TAB_HEADERS: no "MMPC Archived Files" tab appears
+# until mmpc_archive.enabled is actually turned on (ensure_mmpc_tabs()).
+MMPC_ARCHIVE_HEADERS = [
+    "File ID", "Meeting Date", "Type", "Document Name",
+    "Event ID", "Archive Link", "Archived At",
 ]
 
 _TAB_HEADERS = {
@@ -682,4 +696,41 @@ def append_archive_row(
     append_rows(service, sheet_id, TAB_ARCHIVE, [[
         doc_id, document_name, date_filed, risks_str,
         source_link, archive_link, archived_at,
+    ]])
+
+
+def ensure_mmpc_tabs(service, sheet_id: str) -> None:
+    """Create the MMPC Archived Files tab if missing and reconcile its header
+    row on every run (same self-healing policy as ensure_tabs()/
+    ensure_wds_tabs()). Called only from mmpc_archiver.py, so the tab doesn't
+    appear until Mirror D actually runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_MMPC_ARCHIVE not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_MMPC_ARCHIVE}}}]},
+        ).execute()
+    _set_header(service, sheet_id, TAB_MMPC_ARCHIVE, MMPC_ARCHIVE_HEADERS)
+
+
+def mmpc_archived_file_ids(service, sheet_id: str) -> set:
+    """The set of CivicClerk File IDs already mirrored to Drive (col A of MMPC
+    Archived Files, as strings — Sheets returns cell values as strings/numbers
+    inconsistently, so callers compare with str(file_id)). Modeled exactly on
+    archived_doc_ids(); _tab_rows() already returns [] for a tab that doesn't
+    exist yet (first run, before ensure_mmpc_tabs() has created it), so no
+    extra handling is needed here."""
+    return {str(r[0]) for r in _tab_rows(service, sheet_id, TAB_MMPC_ARCHIVE, "A2:A") if r and r[0]}
+
+
+def append_mmpc_archive_row(
+    service, sheet_id: str, file_id, meeting_date: str, doc_type: str,
+    document_name: str, event_id, archive_link: str, archived_at: str,
+) -> None:
+    """Append one row to MMPC Archived Files AFTER the Drive upload succeeds
+    (crash-safe, same ordering rationale as append_archive_row())."""
+    append_rows(service, sheet_id, TAB_MMPC_ARCHIVE, [[
+        file_id, meeting_date, doc_type, document_name,
+        event_id, archive_link, archived_at,
     ]])

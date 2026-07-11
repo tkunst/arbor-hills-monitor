@@ -1,0 +1,53 @@
+name: mmpc-archive
+
+# Mirror D (ADR 010): auto-downloads every MMPC Agenda/Minutes/Other PDF
+# CivicClerk has published and uploads it into the MMPC-meeting-minutes/ Drive
+# folder Trisha already hand-populates (GOAUTH_MMPC_FOLDER_ID). Replaces the
+# "email alert -> Trisha downloads by hand" flow with the real thing, now that
+# the portal's underlying JSON API is known (see mmpc_client.py).
+#
+# Safe to leave scheduled from day one: if mmpc_archive.enabled isn't set yet,
+# the job is a quiet no-op (exit 0) — see mmpc_archiver.py's _should_run().
+# Scheduled between wds-archive.yml (4am ET / 9am UTC) and the daily watcher
+# (6am ET / 11am UTC) so it never overlaps either — all three touch the
+# Sheet's _meta/tab state and aren't safe to run concurrently.
+on:
+  schedule:
+    - cron: "0 10 * * *"   # 5am ET (10am UTC). DST drift of +/-1h is acceptable.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mmpc-archive
+  cancel-in-progress: false
+
+jobs:
+  mmpc-archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Archive new MMPC documents
+        env:
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}
+          GOAUTH_MMPC_FOLDER_ID: ${{ secrets.GOAUTH_MMPC_FOLDER_ID }}
+        run: python mmpc_archiver.py

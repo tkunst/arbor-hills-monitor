@@ -96,7 +96,7 @@ def run() -> int:
             nc.download_pdf(session, meta, local)
             # Upload (durable copy) FIRST, then record the index row — a crash
             # between them re-uploads next run, made idempotent by find_in_folder.
-            link = ac.upload_pdf(drive, local, f"{srn}_{did}.pdf")
+            link = ac.upload_pdf(drive, local, f"{srn}_{did}.pdf", ac.folder_id())
             sw.append_archive_row(
                 sheets, sheet_id, did,
                 payload.get("document_name") or meta.get("document_name", ""),

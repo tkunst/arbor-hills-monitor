@@ -134,7 +134,7 @@ def run() -> int:
                 # between them re-uploads next run, made idempotent by the exact
                 # dated filename (find_in_folder reuses rather than duplicates).
                 drive_name = f"WDS_{name}_p{i}_{today}.html"
-                link = ac.upload_file(drive, local, drive_name, "text/html")
+                link = ac.upload_file(drive, local, drive_name, "text/html", ac.folder_id())
                 sw.append_wds_snapshot_row(sheets, sheet_id, today, name, i, h, link, _now())
                 col_hashes[key] = h
                 uploaded += 1

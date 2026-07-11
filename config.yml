@@ -133,14 +133,39 @@ mmpc:
     - "2026-10-14"
     - "2026-12-09"
   # CivicClerk portal, MMPC category (category_id=72). Verified 2026-06-15.
-  # This is a JS single-page app: documents (agenda/minutes/"other"=presentations)
-  # are behind a download-arrow -> accessible-PDF-viewer -> "Download Original PDF"
-  # flow that a plain HTTP GET can't drive. So the watcher uses this URL as a
-  # REMINDER target, not a scraper: during each meeting's polling window it fires
-  # one "minutes likely posted, go check" email with this link, and Trisha does
-  # the manual download. (A future upgrade could hit CivicClerk's JSON API to
-  # detect/auto-download the published PDFs; not needed for the R1 reminder.)
+  # The public site is a JS single-page app with no server-rendered document
+  # links, so the watcher uses this URL as a REMINDER target: during each
+  # meeting's polling window it fires one "minutes likely posted, go check"
+  # email with this link, and Trisha does the manual download/upload.
+  #
+  # SUPERSEDED for the actual download by mmpc_archive below (ADR 010, added
+  # 2026-07-10): the SPA calls a public JSON API underneath
+  # (washtenawcomi.api.civicclerk.com) that enumerates every published file and
+  # streams its PDF directly — no scraping needed. This reminder flow is left
+  # running as-is (untouched, still tested) pending Trisha's decision on
+  # whether to retire it now that mmpc_archive does the real thing.
   minutes_url: "https://washtenawcomi.portal.civicclerk.com/?category_id=72"
+
+# --- MMPC document archive (Mirror D, ADR 010, added 2026-07-10) ---
+# Auto-downloads every Agenda/Minutes/Other PDF CivicClerk publishes for the
+# MMPC (category_id 72) and uploads it into the SAME Drive folder Trisha
+# already hand-populates (MMPC-meeting-minutes/, via GOAUTH_MMPC_FOLDER_ID —
+# a separate secret from GOAUTH_ARCHIVE_FOLDER_ID, since this is a different
+# destination folder). Dedup is Sheet-derived (MMPC Archived Files tab), not a
+# _meta key — see mmpc_archiver.py.
+#
+# ACTIVATION — same three-step pattern as Stream C (see wds: above):
+#   1. review + merge,
+#   2. first enabled run just archives everything published so far (no seed
+#      script needed — there's no "alert flood" risk here, unlike WDS's
+#      classified events, since this only ever writes an index row + uploads
+#      a file, never emails),
+#   3. set `enabled: true` here and commit.
+# Until `enabled: true` is on main, mmpc-archive.yml runs on schedule but
+# mmpc_archiver.py's _should_run() gate makes every run a no-op.
+mmpc_archive:
+  enabled: false
+  category_id: 72
 
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
