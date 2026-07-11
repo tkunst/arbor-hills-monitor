@@ -100,9 +100,10 @@ same outcome as before this module existed.
 ### Four more bugs found in code review (2026-07-11, before merge)
 
 An independent review of this PR (not by the same session that wrote it)
-found four more real gaps, all fixed before merge:
+found four more real gaps (numbered 3-6, continuing from the two above),
+all fixed before merge:
 
-3. **`.docx` attachments on a `.msg` were silently garbled or dropped.**
+1. **(#3) `.docx` attachments on a `.msg` were silently garbled or dropped.**
    `_add_attachment()` special-cased `.pdf`, images, and `.xls`/`.xlsx` only;
    a `.docx` attachment (a plausible EGLE attachment type) fell through to
    the generic best-effort UTF-8 decode, which — reproduced directly — turns
@@ -111,20 +112,20 @@ found four more real gaps, all fixed before merge:
    synthesized PDF as if it were genuine text. Fixed by routing `.docx`
    attachments through the same `_docx_body_text()` extraction a top-level
    `.docx` document already uses.
-4. **A merged PDF attachment that's itself a scan never triggered the
+2. **(#4) A merged PDF attachment that's itself a scan never triggered the
    proactive-OCR fix.** The PDF-merge branch always returned `needs_ocr =
    False`, even when the merged pages carry no text layer — the same
-   mixed-document blind spot as bug 2 above, just not extended to merged PDF
-   pages. Fixed with `_pdf_has_image_only_pages()`, the same imageonly-page
-   heuristic `classify()` uses, checked before the merge.
-5. **A doc retried successfully via `RETRY_DOC_IDS` stayed in both
+   mixed-document blind spot as bug #2 above, just not extended to merged
+   PDF pages. Fixed with `_pdf_has_image_only_pages()`, the same
+   imageonly-page heuristic `classify()` uses, checked before the merge.
+3. **(#5) A doc retried successfully via `RETRY_DOC_IDS` stayed in both
    `state["processed"]` and `state["skipped"]` forever** (`sheet_writer.
    read_state()`'s `"processed"` branch never cleared a stale `"skipped"`
    entry for the same doc_id) — inert today (every real consumer checks
    `processed` first or safely ORs the two), but a latent trap for future
    code that treats `skipped` as "never processed." Fixed by clearing
    `state["skipped"]` when a `"processed"` event lands for the same doc_id.
-6. **`download_pdf()`'s extraction fallback depended on an unverified
+4. **(#6) `download_pdf()`'s extraction fallback depended on an unverified
    assumption about `doc_url`.** `_normalize()` defaults `doc_url` to the
    *render* endpoint (not the native one) when a record's `docMgmtDocurl` is
    empty — in that case the old two-URL list (`primary`, `render`) deduped
