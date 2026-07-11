@@ -51,6 +51,7 @@ at `poison_doc_extractor.synthesize_pdf()` before the doc poisons.
 than ignored — per Trisha's explicit choice (2026-07-11), since the hand-pull
 found the actual substantive evidence (e.g. the Pace lab report's analyte
 table) often lives in attachments, not the email body:
+
 - PDF attachments have their real pages merged in (`fitz.insert_pdf`), not
   re-extracted as text.
 - `.xls`/`.xlsx` attachments (the lab-report EDD) become a text table
