@@ -23,11 +23,13 @@ itself talks to a fully public, unauthenticated JSON API:
 - `GET https://washtenawcomi.api.civicclerk.com/v1/Events?$filter=categoryId eq 72`
   → every MMPC event. Each carries a `publishedFiles[]` array, one entry per
   document:
+
   ```json
   {"fileId": 9107, "type": "Minutes", "name": "Materials Management Planning
    Committee Minutes February 11, 2026", "publishOn": "2026-03-11T16:20:51.647Z",
    "sort": 3, "fileType": 4}
   ```
+
   `type` is one of `"Agenda"`, `"Minutes"`, `"Other"`. OData-paginated via
   `@odata.nextLink` (followed by `mmpc_client.fetch_mmpc_files()`).
 - `GET https://washtenawcomi.api.civicclerk.com/v1/Meetings/GetMeetingFileStream(fileId={id},plainText=false)`
