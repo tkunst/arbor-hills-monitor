@@ -128,7 +128,7 @@ def run() -> int:
             )
             mirrored += 1
             print(f"  ok  {(f['event_date'] or '')[:10]}  [{f['type']}]  {f['name'][:60]}")
-        except mc.MMPCFetchError as e:
+        except Exception as e:  # noqa: BLE001 — one file's failure must not abort the batch
             print(f"  ERR fileId={file_id}: {e}")
         finally:
             if os.path.exists(local):
