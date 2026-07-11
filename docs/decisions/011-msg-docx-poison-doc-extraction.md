@@ -200,10 +200,11 @@ re-attempted even if named.
 
 A follow-up independent review (correctness/quality, not security — a
 separate security review found nothing) of the post-fix state found two more
-real, verified bugs in `_docx_body_text()`, both confirmed by reproduction
-against the real hand-pull specimens:
+real, verified bugs in `_docx_body_text()` (numbered 7-8, continuing from the
+six above), both confirmed by reproduction against the real hand-pull
+specimens:
 
-7. **Adjacent `<w:t>` runs separated only by `<w:tab/>` or `<w:br/>` were
+1. **(#7) Adjacent `<w:t>` runs separated only by `<w:tab/>` or `<w:br/>` were
    glued together with no separator.** Collecting just `<w:t>` text and
    joining with `""` meant a tabular reading Word represents as two runs
    either side of a `<w:tab/>` — e.g. "Well AHW272R4"\<tab\>"180F" — came out
@@ -213,21 +214,22 @@ against the real hand-pull specimens:
    measurement data is load-bearing for credibility, a silently glued value
    reaching the classifier is a real (if quiet) data-quality risk. Fixed by
    treating `<w:tab/>` as `\t` and `<w:br/>` as `\n` during extraction.
-8. **The same fix's first draft (walking each paragraph's full descendant
-   tree) double-extracted text nested in a text box or drawing anchored
-   inside a run** — a letterhead/signature block, e.g., got captured once as
-   part of the outer paragraph (whose `.iter()` doesn't stop at a nested
-   `<w:p>` boundary) and again when the nested `<w:p>` was reached
-   independently. Confirmed on a real specimen: `"LIESL EICHLER CLARK"`
-   appears twice in raw `<w:t>` elements but came out 4 times in the (buggy)
-   extracted text. This duplication bug actually predates this ADR — it was
-   present in the original `_docx_body_text()` too, just never caught
-   because the original test fixtures never had nested-paragraph structure
-   and the manual real-specimen verification checked page counts / `classify()`
-   verdicts, not exact text content. Fixed by only descending into each
-   paragraph's direct-child `<w:r>` runs (`p.findall`, not `p.iter`) and their
-   direct-child content elements — a `<w:drawing>` is a sibling of
-   `<w:t>`/`<w:tab/>`/`<w:br/>` within a run, never itself walked into.
+2. **(#8) The same fix's first draft (walking each paragraph's full
+   descendant tree) double-extracted text nested in a text box or drawing
+   anchored inside a run** — a letterhead/signature block, e.g., got
+   captured once as part of the outer paragraph (whose `.iter()` doesn't
+   stop at a nested `<w:p>` boundary) and again when the nested `<w:p>` was
+   reached independently. Confirmed on a real specimen: `"LIESL EICHLER
+   CLARK"` appears twice in raw `<w:t>` elements but came out 4 times in the
+   (buggy) extracted text. This duplication bug actually predates this ADR
+   — it was present in the original `_docx_body_text()` too, just never
+   caught because the original test fixtures never had nested-paragraph
+   structure and the manual real-specimen verification checked page counts /
+   `classify()` verdicts, not exact text content. Fixed by only descending
+   into each paragraph's direct-child `<w:r>` runs (`p.findall`, not
+   `p.iter`) and their direct-child content elements — a `<w:drawing>` is a
+   sibling of `<w:t>`/`<w:tab/>`/`<w:br/>` within a run, never itself walked
+   into.
 
 Both fixes were re-verified end-to-end against all 14 real hand-pulled
 `.msg`/`.docx` specimens (still 14/14 succeeding, same `has_text` verdicts)
