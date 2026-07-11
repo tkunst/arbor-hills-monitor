@@ -43,6 +43,20 @@ def _make_docx(paragraphs: list) -> bytes:
     return buf.getvalue()
 
 
+def _make_docx_raw_body(body_xml: str) -> bytes:
+    """Like _make_docx but takes the raw <w:body> inner XML directly, for
+    tests that need explicit control over run/tab/br structure within a
+    paragraph (multi-run paragraphs, <w:tab/>, <w:br/>)."""
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<w:document xmlns:w="{WORD_NS}"><w:body>{body_xml}</w:body></w:document>'
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("word/document.xml", xml)
+    return buf.getvalue()
+
+
 def _make_pdf_bytes(text: str) -> bytes:
     doc = fitz.open()
     page = doc.new_page()
@@ -125,6 +139,46 @@ def test_docx_body_text_extracts_paragraphs():
     data = _make_docx(["First paragraph.", "Second paragraph."])
     text = pde._docx_body_text(data)
     assert text == "First paragraph.\nSecond paragraph."
+
+
+def test_docx_body_text_preserves_tabs_between_runs():
+    # Bug found 2026-07-11 in code review, confirmed against the real
+    # hand-pull specimens (up to 34 <w:tab/> elements in a single real
+    # document): a tabular value split across separate <w:t> runs around a
+    # <w:tab/> (Word's normal representation of "Well AHW272R4<TAB>180F")
+    # previously glued into "Well AHW272R4180F" with no separator.
+    data = _make_docx_raw_body(
+        "<w:p><w:r><w:t>Well AHW272R4</w:t></w:r><w:r><w:tab/></w:r>"
+        "<w:r><w:t>180F</w:t></w:r></w:p>"
+    )
+    assert pde._docx_body_text(data) == "Well AHW272R4\t180F"
+
+
+def test_docx_body_text_preserves_line_breaks_within_a_paragraph():
+    data = _make_docx_raw_body(
+        "<w:p><w:r><w:t>Line one</w:t></w:r><w:r><w:br/></w:r>"
+        "<w:r><w:t>Line two</w:t></w:r></w:p>"
+    )
+    assert pde._docx_body_text(data) == "Line one\nLine two"
+
+
+def test_docx_body_text_does_not_duplicate_nested_textbox_paragraphs():
+    # Bug found 2026-07-11 in code review (confirmed on a real specimen: raw
+    # <w:t> had "LIESL EICHLER CLARK" twice, but the buggy extraction had it
+    # 4 times). A <w:drawing> anchored inside a run can itself contain a
+    # nested <w:p> (a letterhead/signature text box) — walking every
+    # descendant of the OUTER paragraph captured that nested text once as
+    # part of the outer paragraph, and again when root.iter() reached the
+    # nested <w:p> as its own independent paragraph.
+    data = _make_docx_raw_body(
+        "<w:p><w:r><w:t>Outer text</w:t></w:r>"
+        "<w:r><w:drawing><w:txbxContent>"
+        "<w:p><w:r><w:t>Inner textbox text</w:t></w:r></w:p>"
+        "</w:txbxContent></w:drawing></w:r></w:p>"
+    )
+    text = pde._docx_body_text(data)
+    assert text == "Outer text\nInner textbox text"
+    assert text.count("Inner textbox text") == 1
 
 
 def test_docx_to_pdf_produces_classifiable_text(tmp_path):

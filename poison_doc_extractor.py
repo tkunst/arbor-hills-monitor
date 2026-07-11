@@ -135,13 +135,52 @@ def synthesize_pdf(data: bytes, dest_path: str) -> str:
 
 
 def _docx_body_text(data: bytes) -> str:
+    """Extract paragraph text, preserving <w:tab/> and <w:br/> as literal tab/
+    newline characters, and without duplicating text nested in a text box or
+    drawing anchored inside a run.
+
+    Two bugs found 2026-07-11 in code review, both confirmed against the real
+    hand-pull specimens:
+    1. Collecting only <w:t> text and joining with "" glued adjacent runs
+       together with no separator whenever Word split a value across multiple
+       runs or tab-separated columns — a tabular reading like
+       "Well AHW272R4<tab>180F" (two separate <w:t> runs either side of a
+       <w:tab/>) came out as the single glued token "AHW272R4180F". Up to 34
+       <w:tab/> elements in a single real specimen were affected.
+    2. Walking each paragraph's FULL descendant tree (rather than only its
+       direct-child runs) also walks into any <w:txbxContent> nested inside a
+       <w:drawing> inside one of its runs — a letterhead/signature text box,
+       e.g. — double-extracting that text: once as part of the outer
+       paragraph's own text (since a paragraph's .iter() doesn't stop at a
+       nested <w:p> boundary), and again when root.iter() reaches the nested
+       <w:p> as its own independent paragraph. Confirmed on a real specimen:
+       "LIESL EICHLER CLARK" appeared twice in raw <w:t> elements but 4 times
+       in the (buggy) extracted text.
+
+    Fixed by only descending into each paragraph's DIRECT-child <w:r> runs
+    (p.findall, not p.iter) and only their direct-child content elements (not
+    a deep walk) — <w:drawing> is a sibling of <w:t>/<w:tab/>/<w:br/> within a
+    run, never itself walked into, so a nested paragraph inside it is only
+    ever captured once, on its own, when root.iter() reaches it independently."""
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         xml_bytes = z.read("word/document.xml")
     root = ET.fromstring(xml_bytes)
+    run_tag = f"{_WORD_NS}r"
+    text_tag = f"{_WORD_NS}t"
+    tab_tag = f"{_WORD_NS}tab"
+    br_tag = f"{_WORD_NS}br"
     paras = []
     for p in root.iter(f"{_WORD_NS}p"):
-        texts = [t.text or "" for t in p.iter(f"{_WORD_NS}t")]
-        paras.append("".join(texts))
+        parts = []
+        for r in p.findall(run_tag):
+            for el in r:
+                if el.tag == text_tag:
+                    parts.append(el.text or "")
+                elif el.tag == tab_tag:
+                    parts.append("\t")
+                elif el.tag == br_tag:
+                    parts.append("\n")
+        paras.append("".join(parts))
     return "\n".join(paras)
 
 
