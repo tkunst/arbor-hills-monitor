@@ -164,7 +164,7 @@ mmpc:
 # Until `enabled: true` is on main, mmpc-archive.yml runs on schedule but
 # mmpc_archiver.py's _should_run() gate makes every run a no-op.
 mmpc_archive:
-  enabled: false
+  enabled: true
   category_id: 72
 
 # --- Alerts ---
