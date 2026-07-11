@@ -15,6 +15,7 @@ and tags each doc with its facility (the multi-facility design, ADR 008).
 """
 from __future__ import annotations
 
+import gzip
 import re
 import time
 import urllib.parse
@@ -22,6 +23,8 @@ from datetime import datetime, date
 from typing import Optional
 
 import requests
+
+import poison_doc_extractor as pde
 
 NSITE_BASE = "https://mienviro.michigan.gov"
 SETTINGS_URL = f"{NSITE_BASE}/nsite/api/settings/getWslSettings"
@@ -149,18 +152,42 @@ def _looks_like_pdf(body: bytes) -> bool:
     return b"%PDF" in body[:1024]
 
 
+_GZIP_MAGIC = b"\x1f\x8b\x08"
+
+
+def _maybe_gunzip(body: bytes) -> bytes:
+    """nSITE's native-file responses are sometimes gzip-compressed regardless
+    of the Accept-Encoding request header — requests' automatic decompression
+    relies on a correct Content-Encoding response header, which this endpoint
+    doesn't set, so the raw gzip blob otherwise lands in r.content undecoded
+    (curl's --compressed flag papers over this by decoding unconditionally;
+    we do the same explicitly). Verified against real nSITE responses during
+    the 2026-07-07/2026-07-11 WRD-Groundwater hand-pull. A no-op for content
+    that doesn't start with the gzip magic."""
+    if body.startswith(_GZIP_MAGIC):
+        try:
+            return gzip.decompress(body)
+        except OSError:
+            return body  # magic matched but it wasn't valid gzip — pass through
+    return body
+
+
 def download_pdf(session: requests.Session, doc: dict, dest_path: str, timeout: int = 120) -> str:
     """Download one document to dest_path as a PDF the parser can open. Returns
     dest_path; raises on HTTP error, empty body, or if no source yields a PDF.
 
     nSITE's per-record link (`doc_url`) usually points at a PDF, but for some
-    documents it points at the ORIGINAL file — an Outlook .msg, an image, an
-    nForm submission — which PyMuPDF cannot open. When the record's own link is
-    not a PDF, fall back to nSITE's `downloadpdf/<id>` render endpoint, which
-    rasterizes the source into a PDF. (Legacy Word .doc has no render — that
-    endpoint 400s — so those still fail here and accrue a poison strike, which is
-    correct: the monitor can't read them without a .doc converter. See ADR / the
-    2026-07-07 handoff.)"""
+    documents it points at the ORIGINAL file — an Outlook .msg, a Word .docx,
+    an image, an nForm submission — which PyMuPDF cannot open directly. When
+    the record's own link is not a PDF, fall back to nSITE's `downloadpdf/<id>`
+    render endpoint, which rasterizes images/nForms into a PDF but 400s on
+    .msg/.docx/legacy .doc. If every source still isn't a PDF, the last non-PDF
+    body fetched gets one more chance: poison_doc_extractor.synthesize_pdf()
+    (ADR 011) can build a real PDF out of .msg and .docx sources (envelope +
+    recursed attachments for .msg; body text for .docx). Legacy Word .doc has
+    no render AND no extractor here — those still fail and accrue a poison
+    strike, which is correct: the monitor can't read them without a .doc
+    converter. See ADR 011 / the 2026-07-07 handoff."""
     doc_id = doc["doc_id"]
     primary = doc["doc_url"]
     render = f"{DOWNLOAD_BASE}/{doc_id}"
@@ -168,6 +195,7 @@ def download_pdf(session: requests.Session, doc: dict, dest_path: str, timeout: 
     urls = [primary] + ([render] if render != primary else [])
     referer = f"{NSITE_BASE}/nsite/DEFAULT/map/results"
     last_exc: Optional[Exception] = None
+    last_non_pdf_content: Optional[bytes] = None
     for url in urls:
         for attempt in range(3):
             try:
@@ -179,12 +207,23 @@ def download_pdf(session: requests.Session, doc: dict, dest_path: str, timeout: 
                 last_exc = e
                 time.sleep(2 ** attempt)
                 continue
-            if _looks_like_pdf(r.content):
+            content = _maybe_gunzip(r.content)
+            if _looks_like_pdf(content):
                 with open(dest_path, "wb") as f:
-                    f.write(r.content)
+                    f.write(content)
                 return dest_path
-            # A valid response that isn't a PDF (the .msg / image / nForm case).
-            # Retrying the same URL won't help — fall through to the next source.
-            last_exc = RuntimeError(f"non-PDF response from {url} (starts {r.content[:8]!r})")
+            # A valid response that isn't a PDF (the .msg / .docx / image /
+            # nForm case). Retrying the same URL won't help — fall through to
+            # the next source, but remember this body: if every source fails,
+            # it's the last chance for the extractor fallback below.
+            last_non_pdf_content = content
+            last_exc = RuntimeError(f"non-PDF response from {url} (starts {content[:8]!r})")
             break
+
+    if last_non_pdf_content is not None:
+        try:
+            return pde.synthesize_pdf(last_non_pdf_content, dest_path)
+        except pde.ExtractionError as e:
+            last_exc = e
+
     raise RuntimeError(f"download failed for doc {doc_id}: {last_exc}")

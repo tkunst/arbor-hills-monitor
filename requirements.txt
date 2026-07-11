@@ -14,6 +14,17 @@ google-auth-oauthlib>=1.2
 # requests is used by nsite_client (ported from the EGLE scraper)
 requests>=2.32
 
+# poison_doc_extractor.py (ADR 011): .msg / .docx source extraction for nSITE
+# docs the downloadpdf render endpoint 400s on. extract-msg pulls in oletools
+# and RTFDE transitively (OLE2/RTF parsing) — no action needed, just larger
+# than it looks from this one line. NOTE: extract-msg is GPL-licensed; xlrd
+# and openpyxl are BSD/MIT. This repo has no LICENSE file of its own yet, so
+# there's no direct copyleft conflict today, but flag before adding a license
+# or redistributing, since the README invites reuse by other advocacy groups.
+extract-msg>=0.55       # .msg envelope + attachment extraction (GPL)
+xlrd>=2.0                # legacy .xls attachments (e.g. lab-report EDDs)
+openpyxl>=3.1             # .xlsx attachments, in case a future EDD is that format
+
 # Tests: synthetic PDFs are built with PyMuPDF (already a dep) — no extra
 # PDF library needed. pytest is the only test-time addition.
 pytest>=8.0

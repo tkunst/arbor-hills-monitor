@@ -44,18 +44,44 @@ def _retry_poisoned() -> bool:
     return os.environ.get("RETRY_POISONED", "").strip().lower() in {"1", "true", "yes"}
 
 
-def select_todo(docs: list, state: dict, retry_poisoned: bool = False) -> list:
+def _retry_doc_ids() -> set:
+    """Explicit doc_id allowlist for a one-time retroactive retry (ADR 011 —
+    the WRD-Groundwater .msg/.docx docs terminally skipped before
+    poison_doc_extractor existed). Comma-separated nSITE doc_ids via the
+    RETRY_DOC_IDS env (a backfill workflow_dispatch input). Empty/unset ->
+    no override, every doc obeys the normal processed/skipped/poison gates."""
+    raw = os.environ.get("RETRY_DOC_IDS", "").strip()
+    if not raw:
+        return set()
+    return {x.strip() for x in raw.split(",") if x.strip()}
+
+
+def select_todo(docs: list, state: dict, retry_poisoned: bool = False, retry_doc_ids: set = None) -> list:
     """Docs still needing work. Normal mode skips both processed and poisoned
-    docs (poisoned = at least MAX_ERRORS_PER_DOC failures). retry_poisoned mode
-    skips only processed docs, so poison docs are re-attempted this run; a later
-    success appends a 'processed' row that clears their error count in
-    read_state's reducer, while a renewed failure just pushes the count higher
-    (still poisoned)."""
+    docs (poisoned = at least MAX_ERRORS_PER_DOC failures, OR terminally
+    'skipped'). retry_poisoned mode re-attempts poisoned docs but still skips
+    terminal 'skipped' docs; a later success appends a 'processed' row that
+    clears the error count in read_state's reducer, while a renewed failure
+    just pushes the count higher (still poisoned).
+
+    retry_doc_ids is a narrower, surgical override on top of that: an explicit
+    doc_id allowlist that re-attempts EXACTLY those docs regardless of
+    skipped/poisoned status (but never a doc already 'processed' — a genuine
+    success is never re-attempted). Unlike retry_poisoned, which churns
+    through the WHOLE poisoned population, this is for 'these specific docs
+    were terminally skipped before a parser fix existed, and are now known-
+    processable' — see backfill's RETRY_DOC_IDS / ADR 011."""
     skipped = state.get("skipped", {})
+    retry_doc_ids = retry_doc_ids or set()
     out = []
     for d in docs:
         did = d["doc_id"]
-        if did in state["processed"] or did in skipped:
+        if did in state["processed"]:
+            continue
+        if did in retry_doc_ids:
+            out.append(d)
+            continue
+        if did in skipped:
             continue
         if not retry_poisoned and state["errors"].get(did, 0) >= MAX_ERRORS_PER_DOC:
             continue
@@ -97,8 +123,11 @@ def run() -> int:
         return 1
 
     retry_poisoned = _retry_poisoned()
-    todo = select_todo(docs, state, retry_poisoned)
+    retry_doc_ids = _retry_doc_ids()
+    todo = select_todo(docs, state, retry_poisoned, retry_doc_ids)
     mode = " (retrying poisoned)" if retry_poisoned else ""
+    if retry_doc_ids:
+        mode += f" (retrying {len(retry_doc_ids)} specific doc_id(s))"
     print(f"[backfill] {len(docs)} total, {len(state['processed'])} done, {len(todo)} remaining{mode}.")
     if not todo:
         print("[backfill] Backfill complete — nothing to do.")

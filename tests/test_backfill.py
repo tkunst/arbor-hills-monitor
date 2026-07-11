@@ -79,3 +79,43 @@ def test_retry_poisoned_env_parsing(monkeypatch):
         assert bf._retry_poisoned() is False
     monkeypatch.delenv("RETRY_POISONED", raising=False)
     assert bf._retry_poisoned() is False  # unset -> normal (skip poison)
+
+
+# --- ADR 011: RETRY_DOC_IDS, the targeted retroactive-retry override ---
+
+
+def test_retry_doc_ids_env_parsing(monkeypatch):
+    monkeypatch.setenv("RETRY_DOC_IDS", " 111, 222 ,333")
+    assert bf._retry_doc_ids() == {"111", "222", "333"}
+    monkeypatch.setenv("RETRY_DOC_IDS", "")
+    assert bf._retry_doc_ids() == set()
+    monkeypatch.delenv("RETRY_DOC_IDS", raising=False)
+    assert bf._retry_doc_ids() == set()  # unset -> no override
+
+
+def test_select_todo_retry_doc_ids_bypasses_skipped():
+    # The exact ADR 011 scenario: a doc terminally 'skipped' before the
+    # .msg/.docx extractor existed is now known-processable and named
+    # explicitly — it alone should re-enter todo, everything else obeys the
+    # normal gates unchanged.
+    docs = _docs("a", "b", "c")
+    state = _state(skipped=["a"], errors={"b": ME})
+    todo = [d["doc_id"] for d in bf.select_todo(docs, state, retry_doc_ids={"a"})]
+    assert todo == ["a", "c"]  # a retried (named), b still poisoned+not-named, c fresh
+
+
+def test_select_todo_retry_doc_ids_never_reincludes_processed():
+    # A genuine success is never re-attempted, even if explicitly named —
+    # retry_doc_ids is for terminally-skipped docs, not a re-run-everything switch.
+    docs = _docs("a", "b")
+    state = _state(processed=["a"])
+    todo = [d["doc_id"] for d in bf.select_todo(docs, state, retry_doc_ids={"a", "b"})]
+    assert todo == ["b"]
+
+
+def test_select_todo_retry_doc_ids_composes_with_retry_poisoned():
+    docs = _docs("a", "b", "c")
+    state = _state(skipped=["a"], errors={"b": ME})
+    todo = [d["doc_id"] for d in bf.select_todo(
+        docs, state, retry_poisoned=True, retry_doc_ids={"a"})]
+    assert todo == ["a", "b", "c"]  # a via retry_doc_ids, b via retry_poisoned, c fresh

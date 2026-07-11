@@ -22,6 +22,10 @@ on:
         description: "Re-attempt poisoned docs (>=3 failures) this run — use after raising classification_max_tokens"
         type: boolean
         default: false
+      retry_doc_ids:
+        description: "Comma-separated nSITE doc_ids to retry regardless of skipped/poisoned status (ADR 011 one-time backfills)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -63,4 +67,6 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           # Default false; set true via "Run workflow" to re-attempt poison docs.
           RETRY_POISONED: ${{ inputs.retry_poisoned }}
+          # Default empty; set via "Run workflow" for a one-time targeted retry.
+          RETRY_DOC_IDS: ${{ inputs.retry_doc_ids }}
         run: python backfill.py
