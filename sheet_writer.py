@@ -479,6 +479,11 @@ def read_state(service, sheet_id: str) -> dict:
         if status == "processed":
             state["processed"][doc_id] = _load_json(r[4] if len(r) > 4 else "", {})
             state["errors"].pop(doc_id, None)
+            # A doc can go skipped -> processed via a targeted RETRY_DOC_IDS
+            # retry (ADR 011) after a parser fix makes it processable — clear
+            # the now-stale 'skipped' entry so state doesn't claim both
+            # outcomes for the same doc indefinitely.
+            state["skipped"].pop(doc_id, None)
         elif status == "skipped":
             # Terminal: an unprocessable-source doc, made visible as a stub feed
             # row instead of being silently dropped. Not "processed" (never

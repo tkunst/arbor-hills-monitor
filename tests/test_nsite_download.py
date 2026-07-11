@@ -207,3 +207,28 @@ def test_genuinely_unsupported_content_still_poisons(tmp_path, monkeypatch):
     )
     with pytest.raises(RuntimeError, match="download failed"):
         nc.download_pdf(sess, _doc(f"{nc.DOWNLOAD_FILE_BASE}/12345"), dest)
+
+
+def test_empty_doc_url_still_reaches_native_extraction_fallback(tmp_path, monkeypatch):
+    # Bug found 2026-07-11: _normalize() falls back to the RENDER endpoint
+    # (not the native one) when a record's own docMgmtDocurl is empty, so
+    # primary == render and the old two-URL list never even fetched a
+    # non-PDF body to hand to the extractor. native_download_url(doc_id) is
+    # now tried explicitly as a third source.
+    monkeypatch.setattr(nc.time, "sleep", lambda *_: None)
+    docx_bytes = _make_docx("Un-permitted discharge finding.")
+    dest = str(tmp_path / "out.pdf")
+    # doc_url == the render endpoint itself (the empty-docMgmtDocurl case);
+    # downloadpdf 400s (as it does for .msg/.docx); the native downloadfile
+    # endpoint — never explicitly requested before this fix — has the goods.
+    sess = _Session({
+        "downloadpdf/12345": _Resp(b"", 400),
+        "downloadfile/12345": _Resp(docx_bytes),
+    })
+    result = nc.download_pdf(sess, _doc(f"{nc.DOWNLOAD_BASE}/12345"), dest)
+    assert result == dest
+    # downloadpdf 400s (retried 3x before moving on), then the native
+    # downloadfile endpoint — previously never reached — gets called.
+    assert f"{nc.DOWNLOAD_FILE_BASE}/12345" in sess.calls
+    with open(dest, "rb") as f:
+        assert f.read().startswith(b"%PDF")

@@ -117,6 +117,18 @@ def test_skipped_event_is_terminal_and_clears_errors():
     assert "doc-s" not in state["processed"]   # skipped != classified
 
 
+def test_processed_after_skipped_clears_skipped():
+    # ADR 011: a targeted RETRY_DOC_IDS retry can turn a terminally-skipped
+    # doc into a genuine success once a parser fix makes it processable.
+    # 'skipped' must not linger alongside 'processed' for the same doc.
+    svc = FakeSheets()
+    sw.mark_skipped(svc, "SID", "doc-r", {"reason": "was .msg, unsupported"}, "2026-07-07T00:00:00")
+    sw.mark_processed(svc, "SID", "doc-r", {"severity": "notable"}, "2026-07-11T00:00:00")
+    state = sw.read_state(svc, "SID")
+    assert "doc-r" in state["processed"]
+    assert "doc-r" not in state["skipped"]     # the stale skip entry is cleared
+
+
 def test_meta_round_trips_and_defaults_are_isolated():
     svc = FakeSheets()
     state = sw.read_state(svc, "SID")

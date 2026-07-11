@@ -97,6 +97,46 @@ same outcome as before this module existed.
    4 photos — they're genuine site photos with no legible text in them, not
    a pipeline bug.)
 
+### Four more bugs found in code review (2026-07-11, before merge)
+
+An independent review of this PR (not by the same session that wrote it)
+found four more real gaps, all fixed before merge:
+
+3. **`.docx` attachments on a `.msg` were silently garbled or dropped.**
+   `_add_attachment()` special-cased `.pdf`, images, and `.xls`/`.xlsx` only;
+   a `.docx` attachment (a plausible EGLE attachment type) fell through to
+   the generic best-effort UTF-8 decode, which — reproduced directly — turns
+   real ZIP+XML bytes into ~300+ chars of binary noise that clears the
+   20-char "is this real content" threshold and gets inserted into the
+   synthesized PDF as if it were genuine text. Fixed by routing `.docx`
+   attachments through the same `_docx_body_text()` extraction a top-level
+   `.docx` document already uses.
+4. **A merged PDF attachment that's itself a scan never triggered the
+   proactive-OCR fix.** The PDF-merge branch always returned `needs_ocr =
+   False`, even when the merged pages carry no text layer — the same
+   mixed-document blind spot as bug 2 above, just not extended to merged PDF
+   pages. Fixed with `_pdf_has_image_only_pages()`, the same imageonly-page
+   heuristic `classify()` uses, checked before the merge.
+5. **A doc retried successfully via `RETRY_DOC_IDS` stayed in both
+   `state["processed"]` and `state["skipped"]` forever** (`sheet_writer.
+   read_state()`'s `"processed"` branch never cleared a stale `"skipped"`
+   entry for the same doc_id) — inert today (every real consumer checks
+   `processed` first or safely ORs the two), but a latent trap for future
+   code that treats `skipped` as "never processed." Fixed by clearing
+   `state["skipped"]` when a `"processed"` event lands for the same doc_id.
+6. **`download_pdf()`'s extraction fallback depended on an unverified
+   assumption about `doc_url`.** `_normalize()` defaults `doc_url` to the
+   *render* endpoint (not the native one) when a record's `docMgmtDocurl` is
+   empty — in that case the old two-URL list (`primary`, `render`) deduped
+   to one entry, `downloadpdf` 400s, and `synthesize_pdf()` never even got a
+   non-PDF body to try. Fixed by adding `native_download_url(doc_id)` as an
+   explicit third fallback URL (deduped against the other two).
+
+Also fixed as part of the same pass: an image-attachment `insert_image()`
+failure left an orphaned blank page in the synthesized PDF (now cleaned up);
+per-attachment extraction failures were logged nowhere (now printed,
+matching the OCR-failure branch's existing logging).
+
 ### Retroactive backfill (`RETRY_DOC_IDS`)
 
 `state["skipped"]` is terminal — no existing code path un-skips a doc, and

@@ -18,7 +18,10 @@ real OLE2-but-not-msg specimen during design), which this module treats as
 existed.
 
 .msg attachments are recursed into: a PDF attachment has its actual pages
-merged in (fitz.insert_pdf) rather than re-extracted as text; .xls/.xlsx
+merged in (fitz.insert_pdf) rather than re-extracted as text — and if those
+merged pages are themselves a scan (no text layer), that's detected too, so
+the doc still gets OCR'd proactively; a .docx attachment is routed through
+the same _docx_body_text() extraction as a top-level .docx; .xls/.xlsx
 attachments become a text table (xlrd / openpyxl); image attachments are
 placed as a raster page and OCR'd proactively by synthesize_pdf() itself
 (see its docstring for why — a mixed text+image doc can't safely rely on
@@ -171,19 +174,37 @@ def _msg_to_pdf(data: bytes) -> tuple[fitz.Document, bool]:
         )
         _add_text_page(doc, envelope)
         for att in msg.attachments:
+            name = getattr(att, "longFilename", None) or getattr(att, "shortFilename", None) or "?"
             try:
                 if _add_attachment(doc, att):
                     needs_ocr = True
-            except Exception:  # noqa: BLE001 — one bad attachment must not sink the whole doc
+            except Exception as e:  # noqa: BLE001 — one bad attachment must not sink the whole doc
+                print(f"[poison-doc-extractor] attachment {name!r} skipped: {e}")
                 continue
     if len(doc) == 0:
         raise ExtractionError("msg produced no pages")
     return doc, needs_ocr
 
 
+def _pdf_has_image_only_pages(attach: fitz.Document) -> bool:
+    """True if any page has (near-)no text but does carry an image — the same
+    imageonly_page heuristic egle_doc_parser.classify() uses, checked here so
+    a merged PDF attachment that's itself a scan gets the same proactive-OCR
+    treatment as a raw image attachment (found 2026-07-11: the PDF-merge
+    branch previously always reported needs_ocr=False, so a scanned PDF
+    attachment inside a doc that otherwise reads has_text overall could have
+    its content silently skipped, same failure class as synthesize_pdf()'s
+    main docstring describes for image attachments)."""
+    for page in attach:
+        if len(page.get_text().strip()) < 20 and len(page.get_images(full=False)) >= 1:
+            return True
+    return False
+
+
 def _add_attachment(doc: fitz.Document, att) -> bool:
-    """Add one .msg attachment to `doc`. Returns True if a raster image page
-    was inserted (the needs_ocr signal synthesize_pdf acts on)."""
+    """Add one .msg attachment to `doc`. Returns True if the attachment needs
+    the proactive OCR pass synthesize_pdf() runs (a raster image page, or a
+    merged PDF attachment that's itself image-only)."""
     name = (getattr(att, "longFilename", None) or getattr(att, "shortFilename", None) or "").lower()
     raw = getattr(att, "data", None)
     if not isinstance(raw, (bytes, bytearray)) or not raw:
@@ -192,13 +213,24 @@ def _add_attachment(doc: fitz.Document, att) -> bool:
 
     if name.endswith(".pdf") or raw[:4] == b"%PDF":
         with fitz.open(stream=raw, filetype="pdf") as attach:
+            needs_ocr = _pdf_has_image_only_pages(attach)
             doc.insert_pdf(attach)
-        return False
+        return needs_ocr
 
     if name.endswith(_IMAGE_EXTS):
         page = doc.new_page()
-        page.insert_image(page.rect, stream=raw)
+        try:
+            page.insert_image(page.rect, stream=raw)
+        except Exception:
+            doc.delete_page(page.number)  # don't leave an orphaned blank page
+            raise
         return True
+
+    if name.endswith(".docx") or sniff_format(raw) == "docx":
+        text = _docx_body_text(raw)
+        if text.strip():
+            _add_text_page(doc, f"--- attachment: {name} ---\n{text}")
+        return False
 
     if name.endswith((".xls", ".xlsx")):
         table = _spreadsheet_to_text(raw, name)
@@ -207,7 +239,12 @@ def _add_attachment(doc: fitz.Document, att) -> bool:
         return False
 
     # Best-effort text for anything else (e.g. Outlook's tiny inline-image
-    # content-ID .txt sidecars) — skip if it's not real content.
+    # content-ID .txt sidecars) — skip if it's not real content. Content-
+    # sniffed as ZIP/OLE2 but not recognized as .docx/.msg above would decode
+    # to binary noise here; the >=20-char threshold doesn't reliably filter
+    # that out, but there's no further format this module understands to
+    # route it to instead — same "unsupported, degrade rather than crash"
+    # contract as the top-level sniff_format().
     text = raw.decode("utf-8", errors="ignore").strip()
     if len(text) >= 20:
         _add_text_page(doc, f"--- attachment: {name} ---\n{text}")

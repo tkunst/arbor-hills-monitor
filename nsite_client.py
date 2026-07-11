@@ -187,12 +187,24 @@ def download_pdf(session: requests.Session, doc: dict, dest_path: str, timeout: 
     recursed attachments for .msg; body text for .docx). Legacy Word .doc has
     no render AND no extractor here — those still fail and accrue a poison
     strike, which is correct: the monitor can't read them without a .doc
-    converter. See ADR 011 / the 2026-07-07 handoff."""
+    converter. See ADR 011 / the 2026-07-07 handoff.
+
+    `native_download_url(doc_id)` (the same `downloadfile/<id>` endpoint used
+    for stub links) is included explicitly as a final source, not just relied
+    on implicitly via `doc_url` — `_normalize()` falls back to the RENDER
+    endpoint (not the native one) when a record's own `docMgmtDocurl` is
+    empty, which would otherwise mean the extraction fallback above never
+    even gets a non-PDF body to work with for that record."""
     doc_id = doc["doc_id"]
     primary = doc["doc_url"]
     render = f"{DOWNLOAD_BASE}/{doc_id}"
-    # The record's own link first, then the render endpoint (unless identical).
-    urls = [primary] + ([render] if render != primary else [])
+    native = f"{DOWNLOAD_FILE_BASE}/{doc_id}"
+    # The record's own link first, then the render endpoint, then the native
+    # file endpoint explicitly — deduped, since these often coincide.
+    urls = []
+    for u in (primary, render, native):
+        if u not in urls:
+            urls.append(u)
     referer = f"{NSITE_BASE}/nsite/DEFAULT/map/results"
     last_exc: Optional[Exception] = None
     last_non_pdf_content: Optional[bytes] = None

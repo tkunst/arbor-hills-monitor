@@ -188,6 +188,42 @@ def test_msg_pdf_attachment_pages_are_merged(monkeypatch, tmp_path):
     doc.close()
 
 
+def _make_scanned_pdf_bytes() -> bytes:
+    """A PDF page with an image and no text layer — a stand-in for a real
+    scanned attachment (e.g. a photographed inspection form)."""
+    doc = fitz.open()
+    page = doc.new_page()
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 60, 60))
+    pix.clear_with(120)
+    page.insert_image(page.rect, pixmap=pix)
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def test_msg_scanned_pdf_attachment_sets_needs_ocr(monkeypatch):
+    # Bug found 2026-07-11: the PDF-merge branch always returned False,
+    # so a scanned (image-only) PDF attachment never triggered the proactive
+    # OCR pass — its content could be silently lost in a doc that otherwise
+    # reads has_text overall, the same failure class as a raw image
+    # attachment, just not caught for merged PDF pages.
+    fake = _FakeMsg(attachments=[_FakeAttachment("scan.pdf", _make_scanned_pdf_bytes())])
+    _patch_msg(monkeypatch, fake)
+    doc, needs_ocr = pde._msg_to_pdf(pde.OLE2_MAGIC + b"...")
+    assert needs_ocr is True
+    doc.close()
+
+
+def test_msg_text_pdf_attachment_does_not_force_ocr(monkeypatch):
+    # A real text PDF attachment (the common case) must not spuriously
+    # trigger needs_ocr — ocrmypdf --skip-text would just be extra work.
+    fake = _FakeMsg(attachments=[_FakeAttachment("report.pdf", _make_pdf_bytes("Real text content here."))])
+    _patch_msg(monkeypatch, fake)
+    doc, needs_ocr = pde._msg_to_pdf(pde.OLE2_MAGIC + b"...")
+    assert needs_ocr is False
+    doc.close()
+
+
 def test_msg_image_attachment_sets_needs_ocr_and_is_ocrd(monkeypatch, tmp_path):
     # A tiny in-memory JPEG (solid color) via fitz — real image bytes, not a
     # stub, so insert_image + the real ocrmypdf binary both have something
@@ -248,6 +284,29 @@ def test_synthesize_pdf_ocr_failure_does_not_raise(monkeypatch, tmp_path):
     assert result == dest
 
 
+def test_msg_docx_attachment_extracts_real_text(monkeypatch, tmp_path):
+    # Bug found 2026-07-11: a .docx attachment previously fell through to the
+    # generic UTF-8-decode-raw-bytes branch, producing binary noise ("PK\x03
+    # \x04...word/document.xml...") instead of the actual letter text — and
+    # either got inserted as garbage or silently dropped depending on length.
+    # _docx_body_text() already existed for top-level .docx docs; attachments
+    # just never routed through it.
+    docx_bytes = _make_docx(["EGLE Compliance Communication CC-001168.",
+                              "Un-permitted discharge finding at the compost pond."])
+    fake = _FakeMsg(attachments=[_FakeAttachment("compliance_letter.docx", docx_bytes)])
+    _patch_msg(monkeypatch, fake)
+    dest = str(tmp_path / "out.pdf")
+    pde.synthesize_pdf(pde.OLE2_MAGIC + b"...", dest)
+
+    doc = fitz.open(dest)
+    full_text = "\n".join(p.get_text() for p in doc)
+    doc.close()
+    assert "Un-permitted discharge finding at the compost pond." in full_text
+    # The old failure mode: raw zip bytes decoded as text.
+    assert "PK\x03\x04" not in full_text
+    assert "word/document.xml" not in full_text
+
+
 def test_msg_xlsx_attachment_becomes_text_table(monkeypatch, tmp_path):
     import openpyxl
 
@@ -306,6 +365,32 @@ def test_msg_one_bad_attachment_does_not_sink_the_whole_doc(monkeypatch):
     # the envelope page must still come through.
     doc, needs_ocr = pde._msg_to_pdf(pde.OLE2_MAGIC + b"...")
     assert len(doc) == 1
+    doc.close()
+
+
+def test_msg_bad_attachment_failure_is_logged(monkeypatch, capsys):
+    # A skipped attachment used to fail completely silently — no way to tell
+    # from run logs which attachment failed or why.
+    class _ExplodingAttachment:
+        longFilename = "bad.pdf"
+        data = b"not actually a pdf despite the name"
+
+    fake = _FakeMsg(attachments=[_ExplodingAttachment()])
+    _patch_msg(monkeypatch, fake)
+    doc, needs_ocr = pde._msg_to_pdf(pde.OLE2_MAGIC + b"...")
+    doc.close()
+    out = capsys.readouterr().out
+    assert "bad.pdf" in out
+    assert "poison-doc-extractor" in out
+
+
+def test_msg_image_insert_failure_leaves_no_orphaned_blank_page(monkeypatch):
+    # A .jpg-named attachment whose bytes aren't actually a valid image must
+    # not leave a blank page behind when insert_image raises.
+    fake = _FakeMsg(attachments=[_FakeAttachment("photo.jpg", b"not actually image bytes")])
+    _patch_msg(monkeypatch, fake)
+    doc, needs_ocr = pde._msg_to_pdf(pde.OLE2_MAGIC + b"...")
+    assert len(doc) == 1  # envelope only — no orphaned blank page from the failed insert
     doc.close()
 
 
