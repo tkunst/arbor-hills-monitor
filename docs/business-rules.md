@@ -5,9 +5,9 @@
 > monitor's *decision logic* — the rules that decide classification, urgency,
 > alerting, scheduling, and eligibility — each with a `file:line` citation.
 > The **Notes / discrepancies** at the end are *candidates to verify*, not
-> confirmed bugs — **except Note 4 (the 0.0-years edge), which has been
-> code-verified as a real defect** (`wds_watcher.py:109`, `if yrs and yrs < floor`
-> — `0.0` is falsy, so "airspace exhausted" downgrades to `watch`). Otherwise not
+> confirmed bugs — **except Note 4 (the 0.0-years edge), which was code-verified
+> as a real defect and has since been FIXED** (PR #6 / `e90e994`, 2026-07-12;
+> `wds_watcher.py:109` is now `if yrs < floor`). Otherwise these Notes are not
 > yet human-reviewed: treat this as a map to check against the code, not gospel.
 
 Every rule cites the exact `file:line` read during extraction. Infrastructure
@@ -236,7 +236,7 @@ Each WDS collection has its own classifier; none touch the temperature-based `is
 
 ### WD-3 — Annual report: years-of-capacity-remaining below 3.0 = notable (R1)
 
-- **Given** an Annual Landfill Report with `Yrs Remaining End = 2.4` and floor 3.0; **When** classified; **Then** severity `notable`, R1 (airspace pressure). A new report with adequate capacity → `watch`. **See Note 4: an exact `0.0` reading is currently mis-classified as `watch`.**
+- **Given** an Annual Landfill Report with `Yrs Remaining End = 2.4` and floor 3.0; **When** classified; **Then** severity `notable`, R1 (airspace pressure). A new report with adequate capacity → `watch`. **An exact `0.0` reading (airspace exhausted) also classifies `notable` — fixed in PR #6 (`e90e994`); see Note 4.**
 - `wds_watcher.py:103-113`; parameter `config.yml:103`
 - threshold
 
@@ -457,7 +457,7 @@ No secrets appear in any rule parameter. Credentials (SMTP password, Anthropic k
 
 3. **The "131–145F = notable" tiering is model judgment, not a coded rule.** That band appears only inside the classifier prompt (`egle_doc_parser.py:202-210`); no deterministic threshold enforces it. `is_urgent` reads only 145. So a measured 140F reading is `notable` only if the model chose to say so. **Confidence: High.**
 
-4. **`_classify_annual` short-circuits on exactly 0.0 years remaining (CODE-VERIFIED DEFECT).** The guard is `if yrs and yrs < floor` (`wds_watcher.py:109`). In Python `0.0` is falsy, so an Annual Report stating **0.0 years of capacity remaining** — the single most R1-critical case (airspace exhausted) — skips the `notable` branch and returns `watch`. **Confidence: High** (logic explicit, re-read 2026-07-12). **Fix:** `if yrs is not None and yrs < floor:`. **SME question:** Does EGLE ever report exactly `0.0` as a real reading versus a missing-data sentinel? (A blank already raises in `float()` and is caught, so only a literal `0`/`0.0` hits this path.)
+4. **`_classify_annual` short-circuited on exactly 0.0 years remaining — FIXED (PR #6, `e90e994`, 2026-07-12).** The guard was `if yrs and yrs < floor` (`wds_watcher.py:109`); in Python `0.0` is falsy, so an Annual Report stating **0.0 years of capacity remaining** — the single most R1-critical case (airspace exhausted) — skipped the `notable` branch and returned `watch`. It is now `if yrs < floor`, which correctly fires `notable`/R1 on `0.0` and negatives (regression test `test_annual_zero_years_is_notable`). **SME question (still open):** Does EGLE ever report exactly `0.0` as a real reading versus a missing-data sentinel? (A blank already raises in `float()` and is caught, so only a literal `0`/`0.0` hits this path; the fix errs toward alerting on `0.0`, the safe default for a monitor.)
 
 5. **WDS urgent compliance vocabulary is substring-matched and may under-fire.** `_classify_compliance_action` fires urgent on substrings VIOLATION / PENALTY DEMAND / COMPLIANCE ORDER / CONSENT / CIVIL / CRIMINAL / ENFORCEMENT / FINAL MONETARY (`wds_watcher.py:136-138`). The config comment promises "assessed penalty = URGENT", and an assessed-penalty row not containing those literal substrings would fall through to `notable`. **Confidence: Medium.** **SME question:** Enumerate EGLE's actual `Compliance Action Type` values that should count as adverse, so the match list is complete.
 
