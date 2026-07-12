@@ -106,7 +106,9 @@ def _classify_annual(r, changed, floor=3.0):
     airspace pressure)."""
     try:
         yrs = float(_g(r, "Yrs Remaining End", "Yrs Remaining Start"))
-        if yrs and yrs < floor:
+        if yrs < floor:  # NOT `yrs and yrs < floor`: 0.0 is falsy, and 0.0
+                         # years (airspace exhausted) is the most R1-critical
+                         # signal — it must not short-circuit to watch.
             return "notable", "evidence", ["R1"]
     except (TypeError, ValueError):
         pass
