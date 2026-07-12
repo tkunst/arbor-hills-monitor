@@ -7,6 +7,7 @@ The fake mimics just the slice of the Sheets values API the state code uses:
   values().update(range="'TAB'!A2", body=...)  -> overwrites from the 2nd row down
 Each tab keeps a header row at index 0 so the A2-anchored ranges behave like the
 real API (header excluded from gets, preserved by appends/updates)."""
+import json
 import re
 
 import sheet_writer as sw
@@ -71,7 +72,7 @@ def test_empty_state_when_tabs_absent():
     assert state["processed"] == {}
     assert state["errors"] == {}
     assert state["pending_digest"] == []
-    assert state["mmpc_minutes_found"] == {}
+    assert state["wds_seen"] == {}
     assert state["last_run"] == ""
 
 
@@ -133,19 +134,19 @@ def test_meta_round_trips_and_defaults_are_isolated():
     svc = FakeSheets()
     state = sw.read_state(svc, "SID")
     state["pending_digest"].append({"document_name": "X"})
-    state["mmpc_minutes_found"]["2026-06-10"] = True
+    state["wds_snapshot_hashes"]["p1"] = "hashA"
     state["last_run"] = "2026-06-14T06:00:00"
     sw.write_meta(svc, "SID", state)
 
     reloaded = sw.read_state(svc, "SID")
     assert reloaded["pending_digest"] == [{"document_name": "X"}]
-    assert reloaded["mmpc_minutes_found"] == {"2026-06-10": True}
+    assert reloaded["wds_snapshot_hashes"] == {"p1": "hashA"}
     assert reloaded["last_run"] == "2026-06-14T06:00:00"
 
     # The module-level defaults must not have been mutated by the round trip.
     fresh = sw.read_state(FakeSheets(), "SID2")
     assert fresh["pending_digest"] == []
-    assert fresh["mmpc_minutes_found"] == {}
+    assert fresh["wds_snapshot_hashes"] == {}
 
 
 def test_read_meta_matches_read_state_meta_slice():
@@ -171,3 +172,37 @@ def test_read_meta_empty_when_tab_absent():
     assert meta["wds_seen"] == {}
     assert meta["wds_snapshot_hashes"] == {}
     assert meta["last_run"] == ""
+
+
+def test_removed_meta_key_clears_orphan_without_losing_live_state():
+    """Migration guard (ADR 013): a Sheet written by the OLD code has an extra
+    `mmpc_minutes_found` row, so the retired key sits BETWEEN live keys and its
+    removal shifts every later key up one — leaving a stale trailing `last_run`.
+    One write with the new (shorter) key set must (a) preserve every live key's
+    value, (b) return the FRESH last_run not the orphaned stale one, and (c) drop
+    the retired key entirely. This is what write_meta's fixed-span blanking buys."""
+    svc = FakeSheets()
+    # Seed the pre-ADR-013 layout: 5 data rows, each live key a distinct value,
+    # last_run deliberately stale so a positional mis-read would be visible.
+    svc._values._tabs[sw.TAB_META] = [
+        list(sw.META_HEADERS),
+        ["pending_digest", json.dumps([{"document_name": "old-item"}])],
+        ["mmpc_minutes_found", json.dumps({"2026-06-10": True})],  # retired key
+        ["wds_seen", json.dumps({"qmr": {"records": {"k": "h"}, "last_count": 2}})],
+        ["wds_snapshot_hashes", json.dumps({"p1": "oldhash"})],
+        ["last_run", json.dumps("2026-01-01T00:00:00")],           # STALE orphan
+    ]
+
+    # New code reads (retired key is ignored — not in _META_DEFAULTS), advances
+    # last_run, and writes back exactly once, as a real run would.
+    state = sw.read_state(svc, "SID")
+    assert "mmpc_minutes_found" not in state          # retired key never surfaces
+    state["last_run"] = "2026-07-12T06:00:00"
+    sw.write_meta(svc, "SID", state)
+
+    reloaded = sw.read_meta(svc, "SID")
+    assert reloaded["pending_digest"] == [{"document_name": "old-item"}]       # (a)
+    assert reloaded["wds_seen"] == {"qmr": {"records": {"k": "h"}, "last_count": 2}}
+    assert reloaded["wds_snapshot_hashes"] == {"p1": "oldhash"}
+    assert reloaded["last_run"] == "2026-07-12T06:00:00"                       # (b)
+    assert "mmpc_minutes_found" not in reloaded                                 # (c)

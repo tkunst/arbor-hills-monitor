@@ -28,9 +28,10 @@ this workflow runs on schedule but no-ops every time.
   - Configured but the OAuth token is dead: loud failure, exit 1 — a silent
     skip would let the mirror fall behind invisibly.
 
-Runs on its own schedule (see .github/workflows/mmpc-archive.yml). The existing
-mmpc_watcher.py email-reminder flow in watcher.py is left untouched — Trisha's
-call whether to retire it now that this exists (see ADR 010's Alternatives).
+Runs on its own schedule (see .github/workflows/mmpc-archive.yml). This is now
+the SOLE MMPC path: the old mmpc_watcher.py "minutes likely posted, go check"
+reminder in watcher.py was retired once this existed (ADR 013), so Mirror D both
+finds and archives every published MMPC PDF with no manual download step left.
 """
 from __future__ import annotations
 

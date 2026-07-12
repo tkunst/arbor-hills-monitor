@@ -183,13 +183,24 @@ _TAB_HEADERS = {
 # — well under the 50k-char cell cap. Present in defaults so read_state loads
 # them and write_meta persists them with zero extra plumbing, even while Stream C
 # is disabled (they just stay {}).
+# NOTE on removing a key: the _meta tab is written positionally (write_meta
+# below), so dropping a key here without care would leave a now-orphaned trailing
+# row that read_meta could pick up as a stale value for a *different* key. That's
+# why write_meta blanks a fixed row span (_META_CELL_ROWS) rather than only the
+# live keys. The retired `mmpc_minutes_found` key (MMPC "go check" reminder,
+# ADR 013) was removed this way — its old row is cleared on the next write.
 _META_DEFAULTS = {
     "pending_digest": [],
-    "mmpc_minutes_found": {},
     "wds_seen": {},
     "wds_snapshot_hashes": {},
     "last_run": "",
 }
+
+# write_meta overwrites this many _meta rows every time (live keys first, blanks
+# after) so a key removed from _META_DEFAULTS can't leave a stale orphan row
+# behind. Comfortably above the historical max key count (was 5). Only ever grow
+# this; never shrink it below the largest key set the tab has held.
+_META_CELL_ROWS = 8
 
 
 # ---------------------------------------------------------------------------
@@ -462,8 +473,8 @@ def rebuild_all_evidence_tab(service, sheet_id: str) -> None:
 
 
 def read_meta(service, sheet_id: str) -> dict:
-    """Read just the _meta singletons (pending_digest, mmpc_minutes_found,
-    wds_seen, wds_snapshot_hashes, last_run) — no _state scan. For a caller that
+    """Read just the _meta singletons (pending_digest, wds_seen,
+    wds_snapshot_hashes, last_run) — no _state scan. For a caller that
     only touches _meta (e.g. wds_archiver.py, scripts/dump_wds_historical.py),
     read_state()'s full _state event-log scan is pure overhead. Also lets such a
     caller re-read FRESH right before each write_meta() call instead of writing
@@ -472,6 +483,8 @@ def read_meta(service, sheet_id: str) -> dict:
     clobbered, since write_meta() always overwrites every key at once."""
     state = {k: _copy_default(k) for k in _META_DEFAULTS}
     for r in _tab_rows(service, sheet_id, TAB_META, "A2:B"):
+        if not r:
+            continue  # a blank padding row (write_meta clears orphans) — skip
         key = r[0]
         if key in _META_DEFAULTS and len(r) > 1 and r[1]:
             state[key] = _load_json(r[1], _copy_default(key))
@@ -482,7 +495,7 @@ def read_state(service, sheet_id: str) -> dict:
     """Reconstruct the processing-state dict by reducing the _state event log and
     the _meta singletons. Returns the same shape the old Drive JSON state did:
     {processed: {doc_id: payload}, errors: {doc_id: count},
-     pending_digest: [...], mmpc_minutes_found: {...}, last_run: "..."}.
+     pending_digest: [...], wds_seen: {...}, last_run: "..."}.
 
     _state is append-only and chronological, so a doc's 'error' rows always
     precede its 'processed' row: we count errors as we go and clear them when the
@@ -555,14 +568,22 @@ def write_stub_row(service, sheet_id: str, metadata: dict, link: str, reason: st
 def write_meta(service, sheet_id: str, state: dict) -> None:
     """Persist each _meta singleton as one JSON cell. Each stays far under the
     50k-char cell cap — but for a different reason per key: pending_digest is
-    cleared every Sunday; mmpc_minutes_found and last_run are tiny; wds_seen is
-    bounded by record count (~420 short id/hash pairs, grows only as EGLE files
-    new records). That's unlike the 754-entry processed map, which is why per-doc
-    state is rows in _state and these singletons are cells in _meta."""
+    cleared every Sunday; last_run is tiny; wds_seen is bounded by record count
+    (~420 short id/hash pairs, grows only as EGLE files new records). That's
+    unlike the 754-entry processed map, which is why per-doc state is rows in
+    _state and these singletons are cells in _meta.
+
+    We overwrite a fixed _META_CELL_ROWS-row span (live keys first, then blank
+    rows) rather than just the live keys, so a key removed from _META_DEFAULTS
+    can't leave a stale trailing row that read_meta would later mis-read as
+    another key's value (see the _META_DEFAULTS note; ADR 013 removed one)."""
     rows = [
         [k, json.dumps(state.get(k, _copy_default(k)), sort_keys=True)]
         for k in _META_DEFAULTS
     ]
+    # Pad to a fixed span so any orphan rows from a since-removed key are blanked.
+    while len(rows) < _META_CELL_ROWS:
+        rows.append(["", ""])
     service.spreadsheets().values().update(
         spreadsheetId=sheet_id,
         range=f"'{TAB_META}'!A2",
