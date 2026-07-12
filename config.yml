@@ -167,6 +167,33 @@ mmpc_archive:
   enabled: true
   category_id: 72
 
+# --- PFAS page-watch (ADR 012, added 2026-07-12) ---
+# OFF BY DEFAULT. A lightweight content-hash watch on EGLE's PFAS-investigation
+# page(s) for Arbor Hills — prose EGLE edits in place when the investigation
+# moves, with no structured feed or per-record PDFs to parse. When enabled,
+# pfas_watcher.py fetches each page, isolates its <main> content (ignoring the
+# Sitecore theme cache-busters that rotate on every state-wide redeploy — see
+# pfas_client.py for why a whole-page hash would false-alarm constantly), hashes
+# it, and emails an alert (with a visible-text diff) when it changes vs. the last
+# snapshot in the "PFAS Page Watch" tab. The FIRST sighting baselines silently.
+#
+# ACTIVATION — same three-step pattern as Stream C / Mirror D:
+#   1. review + merge,
+#   2. the first enabled run just baselines every page (records a hash, alerts on
+#      none) — no seed script needed,
+#   3. set enabled: true here and commit.
+# Until enabled: true is on main, pfas-watch.yml runs on schedule but
+# pfas_watcher._should_run() makes every run a quiet no-op.
+pfas:
+  enabled: false
+  # Minimum <main> visible-text length for a fetch to count as the real page; a
+  # shorter body is treated as a bad fetch / bot-wall error page and skipped,
+  # never diffed into a false "changed" alert.
+  min_content_chars: 200
+  pages:
+    - label: "Arbor Hills Landfill PFAS investigation"
+      url: "https://www.michigan.gov/pfasresponse/investigations/sites-aoi/washtenaw-county/arbor-hills-landfill"
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 alert_recipients:

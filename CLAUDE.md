@@ -25,6 +25,10 @@ external users but no sensitive data). Public repo.
 - `email_alerts.py` — SMTP urgent alerts + weekly digest; urgency is pure.
 - `backfill.py` — nightly batch of 50, self-terminating, resumable.
 - `watcher.py` — daily new-doc check + MMPC + alerts.
+- `pfas_client.py` — content-hash normalizer for EGLE's PFAS pages (isolates
+  `<main>`, ignores Sitecore theme cache-busters). Pure; stdlib-only.
+- `pfas_watcher.py` — daily page-watch: alerts on any change vs. the last
+  snapshot in the `PFAS Page Watch` tab. Gated on `pfas.enabled`. See ADR 012.
 
 ## Forbidden patterns (do not do these)
 

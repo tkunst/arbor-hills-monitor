@@ -42,6 +42,11 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
 5. **Alerts** (SMTP): urgent → same-day email; procedural + everything else →
    weekly Sunday digest. Recipients in `config.yml` (edit the list, no code
    change).
+6. **PFAS page-watch** (daily, optional — `pfas.enabled: true`): a content-hash
+   watch on EGLE's PFAS-investigation page for Arbor Hills (prose EGLE edits in
+   place — no feed to parse). Emails a diff when the page's `<main>` content
+   changes, ignoring the site's rotating theme cache-busters. Off by default; see
+   `docs/decisions/012-pfas-page-watch.md` for activation.
 
 ## Risk register (R1–R8)
 

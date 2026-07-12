@@ -101,6 +101,12 @@ TAB_WDS_SNAPSHOTS = "WDS Page Snapshots"
 # as the WDS tabs above, so the Sheet gains no empty tab until mmpc_archive is
 # actually enabled/run.
 TAB_MMPC_ARCHIVE = "MMPC Archived Files"
+# PFAS page-watch (ADR 012) — same on-demand policy: no tab until the watch runs.
+# This tab is BOTH the human-readable change log AND the watch's state: the most
+# recent row per URL holds the last content hash + normalized text, so change
+# detection needs no _meta key (append-only ⇒ race-free, unlike the _meta
+# singletons every other job must not write concurrently). See pfas_watcher.py.
+TAB_PFAS = "PFAS Page Watch"
 # Unified view across BOTH Evidence-by-Risk tabs: one row per (risk, evidence
 # item) regardless of source, so filtering/sorting by Risk shows everything —
 # not just whichever portal's own tab you happened to open. Not itself WDS
@@ -144,6 +150,16 @@ WDS_SNAPSHOT_HEADERS = [
 MMPC_ARCHIVE_HEADERS = [
     "File ID", "Meeting Date", "Type", "Document Name",
     "Event ID", "Archive Link", "Archived At",
+]
+# PFAS page-watch (ADR 012). One row per observed state of a watched page —
+# "baseline" (first sighting, silent) or "changed" (fires an alert). The last
+# column carries the full normalized content: it's what next run diffs against
+# and a durable dated snapshot of what the page said (the honest "snapshot" — no
+# Drive/OAuth needed, well under the 50k-char cell cap for an ~8 KB page). It's
+# last so the human-facing columns read cleanly to its left.
+PFAS_SNAPSHOT_HEADERS = [
+    "Date", "Page", "URL", "Change", "Content Hash", "Chars",
+    "Note", "Fetched At", "Normalized Text",
 ]
 
 _TAB_HEADERS = {
@@ -738,4 +754,56 @@ def append_mmpc_archive_row(
     append_rows(service, sheet_id, TAB_MMPC_ARCHIVE, [[
         file_id, meeting_date, doc_type, document_name,
         event_id, archive_link, archived_at,
+    ]])
+
+
+# ---------------------------------------------------------------------------
+# PFAS page-watch (ADR 012) — the tab is the state (append-only ⇒ race-free)
+# ---------------------------------------------------------------------------
+
+
+def ensure_pfas_tabs(service, sheet_id: str) -> None:
+    """Create the PFAS Page Watch tab if missing and reconcile its header row on
+    every run (same self-healing policy as ensure_mmpc_tabs()). Called only from
+    pfas_watcher.py, so the tab doesn't appear until the watch actually runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_PFAS not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_PFAS}}}]},
+        ).execute()
+    _set_header(service, sheet_id, TAB_PFAS, PFAS_SNAPSHOT_HEADERS)
+
+
+def last_pfas_snapshot(service, sheet_id: str, url: str) -> tuple[str, str] | None:
+    """Return (content_hash, normalized_text) from the most recent row for `url`,
+    or None if the page has never been snapshotted. This is the change-detection
+    state: a None means 'baseline this page', and a hash mismatch means 'changed'.
+    Reading the last matching row (not a _meta cell) is what makes the watch
+    race-free — the tab is append-only, so no concurrent job can clobber it the
+    way _meta singletons get clobbered. Rows are appended chronologically, so the
+    last URL match is the latest snapshot."""
+    latest = None
+    for r in _tab_rows(service, sheet_id, TAB_PFAS, "A2:I"):
+        if len(r) > 2 and r[2] == url:
+            latest = r
+    if latest is None:
+        return None
+    content_hash = latest[4] if len(latest) > 4 else ""
+    text = latest[8] if len(latest) > 8 else ""
+    return content_hash, text
+
+
+def append_pfas_snapshot_row(
+    service, sheet_id: str, date: str, page: str, url: str, change: str,
+    content_hash: str, chars: int, note: str, fetched_at: str, normalized_text: str,
+) -> None:
+    """Append one PFAS Page Watch row. Written BEFORE the change email is sent
+    (durable record first, alert best-effort second — same crash-safe ordering as
+    the rest of the monitor: a kill after the row but before the email loses the
+    alert, never the record, and never re-fires next run since the row already
+    advances the stored hash)."""
+    append_rows(service, sheet_id, TAB_PFAS, [[
+        date, page, url, change, content_hash, chars, note, fetched_at, normalized_text,
     ]])
