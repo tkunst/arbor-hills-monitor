@@ -62,7 +62,13 @@ _BLOCK_RE = re.compile(
 _TAG_RE = re.compile(r"<[^>]+>")
 _INTRALINE_WS_RE = re.compile(r"[ \t\r\f\v]+")
 
-_LINK_SENTINEL = "\n\x00LINKS\x00\n"
+# Separates the visible-text half from the link-paths half of a normalized
+# content string. PRINTABLE on purpose: this string is stored verbatim in a
+# Google Sheets cell (the "Normalized Text" column, the diff basis for next run),
+# and the Sheets API rejects NULL/control characters — a control-char sentinel
+# would 400 the very first baseline write (a bug the mocked tests can't see). It
+# only needs to never occur in real page prose or a URL, which this doesn't.
+_LINK_SENTINEL = "\n[pfas-watch:links]\n"
 
 
 class PFASFetchError(RuntimeError):
