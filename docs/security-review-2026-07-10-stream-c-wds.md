@@ -9,6 +9,7 @@ No HIGH or MEDIUM confidence security findings identified in this PR.
 **Scope reviewed:** `.github/workflows/wds-archive.yml`, `archive_client.py`, `config.yml`, `scripts/dump_wds_historical.py`, `scripts/seed_wds_state.py`, `sheet_writer.py`, `watcher.py`, `wds_archiver.py`, `wds_client.py`, `wds_watcher.py`, plus `email_alerts.py` as a downstream sink.
 
 **Key data-flow paths traced** (untrusted WDS portal content → sinks):
+
 - WDS-scraped field values → Google Sheets writes: all call sites use `valueInputOption="RAW"`, which the Sheets API stores as literal text (never formula-evaluated) — no formula-injection path.
 - WDS-scraped field values → email alert subjects/bodies: tested CRLF header-injection payloads against the `email.message.EmailMessage` construction used here — it raises `ValueError` on embedded CRLF rather than emitting forged headers, and this is caught by the existing exception handling in `wds_watcher.check_wds`.
 - Link construction (`wds_link()`): built from `config.yml`'s trusted `site_id`, never from scraped content — no injection surface.
