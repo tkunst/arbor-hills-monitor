@@ -185,7 +185,7 @@ mmpc_archive:
 # Until enabled: true is on main, pfas-watch.yml runs on schedule but
 # pfas_watcher._should_run() makes every run a quiet no-op.
 pfas:
-  enabled: false
+  enabled: true                     # activated 2026-07-12 (Trisha) — see ADR 012
   # Minimum <main> visible-text length for a fetch to count as the real page; a
   # shorter body is treated as a bad fetch / bot-wall error page and skipped,
   # never diffed into a false "changed" alert.
