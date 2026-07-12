@@ -57,7 +57,7 @@ DOMAIN = {
     "watcher": "orchestration", "backfill": "orchestration", "archiver": "orchestration",
     "wds_archiver": "orchestration",   # nightly WDS page-snapshot runner (ADR 009)
     # Ingestion — one client per external source (the three monitoring streams)
-    "nsite_client": "ingestion", "mmpc_watcher": "ingestion",
+    "nsite_client": "ingestion", "mmpc_client": "ingestion",
     "wds_watcher": "ingestion", "wds_client": "ingestion",
     # Document processing & risk
     "egle_doc_parser": "processing", "risk_register": "processing",
@@ -106,7 +106,7 @@ DATA_EDGES = [
     ("archive_client", "ds:drive-archive", "write"),
     ("nsite_client", "ds:nsite", "read"),
     ("wds_client", "ds:wds", "read"),
-    ("mmpc_watcher", "ds:mmpc", "read"),
+    ("mmpc_client", "ds:mmpc", "read"),
     ("email_alerts", "ds:smtp", "write"),
     ("egle_doc_parser", "ds:anthropic", "read"),   # sends doc, reads classification
     ("config_loader", "ds:config", "read"),
@@ -126,7 +126,7 @@ OBSERVATIONS = [
     "watcher.py is a single orchestration hub importing 10 of the ~14 runtime "
     "modules — a star topology and the daily run's single point of failure. "
     "Partly mitigated: the Stream C (WDS) step is wrapped in its own try/except "
-    "so a fault there can't sink the nSITE/MMPC path.",
+    "so a fault there can't sink the nSITE path.",
     "sheet_writer + the Conservancy Google Sheet is the data spine — the only "
     "read+write store, backing the append-only processing log (_state), the "
     "digest queue and all three streams' seen-sets (_meta cells). Single point "

@@ -2,6 +2,12 @@
 
 *Status: built — 2026-07-10 (`mmpc_archive.enabled: false` pending Trisha's review; see Activation).*
 
+> **Update 2026-07-12:** Mirror D is enabled, and the parallel MMPC *reminder*
+> flow it was built to replace has now been retired — see **ADR 013**. This
+> resolves residual risk #4 ("two MMPC systems run in parallel until Trisha
+> retires the old one") and the "`mmpc_watcher.py` … left untouched" notes below,
+> which are kept as the original 2026-07-10 record.
+
 ## Context
 
 The MMPC (Washtenaw County Materials Management Planning Committee) publishes

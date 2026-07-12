@@ -61,7 +61,7 @@ archive:
 # The daily watcher handles INCREMENTAL new filings only (normal volume is 0-5).
 # If it ever sees more unprocessed docs than this, the historical backlog is not
 # cleared yet: it DEFERS to the backfill job (processes no docs this run, still
-# runs MMPC + digest housekeeping) rather than stampeding hundreds of historical
+# runs digest housekeeping) rather than stampeding hundreds of historical
 # docs into the live feed and firing urgent alerts on years-old exceedances. The
 # daily schedule should stay disabled until backfill logs "Backfill complete"
 # anyway (see README); this cap is the belt-and-suspenders backstop.
@@ -106,45 +106,11 @@ wds:
   # of blasting the list (mirrors watcher.max_new_docs_per_run).
   max_new_wds_alerts_per_run: 20
 
-# --- MMPC (Washtenaw County Materials Management Planning Committee) ---
-# Deterministic schedule: 2nd Wednesday of every month, 10:00am, Washtenaw
-# County Learning Resource Center, Superior Room. We calculate meeting dates;
-# we do NOT scrape a calendar page.
-mmpc:
-  meeting_weekday: 2             # 0=Mon ... 2=Wed
-  meeting_week_of_month: 2       # 2nd occurrence
-  poll_start_days_after: 3       # start checking for minutes 3 days after meeting
-  poll_window_days: 10           # keep checking daily up to 10 days, then stop
-  # Authoritative published meeting dates — when present these OVERRIDE the
-  # 2nd-Wednesday rule above. The committee meets ">= quarterly unless otherwise
-  # noted": it skips months (no Nov 2026), moves some meetings off the 2nd
-  # Wednesday (Aug is the 19th = 3rd Wed), and cancels others — so the computed
-  # rule fires phantom/early reminders. List ONLY real (non-cancelled) meetings;
-  # refresh yearly from the WCMMPC schedule PDF. Source: "WCMMPC 2026 Meeting
-  # Schedule" (Apr 8 + May 20 CANCELLED; no November meeting).
-  meeting_dates:
-    - "2026-01-14"
-    - "2026-02-11"
-    - "2026-03-11"
-    - "2026-06-10"
-    - "2026-07-08"
-    - "2026-08-19"
-    - "2026-09-09"
-    - "2026-10-14"
-    - "2026-12-09"
-  # CivicClerk portal, MMPC category (category_id=72). Verified 2026-06-15.
-  # The public site is a JS single-page app with no server-rendered document
-  # links, so the watcher uses this URL as a REMINDER target: during each
-  # meeting's polling window it fires one "minutes likely posted, go check"
-  # email with this link, and Trisha does the manual download/upload.
-  #
-  # SUPERSEDED for the actual download by mmpc_archive below (ADR 010, added
-  # 2026-07-10): the SPA calls a public JSON API underneath
-  # (washtenawcomi.api.civicclerk.com) that enumerates every published file and
-  # streams its PDF directly — no scraping needed. This reminder flow is left
-  # running as-is (untouched, still tested) pending Trisha's decision on
-  # whether to retire it now that mmpc_archive does the real thing.
-  minutes_url: "https://washtenawcomi.portal.civicclerk.com/?category_id=72"
+# --- MMPC minutes reminder — RETIRED 2026-07-12 (ADR 013) ---
+# The old `mmpc:` block (2nd-Wednesday meeting-date math + a "minutes likely
+# posted, go check" reminder email, mmpc_watcher.py) was removed once Mirror D
+# below made it redundant: Mirror D downloads every published MMPC PDF directly,
+# so there is nothing left to remind about. See docs/decisions/013.
 
 # --- MMPC document archive (Mirror D, ADR 010, added 2026-07-10) ---
 # Auto-downloads every Agenda/Minutes/Other PDF CivicClerk publishes for the

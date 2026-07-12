@@ -18,8 +18,8 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
 
 1. **Backfill** (nightly, self-terminating): processes the existing documents
    across the tracked facilities in batches of 50, then becomes a no-op once done.
-2. **Daily watcher**: picks up new filings, classifies them, and runs the MMPC
-   meeting-minutes polling logic. Optionally (when `wds.enabled: true`) it also
+2. **Daily watcher**: picks up new filings and classifies them. Optionally (when
+   `wds.enabled: true`) it also
    polls **Stream C** — the EGLE Waste Data System (Part-115 solid waste, site
    475946): quarterly groundwater reports (R5), annual capacity/airspace (R1),
    permit/license applications (R1), and enforcement (R2). Off by default; see
@@ -79,8 +79,11 @@ pytest -q               # hermetic: synthetic PDFs, all APIs mocked, no secrets
    contents), `GSHEET_ID`, and (for email) `SMTP_HOST`, `SMTP_PORT`,
    `SMTP_USER`, `SMTP_PASSWORD`. `GDRIVE_FOLDER_ID` is no longer used and can be
    left unset.
-4. **Verify the MMPC minutes URL** with the Conservancy (they attend every
-   meeting) and set `mmpc.minutes_url` in `config.yml`.
+4. **MMPC document archive (Mirror D)**: set the `GOAUTH_MMPC_FOLDER_ID` secret
+   and `mmpc_archive.enabled: true` so Mirror D auto-downloads every MMPC
+   Agenda/Minutes PDF from CivicClerk (see `docs/decisions/010`). The older
+   "go check the minutes page" reminder email was retired — see
+   `docs/decisions/013`.
 5. **Set the real alert recipients** in `config.yml`.
 6. **Branch protection** on `main` (require the CI checks).
 7. **Verify Sheet-backed state against the real API first** (no Anthropic call,
@@ -119,7 +122,7 @@ pytest -q               # hermetic: synthetic PDFs, all APIs mocked, no secrets
 ## Scheduling
 
 - `backfill.yml` — 2am ET daily, batches of 50, self-terminating.
-- `daily.yml` — 6am ET daily (new docs + MMPC + alerts). **Schedule starts
+- `daily.yml` — 6am ET daily (new docs + alerts). **Schedule starts
   DISABLED** (only `workflow_dispatch`); uncomment the `schedule:` block after
   backfill completes — see deploy step 9.
 - `archive.yml` — 3am ET daily (durable PDF mirror). **ACTIVE since 2026-06-15**
@@ -144,10 +147,11 @@ docs/day) is essentially free. Model is configurable in `config.yml`.
   it in the **Archived PDFs** tab — **active since 2026-06-15**. The residual
   window is now just whatever the archiver hasn't caught up on (mid-backfill as
   of 2026-06-17, ~1,249 remaining), shrinking daily until backfill completes.
-- **MMPC minutes URL is best-effort.** We poll a hard-coded URL within the
-  computed window; if the county changes where minutes land, polling silently
-  finds nothing. Mitigation: the Conservancy attends every meeting, so a missed
-  posting is caught by a human. Re-verify the URL if minutes stop being detected.
+- **MMPC archiving rides CivicClerk's undocumented JSON API.** Mirror D (ADR 010)
+  downloads MMPC PDFs through a public API found by inspecting the portal's own
+  traffic; if CivicClerk changes it, the fetch fails loudly (aborts the run)
+  rather than silently archiving nothing. The older poll-a-URL "go check the
+  minutes" reminder this superseded was retired in ADR 013.
 - **Classification is model output.** `key_data_point` and `measurements` can be
   wrong. The original PDF link is on every row; the `basis` flag and the
   measured-only urgency rule guard the highest-stakes error (permitted ceiling

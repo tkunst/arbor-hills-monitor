@@ -45,11 +45,13 @@ Two facts make a clean pivot possible:
      Payload JSON`. `read_state` reduces it (latest `processed` row ⇒ done; count
      `error` rows ⇒ retry count). Append-only means **no read-modify-write race**
      and the 754-doc backfill never rewrites a ~150k-char blob.
-   - **`_meta`** — the three small global singletons as one JSON cell each:
-     `pending_digest`, `mmpc_minutes_found`, `last_run`. These are tiny by
-     construction (the digest clears every Sunday), so the 50k-char per-cell cap
-     is never in play — which is exactly why the 754-entry processed map is rows
-     in `_state` and these three are cells in `_meta`, not one JSON cell for all.
+   - **`_meta`** — a handful of small global singletons as one JSON cell each:
+     `pending_digest`, `last_run`, and later `wds_seen` / `wds_snapshot_hashes`
+     (the `mmpc_minutes_found` key here originally was removed with the MMPC
+     reminder — ADR 013). These are tiny by construction (the digest clears every
+     Sunday), so the 50k-char per-cell cap is never in play — which is exactly
+     why the 754-entry processed map is rows in `_state` and these are cells in
+     `_meta`, not one JSON cell for all.
 3. **`GDRIVE_FOLDER_ID` becomes vestigial.** Nothing on the deploy path reads it.
    The Drive helpers in `drive_client.py` (`list/find/download/upload_file`) are
    kept but explicitly OFF the deploy path.
