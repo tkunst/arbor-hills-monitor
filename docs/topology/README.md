@@ -43,15 +43,12 @@ facts from analyst judgement:
 
 ## Snapshot
 
-> **Stale as of 2026-07-12.** The committed `.mmd` diagrams and `TOPOLOGY.html`
-> are the 2026-07-10 snapshot: they predate Mirror D (`mmpc_archiver` /
-> `mmpc_client`), the PFAS page-watch, and poison-doc extraction, and still show
-> the retired `mmpc_watcher` (ADR 013). The curated tables in
-> `extract_topology.py` are current — a full regen (both scripts above **plus**
-> the viewer re-inject) is owed and will refresh all of them at once.
+Regenerated 2026-07-12 — current with Mirror D (`mmpc_archiver` / `mmpc_client`),
+the PFAS page-watch (`pfas_watcher` / `pfas_client`), poison-doc extraction
+(`poison_doc_extractor`), and the retired MMPC minutes reminder (ADR 013).
 
-24 runtime modules · 8 logical data stores · 61 edges · 3 persona flows.
-`watcher.py` is the orchestration hub (star topology, daily SPOF); the
-Conservancy Google Sheet is the single read+write data spine. Full architect
-notes render in the viewer's **Observations** panel (and in a regenerated
-`topology.json` → `observations`).
+28 modules (21 runtime + 7 ops jobs) · 9 logical data stores · 74 edges ·
+5 persona flows. `watcher.py` is the orchestration hub (star topology, daily
+SPOF); the Conservancy Google Sheet is the single read+write data spine. Full
+architect notes render in the viewer's **Observations** panel (and in a
+regenerated `topology.json` → `observations`).
