@@ -372,7 +372,7 @@ Standalone analysis path: `woi_table_parser.py` is invoked only by `scripts/woi_
 
 ### BF-5 — Watcher defers if more than 25 docs are unprocessed
 
-- **Given** the daily watcher sees 300 unprocessed docs (cap 25); **When** it runs; **Then** it processes **no** documents this run (backfill hasn't cleared history) — avoiding stampeding years-old exceedances into the live feed and firing false urgent alerts — while MMPC and digest housekeeping still run.
+- **Given** the daily watcher sees 300 unprocessed docs (cap 25); **When** it runs; **Then** it processes **no** documents this run (backfill hasn't cleared history) — avoiding stampeding years-old exceedances into the live feed and firing false urgent alerts — while digest housekeeping still runs.
 - `watcher.py:109-113`; parameter `config.yml:69`
 - policy
 

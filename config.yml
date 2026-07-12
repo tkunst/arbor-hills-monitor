@@ -61,7 +61,7 @@ archive:
 # The daily watcher handles INCREMENTAL new filings only (normal volume is 0-5).
 # If it ever sees more unprocessed docs than this, the historical backlog is not
 # cleared yet: it DEFERS to the backfill job (processes no docs this run, still
-# runs MMPC + digest housekeeping) rather than stampeding hundreds of historical
+# runs digest housekeeping) rather than stampeding hundreds of historical
 # docs into the live feed and firing urgent alerts on years-old exceedances. The
 # daily schedule should stay disabled until backfill logs "Backfill complete"
 # anyway (see README); this cap is the belt-and-suspenders backstop.

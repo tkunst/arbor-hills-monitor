@@ -126,7 +126,7 @@ OBSERVATIONS = [
     "watcher.py is a single orchestration hub importing 10 of the ~14 runtime "
     "modules — a star topology and the daily run's single point of failure. "
     "Partly mitigated: the Stream C (WDS) step is wrapped in its own try/except "
-    "so a fault there can't sink the nSITE/MMPC path.",
+    "so a fault there can't sink the nSITE path.",
     "sheet_writer + the Conservancy Google Sheet is the data spine — the only "
     "read+write store, backing the append-only processing log (_state), the "
     "digest queue and all three streams' seen-sets (_meta cells). Single point "

@@ -105,7 +105,7 @@ def run() -> int:
     # larger than the cap means backfill hasn't cleared history yet — defer doc
     # processing to backfill (don't stampede historical docs into the live feed,
     # don't fire urgent alerts on years-old exceedances, don't overflow the
-    # single-cell _meta pending_digest). MMPC + digest housekeeping still run.
+    # single-cell _meta pending_digest). Digest housekeeping still runs.
     cap = (cfg.get("watcher") or {}).get("max_new_docs_per_run", 25)
     if len(new_docs) > cap:
         print(f"[watcher] {len(new_docs)} unprocessed docs > cap {cap}: backfill "
@@ -182,7 +182,7 @@ def run() -> int:
 
     # --- WDS (Stream C — EGLE solid-waste system) polling, only when enabled ---
     # Off by default (cfg.wds.enabled). Gated import so a fault in the WDS modules
-    # cannot affect the main nSITE/MMPC path while Stream C is disabled. check_wds
+    # cannot affect the main nSITE path while Stream C is disabled. check_wds
     # is self-protecting: first run silently baselines (no alert flood), a
     # bad/short fetch is skipped not diffed, and it uses its OWN classifier (never
     # the temperature-oriented is_urgent). Its notable/watch items land in
