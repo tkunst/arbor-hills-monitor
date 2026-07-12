@@ -243,6 +243,20 @@ def test_annual_below_floor_is_notable():
     assert above[0] == "watch"
 
 
+def test_annual_zero_years_is_notable():
+    """0.0 years remaining = airspace exhausted, the single most R1-critical
+    signal. `0.0` is falsy in Python, so the old `yrs and yrs < floor` guard
+    short-circuited it to watch. It must classify as notable/evidence/R1."""
+    exhausted = ww._classify_annual({"Yrs Remaining End": "0.0"}, False, floor=3.0)
+    assert exhausted == ("notable", "evidence", ["R1"])
+    # nearby regression cases: just-below floor -> notable, at/above -> watch
+    assert ww._classify_annual({"Yrs Remaining End": "2.4"}, False, floor=3.0)[0] == "notable"
+    assert ww._classify_annual({"Yrs Remaining End": "5.0"}, False, floor=3.0)[0] == "watch"
+    # a blank/absent field is a valid-data absence, not zero -> watch
+    assert ww._classify_annual({"Yrs Remaining End": ""}, False, floor=3.0)[0] == "watch"
+    assert ww._classify_annual({}, False, floor=3.0)[0] == "watch"
+
+
 # ---------------------------------------------------------------------------
 # Sheet row shape
 # ---------------------------------------------------------------------------
