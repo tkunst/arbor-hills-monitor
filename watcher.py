@@ -1,16 +1,17 @@
 """
-watcher.py — daily run: new N2688 filings + MMPC minutes polling + alerts.
+watcher.py — daily run: new nSITE filings + alerts (+ WDS Stream C when enabled).
 
   - New docs: anything in the nSITE list not already in _state.
     Download -> parse -> Sheet row (linked to the nSITE source) -> alert/digest
     -> THEN append the 'processed' state event (crash-safe order). Urgent docs
     trigger a same-day email; everything else accrues into the Sunday digest.
-  - MMPC: compute whether today is inside a meeting's minutes-polling window
-    (2nd-Wednesday rule); if so, check the configured minutes URL and alert once
-    when minutes appear.
   - Digest: on Sunday, email the accumulated non-urgent items and clear them.
 
-State lives in the Sheet's _state (per-doc event log) and _meta (digest / MMPC /
+MMPC meeting documents are captured separately by Mirror D (mmpc_archiver.py,
+ADR 010) on its own schedule; the watcher's old in-window "minutes likely posted,
+go check" reminder was retired once Mirror D made it redundant (ADR 013).
+
+State lives in the Sheet's _state (per-doc event log) and _meta (digest /
 last-run singletons) tabs — not a Drive file (see ADR 006). Runs daily at 6am ET.
 """
 from __future__ import annotations
@@ -31,7 +32,6 @@ import drive_client as dc
 import sheet_writer as sw
 import nsite_client as nc
 import email_alerts as ea
-import mmpc_watcher as mw
 import retry_policy as rp
 from egle_doc_parser import parse_document
 from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
@@ -105,7 +105,7 @@ def run() -> int:
     # larger than the cap means backfill hasn't cleared history yet — defer doc
     # processing to backfill (don't stampede historical docs into the live feed,
     # don't fire urgent alerts on years-old exceedances, don't overflow the
-    # single-cell _meta pending_digest). MMPC + digest housekeeping still run.
+    # single-cell _meta pending_digest). Digest housekeeping still runs.
     cap = (cfg.get("watcher") or {}).get("max_new_docs_per_run", 25)
     if len(new_docs) > cap:
         print(f"[watcher] {len(new_docs)} unprocessed docs > cap {cap}: backfill "
@@ -176,27 +176,13 @@ def run() -> int:
             if os.path.exists(local):
                 os.remove(local)
 
-    # --- MMPC minutes polling ---
-    mtg = mw.active_polling_meeting(today, cfg["mmpc"])
-    if mtg:
-        key = mtg.isoformat()
-        if not state["mmpc_minutes_found"].get(key):
-            found, note = mw.check_minutes_posted(session, cfg["mmpc"]["minutes_url"])
-            print(f"[watcher] MMPC {key}: polling minutes — {note}")
-            if found:
-                state["mmpc_minutes_found"][key] = True
-                ea.send_email(
-                    f"MMPC minutes likely posted for the {key} meeting",
-                    f"The MMPC minutes page for the {key} meeting (Arbor Hills "
-                    f"expansion is an R1 concern) appears updated.\n\n"
-                    f"{cfg['mmpc']['minutes_url']}\n\n({note})",
-                    cfg,
-                )
-                sw.write_meta(sheets, sheet_id, state)
+    # MMPC meeting documents are archived by Mirror D (mmpc-archive.yml) on its
+    # own schedule — the watcher no longer polls for or emails MMPC minutes (the
+    # "go check" reminder was retired once Mirror D made it redundant; ADR 013).
 
     # --- WDS (Stream C — EGLE solid-waste system) polling, only when enabled ---
     # Off by default (cfg.wds.enabled). Gated import so a fault in the WDS modules
-    # cannot affect the main nSITE/MMPC path while Stream C is disabled. check_wds
+    # cannot affect the main nSITE path while Stream C is disabled. check_wds
     # is self-protecting: first run silently baselines (no alert flood), a
     # bad/short fetch is skipped not diffed, and it uses its OWN classifier (never
     # the temperature-oriented is_urgent). Its notable/watch items land in

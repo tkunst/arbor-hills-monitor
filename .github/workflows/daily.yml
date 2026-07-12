@@ -1,8 +1,8 @@
 name: daily
 
-# Daily watcher: checks nSITE for N2688 docs filed since the last checkpoint,
-# runs the MMPC second-Wednesday / minutes-polling logic, and sends alerts
-# (urgent same-day; procedural + everything else into the Sunday digest).
+# Daily watcher: checks nSITE for new docs filed since the last checkpoint
+# and sends alerts (urgent same-day; procedural + everything else into the
+# Sunday digest). MMPC documents are archived separately by Mirror D.
 on:
   # ENABLED 2026-06-15 — backfill is complete (1547/1564 processed; the rest are
   # poison docs the watcher also skips). The watcher's max_new_docs_per_run cap

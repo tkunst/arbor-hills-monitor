@@ -21,10 +21,12 @@ external users but no sensitive data). Public repo.
 - `nsite_client.py` — EGLE nSITE API: session, list, download.
 - `drive_client.py` — Google Drive + Sheets API (service account, folder ID).
 - `sheet_writer.py` — the four+1 sheet tabs; routing/fan-out is pure & tested.
-- `mmpc_watcher.py` — second-Wednesday calculator + minutes poller (pure math).
+- `mmpc_client.py` — CivicClerk JSON API: enumerate + fetch MMPC event PDFs.
+- `mmpc_archiver.py` — Mirror D: auto-archive MMPC Agenda/Minutes PDFs (ADR 010).
+  (The old in-watcher "go check the minutes" reminder was retired; see ADR 013.)
 - `email_alerts.py` — SMTP urgent alerts + weekly digest; urgency is pure.
 - `backfill.py` — nightly batch of 50, self-terminating, resumable.
-- `watcher.py` — daily new-doc check + MMPC + alerts.
+- `watcher.py` — daily new-doc check + alerts (+ WDS Stream C when enabled).
 - `pfas_client.py` — content-hash normalizer for EGLE's PFAS pages (isolates
   `<main>`, ignores Sitecore theme cache-busters). Pure; stdlib-only.
 - `pfas_watcher.py` — daily page-watch: alerts on any change vs. the last
@@ -61,5 +63,6 @@ Run before every commit.
 
 ## Before first deploy
 
-See `README.md` → Deploy checklist and `scripts/setup_gcp.md`. The MMPC minutes
-URL must be verified with the Conservancy and set in `config.yml` first.
+See `README.md` → Deploy checklist and `scripts/setup_gcp.md`. To activate the
+MMPC document archive (Mirror D), set the `GOAUTH_MMPC_FOLDER_ID` secret and
+`mmpc_archive.enabled: true` (ADR 010).
