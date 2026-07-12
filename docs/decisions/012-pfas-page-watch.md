@@ -53,7 +53,7 @@ committed, per the no-data-files rule):
 ## Decision (architecture)
 
 - **`pfas_client.py`** — `fetch_page()` (network; rejects non-200 / short bodies)
-  + pure `extract_content()` / `hash_text()` / `visible_text()`. Stdlib-only
+  plus pure `extract_content()` / `hash_text()` / `visible_text()`. Stdlib-only
   (urllib/re/hashlib), no new dependency — same as `wds_client.py`.
 - **`pfas_watcher.py`** — standalone, self-terminating, gated on `pfas.enabled`.
   Per page: baseline silently on first sighting; on a hash change, append a row
