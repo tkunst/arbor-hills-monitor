@@ -27,12 +27,29 @@ substring trap proved that). For historical rows, reclassify the distinct
 Keep a small `event`/`status` bucket for rows that are not chemical readings
 (a well "screen submerged", an operational "gas shortfall").
 
+**Companion idea — a `location_type` field.** A 2026-07-13 cross-tab of `well_id`
+vs. `metric` on the live tab found that the substance and the location are
+ORTHOGONAL, and that today's `well_id` column silently conflates several kinds of
+location: gas wells (`AHW272R4`), purge/monitoring wells (`Purge Well 4`),
+effluent outfalls (`Effluent-001`), perimeter monitoring stations (`MS-2`), and
+surface/ambient readings with no location at all. Consequences seen in the data:
+42% of rows carry a `well_id` while 47% are "well metrics" (temperature/O2/
+methane/CO), and they DON'T line up — e.g. `Final Effluent temperature` and
+`Dissolved Oxygen` are well-metrics with no well (they're measured at an
+outfall), while `AHW263R5 | Hydrogen (H2)` is a non-gas substance measured AT a
+well. So "% with a well_id" isn't a meaningful single number today. Consider
+adding a `location_type` (gas_well / monitoring_well / outfall /
+perimeter_station / surface_ambient / none) alongside the substance metric, so
+the case file is queryable by BOTH *what* (substance) and *where* (location) —
+the two independent axes this data actually has. Design it together with the
+metric taxonomy.
+
 **Scope questions to settle first.** Granularity (separate arsenic/mercury/lead
 vs. one `metal`?); how to treat permitted-limit rows (basis already handles it);
-the residual that genuinely can't be a substance metric; and whether a full
-overnight re-extract is warranted vs. a targeted note-reclassification pass.
-Draft the metric list for review BEFORE building. See ADR 004 "Metric
-vocabulary growth".
+the residual that genuinely can't be a substance metric; the `location_type`
+axis above; and whether a full overnight re-extract is warranted vs. a targeted
+note-reclassification pass. Draft the metric list for review BEFORE building.
+See ADR 004 "Metric vocabulary growth".
 
 ## Vision-based classification for image-only content
 
