@@ -56,12 +56,16 @@ DOMAIN = {
     # Orchestration / entry-point runners
     "watcher": "orchestration", "backfill": "orchestration", "archiver": "orchestration",
     "wds_archiver": "orchestration",   # nightly WDS page-snapshot runner (ADR 009)
-    # Ingestion — one client per external source (the three monitoring streams)
+    "mmpc_archiver": "orchestration",  # nightly MMPC PDF mirror — Mirror D (ADR 010)
+    "pfas_watcher": "orchestration",   # daily PFAS page-watch runner (ADR 012)
+    # Ingestion — one client per external source (nSITE, WDS, MMPC, PFAS)
     "nsite_client": "ingestion", "mmpc_client": "ingestion",
     "wds_watcher": "ingestion", "wds_client": "ingestion",
+    "pfas_client": "ingestion",        # PFAS page fetch + content-hash normalize (ADR 012)
     # Document processing & risk
     "egle_doc_parser": "processing", "risk_register": "processing",
     "retry_policy": "processing", "woi_table_parser": "processing",
+    "poison_doc_extractor": "processing",  # .msg/.docx -> synthesized PDF (ADR 011)
     # Persistence & notification
     "sheet_writer": "persistence", "drive_client": "persistence",
     "archive_client": "persistence", "email_alerts": "persistence",
@@ -94,6 +98,7 @@ DATASTORES = [
     ("ds:nsite", "EGLE nSITE Portal (Air)"),
     ("ds:wds", "EGLE WDS Portal (Solid Waste)"),
     ("ds:mmpc", "Washtenaw County MMPC Site"),
+    ("ds:pfas", "EGLE PFAS Investigation Pages (michigan.gov)"),
     ("ds:smtp", "Email Recipients (SMTP)"),
     ("ds:anthropic", "Anthropic Claude API"),
     ("ds:config", "config.yml (risk register + settings)"),
@@ -106,12 +111,14 @@ DATA_EDGES = [
     ("archive_client", "ds:drive-archive", "write"),
     ("nsite_client", "ds:nsite", "read"),
     ("wds_client", "ds:wds", "read"),
-    ("mmpc_client", "ds:mmpc", "read"),
+    ("mmpc_client", "ds:mmpc", "read"),            # CivicClerk JSON API (Mirror D)
+    ("pfas_client", "ds:pfas", "read"),            # fetches EGLE PFAS pages, hashes <main>
     ("email_alerts", "ds:smtp", "write"),
     ("egle_doc_parser", "ds:anthropic", "read"),   # sends doc, reads classification
     ("config_loader", "ds:config", "read"),
     ("wds_archiver", "ds:wds", "read"),            # fetches the 5 collection pages
     ("wds_archiver", "ds:drive-archive", "write"), # uploads raw-HTML snapshots
+    ("mmpc_archiver", "ds:drive-archive", "write"),# uploads MMPC PDFs (Mirror D, ADR 010)
 ]
 # DISPATCH edges — call targets resolved against config, not a static symbol.
 # Represented as `dispatch` (and the equivalent plain import edge is suppressed,
@@ -123,34 +130,43 @@ DATA_EDGES = [
 DISPATCH_EDGES = [("watcher", "wds_watcher"), ("wds_watcher", "wds_client")]
 
 OBSERVATIONS = [
-    "watcher.py is a single orchestration hub importing 10 of the ~14 runtime "
+    "watcher.py is a single orchestration hub importing ~9 of the 21 runtime "
     "modules — a star topology and the daily run's single point of failure. "
     "Partly mitigated: the Stream C (WDS) step is wrapped in its own try/except "
     "so a fault there can't sink the nSITE path.",
     "sheet_writer + the Conservancy Google Sheet is the data spine — the only "
-    "read+write store, backing the append-only processing log (_state), the "
-    "digest queue and all three streams' seen-sets (_meta cells). Single point "
-    "of failure and a scaling ceiling (50k-char cells).",
+    "read+write store, backing the append-only processing log (_state) plus the "
+    "_meta singletons (digest queue, WDS seen-set + snapshot hashes, last-run) and "
+    "the per-tab feeds (New/Historical, Evidence, MMPC Archived Files, PFAS Page "
+    "Watch). Single point of failure and a scaling ceiling (50k-char cells).",
     "egle_doc_parser -> Anthropic is the only external-LLM dependency and the "
     "sole per-document cost driver; it is isolated to one module (swappable) and "
     "reached only on the backfill/watcher classify path.",
-    "The three ingestion streams (nSITE/Air, WDS/Solid-Waste, MMPC) are cleanly "
-    "separated into their own client modules with no cross-talk — good "
-    "service-extraction seams. Stream C (wds_watcher->wds_client) is config-gated "
-    "and now active (config wds.enabled: true, merged to main).",
+    "Four ingestion streams — nSITE/Air, WDS/Solid-Waste, MMPC (CivicClerk), and "
+    "PFAS pages — are cleanly separated into their own client modules with no "
+    "cross-talk (good service-extraction seams). The MMPC minutes *reminder* was "
+    "retired (ADR 013); MMPC is now archive-only via Mirror D (mmpc_archiver -> "
+    "mmpc_client). Stream C (wds_watcher -> wds_client) is config-gated and active.",
+    "Five independent runners now write to the Sheet/Drive spine, each on its own "
+    "morning cron + concurrency group so they never race the shared _meta state: "
+    "archiver (nSITE PDFs, 3am), wds_archiver (WDS HTML snapshots, 4am), "
+    "mmpc_archiver (MMPC PDFs, 5am), watcher (nSITE + WDS + alerts, 6am), and "
+    "pfas_watcher (PFAS page hash, 7am). backfill is a sixth, now manual-only.",
+    "Three runners write into the same Drive archive store (archive_client for "
+    "nSITE PDFs, wds_archiver for WDS HTML snapshots, mmpc_archiver for MMPC PDFs) "
+    "— watch for a shared-folder or quota coupling as they scale (Mirror D uses a "
+    "distinct Drive folder from Mirror B/C).",
+    "poison_doc_extractor (ADR 011) lets nsite_client salvage legacy .msg/.docx "
+    "sources the downloadpdf endpoint can't render, synthesizing a PDF from the "
+    "extracted text + embedded images. Reached only from the ingestion path; a "
+    "known gap remains — image-only pages extract but are not vision-classified.",
     "The WOI cluster (woi_table_parser + co_summary + woi_summary) is disconnected "
     "from the daily runtime — reachable only via manual summary scripts. It is an "
     "offline-analysis tool, not dead code (it has inbound edges from the jobs), "
     "but a candidate to confirm still-needed or split out.",
     "Unresolved-at-extraction dynamic dispatch: which WDS fetchers run depends on "
-    "config `wds.collections` at runtime; watcher->wds_watcher fires only when "
-    "`wds.enabled` is true (now true). Both are surfaced as dispatch edges, not calls.",
-    "wds_archiver is a second nightly runner (parallel to archiver): it snapshots "
-    "the 5 WDS portal pages to Drive as portal-drift insurance (ADR 009 residual "
-    "risk #1), since the 2001-era WDS app has no per-record PDFs to mirror.",
-    "Two runners now write into the same Drive archive store (archive_client for "
-    "nSITE PDFs, wds_archiver for WDS HTML snapshots) — watch for a shared-folder "
-    "or quota coupling as both scale.",
+    "config `wds.collections` at runtime; watcher -> wds_watcher fires only when "
+    "`wds.enabled` is true. Both are surfaced as dispatch edges, not calls.",
 ]
 
 # Persona flows — the people who EXPERIENCE the monitor's output. Node ids are
@@ -203,6 +219,38 @@ FLOWS = [
             {"label": "Download the source PDF from EGLE",
              "nodes": ["nsite_client", "ds:nsite"]},
             {"label": "Upload a durable copy to Google Drive",
+             "nodes": ["archive_client", "ds:drive-archive"]},
+        ],
+    },
+    {
+        "name": "EGLE quietly edits the PFAS investigation page",
+        "persona": "Remediation-Area / water advocate",
+        "description": "EGLE updates the PFAS investigation status as prose on a "
+                       "web page (no feed, no PDF); the watcher notices and emails a diff.",
+        "steps": [
+            {"label": "The daily PFAS watch runs at 7am",
+             "nodes": ["pfas_watcher", "config_loader", "ds:config"]},
+            {"label": "Fetch the EGLE PFAS page and isolate + hash its <main> content",
+             "nodes": ["pfas_watcher", "pfas_client", "ds:pfas"]},
+            {"label": "Compare the hash to the last snapshot in the PFAS Page Watch tab",
+             "nodes": ["pfas_watcher", "sheet_writer", "ds:conservancy-sheet"]},
+            {"label": "Email a visible-text diff when the page has changed",
+             "nodes": ["email_alerts", "ds:smtp"]},
+        ],
+    },
+    {
+        "name": "New MMPC meeting documents are published (Mirror D)",
+        "persona": "Advocate tracking the county committee",
+        "description": "The county posts new MMPC agenda/minutes PDFs; Mirror D "
+                       "downloads each into Drive automatically — no manual step.",
+        "steps": [
+            {"label": "The nightly MMPC mirror runs at 5am",
+             "nodes": ["mmpc_archiver", "config_loader", "ds:config"]},
+            {"label": "List every published file via the CivicClerk JSON API",
+             "nodes": ["mmpc_archiver", "mmpc_client", "ds:mmpc"]},
+            {"label": "Skip files already logged in the MMPC Archived Files tab",
+             "nodes": ["mmpc_archiver", "sheet_writer", "ds:conservancy-sheet"]},
+            {"label": "Download each new PDF and upload a durable copy to Drive",
              "nodes": ["archive_client", "ds:drive-archive"]},
         ],
     },
