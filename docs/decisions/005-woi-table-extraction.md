@@ -68,14 +68,48 @@ series + first→last rise. On the 2025 report: 16 WOI wells, max 150 ppm
 June 2025. CO is a combustion product, so this is the early-warning row of the
 matrix. `scripts/co_summary.py` is the hand-to-EGLE generator.
 
-## Integration (follow-up, not in this ADR)
+## Integration (DONE — 2026-07-13, `woi_router.py`)
 
-`woi_table_parser` is standalone and unit-tested. Wiring it into
-`egle_doc_parser.parse_document` (route WOI-shaped reports here instead of
-windowing, detected by the "Gas Extraction Report" header + page count) is the
-next step, kept separate to avoid destabilizing the tested generic path before
-deploy. Until then, backfill processes WOI reports via the generic path
-(windowed summary) and this module is run directly for full extraction.
+`woi_table_parser` is now wired into the live pipeline by **`woi_router.py`**, which
+`watcher.py` and `backfill.py` call after `parse_document` and **before**
+`is_urgent` / `write_document`. The dispatch lives ABOVE `parse_document` so the
+Decode base (`egle_doc_parser.py`) stays domain-agnostic — it never learns
+"Gas Extraction Report" or WOI.
+
+- **Detection is content-based, not name-based.** A WOI report is detected by the
+  Attachment-1 "Gas Extraction Report" header plus a page count over the large-doc
+  threshold. The nSITE filename is deliberately NOT a signal: the real reports are
+  filed under generic names ("nForm Document" / "Site") — verified against the live
+  181-page 2025 report (nSITE doc_id `7022559137978826651`, type_name
+  "nForm Document"), so a filename gate would never fire. (This is a deliberate,
+  evidence-backed departure from the original handoff, which proposed an nSITE-name
+  signal.)
+- **Augment, don't replace the narrative.** `parse_document` still produces the five
+  model-derived fields; `woi_router` then REPLACES `parsed.measurements` with the
+  exhaustive validated set (non-ADJ, valid, at/above the 131 °F watch band), so a
+  measured exceedance buried past the keyword window now lands in `measurements[]`
+  and drives the same-day `is_urgent` alert.
+- **Two safety rules (from the plan's adversarial review):**
+  - *Data-loss guard* — route only if the exhaustive parse yields at least 50 valid
+    readings (a real report has ~14,000; a misdetected narrative doc yields ~0).
+    Otherwise keep the generic measurements and log loudly. This makes an
+    over-trigger harmless and doubles as the EGLE-format-drift alarm.
+  - *Peak-temp preservation* — always keep the peak as-found temperature in the
+    emitted set. `is_urgent` decides from `measurements[]` whenever any temperature
+    is present and only regexes free text when there is none; on an all-cool report
+    an unguarded ≥131 trim would emit zero temperatures and send `is_urgent` to its
+    free-text fallback, which would match the HOV permitted ceilings (155/180 °F) on
+    the windowed cover and FALSE-FIRE off a permitted limit — the exact conflation
+    ADR 004 forbids.
+- **Volume.** A new `WOI Well Summary` tab (one row per well, from
+  `per_well_summary()`); only the ≥131 °F readings ride the Measurements tab. The
+  full ~14k-reading dump stays reproducible via `scripts/woi_summary.py`.
+- **Kill-switch.** `woi.auto_route` (config), default **on** — a rollback lever, not a
+  new-source enable gate; flip it off to fall back to windowing.
+
+Verified end-to-end against the real 181-page 2025 report before merge: 13,976
+readings, 99.6 % valid, 478 wells, hottest AHW272R4 = 177 °F → wired `is_urgent`
+returns `True` (it did not under windowing).
 
 ## Consequence
 

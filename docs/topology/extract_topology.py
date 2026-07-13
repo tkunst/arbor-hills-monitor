@@ -65,6 +65,7 @@ DOMAIN = {
     # Document processing & risk
     "egle_doc_parser": "processing", "risk_register": "processing",
     "retry_policy": "processing", "woi_table_parser": "processing",
+    "woi_router": "processing",         # routes WOI Status Reports to woi_table_parser (ADR 005)
     "poison_doc_extractor": "processing",  # .msg/.docx -> synthesized PDF (ADR 011)
     # Persistence & notification
     "sheet_writer": "persistence", "drive_client": "persistence",
@@ -130,7 +131,7 @@ DATA_EDGES = [
 DISPATCH_EDGES = [("watcher", "wds_watcher"), ("wds_watcher", "wds_client")]
 
 OBSERVATIONS = [
-    "watcher.py is a single orchestration hub importing ~9 of the 21 runtime "
+    "watcher.py is a single orchestration hub importing ~10 of the 22 runtime "
     "modules — a star topology and the daily run's single point of failure. "
     "Partly mitigated: the Stream C (WDS) step is wrapped in its own try/except "
     "so a fault there can't sink the nSITE path.",
@@ -160,10 +161,12 @@ OBSERVATIONS = [
     "sources the downloadpdf endpoint can't render, synthesizing a PDF from the "
     "extracted text + embedded images. Reached only from the ingestion path; a "
     "known gap remains — image-only pages extract but are not vision-classified.",
-    "The WOI cluster (woi_table_parser + co_summary + woi_summary) is disconnected "
-    "from the daily runtime — reachable only via manual summary scripts. It is an "
-    "offline-analysis tool, not dead code (it has inbound edges from the jobs), "
-    "but a candidate to confirm still-needed or split out.",
+    "The WOI extractor (woi_table_parser) is now wired into the daily runtime via "
+    "woi_router: watcher and backfill route WOI Status Reports (detected by the "
+    "'Gas Extraction Report' header + page count, NOT the nSITE filename) to it, "
+    "replacing the windowed measurements before is_urgent so a buried exceedance "
+    "still alerts (ADR 005). co_summary + woi_summary remain manual hand-to-EGLE "
+    "generators built on the same parser.",
     "Unresolved-at-extraction dynamic dispatch: which WDS fetchers run depends on "
     "config `wds.collections` at runtime; watcher -> wds_watcher fires only when "
     "`wds.enabled` is true. Both are surfaced as dispatch edges, not calls.",

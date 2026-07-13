@@ -114,6 +114,12 @@ TAB_PFAS = "PFAS Page Watch"
 # evidence exists to merge in, so it's created alongside the WDS tabs (see
 # _WDS_TAB_HEADERS) rather than unconditionally by ensure_tabs().
 TAB_ALL_EVIDENCE = "All Evidence by Risk"
+# WOI Well Summary (ADR 005 integration, woi_router) — same on-demand policy as
+# the WDS/MMPC/PFAS tabs: no tab appears until a WOI Status Report is actually
+# routed (ensure_woi_tabs). One row per well; the alert/watch-band readings also
+# ride the Measurements tab, and the exhaustive ~14k-reading dump stays
+# reproducible via scripts/woi_summary.py.
+TAB_WOI_SUMMARY = "WOI Well Summary"
 # Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
 # TAB_NEW/TAB_HISTORICAL. "Change" is new/changed (live) or historical (dump).
 WDS_HEADERS = [
@@ -160,6 +166,17 @@ MMPC_ARCHIVE_HEADERS = [
 PFAS_SNAPSHOT_HEADERS = [
     "Date", "Page", "URL", "Change", "Content Hash", "Chars",
     "Note", "Fetched At", "Normalized Text",
+]
+
+# WOI Well Summary (ADR 005 integration). One row per well from a routed WOI
+# Status Report's per_well_summary(): max as-found temperature (with the O2/CH4
+# read at that same moment), max O2, WOI-list membership, and reading count — the
+# hand-to-EGLE per-well rollup. Not in _TAB_HEADERS: created on demand by
+# ensure_woi_tabs() so no empty tab appears until a WOI report is routed.
+WOI_SUMMARY_HEADERS = [
+    "Report Date", "Well", "On WOI List", "Max Temp (F)", "Date of Max Temp",
+    "O2 % at Max Temp", "CH4 % at Max Temp", "Max O2 % (any reading)",
+    "# Readings", "Document Name", "Link",
 ]
 
 _TAB_HEADERS = {
@@ -240,6 +257,32 @@ def measurement_rows(parsed, metadata: dict, link: str) -> list[list]:
             m.get("note") or "",
             link,
             metadata.get("facility_name", ""),
+        ])
+    return rows
+
+
+def woi_summary_rows(summary: list[dict], metadata: dict, link: str) -> list[list]:
+    """One row per well from woi_table_parser.per_well_summary() for a routed WOI
+    Status Report (pure — unit-tested without the Sheets API). The parser already
+    sorts hottest-first; None numeric cells render as blank so an ambient well
+    with no reading doesn't write the literal 'None'."""
+    def cell(v):
+        return "" if v is None else v
+
+    rows = []
+    for d in summary:
+        rows.append([
+            metadata.get("date_filed", ""),
+            d.get("well", ""),
+            "yes" if d.get("is_woi") else "no",
+            cell(d.get("max_temp_f")),
+            cell(d.get("max_temp_date")),
+            cell(d.get("o2_at_max_temp")),
+            cell(d.get("ch4_at_max_temp")),
+            cell(d.get("max_o2_pct")),
+            cell(d.get("n_readings")),
+            metadata.get("document_name", ""),
+            link,
         ])
     return rows
 
@@ -828,3 +871,35 @@ def append_pfas_snapshot_row(
     append_rows(service, sheet_id, TAB_PFAS, [[
         date, page, url, change, content_hash, chars, note, fetched_at, normalized_text,
     ]])
+
+
+# ---------------------------------------------------------------------------
+# WOI Well Summary (ADR 005 integration, woi_router) — created on demand
+# ---------------------------------------------------------------------------
+
+
+def ensure_woi_tabs(service, sheet_id: str) -> None:
+    """Create the WOI Well Summary tab if missing and reconcile its header row on
+    every run (same self-healing policy as ensure_mmpc_tabs()/ensure_pfas_tabs()).
+    Called from the watcher/backfill only when a WOI Status Report is actually
+    routed (woi_router), so the tab doesn't appear until then — same no-empty-tab
+    policy as the WDS/MMPC/PFAS tabs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_WOI_SUMMARY not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_WOI_SUMMARY}}}]},
+        ).execute()
+    _set_header(service, sheet_id, TAB_WOI_SUMMARY, WOI_SUMMARY_HEADERS)
+
+
+def write_woi_summary(
+    service, sheet_id: str, summary: list[dict], metadata: dict, link: str
+) -> None:
+    """Append the per-well summary rows for one routed WOI report. Best-effort at
+    the call site: the feed row + Measurements are the system of record, so a
+    summary-tab write failure must not block marking the doc processed. Re-routing
+    a report (rare — normal operation processes each once) re-appends its rows, the
+    same 'duplicate row, never a drop' tradeoff the feed/Measurements tabs accept."""
+    append_rows(service, sheet_id, TAB_WOI_SUMMARY, woi_summary_rows(summary, metadata, link))
