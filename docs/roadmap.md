@@ -51,6 +51,40 @@ axis above; and whether a full overnight re-extract is warranted vs. a targeted
 note-reclassification pass. Draft the metric list for review BEFORE building.
 See ADR 004 "Metric vocabulary growth".
 
+## Well-ID normalization (short↔full + cross-report renames)
+
+**Problem.** The same physical well appears in the Measurements tab under
+different identifiers, which FRAGMENTS its per-well history — the exact failure
+mode ADR 004 exists to prevent. Two causes seen in the live data (2026-07-13):
+
+- **Short vs. full form.** Structured WOI table reports use the canonical ID
+  (`AHWW502R`); inspection/field reports refer to the same well by its short
+  number ("well 502R"), and the generic model path extracts it as-written
+  (`502R`). Concrete hit on the flagship well: `AHW272R4` (hottest, 177 °F) has
+  **165 rows** under the full ID and **2 more** under `272R4` — a filter on
+  `AHW272R4` silently misses them. ~13 distinct short-forms map to full wells
+  (`502R`→`AHWW502R`, `286R`→`AHW286R`, `290`→`AHWW0290`, …), ~50 rows total.
+- **Cross-report renames.** A well is abandoned and reissued under a new id
+  (e.g. `AHW0177`→`AHWW177R`; EGLE issued a formal WOI-id update 6/22/2023) — the
+  case ADR 005's `canonicalize(well_id, alias_map)` was designed for.
+
+**Caveat — do NOT use a blunt rule.** Most non-`AH` identifiers are NOT wells:
+flares (`EUENCLOSEDFLARE2`, `Flare_391`), outfalls (`DISCHARGE 001A`,
+`Effluent-001A`), gas-collection points (`GC-1`, `GP-14`), QA samples
+(`DUPLICATE`, `FIELD BLANK`), and `EW`-prefixed extraction wells. "Prepend `AH`"
+would corrupt these. Normalization must be a **curated alias map**, human-checked.
+
+**What it would take.** Build the curated alias map (short↔full + cross-report
+renames) and apply it across BOTH paths — the WOI parser already has the hook
+(`canonicalize(well_id, alias_map)`, currently passed an empty map in the live
+pipeline), and the generic model path needs the same normalization. Likely
+cleanest as a normalization step where measurements are written
+(`sheet_writer`), so every source is covered, plus a one-time pass over existing
+rows. Relates to the `location_type` idea above (both are about making the
+Measurements tab cleanly queryable by well). Scope questions: where to normalize
+(parse-time vs. write-time vs. a periodic sweep); how the curated map is
+maintained and reviewed; and whether to normalize non-well location IDs too.
+
 ## Vision-based classification for image-only content
 
 **Status:** proposed 2026-07-11/12. Not started.
