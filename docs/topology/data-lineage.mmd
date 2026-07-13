@@ -5,6 +5,7 @@ graph LR
   ds_nsite[("EGLE nSITE Portal (Air)")]
   ds_wds[("EGLE WDS Portal (Solid Waste)")]
   ds_mmpc[("Washtenaw County MMPC Site")]
+  ds_pfas[("EGLE PFAS Investigation Pages (michigan.gov)")]
   ds_smtp[("Email Recipients (SMTP)")]
   ds_anthropic[("Anthropic Claude API")]
   ds_config[("config.yml (risk register + settings)")]
@@ -17,8 +18,10 @@ graph LR
   nsite_client -. read .-> ds_nsite
   wds_client["wds_client"]
   wds_client -. read .-> ds_wds
-  mmpc_watcher["mmpc_watcher"]
-  mmpc_watcher -. read .-> ds_mmpc
+  mmpc_client["mmpc_client"]
+  mmpc_client -. read .-> ds_mmpc
+  pfas_client["pfas_client"]
+  pfas_client -. read .-> ds_pfas
   email_alerts["email_alerts"]
   email_alerts ==>|write| ds_smtp
   egle_doc_parser["egle_doc_parser"]
@@ -28,11 +31,14 @@ graph LR
   wds_archiver["wds_archiver"]
   wds_archiver -. read .-> ds_wds
   wds_archiver ==>|write| ds_drive_archive
+  mmpc_archiver["mmpc_archiver"]
+  mmpc_archiver ==>|write| ds_drive_archive
   style ds_conservancy_sheet fill:#f59e0b,color:#000,stroke:#b45309
   style ds_drive_archive fill:#f59e0b,color:#000,stroke:#b45309
   style ds_nsite fill:#f59e0b,color:#000,stroke:#b45309
   style ds_wds fill:#f59e0b,color:#000,stroke:#b45309
   style ds_mmpc fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_pfas fill:#f59e0b,color:#000,stroke:#b45309
   style ds_smtp fill:#f59e0b,color:#000,stroke:#b45309
   style ds_anthropic fill:#f59e0b,color:#000,stroke:#b45309
   style ds_config fill:#f59e0b,color:#000,stroke:#b45309
