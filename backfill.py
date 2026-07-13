@@ -25,6 +25,7 @@ import drive_client as dc
 import sheet_writer as sw
 import nsite_client as nc
 import retry_policy as rp
+import woi_router
 from egle_doc_parser import parse_document
 from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
 from config_loader import load_config
@@ -152,11 +153,29 @@ def run() -> int:
 
             link = d["doc_url"]  # canonical nSITE source (resolves unauthenticated)
 
+            # Route WOI Status Reports to the exhaustive woi_table_parser and
+            # REPLACE parsed.measurements before write_document (see woi_router /
+            # ADR 005). Backfill deliberately never calls is_urgent, so re-
+            # extracting historical reports through this path fires no stale
+            # alerts. Best-effort: a routing failure degrades to the generic
+            # parse (logged), never drops the filing.
+            try:
+                routed = woi_router.route_measurements(parsed, local, d, cfg)
+            except Exception as we:  # noqa: BLE001 — degrade to the generic parse
+                print(f"  WOI routing failed, using generic parse: {we}")
+                routed = None
+
             # Sheet row FIRST, then state — order matters for crash-safety.
             sw.write_document(
                 sheets, sheet_id, parsed, d, link, RISK_NAMES,
                 feed_tab=sw.TAB_HISTORICAL,
             )
+            if routed is not None:
+                try:
+                    sw.ensure_woi_tabs(sheets, sheet_id)
+                    sw.write_woi_summary(sheets, sheet_id, routed["summary"], d, link)
+                except Exception as we:  # noqa: BLE001 — summary tab is best-effort
+                    print(f"  WOI summary-tab write skipped (doc still recorded): {we}")
             payload = {
                 "document_name": d["document_name"],
                 "date_filed": d["date_filed"],

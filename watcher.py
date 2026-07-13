@@ -33,6 +33,7 @@ import sheet_writer as sw
 import nsite_client as nc
 import email_alerts as ea
 import retry_policy as rp
+import woi_router
 from egle_doc_parser import parse_document
 from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
 from config_loader import load_config
@@ -129,6 +130,21 @@ def run() -> int:
             )
             link = d["doc_url"]  # canonical nSITE source (resolves unauthenticated)
 
+            # WOI Status Reports (180-320pp gas-extraction tables) are keyword-
+            # windowed by the generic parser (<5% of ~14k readings; a >=145F well
+            # buried past the window emits no measurement, so is_urgent never
+            # fires). Route them to the exhaustive woi_table_parser and REPLACE
+            # parsed.measurements BEFORE is_urgent (so a page-140 exceedance
+            # actually alerts) and before write_document (so the ranked ADR-004
+            # readings, not the windowed soup, land in Measurements). Routing is
+            # best-effort: any failure degrades to the generic parse (logged),
+            # never drops the filing. See woi_router / ADR 005.
+            try:
+                routed = woi_router.route_measurements(parsed, local, d, cfg)
+            except Exception as we:  # noqa: BLE001 — degrade to the generic parse
+                print(f"  WOI routing failed, using generic parse: {we}")
+                routed = None
+
             # Crash-safe order: durable Sheet row first, the 'processed' state
             # event last (a crash before it re-processes the doc next run — a
             # duplicate row, never a silent drop; see ADR 006). The alert/digest
@@ -137,6 +153,13 @@ def run() -> int:
             # trigger a daily reprocess. send_email() already no-ops when SMTP is
             # unconfigured; here we also swallow a configured-but-failing send.
             sw.write_document(sheets, sheet_id, parsed, d, link, RISK_NAMES, feed_tab=sw.TAB_NEW)
+
+            if routed is not None:
+                try:
+                    sw.ensure_woi_tabs(sheets, sheet_id)
+                    sw.write_woi_summary(sheets, sheet_id, routed["summary"], d, link)
+                except Exception as we:  # noqa: BLE001 — summary tab is best-effort
+                    print(f"  WOI summary-tab write skipped (doc still recorded): {we}")
 
             if ea.is_urgent(parsed, cfg):
                 try:

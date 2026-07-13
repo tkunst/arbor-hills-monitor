@@ -44,6 +44,23 @@ classification_max_tokens: 16384
 large_doc_page_threshold: 30
 large_doc_max_keyword_pages: 10
 
+# --- WOI (Wells of Interest) auto-routing (ADR 005 integration, added 2026-07-13) ---
+# The semi-annual WOI Status Reports (the two are 181 and 323 pp of per-well
+# gas-extraction tables) are routed to the exhaustive woi_table_parser instead of
+# the generic keyword-windowing above. Windowing captures <5% of the ~14,000
+# readings AND can miss a measured >=145F exceedance entirely — a hot well buried
+# on a page with no signal keyword produces no measurement, so is_urgent never
+# fires. Detection is CONTENT-based (the Attachment-1 "Gas Extraction Report"
+# header + page count), NOT the nSITE filename: the real reports are filed under
+# generic names ("nForm Document"/"Site"), so a name signal would never fire.
+# See woi_router.py and docs/decisions/005.
+#
+# This is a LIVE-PATH fix that ships ON. `auto_route` is a ROLLBACK LEVER, not a
+# new-source enable gate: flip it to false and the monitor falls back to
+# windowing if the detector or the volume ever misbehaves.
+woi:
+  auto_route: true
+
 # --- Backfill ---
 backfill_batch_size: 50          # docs per nightly run
 

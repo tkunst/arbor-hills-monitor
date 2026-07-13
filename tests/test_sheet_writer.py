@@ -302,3 +302,44 @@ def test_fetch_all_documents_tags_facility(monkeypatch):
     assert docs[0]["facility_name"] == "Arbor Hills Landfill"
     assert docs[2]["facility_srn"] == "P1488"
     assert docs[2]["facility_name"] == "Emerald RNG"
+
+
+# ---------------------------------------------------------------------------
+# WOI Well Summary (ADR 005 integration) — per-well summary rows + tab write.
+# ---------------------------------------------------------------------------
+
+_WOI_SUMMARY = [
+    {"well": "AHW272R4", "is_woi": True, "max_temp_f": 177.0,
+     "max_temp_date": "3/14/2025 15:40", "o2_at_max_temp": 7.0,
+     "ch4_at_max_temp": 8.1, "max_o2_pct": 12.0, "n_readings": 30},
+    {"well": "AHW999", "is_woi": False, "max_temp_f": None, "max_temp_date": None,
+     "o2_at_max_temp": None, "ch4_at_max_temp": None, "max_o2_pct": None,
+     "n_readings": 0},
+]
+
+
+def test_woi_summary_rows_shape_and_none_blanks():
+    rows = sw.woi_summary_rows(_WOI_SUMMARY, META, LINK)
+    assert len(rows) == 2
+    assert len(rows[0]) == len(sw.WOI_SUMMARY_HEADERS)
+    assert rows[0][0] == "2025-02-05"              # report date = doc date_filed
+    assert rows[0][1] == "AHW272R4"
+    assert rows[0][2] == "yes"                     # is_woi -> yes
+    assert rows[0][3] == 177.0
+    assert rows[0][-2] == "WOI Status Report"      # document_name
+    assert rows[0][-1] == LINK
+    assert rows[1][2] == "no"
+    assert rows[1][3] == "" and rows[1][5] == ""   # None numerics render blank
+
+
+def test_write_woi_summary_appends_to_summary_tab():
+    svc = FakeSheets()
+    sw.write_woi_summary(svc, "SID", _WOI_SUMMARY, META, LINK)
+    rows = svc._values._tabs[sw.TAB_WOI_SUMMARY]
+    assert any(len(r) > 1 and r[1] == "AHW272R4" for r in rows)
+
+
+def test_write_woi_summary_empty_summary_writes_nothing():
+    svc = FakeSheets()
+    sw.write_woi_summary(svc, "SID", [], META, LINK)
+    assert sw.TAB_WOI_SUMMARY not in svc._values._tabs
