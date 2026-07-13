@@ -50,14 +50,47 @@ def _retry_doc_ids() -> set:
     the WRD-Groundwater .msg/.docx docs terminally skipped before
     poison_doc_extractor existed). Comma-separated nSITE doc_ids via the
     RETRY_DOC_IDS env (a backfill workflow_dispatch input). Empty/unset ->
-    no override, every doc obeys the normal processed/skipped/poison gates."""
+    no override, every doc obeys the normal processed/skipped/poison gates.
+
+    NOTE: RETRY_DOC_IDS re-attempts skipped/poisoned docs but NEVER a doc already
+    'processed' (a genuine success is never re-touched). To re-extract an
+    already-processed doc — e.g. a WOI Status Report processed via the old
+    windowed path before woi_router existed — use FORCE_REPROCESS_DOC_IDS below."""
     raw = os.environ.get("RETRY_DOC_IDS", "").strip()
     if not raw:
         return set()
     return {x.strip() for x in raw.split(",") if x.strip()}
 
 
-def select_todo(docs: list, state: dict, retry_poisoned: bool = False, retry_doc_ids: set = None) -> list:
+def _force_reprocess_doc_ids() -> set:
+    """Explicit doc_id allowlist to RE-PROCESS docs even if already 'processed' —
+    the one override that bypasses the processed gate. For re-extracting a doc
+    whose classification/measurements should change because the parser did (the
+    WOI Status Reports processed via the old windowed path, now routed exhaustively
+    through woi_router — see ADR 005 / docs/handoffs/woi-auto-routing.md).
+
+    Comma-separated nSITE doc_ids via the FORCE_REPROCESS_DOC_IDS env (a backfill
+    workflow_dispatch input). Because re-processing an already-recorded doc would
+    otherwise pile fresh rows on top of the stale ones, each force doc's existing
+    rows are PURGED (sheet_writer.purge_doc_rows) before the fresh rows are written
+    — but ONLY when FORCE_REPROCESS_APPLY is set. Without it the run is a DRY RUN:
+    it previews exactly what would be purged + re-extracted and mutates nothing."""
+    raw = os.environ.get("FORCE_REPROCESS_DOC_IDS", "").strip()
+    if not raw:
+        return set()
+    return {x.strip() for x in raw.split(",") if x.strip()}
+
+
+def _force_reprocess_apply() -> bool:
+    """Whether a FORCE_REPROCESS_DOC_IDS run actually mutates the Sheet (purge +
+    re-extract), vs. the safe default of a DRY RUN that only previews. A
+    deliberate second switch so a destructive re-extract of hand-curated case-file
+    rows can never fire from the doc-id list alone."""
+    return os.environ.get("FORCE_REPROCESS_APPLY", "").strip().lower() in {"1", "true", "yes"}
+
+
+def select_todo(docs: list, state: dict, retry_poisoned: bool = False,
+                retry_doc_ids: set = None, force_reprocess_doc_ids: set = None) -> list:
     """Docs still needing work. Normal mode skips both processed and poisoned
     docs (poisoned = at least MAX_ERRORS_PER_DOC failures, OR terminally
     'skipped'). retry_poisoned mode re-attempts poisoned docs but still skips
@@ -71,9 +104,21 @@ def select_todo(docs: list, state: dict, retry_poisoned: bool = False, retry_doc
     success is never re-attempted). Unlike retry_poisoned, which churns
     through the WHOLE poisoned population, this is for 'these specific docs
     were terminally skipped before a parser fix existed, and are now known-
-    processable' — see backfill's RETRY_DOC_IDS / ADR 011."""
+    processable' — see backfill's RETRY_DOC_IDS / ADR 011.
+
+    force_reprocess_doc_ids is the ONLY override that bypasses the 'processed'
+    gate — an explicit allowlist to RE-PROCESS docs whose output should change
+    because the parser did (WOI reports processed via the old windowed path, now
+    routed through woi_router — ADR 005). A force-reprocess run is SURGICAL: when
+    it is set, ONLY the named docs are returned — the normal backlog is left
+    untouched, so the run can never silently co-process unrelated pending docs
+    (backfill sends no alerts; that silent-processing risk is exactly why the
+    nightly schedule was disabled). Order follows `docs`."""
     skipped = state.get("skipped", {})
     retry_doc_ids = retry_doc_ids or set()
+    force_reprocess_doc_ids = force_reprocess_doc_ids or set()
+    if force_reprocess_doc_ids:
+        return [d for d in docs if d["doc_id"] in force_reprocess_doc_ids]
     out = []
     for d in docs:
         did = d["doc_id"]
@@ -125,11 +170,19 @@ def run() -> int:
 
     retry_poisoned = _retry_poisoned()
     retry_doc_ids = _retry_doc_ids()
-    todo = select_todo(docs, state, retry_poisoned, retry_doc_ids)
+    force_ids = _force_reprocess_doc_ids()
+    force_apply = _force_reprocess_apply()
+    todo = select_todo(docs, state, retry_poisoned, retry_doc_ids, force_ids)
     mode = " (retrying poisoned)" if retry_poisoned else ""
     if retry_doc_ids:
         mode += f" (retrying {len(retry_doc_ids)} specific doc_id(s))"
+    if force_ids:
+        mode += (f" (FORCE-REPROCESS {len(force_ids)} doc_id(s)"
+                 f"{' — APPLY' if force_apply else ' — DRY RUN'})")
     print(f"[backfill] {len(docs)} total, {len(state['processed'])} done, {len(todo)} remaining{mode}.")
+    if force_ids and not force_apply:
+        print("[backfill] FORCE_REPROCESS DRY RUN — previewing purge + re-extract, "
+              "mutating nothing. Set FORCE_REPROCESS_APPLY=1 to execute.")
     if not todo:
         print("[backfill] Backfill complete — nothing to do.")
         return 0
@@ -141,6 +194,15 @@ def run() -> int:
     for d in batch:
         did = d["doc_id"]
         local = os.path.join(tmp, f"{d.get('facility_srn', 'N2688')}_{did}.pdf")
+        is_force = did in force_ids
+        if is_force and not force_apply:
+            # DRY RUN: preview which rows a purge would remove, then re-extract.
+            # Download/classify nothing; mutate nothing.
+            preview = sw.purge_doc_rows(sheets, sheet_id, did, dry_run=True)
+            print(f"  [FORCE dry-run] {d['date_filed']} {d['document_name'][:40]}: "
+                  f"would purge {sum(preview.values())} row(s) {preview}, then "
+                  f"re-extract this doc. Set FORCE_REPROCESS_APPLY=1 to execute.")
+            continue
         try:
             nc.download_pdf(session, d, local)
 
@@ -164,6 +226,15 @@ def run() -> int:
             except Exception as we:  # noqa: BLE001 — degrade to the generic parse
                 print(f"  WOI routing failed, using generic parse: {we}")
                 routed = None
+
+            # FORCE_REPROCESS (apply): remove this doc's stale rows BEFORE writing
+            # the fresh ones, so the re-extract is clean, not additive. Done only
+            # after a successful download+parse+route above — a fetch/parse failure
+            # lands in the except block with nothing purged, leaving rows intact.
+            if is_force:
+                purged = sw.purge_doc_rows(sheets, sheet_id, did)
+                print(f"  [FORCE] purged {sum(purged.values())} stale row(s) {purged} "
+                      f"for {did} before re-extract")
 
             # Sheet row FIRST, then state — order matters for crash-safety.
             sw.write_document(
