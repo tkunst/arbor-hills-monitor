@@ -75,6 +75,34 @@ tree — see `.claude/COORDINATION.md`.
    than direct to `main` because it involved authoring judgment (domain assignments,
    edges, observations, flows) and the session was unattended.
 
+6. **WDS `_classify_annual` `0.0`-years fix — PR #6, merged (Session-WDS write-up
+   of the concurrent session in item 3, from its own side).** The below-floor guard
+   was `if yrs and yrs < floor` (`wds_watcher.py:109`); `0.0` is falsy in Python, so
+   an Annual Landfill Report of **exactly 0.0 years capacity remaining** (airspace
+   exhausted — the single most R1-critical signal) short-circuited to `watch`. With
+   `wds.enabled: true` this was a live path. Fix: `if yrs < floor`, plus a
+   `test_annual_zero_years_is_notable` regression (0.0 → notable/R1, with 2.4 / 5.0 /
+   blank / absent cases). 214 tests green.
+   - **Isolation mechanics.** Detected MMPC mid-write in the shared tree; backed my
+     two edits out so they couldn't be swept into its commit, and did all work in a
+     separate `git worktree` off `086f1af` — never moving the shared tree's HEAD.
+     Rebased **twice** as `main` advanced under me (`47bae41`, then the `0b1ca68`
+     session-log commit) — both disjoint and clean — then a true `--ff-only` merge
+     as `e90e994`. Branch + worktree removed afterward.
+   - **Gates:** `/review` → LGTM (one optional test suggestion); `/security-review`
+     → no findings (pure classifier logic; the change biases toward *more* alerting —
+     the fail-safe direction for a monitor). CI green throughout; markdownlint never
+     ran on the code-only PR (path-filtered to `**/*.md`).
+   - **Doc follow-up** (`3a3fd82`, direct to `main` per Trisha): flipped the
+     `business-rules.md` provenance callout + WD-3 body + Note 4 from open-defect to
+     fixed, keeping the still-open SME question (does EGLE ever emit a literal `0.0`
+     as a missing-data sentinel vs. a real reading?) on the record.
+   - **Repo hygiene:** deleted three merged stale remote branches — `stream-c-wds`
+     (PR #1), `stream-d-mmpc-archive` (PR #2), `nsite-msg-docx-extraction` (PR #3) —
+     each verified fully contained in `main` (0 unmerged commits, PR already MERGED)
+     before deletion. Left `refresh-topology-map` and Session-WOI's untracked
+     `docs/handoffs/` alone.
+
 ## Loose ends (for a future session)
 
 - **Topology regen (PR #8) — DONE** — merged to `main` as `e7e7447`.
