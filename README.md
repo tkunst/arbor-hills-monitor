@@ -79,11 +79,11 @@ pytest -q               # hermetic: synthetic PDFs, all APIs mocked, no secrets
    contents), `GSHEET_ID`, and (for email) `SMTP_HOST`, `SMTP_PORT`,
    `SMTP_USER`, `SMTP_PASSWORD`. `GDRIVE_FOLDER_ID` is no longer used and can be
    left unset.
-4. **MMPC document archive (Mirror D)**: set the `GOAUTH_MMPC_FOLDER_ID` secret
-   and `mmpc_archive.enabled: true` so Mirror D auto-downloads every MMPC
-   Agenda/Minutes PDF from CivicClerk (see `docs/decisions/010`). The older
-   "go check the minutes page" reminder email was retired — see
-   `docs/decisions/013`.
+4. **MMPC document archive (Mirror D)** — **done, active since 2026-07-11**: the
+   `GOAUTH_MMPC_FOLDER_ID` secret is set and `mmpc_archive.enabled: true` is on
+   `main`, so Mirror D auto-downloads every MMPC Agenda/Minutes PDF from
+   CivicClerk (see `docs/decisions/010`). The older "go check the minutes page"
+   reminder email was retired — see `docs/decisions/013`.
 5. **Set the real alert recipients** in `config.yml`.
 6. **Branch protection** on `main` (require the CI checks).
 7. **Verify Sheet-backed state against the real API first** (no Anthropic call,

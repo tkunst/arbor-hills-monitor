@@ -147,7 +147,7 @@ wds:
 # Until `enabled: true` is on main, mmpc-archive.yml runs on schedule but
 # mmpc_archiver.py's _should_run() gate makes every run a no-op.
 mmpc_archive:
-  enabled: true
+  enabled: true                     # activated 2026-07-11 (Trisha) — secret set + merged; see ADR 010
   category_id: 72
 
 # --- PFAS page-watch (ADR 012, added 2026-07-12) ---

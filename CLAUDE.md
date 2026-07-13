@@ -63,6 +63,7 @@ Run before every commit.
 
 ## Before first deploy
 
-See `README.md` → Deploy checklist and `scripts/setup_gcp.md`. To activate the
-MMPC document archive (Mirror D), set the `GOAUTH_MMPC_FOLDER_ID` secret and
-`mmpc_archive.enabled: true` (ADR 010).
+See `README.md` → Deploy checklist and `scripts/setup_gcp.md`. The MMPC document
+archive (Mirror D) is **already activated** — the `GOAUTH_MMPC_FOLDER_ID` secret
+was set 2026-07-11 and `mmpc_archive.enabled: true` is live on `main` (ADR 010).
+No activation step remains for it.
