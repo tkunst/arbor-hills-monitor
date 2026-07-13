@@ -200,8 +200,15 @@ def run() -> int:
             # Download/classify nothing; mutate nothing.
             preview = sw.purge_doc_rows(sheets, sheet_id, did, dry_run=True)
             print(f"  [FORCE dry-run] {d['date_filed']} {d['document_name'][:40]}: "
-                  f"would purge {sum(preview.values())} row(s) {preview}, then "
-                  f"re-extract this doc. Set FORCE_REPROCESS_APPLY=1 to execute.")
+                  f"would PURGE {sum(preview.values())} row(s) {preview}, then "
+                  f"re-extract this doc.")
+            # The doc may also appear in tabs that are NOT purged — spell out the
+            # full accounting so nothing looks unhandled:
+            print("      also, on APPLY: 'All Evidence by Risk' is recomputed from "
+                  "the refreshed Evidence tab; '_state' gets a new 'processed' "
+                  "event that supersedes the old; 'Archived PDFs' is left intact "
+                  "(it indexes the unchanged Drive-mirrored PDF). "
+                  "Set FORCE_REPROCESS_APPLY=1 to execute.")
             continue
         try:
             nc.download_pdf(session, d, local)
@@ -299,13 +306,26 @@ def run() -> int:
             if os.path.exists(local):
                 os.remove(local)
 
+    # A pure FORCE_REPROCESS dry run mutates NOTHING — skip the derived-tab
+    # rebuilds below and return. (A force run's todo is only the named docs, which
+    # all just previewed above; there is nothing to rebuild from.)
+    if force_ids and not force_apply:
+        print("[backfill] FORCE_REPROCESS DRY RUN complete — nothing was changed.")
+        return 0
+
     # Keep the Risk Register tab current after each batch.
     try:
         sw.rebuild_risk_register_tab(sheets, sheet_id, RISK_REGISTER)
     except Exception as e:  # noqa: BLE001
         print(f"[backfill] risk-register rebuild skipped: {e}")
 
-    if (cfg.get("wds") or {}).get("enabled"):
+    # "All Evidence by Risk" is DERIVED from "Evidence by Risk" (rebuilt via
+    # clear+rewrite), so it is NOT purged directly — this rebuild keeps it
+    # consistent after a re-extract. Run it while Stream C is enabled (its normal
+    # trigger) OR after a force-reprocess that applied changes, so a re-extract
+    # leaves All Evidence correct even if Stream C is ever disabled (the write is
+    # caught below if the tab doesn't exist).
+    if (cfg.get("wds") or {}).get("enabled") or (force_ids and force_apply):
         try:
             sw.rebuild_all_evidence_tab(sheets, sheet_id)
         except Exception as e:  # noqa: BLE001
