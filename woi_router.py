@@ -166,6 +166,18 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict) -> Opti
               f"reading — NOT replacing measurements: {metadata.get('document_name')!r}")
         return None
 
+    # CO (Attachment 2) — carbon monoxide is a direct combustion product, so
+    # rising CO is an early-warning signal for subsurface oxidation. It's a small,
+    # bounded set (the WOI wells, monthly), so it is NOT temperature-gated: every
+    # CO reading is emitted. Added AFTER the temperature-anchor guard above so CO
+    # can never stand in for a missing temperature and re-expose the is_urgent
+    # free-text fallback. (The old windowed path caught only a few CO readings by
+    # luck; this captures the full series.) See ADR 005.
+    co_measurements: list[dict] = []
+    for cr in wtp.parse_co_data(pdf_path):
+        co_measurements.extend(wtp.co_to_measurements(cr))
+    measurements.extend(co_measurements)
+
     woi_set = wtp.extract_woi_well_list(pdf_path)
     summary = wtp.per_well_summary(valid, woi_set=woi_set)
     parsed.measurements = measurements
@@ -177,7 +189,8 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict) -> Opti
           f"readings ({validity:.1f}% valid), {len(summary)} wells "
           f"({len(woi_set)} on the WOI list), {n_hot} as-found readings "
           f">= {watch_f:.0f}F -> {len(measurements)} measurements "
-          f"({n_hot_wells} wells >= {watch_f:.0f}F). Replaced the windowed set.")
+          f"({len(co_measurements)} of them CO; {n_hot_wells} wells "
+          f">= {watch_f:.0f}F). Replaced the windowed set.")
     return {
         "summary": summary,
         "woi_set": woi_set,
@@ -185,4 +198,5 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict) -> Opti
         "n_valid": len(valid),
         "validity_pct": validity,
         "n_measurements": len(measurements),
+        "n_co": len(co_measurements),
     }

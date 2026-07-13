@@ -88,7 +88,13 @@ Decode base (`egle_doc_parser.py`) stays domain-agnostic — it never learns
   model-derived fields; `woi_router` then REPLACES `parsed.measurements` with the
   exhaustive validated set (non-ADJ, valid, at/above the 131 °F watch band), so a
   measured exceedance buried past the keyword window now lands in `measurements[]`
-  and drives the same-day `is_urgent` alert.
+  and drives the same-day `is_urgent` alert. Each hot reading emits temperature +
+  oxygen + **methane** (a first-class metric since 2026-07-13, not `other`).
+- **CO too (Attachment 2).** `woi_router` also routes the monthly carbon-monoxide
+  series (`parse_co_data` → `carbon_monoxide` measurements) — CO is a combustion
+  early-warning signal, a small bounded set (WOI wells, monthly), emitted for
+  every reading (not temperature-gated), but only AFTER the temperature-anchor
+  guard so it can't stand in for a missing temperature.
 - **Two safety rules (from the plan's adversarial review):**
   - *Data-loss guard* — route only if the exhaustive parse yields at least 50 valid
     readings (a real report has ~14,000; a misdetected narrative doc yields ~0).

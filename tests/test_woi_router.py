@@ -33,10 +33,11 @@ def _reading_lines(well, temp, adj=False, dt="3/14/2025 15:40"):
     return lines
 
 
-def _build_pdf(path, readings, header=True, total_pages=45, per_page=5):
+def _build_pdf(path, readings, header=True, total_pages=45, per_page=5, co=None):
     """readings: list of (well, temp) or (well, temp, adj). Places the
     'Gas Extraction Report' header on p8 and the gas rows across interior pages
-    (small font so many rows fit); pads to total_pages of filler."""
+    (small font so many rows fit); pads to total_pages of filler. `co`, if given,
+    is a list of (well, date, ppm) written as an Attachment-2 CO page on p9."""
     norm = [(r[0], r[1], r[2] if len(r) > 2 else False) for r in readings]
     chunks = [norm[i:i + per_page] for i in range(0, len(norm), per_page)]
     doc = fitz.open()
@@ -44,9 +45,14 @@ def _build_pdf(path, readings, header=True, total_pages=45, per_page=5):
         page = doc.new_page()
         if header and p == 7:
             page.insert_text((20, 20), "Attachment 1\nGas Extraction Report", fontsize=8)
-        elif 9 <= p < 9 + len(chunks):
+        elif co and p == 8:
+            lines = ["Attachment 2 - June 2025 CO Data", "Well ID", "Date", "ppm"]
+            for well, date, ppm in co:
+                lines += [well, date, str(ppm)]
+            page.insert_text((20, 20), "\n".join(lines), fontsize=6)
+        elif 10 <= p < 10 + len(chunks):
             block = []
-            for well, temp, adj in chunks[p - 9]:
+            for well, temp, adj in chunks[p - 10]:
                 block += _reading_lines(well, temp, adj)
             page.insert_text((20, 20), "\n".join(block), fontsize=5)
         else:
@@ -128,6 +134,29 @@ def test_route_guard_keeps_generic_when_few_valid(tmp_path):
     parsed = _parsed(measurements=list(orig))
     assert woi_router.route_measurements(parsed, pdf, META, CFG) is None
     assert parsed.measurements == orig
+
+
+def test_route_includes_co_measurements(tmp_path):
+    # CO (Attachment 2) is routed too — kept regardless of temperature.
+    reads = _many(54, temp=90) + [("AHW272R4", 177)]
+    co = [("AHWW0279", "6/24/2025", "110"), ("AHW272R4", "6/23/2025", "70")]
+    pdf = _build_pdf(tmp_path / "woi_co.pdf", reads, co=co)
+    parsed = _parsed()
+    routed = woi_router.route_measurements(parsed, pdf, META, CFG)
+    assert routed is not None and routed["n_co"] == 2
+    co_ms = [m for m in parsed.measurements if m["metric"] == "carbon_monoxide"]
+    assert {m["value"] for m in co_ms} == {110.0, 70.0}
+    assert all(m["basis"] == "measured" for m in co_ms)
+
+
+def test_route_labels_methane_not_other(tmp_path):
+    # CH4 is emitted as metric='methane' (first-class), never 'other'.
+    reads = _many(54, temp=90) + [("AHW272R4", 177)]
+    pdf = _build_pdf(tmp_path / "woi.pdf", reads)
+    parsed = _parsed()
+    woi_router.route_measurements(parsed, pdf, META, CFG)
+    metrics = {m["metric"] for m in parsed.measurements}
+    assert "methane" in metrics and "other" not in metrics
 
 
 # --- is_urgent through the wired path ----------------------------------------
