@@ -193,12 +193,26 @@ class _Values:
 class FakeSheets:
     def __init__(self, tabs=None):
         self._values = _Values(tabs or {})
+        self._created = []  # titles created via batchUpdate(addSheet)
 
     def spreadsheets(self):
         return self
 
     def values(self):
         return self._values
+
+    # spreadsheet-level metadata + tab creation, for the ensure_*_tabs() helpers.
+    def get(self, spreadsheetId):
+        titles = list(self._values._tabs.keys())
+        return _Req({"sheets": [{"properties": {"title": t}} for t in titles]})
+
+    def batchUpdate(self, spreadsheetId, body):
+        for r in body.get("requests", []):
+            title = r.get("addSheet", {}).get("properties", {}).get("title")
+            if title:
+                self._created.append(title)
+                self._values._tabs.setdefault(title, [["hdr"]])
+        return _Req({})
 
 
 def test_wds_historical_collections_dumped_empty_when_tab_absent():
@@ -343,3 +357,16 @@ def test_write_woi_summary_empty_summary_writes_nothing():
     svc = FakeSheets()
     sw.write_woi_summary(svc, "SID", [], META, LINK)
     assert sw.TAB_WOI_SUMMARY not in svc._values._tabs
+
+
+def test_ensure_woi_tabs_creates_when_absent():
+    svc = FakeSheets()
+    sw.ensure_woi_tabs(svc, "SID")
+    assert sw.TAB_WOI_SUMMARY in svc._created            # create-if-absent fired
+    assert sw.TAB_WOI_SUMMARY in svc._values._tabs
+
+
+def test_ensure_woi_tabs_idempotent_when_present():
+    svc = FakeSheets({sw.TAB_WOI_SUMMARY: [sw.WOI_SUMMARY_HEADERS]})
+    sw.ensure_woi_tabs(svc, "SID")
+    assert svc._created == []                            # already present -> not re-created
