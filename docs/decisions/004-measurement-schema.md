@@ -21,7 +21,7 @@ The parser extracts a generic, atomic `measurements[]` list. Each measurement:
 
 | Field        | Type / values                                             | Notes |
 |--------------|-----------------------------------------------------------|-------|
-| `metric`     | `temperature` \| `carbon_monoxide` \| `oxygen` \| `other` | generic — CO/O₂/benzene are free extensions |
+| `metric`     | `temperature` \| `carbon_monoxide` \| `oxygen` \| `methane` \| `other` | named metrics grow as needed; `other` (+ `note`) is the catch-all |
 | `value`      | number                                                    | the reading |
 | `unit`       | string (`F`, `ppm`, `percent`, …)                         | |
 | `basis`      | `measured` \| `permitted_limit` \| `unknown`              | **load-bearing** — measured vs permitted ceiling/HOV/MACT limit |
@@ -48,13 +48,27 @@ field). Written to the **Measurements** sheet tab, one row per reading.
   (`temperature_thresholds.epa_gas_operating_f` = 131,
   `temperature_thresholds.mact_f` = 145), not stored.
 
+## Metric vocabulary growth
+
+`metric` started as temperature / carbon_monoxide / oxygen / other. **`methane`
+was promoted to a named metric 2026-07-13** (it's the central landfill gas; the
+WOI table parser emits it directly, and the classifier prompt now names it).
+`other` remains the catch-all, but a review of the live Measurements tab found it
+had become a grab-bag of ~30-40 distinct substances/measurements (H2S, PFAS at
+`ng/L`, metals, wastewater params, NOx, SO2, odor, liquid level, …) where the
+UNIT does not identify the metric (`%` is used for methane, O₂, gas composition,
+and efficiency alike). A follow-up will expand the named-metric vocabulary to
+decompose `other` by SUBSTANCE (classified by the model, not by unit or brittle
+keyword rules), keeping a small `event`/`status` bucket for the rows that are not
+chemical readings (well "screen submerged", operational "gas shortfall").
+
 ## Deferred (not in this ADR; owned by the plan's alert semantics + a future ADR)
 
 - Per-well trend/velocity computation and a per-well view.
 - 3-tier Watch / Warning / Crisis alerting (maps onto the existing
   `routine`/`notable`/`urgent` severity field + trend triggers).
-- CO/O₂ as dedicated early-warning logic (the `metric` field already carries the
-  data; only the alert rule is pending).
+- The full named-metric taxonomy that decomposes `other` (see "Metric vocabulary
+  growth" above).
 
 ## Cost note
 

@@ -93,10 +93,12 @@ def test_to_measurements_emits_temp_o2_methane_and_skips_adj():
     r = _r("AHW272R4", 177.0, 7.0, 8.1)
     ms = w.to_measurements(r)
     metrics = {m["metric"] for m in ms}
-    assert metrics == {"temperature", "oxygen", "other"}
+    assert metrics == {"temperature", "oxygen", "methane"}   # methane is first-class now
     temp = next(m for m in ms if m["metric"] == "temperature")
     assert temp["value"] == 177.0 and temp["basis"] == "measured"
     assert temp["well_id"] == "AHW272R4" and temp["as_of_date"] == "2025-03-14"
+    methane = next(m for m in ms if m["metric"] == "methane")
+    assert methane["value"] == 8.1 and methane["basis"] == "measured"
     assert w.to_measurements(_r("AHW272R4", 177.0, 7.0, 8.1, adj=True)) == []
 
 

@@ -49,7 +49,7 @@ class ParsedDoc:
     ocr_applied: bool
     page_count: int
     # Structured readings extracted from the document. Each is a dict with keys:
-    #   metric  : "temperature" | "carbon_monoxide" | "oxygen" | "other"
+    #   metric  : "temperature" | "carbon_monoxide" | "oxygen" | "methane" | "other"
     #   value   : float
     #   unit    : str ("F", "ppm", "percent", ...)
     #   basis   : "measured" | "permitted_limit" | "unknown"  <-- CRITICAL
@@ -212,8 +212,9 @@ _SEVERITY_HELP = (
 _MEASUREMENTS_HELP = (
     "Extract every quantitative reading the document states, as structured "
     "measurements. For EACH reading set:\n"
-    "  - metric: temperature / carbon_monoxide / oxygen / other. For any other "
-    "substance (e.g. benzene, hydrogen sulfide) use 'other' and put the "
+    "  - metric: temperature / carbon_monoxide / oxygen / methane. Use 'methane' "
+    "for a methane (CH4) reading. For any OTHER substance (e.g. benzene, hydrogen "
+    "sulfide, NMOC/non-methane organic compounds) use 'other' and put the "
     "substance name in 'note'.\n"
     "  - value: the number\n"
     "  - unit: F, ppm, percent, etc.\n"
@@ -267,7 +268,7 @@ def _classify_with_claude(
     from pydantic import BaseModel
 
     class Measurement(BaseModel):
-        metric: Literal["temperature", "carbon_monoxide", "oxygen", "other"]
+        metric: Literal["temperature", "carbon_monoxide", "oxygen", "methane", "other"]
         value: float
         unit: str
         basis: Literal["measured", "permitted_limit", "unknown"]

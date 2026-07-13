@@ -171,11 +171,9 @@ def to_measurements(reading: WOIReading, include_adj: bool = False) -> list[dict
     if reading.o2 is not None:
         out.append(_m("oxygen", reading.o2, "percent", reading.well_id, iso))
     if reading.ch4 is not None:
-        # methane has no native enum slot; carry it as 'other' (low CH4 alongside
-        # high temp + O2 is the subsurface-oxidation signature).
-        m = _m("other", reading.ch4, "percent", reading.well_id, iso)
-        m["note"] = "methane (CH4)"
-        out.append(m)
+        # methane (CH4) is a first-class metric (ADR 004). Low CH4 alongside high
+        # temp + some O2 at the same well is the subsurface-oxidation signature.
+        out.append(_m("methane", reading.ch4, "percent", reading.well_id, iso))
     return out
 
 
