@@ -1,6 +1,6 @@
 # ADR 010 — Mirror D: MMPC document archive (CivicClerk)
 
-*Status: built — 2026-07-10 (`mmpc_archive.enabled: false` pending Trisha's review; see Activation).*
+*Status: **ACTIVATED** — built 2026-07-10; activated 2026-07-11 (`GOAUTH_MMPC_FOLDER_ID` secret set + `mmpc_archive.enabled: true` merged to `main`). The Activation section below is retained as the original checklist, now complete.*
 
 > **Update 2026-07-12:** Mirror D is enabled, and the parallel MMPC *reminder*
 > flow it was built to replace has now been retired — see **ADR 013**. This
@@ -134,7 +134,10 @@ call, not bundled into this change — see Alternatives.
   reviewed first, decide on the old flow after) is lower-risk than touching
   tested code in the same change that introduces new untested code.
 
-## Activation (Trisha's call)
+## Activation (Trisha's call) — ✅ COMPLETED 2026-07-11
+
+All four steps below were carried out on 2026-07-11 (secret set + `enabled: true`
+merged to `main`); Mirror D has been live since. Kept as the original record.
 
 1. Review + merge this branch to `main`.
 2. Add the Drive folder secret to the repo: `GOAUTH_MMPC_FOLDER_ID` =
