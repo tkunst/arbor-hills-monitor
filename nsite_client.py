@@ -33,6 +33,14 @@ DOCS_ENDPOINT = (
     "/profiles/4-documents/1-documents"
 )
 DOWNLOAD_BASE = f"{NSITE_BASE}/ncore/downloadpdf"
+# In-browser quirk (harmless): opening a downloadpdf/<id> link can render an
+# ASP.NET "Server Error in '/ncore' Application" page WHILE STILL downloading the
+# file — an intermittent portal-side fault, not a bad document or a bad link. A
+# direct server-side GET (which is all this client ever does) returns a clean
+# HTTP 200 application/pdf; verified 2026-07-13 against doc 7022559137978826651
+# (the 181pp WOI report): plain, ranged, and HEAD requests all returned the full
+# valid %PDF, cookie or not. So the monitor is unaffected; the error page only
+# appears in interactive browser use. See README "A note on the document links".
 # Native-file endpoint: serves the document's ORIGINAL bytes (legacy .doc, zips,
 # images) where downloadpdf returns HTTP 400 "PDF content could not be found"
 # for any non-PDF source. Used for stub links to docs the parser can't ingest.

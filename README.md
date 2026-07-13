@@ -48,6 +48,18 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
    changes, ignoring the site's rotating theme cache-busters. Off by default; see
    `docs/decisions/012-pfas-page-watch.md` for activation.
 
+> **A note on the document links (expected behavior).** Every case-file row's
+> **Link** column points to EGLE's nSITE portal
+> (`https://mienviro.michigan.gov/ncore/downloadpdf/<id>`). Clicking one
+> sometimes shows a **"Server Error in '/ncore' Application"** page **while still
+> downloading the file** — this is a harmless, intermittent quirk of EGLE's
+> portal, *not* a problem with the document or the link. **The file that
+> downloads is the correct, complete PDF.** (Verified: a direct fetch returns a
+> valid `application/pdf`, and the monitor ingests these files server-side
+> without ever seeing the error page — which is why, e.g., the 181-page 2025 WOI
+> Status Report processed fine.) If the download doesn't start, just reload the
+> link, or open the report's file directly. Nothing to fix on our side.
+
 ## Risk register (R1–R8)
 
 R1 expansion eligibility · R2 violations history · R3 odor nuisance · R4 air
