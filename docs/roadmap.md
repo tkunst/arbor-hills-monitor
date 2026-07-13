@@ -5,6 +5,35 @@ Larger, not-yet-scheduled improvements to the monitor. Unlike
 `README.md`'s "Residual risks (accepted)" (known gaps deliberately not
 fixed), this file is for real, scoped-but-not-started projects.
 
+## Metric taxonomy: decompose the `other` bucket into named metrics
+
+**Problem.** The ADR-004 `metric` field has a handful of named metrics
+(`temperature`, `carbon_monoxide`, `oxygen`, `methane`) plus `other`. A
+2026-07-13 review of the live Measurements tab found `other` had become a
+grab-bag of ~30-40 distinct substances/measurements — hydrogen sulfide, PFAS
+(at `ng/L`), metals (arsenic/mercury/lead/…), wastewater parameters
+(TSS/BOD/pH/ammonia/phosphorus), NOx, SO2, cyanide, hardness, VOCs, odor,
+liquid level, pressure, flow, and more. Crucially, **the unit does not identify
+the metric** (`%` is used for methane, O₂, gas composition, and efficiency
+alike; `ppm` for CO, methane, H2S, VOCs), so classification must go by
+SUBSTANCE, not unit.
+
+**What it would take.** Expand the named-metric vocabulary to ~40 metrics, add
+them to the classifier prompt + the `Measurement` enum, and reclassify. The
+reliable classifier is the MODEL itself (it maps "PFHxS → pfas", "NOx →
+nitrogen_oxides" accurately) — NOT brittle keyword rules (the NMOC-vs-methane
+substring trap proved that). For historical rows, reclassify the distinct
+`(note, unit)` pairs once (cheap, accurate) rather than re-parsing every PDF.
+Keep a small `event`/`status` bucket for rows that are not chemical readings
+(a well "screen submerged", an operational "gas shortfall").
+
+**Scope questions to settle first.** Granularity (separate arsenic/mercury/lead
+vs. one `metal`?); how to treat permitted-limit rows (basis already handles it);
+the residual that genuinely can't be a substance metric; and whether a full
+overnight re-extract is warranted vs. a targeted note-reclassification pass.
+Draft the metric list for review BEFORE building. See ADR 004 "Metric
+vocabulary growth".
+
 ## Vision-based classification for image-only content
 
 **Status:** proposed 2026-07-11/12. Not started.
