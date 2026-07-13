@@ -14,9 +14,8 @@ tree — see `.claude/COORDINATION.md`.
    `config.yml`), which surfaced two honest caveats at the time: the
    `wds-archive` job's last scheduled run had failed on a transient Google Sheets
    503, and PFAS was activated-but-not-yet-cron-confirmed. Config for future
-   refreshes lives under the project-artifact plugin data dir. **Now stale** —
-   this session then retired the MMPC reminder (stream B), so the artifact's
-   stream table + "should we retire the reminder?" open question need a refresh.
+   refreshes lives under the project-artifact plugin data dir. **Later refreshed
+   this same session** (item 4), after the MMPC reminder was retired.
 
 2. **PR #7 — retire the MMPC "go check" reminder (ADR 013): built, reviewed,
    merged.** Mirror D (`mmpc_archiver.py`, ADR 010) already downloads every
@@ -53,16 +52,34 @@ tree — see `.claude/COORDINATION.md`.
    `session-coordination` skill and set up `.claude/COORDINATION.md` (gitignored):
    agreed disjoint surfaces, I took sole ownership of `business-rules.md` + the
    markdownlint fix, they moved their work to a separate `git worktree`, and both
-   sides committed by explicit path (never `-A`). No clobbering.
+   sides committed by explicit path (never `-A`). No clobbering. Session-WDS
+   finished cleanly: their fix merged (`e90e994`) plus their WD-3 / Note 4 "flip to
+   fixed" doc edit (`3a3fd82`, direct to `main` per Trisha). Both sessions done.
+
+4. **Status artifact refreshed** (as-of 2026-07-12 20:50 UTC, same URL). Re-gathered
+   live state and edited the render in place: stream B flipped to **retired** across
+   the banner, streams table, "County minutes" success criterion, Background, and the
+   residual-risk row, and the resolved "retire the reminder?" open question was
+   removed; test count 224 → 214. The WDS-mirror 503 and PFAS first-cron were
+   unchanged (no new scheduled runs yet — next 2026-07-13) and stay on the
+   next-steps strip.
+
+5. **Topology map full regen → PR #8** (merged to `main` as `e7e7447`). The
+   committed snapshot was the 2026-07-10 render — it showed the deleted
+   `mmpc_watcher` and was missing Mirror D / PFAS / poison-doc. Updated
+   `extract_topology.py`'s curated tables (DOMAIN, `ds:pfas`, data edges, rewritten
+   observations, + PFAS and MMPC-archive persona flows), regenerated `topology.json`
+   → re-injected into `TOPOLOGY.html` (`<`/`>`/`&` escaped for the `<script>` tag) +
+   the `.mmd` diagrams. Verified the viewer renders in a browser (28 modules · 9
+   stores · 74 edges · 5 flows, no `mmpc_watcher`). Done on a **branch + PR** rather
+   than direct to `main` because it involved authoring judgment (domain assignments,
+   edges, observations, flows) and the session was unattended.
 
 ## Loose ends (for a future session)
 
-- **Status artifact refresh** — reflect the MMPC reminder retirement (stream B
-  now "retired, ADR 013"; the open question is resolved) and re-check the
-  `wds-archive` transient-503 recovery + PFAS first-cron.
-- **Topology snapshot regen** — `docs/topology/TOPOLOGY.html` still shows the
-  `mmpc_watcher` node and predates Mirror D + PFAS; a full regen (both scripts +
-  the viewer re-inject) is owed. Flagged in `docs/topology/README.md`.
-- **Session-WDS follow-up** — after their WDS code PR merges, they file the WD-3 /
-  Note 4 "flip to fixed" doc edit against `business-rules.md` (left untouched for
-  them). Tracked in the coordination file's Open Questions.
+- **Topology regen (PR #8) — DONE** — merged to `main` as `e7e7447`.
+- **Ops checks 2026-07-13** — confirm the next `wds-archive` scheduled run recovers
+  from the transient Google Sheets 503 (4am ET), and that the first *scheduled* PFAS
+  run fires clean (7am ET). Both are on the status artifact's next-steps strip.
+- **Vision classification (stream G)** — still the one open *build* item on the
+  roadmap (`docs/roadmap.md`); unchanged, not scoped.
