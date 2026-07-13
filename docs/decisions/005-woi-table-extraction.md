@@ -111,6 +111,34 @@ Verified end-to-end against the real 181-page 2025 report before merge: 13,976
 readings, 99.6 % valid, 478 wells, hottest AHW272R4 = 177 °F → wired `is_urgent`
 returns `True` (it did not under windowing).
 
+### Re-extracting the two historical reports (`FORCE_REPROCESS_DOC_IDS`)
+
+Future WOI reports route automatically. The two reports filed **before** this
+change are already `processed` via the old windowed path, and neither
+`RETRY_POISONED` nor `RETRY_DOC_IDS` re-touches a `processed` doc. `backfill.py`
+adds **`FORCE_REPROCESS_DOC_IDS`** — the one override that bypasses the
+`processed` gate — to re-extract them cleanly:
+
+- It is **surgical**: only the named doc_ids are processed, never the normal
+  backlog (backfill sends no alerts, so it must not silently sweep up pending
+  docs — the risk that disabled the nightly schedule).
+- Because re-processing an already-recorded doc would otherwise pile fresh rows
+  on the stale ones, each doc's existing rows are **purged**
+  (`sheet_writer.purge_doc_rows`, matched by the doc_id in each row's Link)
+  before the fresh exhaustive rows are written. The full windowed footprint of
+  the 181-page report is 22 rows (1 feed + 3 evidence + 18 measurements).
+- It defaults to a **DRY RUN**: `FORCE_REPROCESS_DOC_IDS` alone only previews the
+  purge + re-extract and mutates nothing. A second switch, `FORCE_REPROCESS_APPLY`,
+  is required to execute. Google Sheets File → Version history is the restore
+  path if a purge ever goes wrong.
+
+Operator recipe (backfill `workflow_dispatch`): set `force_reprocess_doc_ids` to
+the report doc_ids, run once with `force_reprocess_apply` **off** to review the
+preview, then re-run with it **on**. Verify each id is a real WOI report first
+(the detector needs the "Gas Extraction Report" header). The 181pp report is
+`7022559137978826651` (verified); the 323pp report is identified by page-count
+only — confirm against the live tab before applying.
+
 ## Consequence
 
 The most important R8 evidence is now fully and verifiably extractable. The

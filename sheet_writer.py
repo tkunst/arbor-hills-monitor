@@ -903,3 +903,82 @@ def write_woi_summary(
     a report (rare — normal operation processes each once) re-appends its rows, the
     same 'duplicate row, never a drop' tradeoff the feed/Measurements tabs accept."""
     append_rows(service, sheet_id, TAB_WOI_SUMMARY, woi_summary_rows(summary, metadata, link))
+
+
+# ---------------------------------------------------------------------------
+# Force-reprocess support: purge a doc's rows so a re-extract is clean, not
+# additive (backfill FORCE_REPROCESS_DOC_IDS — see backfill.py).
+# ---------------------------------------------------------------------------
+
+# The human, append-only tabs a document leaves rows in, paired with the 0-based
+# index of that tab's "Link" column (the Link carries the doc's nSITE URL, whose
+# final path segment is the doc_id — the join key). The internal _state/_meta
+# tabs are deliberately NOT purged: _state is an append-only event log where a
+# fresh 'processed' event already supersedes the old one, so rewriting it would
+# break crash-safety for no benefit.
+_PURGE_TABS = [
+    (TAB_HISTORICAL, FEED_HEADERS.index("Link")),
+    (TAB_NEW, FEED_HEADERS.index("Link")),
+    (TAB_EVIDENCE, EVIDENCE_HEADERS.index("Link")),
+    (TAB_MEASUREMENTS, MEASUREMENTS_HEADERS.index("Link")),
+    (TAB_WOI_SUMMARY, WOI_SUMMARY_HEADERS.index("Link")),
+]
+
+
+def _link_doc_id(link) -> str:
+    """The final path segment of a Link URL (…/downloadpdf/<doc_id> or
+    …/downloadfile/<doc_id>), which is the nSITE doc_id. Query string stripped.
+    Exact-segment match avoids a substring collision between two doc_ids."""
+    return str(link).split("?")[0].rstrip("/").split("/")[-1]
+
+
+def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False) -> dict:
+    """Delete every row belonging to `doc_id` from the human feed / evidence /
+    measurement / WOI-summary tabs (matched by the doc_id being the final path
+    segment of the row's Link), returning {tab: rows_matched}.
+
+    Used by backfill's FORCE_REPROCESS_DOC_IDS path so a re-extract of an already-
+    processed doc is CLEAN — the stale windowed rows are removed before the fresh
+    exhaustive rows are written, instead of piling up beside them (which would,
+    e.g., double-count a well's temperature in the Measurements tab).
+
+    `dry_run=True` finds and reports the matches WITHOUT deleting — the preview an
+    operator reviews before applying. Deletes are issued bottom-up per tab so row
+    indices don't shift mid-batch. Safety net: this only ever runs for an explicit
+    allowlist, and Google Sheets keeps File → Version history, so a mistaken purge
+    is restorable in the UI."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    gid = {s["properties"]["title"]: s["properties"]["sheetId"]
+           for s in meta.get("sheets", [])}
+
+    requests: list[dict] = []
+    counts: dict[str, int] = {}
+    for tab, link_col in _PURGE_TABS:
+        if tab not in gid:
+            continue  # tab not created yet (e.g. WOI Summary before any route)
+        resp = (
+            service.spreadsheets().values()
+            .get(spreadsheetId=sheet_id, range=f"'{tab}'!A2:Z")
+            .execute()
+        )
+        values = resp.get("values", [])
+        # values[i] is data row i, i.e. 0-based grid row (i + 1) since row 0 is the
+        # header. Sheets only trims TRAILING empty rows, so interior indices stay
+        # aligned for any row that actually carries a Link.
+        matched = [
+            i + 1 for i, r in enumerate(values)
+            if len(r) > link_col and r[link_col] and _link_doc_id(r[link_col]) == doc_id
+        ]
+        counts[tab] = len(matched)
+        if not dry_run:
+            for grid_row in sorted(matched, reverse=True):  # bottom-up within the tab
+                requests.append({"deleteDimension": {"range": {
+                    "sheetId": gid[tab], "dimension": "ROWS",
+                    "startIndex": grid_row, "endIndex": grid_row + 1,
+                }}})
+
+    if requests:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id, body={"requests": requests}
+        ).execute()
+    return counts

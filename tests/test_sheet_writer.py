@@ -194,6 +194,13 @@ class FakeSheets:
     def __init__(self, tabs=None):
         self._values = _Values(tabs or {})
         self._created = []  # titles created via batchUpdate(addSheet)
+        self._gid = {}      # title -> a stable numeric sheetId
+        for t in self._values._tabs:
+            self._ensure_gid(t)
+
+    def _ensure_gid(self, title):
+        if title not in self._gid:
+            self._gid[title] = len(self._gid)
 
     def spreadsheets(self):
         return self
@@ -201,17 +208,26 @@ class FakeSheets:
     def values(self):
         return self._values
 
-    # spreadsheet-level metadata + tab creation, for the ensure_*_tabs() helpers.
+    # spreadsheet-level metadata + tab creation/deletion, for ensure_*_tabs() and
+    # purge_doc_rows(). get() exposes each tab's numeric sheetId (needed for
+    # deleteDimension); batchUpdate handles both addSheet and deleteDimension.
     def get(self, spreadsheetId):
-        titles = list(self._values._tabs.keys())
-        return _Req({"sheets": [{"properties": {"title": t}} for t in titles]})
+        for t in self._values._tabs:
+            self._ensure_gid(t)
+        return _Req({"sheets": [{"properties": {"title": t, "sheetId": self._gid[t]}}
+                                for t in self._values._tabs]})
 
     def batchUpdate(self, spreadsheetId, body):
         for r in body.get("requests", []):
-            title = r.get("addSheet", {}).get("properties", {}).get("title")
-            if title:
+            if "addSheet" in r:
+                title = r["addSheet"]["properties"]["title"]
                 self._created.append(title)
                 self._values._tabs.setdefault(title, [["hdr"]])
+                self._ensure_gid(title)
+            elif "deleteDimension" in r:
+                rng = r["deleteDimension"]["range"]
+                title = next(t for t, g in self._gid.items() if g == rng["sheetId"])
+                del self._values._tabs[title][rng["startIndex"]:rng["endIndex"]]
         return _Req({})
 
 
@@ -370,3 +386,69 @@ def test_ensure_woi_tabs_idempotent_when_present():
     svc = FakeSheets({sw.TAB_WOI_SUMMARY: [sw.WOI_SUMMARY_HEADERS]})
     sw.ensure_woi_tabs(svc, "SID")
     assert svc._created == []                            # already present -> not re-created
+
+
+# ---------------------------------------------------------------------------
+# purge_doc_rows(): clean re-extract support (backfill FORCE_REPROCESS_DOC_IDS).
+# ---------------------------------------------------------------------------
+
+_DID_A = "111"
+_DID_B = "-222"   # a negative doc_id, to prove the final-path-segment match
+
+
+def _link(did):
+    return f"https://mienviro.michigan.gov/ncore/downloadpdf/{did}"
+
+
+def _purge_fixture():
+    """Historical + Measurements tabs holding rows for two docs (A twice, B once),
+    matched by the doc_id in the Link column (index 7 in FEED, 9 in MEASUREMENTS)."""
+    def hist_row(did, name):
+        r = [""] * len(sw.FEED_HEADERS)
+        r[0], r[1], r[7] = "2025-07-08", name, _link(did)
+        return r
+
+    def meas_row(did, well):
+        r = [""] * len(sw.MEASUREMENTS_HEADERS)
+        r[1], r[9] = well, _link(did)
+        return r
+
+    tabs = {
+        sw.TAB_HISTORICAL: [sw.FEED_HEADERS, hist_row(_DID_A, "A"),
+                            hist_row(_DID_B, "B"), hist_row(_DID_A, "A-dup")],
+        sw.TAB_MEASUREMENTS: [sw.MEASUREMENTS_HEADERS, meas_row(_DID_A, "W1"),
+                              meas_row(_DID_A, "W2"), meas_row(_DID_B, "W3")],
+    }
+    return FakeSheets(tabs)
+
+
+def test_link_doc_id_final_path_segment():
+    assert sw._link_doc_id(_link("111")) == "111"
+    assert sw._link_doc_id(_link("-222")) == "-222"          # negative id survives
+    assert sw._link_doc_id(_link("111") + "?x=1") == "111"   # query stripped
+
+
+def test_purge_doc_rows_removes_only_matching_doc():
+    svc = _purge_fixture()
+    counts = sw.purge_doc_rows(svc, "SID", _DID_A)
+    assert counts[sw.TAB_HISTORICAL] == 2 and counts[sw.TAB_MEASUREMENTS] == 2
+    hist = svc._values._tabs[sw.TAB_HISTORICAL]
+    meas = svc._values._tabs[sw.TAB_MEASUREMENTS]
+    assert hist[0] == sw.FEED_HEADERS                        # header intact
+    assert [sw._link_doc_id(r[7]) for r in hist[1:]] == [_DID_B]   # only B remains
+    assert [sw._link_doc_id(r[9]) for r in meas[1:]] == [_DID_B]
+
+
+def test_purge_doc_rows_dry_run_mutates_nothing():
+    svc = _purge_fixture()
+    before = [list(r) for r in svc._values._tabs[sw.TAB_HISTORICAL]]
+    counts = sw.purge_doc_rows(svc, "SID", _DID_A, dry_run=True)
+    assert counts[sw.TAB_HISTORICAL] == 2                    # still reports the matches
+    assert svc._values._tabs[sw.TAB_HISTORICAL] == before    # but deleted nothing
+
+
+def test_purge_doc_rows_skips_absent_tabs():
+    # WOI Summary / New / Evidence not created here -> purge skips them silently.
+    svc = _purge_fixture()
+    counts = sw.purge_doc_rows(svc, "SID", _DID_A)
+    assert sw.TAB_WOI_SUMMARY not in counts and sw.TAB_EVIDENCE not in counts

@@ -26,6 +26,14 @@ on:
         description: "Comma-separated nSITE doc_ids to retry regardless of skipped/poisoned status (ADR 011 one-time backfills)"
         type: string
         default: ""
+      force_reprocess_doc_ids:
+        description: "Comma-separated doc_ids to RE-PROCESS even if already processed (purges their old rows first). E.g. re-extract WOI reports via woi_router — ADR 005."
+        type: string
+        default: ""
+      force_reprocess_apply:
+        description: "Actually purge + re-extract the force_reprocess_doc_ids. Leave OFF for a dry-run preview (mutates nothing) first."
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -69,4 +77,10 @@ jobs:
           RETRY_POISONED: ${{ inputs.retry_poisoned }}
           # Default empty; set via "Run workflow" for a one-time targeted retry.
           RETRY_DOC_IDS: ${{ inputs.retry_doc_ids }}
+          # Re-process already-processed docs (purges their old rows first). Both
+          # are workflow_dispatch inputs (operator-supplied, not untrusted event
+          # data) and are read by Python via os.environ — never shell-evaluated.
+          # APPLY defaults false, so a bare doc-id list is a safe dry-run preview.
+          FORCE_REPROCESS_DOC_IDS: ${{ inputs.force_reprocess_doc_ids }}
+          FORCE_REPROCESS_APPLY: ${{ inputs.force_reprocess_apply }}
         run: python backfill.py

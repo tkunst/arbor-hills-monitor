@@ -119,3 +119,56 @@ def test_select_todo_retry_doc_ids_composes_with_retry_poisoned():
     todo = [d["doc_id"] for d in bf.select_todo(
         docs, state, retry_poisoned=True, retry_doc_ids={"a"})]
     assert todo == ["a", "b", "c"]  # a via retry_doc_ids, b via retry_poisoned, c fresh
+
+
+# --- FORCE_REPROCESS_DOC_IDS: the only override that bypasses the processed gate ---
+
+
+def test_force_reprocess_env_parsing(monkeypatch):
+    monkeypatch.setenv("FORCE_REPROCESS_DOC_IDS", " 111, 222 ,333")
+    assert bf._force_reprocess_doc_ids() == {"111", "222", "333"}
+    monkeypatch.setenv("FORCE_REPROCESS_DOC_IDS", "")
+    assert bf._force_reprocess_doc_ids() == set()
+    monkeypatch.delenv("FORCE_REPROCESS_DOC_IDS", raising=False)
+    assert bf._force_reprocess_doc_ids() == set()  # unset -> no override
+
+
+def test_force_reprocess_apply_env_parsing(monkeypatch):
+    for truthy in ("1", "true", "TRUE", "yes", " Yes "):
+        monkeypatch.setenv("FORCE_REPROCESS_APPLY", truthy)
+        assert bf._force_reprocess_apply() is True
+    for falsy in ("", "0", "false", "no", "off"):
+        monkeypatch.setenv("FORCE_REPROCESS_APPLY", falsy)
+        assert bf._force_reprocess_apply() is False
+    monkeypatch.delenv("FORCE_REPROCESS_APPLY", raising=False)
+    assert bf._force_reprocess_apply() is False  # unset -> safe default: dry-run
+
+
+def test_select_todo_force_reprocess_reincludes_processed():
+    # The one override that re-processes an already-'processed' doc (a WOI report
+    # processed via the old windowed path, now routed through woi_router).
+    docs = _docs("a", "b", "c")
+    state = _state(processed=["a", "b"])
+    todo = [d["doc_id"] for d in bf.select_todo(
+        docs, state, force_reprocess_doc_ids={"a"})]
+    assert todo == ["a"]  # a forced despite being processed
+
+
+def test_select_todo_force_reprocess_is_surgical():
+    # A force run processes ONLY the named docs — never the normal backlog too
+    # (backfill is alert-less, so silently sweeping up a fresh pending doc is the
+    # exact foot-gun that disabled the nightly schedule). Here 'd' is a genuinely
+    # unprocessed doc, but it must NOT ride along on a force-reprocess run.
+    docs = _docs("a", "b", "c", "d")
+    state = _state(processed=["a", "b", "c"])  # d is normally 'remaining'
+    todo = [d["doc_id"] for d in bf.select_todo(
+        docs, state, force_reprocess_doc_ids={"c"})]
+    assert todo == ["c"]  # only the forced doc; the pending 'd' is left untouched
+
+
+def test_select_todo_force_reprocess_multiple_in_docs_order():
+    docs = _docs("a", "b", "c")
+    state = _state(processed=["a", "b", "c"])
+    todo = [d["doc_id"] for d in bf.select_todo(
+        docs, state, force_reprocess_doc_ids={"c", "a"})]
+    assert todo == ["a", "c"]  # both forced, returned in docs order
