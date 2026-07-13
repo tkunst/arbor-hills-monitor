@@ -910,12 +910,23 @@ def write_woi_summary(
 # additive (backfill FORCE_REPROCESS_DOC_IDS — see backfill.py).
 # ---------------------------------------------------------------------------
 
-# The human, append-only tabs a document leaves rows in, paired with the 0-based
+# The human, APPEND-ONLY tabs a document leaves rows in, paired with the 0-based
 # index of that tab's "Link" column (the Link carries the doc's nSITE URL, whose
-# final path segment is the doc_id — the join key). The internal _state/_meta
-# tabs are deliberately NOT purged: _state is an append-only event log where a
-# fresh 'processed' event already supersedes the old one, so rewriting it would
-# break crash-safety for no benefit.
+# final path segment is the doc_id — the join key). write_document re-adds fresh
+# rows to exactly these tabs, so purging them makes the re-extract clean.
+#
+# Tabs a doc can ALSO appear in but that are deliberately NOT purged here — each
+# handled a different, correct way:
+#   - "All Evidence by Risk": DERIVED from "Evidence by Risk" (rebuilt via
+#     clear+rewrite by rebuild_all_evidence_tab); purging Evidence + that rebuild
+#     leaves it consistent, so a direct purge would be redundant.
+#   - "Risk Register": DERIVED (per-risk counts, no doc rows); recomputed by
+#     rebuild_risk_register_tab.
+#   - "_state"/"_meta": the append-only processing log; a fresh 'processed' event
+#     supersedes the old one, so rewriting it would break crash-safety.
+#   - "Archived PDFs": the durable Drive-mirror index. Re-classifying a doc does
+#     not change the mirrored source PDF, so the archive row stays valid — purging
+#     it would orphan the mirror.
 _PURGE_TABS = [
     (TAB_HISTORICAL, FEED_HEADERS.index("Link")),
     (TAB_NEW, FEED_HEADERS.index("Link")),

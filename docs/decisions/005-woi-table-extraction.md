@@ -123,10 +123,16 @@ adds **`FORCE_REPROCESS_DOC_IDS`** — the one override that bypasses the
   backlog (backfill sends no alerts, so it must not silently sweep up pending
   docs — the risk that disabled the nightly schedule).
 - Because re-processing an already-recorded doc would otherwise pile fresh rows
-  on the stale ones, each doc's existing rows are **purged**
-  (`sheet_writer.purge_doc_rows`, matched by the doc_id in each row's Link)
-  before the fresh exhaustive rows are written. The full windowed footprint of
-  the 181-page report is 22 rows (1 feed + 3 evidence + 18 measurements).
+  on the stale ones, each doc's existing rows are **purged** from the append-only
+  tabs (`sheet_writer.purge_doc_rows`, matched by the doc_id in each row's Link):
+  Historical/New/Evidence/Measurements/WOI-Summary. The windowed footprint of the
+  181-page report is 22 such rows (1 feed + 3 evidence + 18 measurements). The
+  other tabs the doc appears in are handled without a direct purge: **All Evidence
+  by Risk** and **Risk Register** are *derived* and recomputed by the post-run
+  rebuilds (forced on a re-extract so it holds even if Stream C is disabled);
+  **_state** is append-only (a fresh `processed` event supersedes the old);
+  **Archived PDFs** is left intact (it indexes the unchanged Drive-mirrored PDF —
+  purging it would orphan the mirror).
 - It defaults to a **DRY RUN**: `FORCE_REPROCESS_DOC_IDS` alone only previews the
   purge + re-extract and mutates nothing. A second switch, `FORCE_REPROCESS_APPLY`,
   is required to execute. Google Sheets File → Version history is the restore
