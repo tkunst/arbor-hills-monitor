@@ -103,8 +103,43 @@ tree — see `.claude/COORDINATION.md`.
      before deletion. Left `refresh-topology-map` and Session-WOI's untracked
      `docs/handoffs/` alone.
 
+7. **Session-WOI — answered the WOI-auto-routing eng question and staged an
+   overnight-coder handoff (no code merged; from its own side).** A separate
+   session picked up `business-rules.md` **Note 6** / ADR 005's deferred
+   "Integration (follow-up)": *should WOI Status Reports route through
+   `woi_table_parser` automatically instead of a manual script run?* Traced the
+   live path and found the answer is **yes**, and for a stronger reason than
+   archive completeness: `email_alerts.is_urgent` fires the same-day urgent alert
+   off a **measured** temp ≥145 °F in `parsed.measurements`
+   (`email_alerts.py:41-53, 63-65`), but keyword-windowing on a 180-pp WOI report
+   never shows the classifier a reading buried past the windowed pages — so a real
+   MACT exceedance produces **no measurement and no alert** today. Feeding the
+   already-built, 16-test `woi_table_parser` output into `measurements[]` closes
+   both the archive *and* the alerting gap.
+   - **Deliverable:** `docs/handoffs/woi-auto-routing.md` — a self-contained goal
+     spec for the `docs/overnight-coder.md` loop, with the design pinned (route
+     *above* `parse_document` to keep the Decode base domain-agnostic; per-well
+     summary to a new tab + only ≥131 °F readings into Measurements, not ~14k raw
+     rows; `woi.auto_route` kill-switch defaulting on) and an adversarial-review
+     section folded in. Flagged the load-bearing override for the loop: this is a
+     change to an **already-live path**, so it does *not* ship `enabled:false` — it
+     ships live and **must** be verified against a real downloaded WOI report
+     before an autonomous merge (else a Step-3 draft-PR stop).
+   - **No code changed, nothing merged, nothing committed to `main` by this
+     session beyond this write-up + the handoff doc.** `is_urgent` already prefers
+     `measurements[]`, so no change is needed there — the fix is pure integration
+     glue (~80–85% done: the extractor is complete and tested).
+   - Queued for the overnight-coder loop (goal = wire it in). The one manual
+     follow-up after it merges: re-extract the two already-`processed` historical
+     WOI reports (a `RETRY_DOC_IDS`/force-reprocess trigger — same `processed`-doc
+     wrinkle ADR 011's backfill hit).
+
 ## Loose ends (for a future session)
 
+- **WOI auto-routing (Session-WOI, item 7)** — handoff staged at
+  `docs/handoffs/woi-auto-routing.md`; queued for the overnight-coder loop. Check
+  `gh pr list --state open` the morning after the run (merged PR, or a draft-PR
+  stop). Manual follow-up after merge: re-extract the two historical WOI reports.
 - **Topology regen (PR #8) — DONE** — merged to `main` as `e7e7447`.
 - **Ops checks 2026-07-13** — confirm the next `wds-archive` scheduled run recovers
   from the transient Google Sheets 503 (4am ET), and that the first *scheduled* PFAS
