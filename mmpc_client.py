@@ -98,6 +98,36 @@ def fetch_mmpc_files(session: requests.Session, category_id: int = 72) -> list[d
     return out
 
 
+def fetch_event(session: requests.Session, event_id) -> dict | None:
+    """Fetch ONE CivicClerk event by its numeric id, returning the raw event dict
+    (including its `publishedFiles` array), or None when the API returns HTTP 200
+    with an empty result set — i.e. the event genuinely isn't there (removed,
+    cancelled, or a bad id).
+
+    That None is a MEANINGFUL 'not found', deliberately distinct from an HTTP/JSON
+    failure, which raises MMPCFetchError. A caller (civicclerk_watcher) treats the
+    error as TRANSIENT (skip-and-warn, never 'the meeting vanished') but treats a
+    200-empty for a previously-seen event as a real change worth alerting on.
+
+    Same OData host + session as the Mirror-D enumeration above — this just asks
+    for a single event by id instead of a whole category. Used to watch specific
+    MMPC / Board-of-Commissioners meetings for changes (see ADR 015)."""
+    quoted = urllib.parse.quote(f"id eq {event_id}")
+    url = f"{_BASE}/Events?$filter={quoted}"
+    try:
+        r = session.get(url, timeout=30)
+    except requests.RequestException as e:
+        raise MMPCFetchError(f"GET event {event_id} failed: {e}") from e
+    if r.status_code != 200:
+        raise MMPCFetchError(f"GET event {event_id} -> HTTP {r.status_code}")
+    try:
+        payload = r.json()
+    except ValueError as e:
+        raise MMPCFetchError(f"GET event {event_id} -> unparseable JSON: {e}") from e
+    values = payload.get("value") or []
+    return values[0] if values else None
+
+
 def download_file(session: requests.Session, file_id, dest_path: str, timeout: int = 60) -> str:
     """Download one document's PDF bytes to dest_path. Returns dest_path; raises
     MMPCFetchError on HTTP error or an empty/non-PDF body."""

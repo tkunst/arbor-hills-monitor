@@ -1,0 +1,60 @@
+name: meeting-watch
+
+# CivicClerk meeting-change watch (ADR 015). Snapshots a hand-picked list of MMPC
+# + Washtenaw County Board-of-Commissioners meeting events (title, date/time,
+# publish status, and document set) and emails a change alert when one changes vs.
+# the last snapshot in the "Meeting Watch" tab. First sighting baselines silently.
+#
+# Fires TWICE daily; cadence is then decided IN CODE per event (civicclerk_watcher
+# .is_due_today): MMPC every run; BOC weekly + daily in the 3 days before a meeting.
+#
+# Safe to leave scheduled: civicclerk_watch.enabled gates it, and even enabled the
+# first run only baselines (no alerts). Lighter than the doc jobs — no Anthropic,
+# no OCR, no Drive/OAuth (Sheets I/O via the service account + SMTP for the alert).
+# State is the append-only Meeting Watch tab, NOT _meta, so this never races the
+# other jobs on the _meta cell.
+on:
+  schedule:
+    - cron: "0 11 * * *"    # ~7am ET (11:00 UTC). DST drift of +/-1h is acceptable.
+    - cron: "0 23 * * *"    # ~7pm ET (23:00 UTC).
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meeting-watch
+  cancel-in-progress: false
+
+jobs:
+  meeting-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Watch CivicClerk meeting events for changes
+        env:
+          # Sheets I/O uses the service account; the change alert uses SMTP.
+          # No Anthropic (nothing to classify) and no OAuth (no Drive mirror).
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
+        run: python civicclerk_watcher.py

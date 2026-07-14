@@ -37,6 +37,12 @@ external users but no sensitive data). Public repo.
 - `gfl_air_watcher.py` — daily poll of the GFL air feed: incremental OBJECTID
   cursor (in the `GFL Air` tab), readings → Measurements (`basis=measured`),
   same-day exceedance alerts via its own classifier. Gated on `gfl_air.enabled`.
+- `civicclerk_watcher.py` — Stream F: twice-daily change-watch on a hand-picked
+  list of MMPC + Washtenaw County BOC meeting events (via `mmpc_client.fetch_event`).
+  Snapshots each event's title/date/status/document-set into the `Meeting Watch`
+  tab and alerts (Trisha only) on any change. Cadence is a pure function per event
+  (`is_due_today`): MMPC every run; BOC weekly + daily in the 3 days before a
+  meeting. Alert-only (no Drive). Gated on `civicclerk_watch.enabled`. See ADR 015.
 
 ## Forbidden patterns (do not do these)
 
