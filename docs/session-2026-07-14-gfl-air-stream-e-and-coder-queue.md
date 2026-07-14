@@ -109,3 +109,18 @@ provenance-stamped archive of the self-reported feeds (queued as `coder:selfrepo
 - Not urgent (in TASKS.md): optimize overnight worker/coder timing; automate the
   nightly Apple Note.
 - Non-blocking: re-inject `docs/topology/TOPOLOGY.html` via `/modernize-map`.
+
+## Session close (2026-07-14)
+
+Everything durable and merged. Nothing in flight.
+
+- **`arbor-hills-monitor` `main`:** Stream E (PR #12 `4ed3e7f`) + ADR-014 accuracy
+  pass (`dfeb438`) + Ridge Wood/session docs (`7d0248d`) + overnight-coder Step 9 /
+  STOPPED / gfl-air-liveness handoff (`b897bea`). All pushed; push-to-main CI green.
+- **Cowork workspace** (committed locally, not pushed — Lotext convention,
+  `b01658e`): the two overnight-coder queue docs, the worker-queue slug rewire +
+  #74-moot, the item-8 recon + backlog updates (items 6/8), and the two not-urgent
+  TASKS follow-ups.
+- **Two ready coder items** to run any night: `coder:ridgewood-h2s`,
+  `coder:gfl-air-liveness`. **Two human steps** before Stream E goes live: confirm
+  thresholds, then `enabled:true` (after the liveness build).
