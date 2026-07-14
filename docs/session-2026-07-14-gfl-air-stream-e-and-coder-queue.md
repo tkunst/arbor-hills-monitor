@@ -70,28 +70,42 @@ All in `/Volumes/Samsung-Pro-2TB/Cowork-claude/`:
 - **`documents/overnight-coder-queue.md`** (new) — active coder queue: how Trisha
   starts (cd repo → `claude --dangerously-skip-permissions` → `!pwd` anchor →
   paste goal), a `Dependency:` (null | `worker #NN`) + `Handoff:` + cut/paste Goal
-  box per item, and 7 staged items (coder #1 Ridge Wood and #2 GFL liveness are
-  `null`/ready; #3–#7 gated on worker items 66–69 / a new backup design-spike).
+  box per item, keyed by **stable slugs** (`coder:ridgewood-h2s`, …), and 7 staged
+  items (`coder:ridgewood-h2s` + `coder:gfl-air-liveness` are `null`/ready; the rest
+  gated on worker items 66–69 / a new backup design-spike).
 - **`documents/overnight-coder-archive.md`** (new) — completed builds (GFL #12,
   WOI #9) + pre-queue history.
-- **`documents/overnight-queue.md`** — rewired the worker convention: `[coder-prep]`
-  → **`[coder-prep -> coder #N]`** naming the specific coder-queue item it gates
-  (replacing the vague "next night's coder"/"tomorrow"); items 66→#4, 67→#5, 68→#6,
-  69→#3.
-- This repo: **`docs/overnight-coder-handoffs/ridgewood-h2s.md`** (new) — the
-  flagship coder #1 handoff (Stream F), staged from the recon so it's runnable now.
-- Bonus: demonstrated pushing a Goal to an Apple Note (`osascript`) for coder #1.
+- **`documents/overnight-queue.md`** — rewired the worker convention to
+  **`[coder-prep -> coder:<slug>]`** naming the specific coder item it gates
+  (replacing "next night's coder"/"tomorrow"): 66→`coder:metric-taxonomy`,
+  67→`coder:location-type`, 68→`coder:well-id-normalization`, 69→`coder:ride-part201`;
+  marked worker #74 (GFL recon fallback) MOOT.
+- **`docs/overnight-coder.md`** (repo) — added **Step 9** (automatic queue
+  maintenance: on merge, archive the item by slug + release the consumed worker pin,
+  commit the Cowork files locally, never push) and a **STOPPED-state** convention (a
+  stopped item stays in the active queue, annotated, pointing at its draft PR).
+- **`TASKS.md`** — two not-urgent follow-ups: optimize the overnight worker/coder
+  timing (the coder runs before the worker, so worker-gated builds carry a ~2-night
+  latency) and automate the nightly Apple Note.
+- This repo: **`docs/overnight-coder-handoffs/ridgewood-h2s.md`** +
+  **`gfl-air-liveness.md`** (new) — the `coder:ridgewood-h2s` and
+  `coder:gfl-air-liveness` handoffs, both staged so they're runnable now.
+- Bonus: demonstrated pushing a Goal to an Apple Note (`osascript`) for
+  `coder:ridgewood-h2s`.
 
 **Item 9 (backup / 3-2-1-1-0) critique** was delivered to Trisha directly (not
 written to the doc): it's really 3 tasks (worker write-up + worker design-spike +
 a *decomposed* set of coder builds); the Seagate offline leg can't run from CI; the
 "0" (verified restore) is the unstated crux; and the highest-value first slice is a
-provenance-stamped archive of the self-reported feeds (queued as coder #7).
+provenance-stamped archive of the self-reported feeds (queued as `coder:selfreport-provenance`).
 
 ## Follow-ups
 
-- Enable Stream E after threshold confirm + the coder #2 liveness check.
-- Run coder #1 (Ridge Wood) — ready now.
-- Stage worker items' outputs to unblock coder #3–#6; stage a backup design-spike
-  for coder #7.
+- Enable Stream E after threshold confirm + the `coder:gfl-air-liveness` check.
+- Run `coder:ridgewood-h2s` or `coder:gfl-air-liveness` — both ready now.
+- Stage worker items' outputs to unblock `coder:ride-part201` /
+  `coder:metric-taxonomy` / `coder:location-type` / `coder:well-id-normalization`;
+  stage a backup design-spike for `coder:selfreport-provenance`.
+- Not urgent (in TASKS.md): optimize overnight worker/coder timing; automate the
+  nightly Apple Note.
 - Non-blocking: re-inject `docs/topology/TOPOLOGY.html` via `/modernize-map`.

@@ -211,6 +211,40 @@ before declaring done. Loop:
   along the way. This is what she reads first each morning — make it
   legible without requiring her to re-read the whole diff.
 
+### 9. Update the overnight-coder queue (Cowork) — automatic housekeeping
+
+Only after a **successful merge**. The queue that fed you this goal lives in the
+Lotext workspace, OUTSIDE this repo — update it so the morning review doesn't have
+to. Your cwd is the repo, so use ABSOLUTE paths:
+
+- `/Volumes/Samsung-Pro-2TB/Cowork-claude/documents/overnight-coder-queue.md` (active)
+- `/Volumes/Samsung-Pro-2TB/Cowork-claude/documents/overnight-coder-archive.md` (done)
+- `/Volumes/Samsung-Pro-2TB/Cowork-claude/documents/overnight-queue.md` (worker queue)
+
+Steps:
+
+1. **Find your item.** `grep -n` the coder queue for the `Goal + full spec:` path
+   you were handed; that block's `### coder:<slug>` heading is your item. (If the
+   goal didn't come from the queue — an ad-hoc paste — skip this whole step.)
+2. **Archive it.** Move that whole block out of the coder queue into
+   `overnight-coder-archive.md` under `## Done` (newest first), rewritten to the
+   archive's compact form: `### <date> — coder:<slug> — <title>` with Handoff, PR #,
+   spike verdict (if any), a one-line outcome, and what's left for Trisha. The slug
+   retires — never reused.
+3. **Release the worker pin.** If your item's `Dependency:` named a worker item
+   (`worker #NN`), edit the worker queue: change that item's
+   `[coder-prep -> coder:<slug>]` tag to `[coder-prep CONSUMED by coder:<slug> <date>]`
+   (pin released; a later session may `[x]`/archive that worker item normally). If
+   `Dependency: null`, skip this.
+4. **Commit locally, never push.** These are Lotext files — commit them in the
+   Cowork repo by EXPLICIT path (never `-A`), do NOT push (Lotext convention):
+   `git -C /Volumes/Samsung-Pro-2TB/Cowork-claude add <the 2-3 files>` then
+   `... commit -m "overnight-coder: archive coder:<slug>; release worker pin"`.
+
+**Best-effort:** a failure here must never undo the merge. If any step can't
+complete (missing path, git issue), say so in your closing PR comment so Trisha
+finishes the move in her morning review, and stop — do not retry destructively.
+
 ## What "stopped for Trisha" looks like
 
 Every stop in this procedure that happens after Step 2 — a Step-3
@@ -234,6 +268,15 @@ included):
   at the same goal in a new branch unless explicitly asked to. One open,
   well-documented PR waiting for a human is the correct end state — not a
   queue of half-finished attempts.
+- **Annotate the queue item as STOPPED (do NOT archive it).** If this goal came
+  from the overnight-coder queue, mark it in place instead of running Step 9's
+  archive move: in
+  `/Volumes/Samsung-Pro-2TB/Cowork-claude/documents/overnight-coder-queue.md`,
+  prepend `**STOPPED <date> — see draft PR #N (<one-line reason>).**` to your
+  item's `Readiness:` line, and commit that locally (explicit path, no push) the
+  way Step 9 does. The item stays in the ACTIVE queue (not the archive) so it's
+  visibly awaiting attention, pointing at the draft PR. Do NOT release any worker
+  pin on a stop — the dependency was not consumed.
 
 The one exception is Step 1's dirty-tree stop: it happens before this loop
 has touched anything, so there's nothing of its own to commit or push.
