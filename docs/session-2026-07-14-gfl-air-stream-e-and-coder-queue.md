@@ -124,3 +124,20 @@ Everything durable and merged. Nothing in flight.
 - **Two ready coder items** to run any night: `coder:ridgewood-h2s`,
   `coder:gfl-air-liveness`. **Two human steps** before Stream E goes live: confirm
   thresholds, then `enabled:true` (after the liveness build).
+
+## Addendum — threshold equivalence (2026-07-14)
+
+Per Trisha: where the two air monitors' thresholds are equivalent, use them.
+
+- **H2S 72 ppb is now SETTLED** — it is simultaneously the Michigan EGLE ITSL
+  (24-hr) *and* the Ridge Wood monitor's own published 24-hr action level (item 8),
+  so two independent official sources agree. Updated `config.yml` + ADR 014
+  decision 4 + the activation notes from "Trisha confirms" to "settled" for H2S
+  (value unchanged at 72; noted the 24-hr-avg-vs-hourly nuance and the operator's
+  additional 750 ppb 15-min *acute* level as a small follow-on tier).
+- **CH4 12,500 ppm stays PENDING** — no second monitor measures CH4, so it isn't
+  cross-validated.
+- **New overnight-worker item #75** (Cowork queue) researches publicly-available
+  recommended H2S/CH4 thresholds (values + averaging periods + sources) to firm up
+  CH4 before enabling. `[coder: none]`; a multi-tier outcome could later stage a
+  `coder:gfl-air-thresholds` build. Item 6 backlog cell updated to match.

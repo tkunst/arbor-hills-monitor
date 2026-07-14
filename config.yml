@@ -194,7 +194,9 @@ pfas:
 #      snapshot + sets the cursor, alerts on NONE) — no seed script needed, and it
 #      cannot blast the ~214k-row history,
 #   3. CONFIRM the alert thresholds below (a wrong threshold floods or starves —
-#      see ADR 014), then set enabled: true here and commit.
+#      see ADR 014). H2S 72 ppb is already settled (equivalent across both air
+#      monitors); CH4 12500 ppm is still pending (overnight-worker #75 researches
+#      recommended values). Then set enabled: true here and commit.
 # Until enabled: true is on main, gfl-air.yml runs on schedule but
 # gfl_air_watcher._should_run() makes every run a quiet no-op. It is keyless — no
 # secret to provision.
@@ -212,16 +214,24 @@ gfl_air:
   # station daily peak (~12/day) — the source feed stays the system of record for
   # full hourly history. Set 'all' for full fidelity in the Sheet. See ADR 014.
   measurements_mode: digest
-  # Exceedance ACTION LEVELS — CONSERVATIVE defaults, CONFIRM before enabling.
-  #   h2s_ppb 72: Michigan EGLE has no ambient H2S standard; its Initial Threshold
-  #     Screening Level (ITSL) is 100 µg/m³ (24-hr avg) ≈ 72 ppb (health screening).
-  #     A LOWER odor-nuisance level is ~5-8 ppb — far more sensitive (H2S>=5 ppb
-  #     occurred ~2874× in 4 yrs); using it as an URGENT trigger would flood, so it
-  #     is a 'watch' reference, not the default alert. Trisha's call.
-  #   ch4_ppm 12500: 25% of the methane LEL (LEL = 5% vol = 50,000 ppm); 40 CFR
-  #     258.23 requires methane below the LEL at the facility boundary. Perimeter
-  #     readings run ~4-27 ppm, so this fires only on a genuine gas-migration event;
-  #     a lower 'elevated landfill gas' watch level (~100 ppm) is available. Trisha's call.
+  # Exceedance ACTION LEVELS.
+  #   h2s_ppb 72 — CONFIRMED (equivalent across BOTH air monitors, 2026-07-14):
+  #     72 ppb is BOTH the Michigan EGLE H2S ITSL (100 µg/m³, 24-hr avg ≈ 72 ppb)
+  #     AND the Ridge Wood Elementary monitor's OWN published 24-hr action level
+  #     (data-sources item 8 / Stream F). Two independent official sources agree, so
+  #     this value is settled — not "pending confirmation". NUANCE: 72 ppb is a
+  #     24-HOUR-AVERAGE level, and Stream E applies it to HOURLY instantaneous
+  #     readings (deliberately conservative — a single hot hour alerts). The operator
+  #     also publishes a 750 ppb 15-MINUTE ACUTE level; adding that as a
+  #     higher-urgency second tier is a small follow-on (needs a classifier tier).
+  #     Lower odor-nuisance ~5-8 ppb stays a 'watch' reference, not the alert
+  #     (H2S>=5 ppb hit ~2874× in 4 yrs — it would flood).
+  #   ch4_ppm 12500 — PENDING (no second monitor measures CH4, so NOT cross-validated):
+  #     25% of the methane LEL (LEL = 5% vol = 50,000 ppm); 40 CFR 258.23 requires
+  #     methane below the LEL at the facility boundary. Perimeter readings run ~4-27
+  #     ppm, so this fires only on a genuine gas-migration event; a lower 'elevated
+  #     landfill gas' watch level (~100 ppm) is an option. Overnight-worker item #75
+  #     researches published/recommended CH4 (+ H2S) thresholds to firm this up.
   thresholds:
     h2s_ppb: 72
     ch4_ppm: 12500
