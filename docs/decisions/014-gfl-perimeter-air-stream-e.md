@@ -63,6 +63,17 @@ must fetch only what is new since last run. Two candidates:
 The cursor is stored as the `max(OBJECTID)` in the **"GFL Air" tab** (see decision
 5), and re-read as an integer each run.
 
+**Verified monotonic-with-time (2026-07-14).** OBJECTID ranges from ~4.14M (min) to
+~17.6M (max) for only ~214k surviving rows — an ~60× gap that, left unexplained,
+would undermine the cursor. Querying the **lowest** OBJECTIDs settles it: OIDs
+4,139,326–330 carry the **oldest** dates (2022-05-05, the start of the record). So
+low OID = old, high OID = new — OBJECTID tracks insertion time, and the gap is a
+high-starting *shared* server sequence (it begins at ~4.1M, not 0) plus snapshot-
+row churn (Layer 0's current-per-station rows are delete+reinserted hourly),
+**not** a table reload that renumbers Layer 4. The 2022 rows still hold their
+original low OIDs, so the readings table is append-mostly and the `> cursor` walk
+never misses or re-sees them.
+
 ### 2. In-place mutation does NOT touch the numerics (verified) — so the cursor is safe
 
 An OBJECTID cursor walks past each row once and never revisits it, so it would miss
@@ -225,6 +236,21 @@ It is keyless — no secret to provision.
   stream ships disabled so Trisha reviews them before any alert can fire.
 - **GFL-reported data is the operator's own self-report:** attributed as such in the
   row (decision 7).
+- **OBJECTID-reset silent stall (accepted, watch before enabling):** the cursor is
+  verified monotonic-with-time *today* (decision 1). But if Barr ever rebuilds the
+  service and the new OIDs reset **below** the stored cursor (~17.6M), `OBJECTID >
+  cursor` would return nothing **forever** — a permanent silent zero that looks
+  identical to "no new readings." The over-cap guard only catches the opposite
+  (OIDs bumped *higher*). There is no auto-recovery beyond the per-poll reading-
+  count log, and a log line is not an alert — so for a stream that is quiet-by-
+  design until an exceedance, this is the one way a real reading could go unseen.
+  **Before enabling, add a liveness check** (alert if N days pass with zero new
+  readings); until then, `enabled: false` bounds the blast radius to nil.
+- **Over-cap suppresses a genuine catch-up's alerts (accepted):** a poll returning
+  more than `max_new_readings_per_run` re-baselines and alerts on **none** — correct
+  as stale-data deferral (the `watcher.max_new_docs_per_run` posture), but it does
+  mean a real exceedance inside a >cap catch-up window is recorded-not-alerted. The
+  window only arises after a multi-day outage or a feed reinsert.
 - **Residual (accepted):** a future numeric-mutation change (decision 2) or a source
   format change could under-capture until the reading-count log flags it — no
   auto-recovery beyond that signal + the `enabled: false` / disable lever; and
