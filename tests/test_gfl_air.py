@@ -214,7 +214,8 @@ def _wire(monkeypatch, cfg=CFG):
 
 
 def _summary(fake):
-    return fake._values._tabs.get(sw.TAB_GFL_AIR, [])[1:]     # drop header
+    # non-blank station rows (the snapshot is written over a fixed padded span)
+    return [r for r in fake._values._tabs.get(sw.TAB_GFL_AIR, [])[1:] if r and str(r[0]).strip()]
 
 
 def _measurements(fake):
@@ -352,6 +353,27 @@ def test_read_error_skips_run_without_rebaselining(monkeypatch):
                         lambda *a, **k: called.append(1) or list(base))
     assert gw.run() == 0
     assert called == []                             # did NOT re-baseline on a read blip
+
+
+def test_summary_is_single_update_and_blanks_a_shrunk_station_set(monkeypatch):
+    # Written as one padded update (no clear+update crash window); a station going
+    # dark must not leave an orphan row, and the cursor must stay correct.
+    fake = FakeSheets()
+    sw.ensure_gfl_air_tabs(fake, "SID")
+    six = [{"station": s, "as_of": "t", "h2s": 0, "h2s_status": "ok", "ch4": 5,
+            "ch4_status": "ok", "wind": 1, "direction": 200, "temp": 75,
+            "oid": 100 + i, "note": "n"} for i, s in enumerate(STATIONS)]
+    calls = []
+    orig_clear = fake._values.clear
+    fake._values.clear = lambda *a, **k: (calls.append("clear"), orig_clear(*a, **k))[1]
+    sw.write_gfl_air_summary(fake, "SID", six, "link")
+    assert calls == []                              # never calls clear()
+    assert len(_summary(fake)) == 6
+    assert sw.gfl_air_cursor(fake, "SID") == 105
+    # A later poll sees only 5 stations (MS-6 dark): the 6th row must be blanked.
+    sw.write_gfl_air_summary(fake, "SID", six[:5], "link")
+    assert len(_summary(fake)) == 5
+    assert sw.gfl_air_cursor(fake, "SID") == 104    # no stale 105 orphan
 
 
 # --- cursor int-parse (the string-max trap) ------------------------------------

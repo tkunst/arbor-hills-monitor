@@ -980,25 +980,38 @@ def ensure_gfl_air_tabs(service, sheet_id: str) -> None:
     _set_header(service, sheet_id, TAB_GFL_AIR, GFL_AIR_SUMMARY_HEADERS)
 
 
+# Fixed write span for the GFL Air snapshot: the six MS-* stations plus headroom.
+# The snapshot is written over this many rows every time (live rows first, then
+# blank rows), so a shrinking station set (a station goes dark) can't leave an
+# orphan row — AND the whole snapshot lands in ONE update() call. That single call
+# is what makes the cursor crash-safe: a clear()+update() pair could die between
+# the two, leaving the tab EMPTY, which the next run would read as "first run" and
+# re-baseline — silently skipping every reading since the lost cursor. With one
+# update, a crash leaves either the old cursor (harmless re-ingest next run) or the
+# new one, never an empty tab. Only ever GROW this; never shrink it below the
+# largest station count the tab has held (same rule as _META_CELL_ROWS).
+_GFL_SUMMARY_ROWS = 12
+
+
 def write_gfl_air_summary(service, sheet_id: str, stations: list[dict], link: str) -> None:
-    """REPLACE the GFL Air snapshot: clear the body (rows 2+) and write the current
-    latest-reading-per-station rows. Replace (not append) keeps the tab small and
-    always current, and — because the OBJECTID column IS the cursor — makes the
-    stored cursor exactly max(OBJECTID) over the current stations. Written AFTER
-    the Measurements rows for the same poll (crash-safe order: a kill between them
+    """REPLACE the GFL Air snapshot with the current latest-reading-per-station
+    rows in a SINGLE padded update (no clear). Replace (not append) keeps the tab
+    small and current, and — because the OBJECTID column IS the cursor — makes the
+    stored cursor exactly max(OBJECTID) over the current stations. Written AFTER the
+    Measurements rows for the same poll (crash-safe order: a kill between them
     re-ingests the batch next run — a duplicate reading, never a dropped one — and
-    the cursor only advances once the snapshot lands)."""
-    service.spreadsheets().values().clear(
-        spreadsheetId=sheet_id, range=f"'{TAB_GFL_AIR}'!A2:L", body={}
-    ).execute()
+    the cursor only advances once this snapshot lands). See _GFL_SUMMARY_ROWS for
+    why this is one update, not clear+update."""
     rows = gfl_air_summary_rows(stations, link)
-    if rows:
-        service.spreadsheets().values().update(
-            spreadsheetId=sheet_id,
-            range=f"'{TAB_GFL_AIR}'!A2",
-            valueInputOption="RAW",
-            body={"values": rows},
-        ).execute()
+    ncols = len(GFL_AIR_SUMMARY_HEADERS)
+    while len(rows) < _GFL_SUMMARY_ROWS:
+        rows.append([""] * ncols)        # blank the tail so a shrink leaves no orphan
+    service.spreadsheets().values().update(
+        spreadsheetId=sheet_id,
+        range=f"'{TAB_GFL_AIR}'!A2",
+        valueInputOption="RAW",
+        body={"values": rows},
+    ).execute()
 
 
 def gfl_air_cursor(service, sheet_id: str):
