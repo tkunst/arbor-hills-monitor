@@ -119,8 +119,9 @@ that must rest on published action levels, cited so the artifact stays credible:
   number settles it: use 72 ppb for both air-monitor streams, no longer "pending
   confirmation". **Nuance:** 72 ppb is a *24-hour-average* level, and Stream E
   applies it to *hourly instantaneous* readings — deliberately conservative (a
-  single hot hour alerts); whether to compute a rolling 24-hr average to match the
-  action level exactly is a refinement, not a blocker. The Ridge Wood source also
+  single hot hour alerts); computing a rolling 24-hr average per station to match
+  the action level exactly is a refinement (queued as the `coder:gfl-air-24h-average`
+  build), not a blocker. The Ridge Wood source also
   publishes a **750 ppb 15-minute *acute*** level; adding that as a higher-urgency
   second tier is a small follow-on (a classifier tier). A far lower **odor-nuisance**
   level (~5–8 ppb) stays a *watch* reference, not the alert default: `H2S >= 5 ppb`

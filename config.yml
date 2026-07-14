@@ -221,7 +221,8 @@ gfl_air:
   #     (data-sources item 8 / Stream F). Two independent official sources agree, so
   #     this value is settled — not "pending confirmation". NUANCE: 72 ppb is a
   #     24-HOUR-AVERAGE level, and Stream E applies it to HOURLY instantaneous
-  #     readings (deliberately conservative — a single hot hour alerts). The operator
+  #     readings (deliberately conservative — a single hot hour alerts; a rolling
+  #     24-hr-average build is queued as coder:gfl-air-24h-average). The operator
   #     also publishes a 750 ppb 15-MINUTE ACUTE level; adding that as a
   #     higher-urgency second tier is a small follow-on (needs a classifier tier).
   #     Lower odor-nuisance ~5-8 ppb stays a 'watch' reference, not the alert
