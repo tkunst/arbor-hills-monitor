@@ -133,6 +133,14 @@ TAB_WOI_SUMMARY = "WOI Well Summary"
 # why the cursor lives here, not in _meta (a separate workflow must never write
 # _meta; see pfas_watcher / ADR 014).
 TAB_GFL_AIR = "GFL Air"
+# CivicClerk meeting-change watch (ADR 015) — same on-demand policy as the WDS/
+# MMPC/PFAS/WOI/GFL tabs: no tab appears until civicclerk_watcher actually runs.
+# Append-only ⇒ race-free state (the last row per Event ID IS the last snapshot),
+# exactly like the PFAS Page Watch tab — NOT _meta, so a separate workflow can't
+# clobber it. Distinct from MMPC Archived Files (that mirrors category-72 PDFs to
+# Drive by fileId; this watches a HAND-PICKED list of MMPC + BOC events for ANY
+# change — date, title, status, or its document set — and alerts, no Drive).
+TAB_MEETING_WATCH = "Meeting Watch"
 # Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
 # TAB_NEW/TAB_HISTORICAL. "Change" is new/changed (live) or historical (dump).
 WDS_HEADERS = [
@@ -179,6 +187,17 @@ MMPC_ARCHIVE_HEADERS = [
 PFAS_SNAPSHOT_HEADERS = [
     "Date", "Page", "URL", "Change", "Content Hash", "Chars",
     "Note", "Fetched At", "Normalized Text",
+]
+
+# CivicClerk meeting-change watch (ADR 015). One row per observed state of a
+# watched meeting event — "baseline" (first sighting, silent) or "changed" (fires
+# an alert). The last column carries the canonical snapshot JSON (event name/date/
+# status + the sorted document set): it's what next run diffs against AND a durable
+# dated record of what the meeting looked like. Last so the human columns read
+# cleanly to its left (same layout choice as PFAS_SNAPSHOT_HEADERS).
+MEETING_WATCH_HEADERS = [
+    "Date", "Group", "Meeting", "Event ID", "URL", "Change",
+    "Snapshot Hash", "# Files", "Note", "Checked At", "Snapshot JSON",
 ]
 
 # WOI Well Summary (ADR 005 integration). One row per well from a routed WOI
@@ -923,6 +942,63 @@ def append_pfas_snapshot_row(
     advances the stored hash)."""
     append_rows(service, sheet_id, TAB_PFAS, [[
         date, page, url, change, content_hash, chars, note, fetched_at, normalized_text,
+    ]])
+
+
+# ---------------------------------------------------------------------------
+# CivicClerk meeting-change watch (ADR 015) — the tab is the state (append-only
+# ⇒ race-free), exactly like the PFAS Page Watch tab above.
+# ---------------------------------------------------------------------------
+
+
+def ensure_meeting_watch_tabs(service, sheet_id: str) -> None:
+    """Create the Meeting Watch tab if missing and reconcile its header row on
+    every run (same self-healing policy as ensure_pfas_tabs()). Called only from
+    civicclerk_watcher.py, so the tab doesn't appear until the watch actually
+    runs — same no-empty-tab policy as the WDS/MMPC/PFAS/WOI/GFL tabs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_MEETING_WATCH not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_MEETING_WATCH}}}]},
+        ).execute()
+    _set_header(service, sheet_id, TAB_MEETING_WATCH, MEETING_WATCH_HEADERS)
+
+
+def last_meeting_snapshot(service, sheet_id: str, event_id) -> tuple[str, str] | None:
+    """Return (snapshot_hash, snapshot_json) from the most recent row for this
+    event_id, or None if the event has never been snapshotted. None means
+    'baseline this event'; a hash mismatch means 'changed'. Reading the last
+    matching row (not a _meta cell) is what makes the watch race-free — the tab is
+    append-only, so no concurrent job can clobber it. event_id is compared as a
+    string: it's an int in the API/config but Sheets round-trips cell values as
+    strings (same normalization as mmpc_archived_file_ids())."""
+    latest = None
+    target = str(event_id)
+    for r in _tab_rows(service, sheet_id, TAB_MEETING_WATCH, "A2:K"):
+        if len(r) > 3 and str(r[3]) == target:
+            latest = r
+    if latest is None:
+        return None
+    snap_hash = latest[6] if len(latest) > 6 else ""
+    snap_json = latest[10] if len(latest) > 10 else ""
+    return snap_hash, snap_json
+
+
+def append_meeting_watch_row(
+    service, sheet_id: str, date: str, group: str, meeting: str, event_id, url: str,
+    change: str, snapshot_hash: str, n_files: int, note: str, checked_at: str,
+    snapshot_json: str,
+) -> None:
+    """Append one Meeting Watch row. Written BEFORE the change email is sent
+    (durable record first, alert best-effort second — same crash-safe ordering as
+    append_pfas_snapshot_row: a kill after the row but before the email loses the
+    alert, never the record, and never re-fires next run since the row already
+    advances the stored hash)."""
+    append_rows(service, sheet_id, TAB_MEETING_WATCH, [[
+        date, group, meeting, event_id, url, change,
+        snapshot_hash, n_files, note, checked_at, snapshot_json,
     ]])
 
 
