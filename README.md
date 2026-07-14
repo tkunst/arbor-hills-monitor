@@ -55,6 +55,16 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
    email fires when a reading crosses a conservative, config-driven action level
    (**R3/R4**). Off by default until Trisha confirms the thresholds; see
    `docs/decisions/014-gfl-perimeter-air-stream-e.md` for activation.
+8. **CivicClerk meeting-change watch (Stream F)** (twice daily —
+   `civicclerk_watch.enabled: true`): watches a hand-picked list of MMPC and
+   Washtenaw County Board-of-Commissioners meeting events for **any** change —
+   title, date/time, publish status, cancellation, or its agenda/minutes/other
+   document set — and emails a change alert (recipients scoped to Trisha, not the
+   advocacy list). Complements Mirror D, which only *mirrors* MMPC PDFs and is
+   blind to a meeting being moved/cancelled and covers no BOC meetings. Cadence is
+   decided in code per event (MMPC every run; BOC weekly + daily in the 3 days
+   before each meeting). First run baselines silently; see
+   `docs/decisions/015-civicclerk-meeting-watch.md`.
 
 > **A note on the document links (expected behavior).** Every case-file row's
 > **Link** column points to EGLE's nSITE portal

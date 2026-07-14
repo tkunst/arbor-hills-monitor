@@ -250,6 +250,65 @@ gfl_air:
   # watcher.max_new_docs_per_run). Normal daily volume is ~144 (6 stations × hourly).
   max_new_readings_per_run: 1000
 
+# --- CivicClerk meeting-change watch (Stream F, ADR 015, added 2026-07-14) ---
+# Watches a HAND-PICKED list of Washtenaw County CivicClerk meeting events for ANY
+# change — title, date/time, publish status, cancellation, or its agenda/minutes/
+# other document set — and emails a change alert. Distinct from Mirror D
+# (mmpc_archive: below), which only MIRRORS category-72 (MMPC) PDFs to Drive by
+# fileId and is blind to a meeting being moved/renamed/cancelled or a doc replaced,
+# AND covers no Board-of-Commissioners meetings at all. This watch downloads
+# nothing; the deliverable is the ALERT. See civicclerk_watcher.py + ADR 015.
+#
+# CADENCE is a pure function of (config, today), NOT the cron: meeting-watch.yml
+# fires twice daily and each event decides if it's due (is_due_today). MMPC =
+# every run; BOC = weekly (weekly_weekday, Mon=0) PLUS daily in the N days before
+# each meeting (daily_before_days), so a last-minute agenda/cancellation is caught.
+#
+# RECIPIENTS below are used VERBATIM (Trisha only) — NOT the shared
+# alert_recipients list — because meeting-logistics changes are hers to triage.
+#
+# ACTIVATION note: ships enabled. Unlike a classified feed this cannot flood — the
+# FIRST run BASELINES every event silently (records a snapshot, alerts on none),
+# exactly like pfas_watcher. Flip enabled:false to pause without deleting the tab.
+civicclerk_watch:
+  enabled: true
+  recipients:
+    - arbor-hills@trishakunst.com          # Trisha only (not the advocacy list)
+  groups:
+    # MMPC — the Materials Management Planning Committee (category 72). Oct/Nov
+    # have NO portal page (the committee isn't meeting then), so only these three
+    # exist to watch. Checked every run (2x/day) — the siting arc is high-stakes.
+    - name: "MMPC"
+      cadence: every_run
+      events:
+        - {id: 4005, event_date: "2026-08-19", label: "MMPC — Aug 19, 2026 (siting requirements approval)"}
+        - {id: 4006, event_date: "2026-09-09", label: "MMPC — Sep 9, 2026"}
+        - {id: 4007, event_date: "2026-12-09", label: "MMPC — Dec 9, 2026 (siting vote)"}
+    # Washtenaw County Board of Commissioners — Working Session (category 27,
+    # 5:30 PM) + Board Meeting (category 26, 7:00 PM). Less critical → weekly, but
+    # daily in the 3 days before each meeting. Every date below HAS a live portal
+    # page (unlike MMPC's Oct/Nov). Dec 2 is a meeting only (no working session).
+    - name: "Washtenaw County BOC"
+      cadence:
+        weekly_weekday: 0                  # Monday
+        daily_before_days: 3
+      events:
+        - {id: 3975, event_date: "2026-08-05", label: "BOC Working Session — Aug 5, 2026"}
+        - {id: 3940, event_date: "2026-08-05", label: "BOC Meeting — Aug 5, 2026"}
+        - {id: 3976, event_date: "2026-09-02", label: "BOC Working Session — Sep 2, 2026"}
+        - {id: 3941, event_date: "2026-09-02", label: "BOC Meeting — Sep 2, 2026"}
+        - {id: 3965, event_date: "2026-09-16", label: "BOC Working Session — Sep 16, 2026"}
+        - {id: 3953, event_date: "2026-09-16", label: "BOC Meeting — Sep 16, 2026"}
+        - {id: 3977, event_date: "2026-10-07", label: "BOC Working Session — Oct 7, 2026"}
+        - {id: 3942, event_date: "2026-10-07", label: "BOC Meeting — Oct 7, 2026"}
+        - {id: 3966, event_date: "2026-10-21", label: "BOC Working Session — Oct 21, 2026"}
+        - {id: 3954, event_date: "2026-10-21", label: "BOC Meeting — Oct 21, 2026"}
+        - {id: 3978, event_date: "2026-11-04", label: "BOC Working Session — Nov 4, 2026"}
+        - {id: 3943, event_date: "2026-11-04", label: "BOC Meeting — Nov 4, 2026"}
+        - {id: 3967, event_date: "2026-11-18", label: "BOC Working Session — Nov 18, 2026"}
+        - {id: 3955, event_date: "2026-11-18", label: "BOC Meeting — Nov 18, 2026"}
+        - {id: 3944, event_date: "2026-12-02", label: "BOC Meeting — Dec 2, 2026"}
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 alert_recipients:

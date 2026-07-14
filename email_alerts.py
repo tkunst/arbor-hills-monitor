@@ -147,10 +147,17 @@ def resolve_recipients(cfg: dict) -> list:
     return out
 
 
-def send_email(subject: str, body: str, cfg: dict) -> None:
+def send_email(subject: str, body: str, cfg: dict, recipients: list | None = None) -> None:
     """Send to all configured recipients via SMTP (TLS). No-op with a warning if
-    SMTP env vars are missing (so a dry/local run doesn't crash)."""
-    recipients = resolve_recipients(cfg)
+    SMTP env vars are missing (so a dry/local run doesn't crash).
+
+    `recipients` overrides the audience: when a non-empty list is passed it is used
+    VERBATIM (not merged with the shared `alert_recipients` list or the
+    ALERT_RECIPIENTS_EXTRA env). This is how a narrowly-scoped alert reaches only a
+    subset — e.g. the CivicClerk meeting-watch (ADR 015) sends meeting-logistics
+    changes to Trisha alone, not the whole advocacy list. When None/empty, the
+    default whole-list behaviour (resolve_recipients) is unchanged."""
+    recipients = list(recipients) if recipients else resolve_recipients(cfg)
     host = os.environ.get("SMTP_HOST")
     user = os.environ.get("SMTP_USER")
     password = os.environ.get("SMTP_PASSWORD")
