@@ -6,6 +6,7 @@ graph LR
   ds_wds[("EGLE WDS Portal (Solid Waste)")]
   ds_mmpc[("Washtenaw County MMPC Site")]
   ds_pfas[("EGLE PFAS Investigation Pages (michigan.gov)")]
+  ds_gfl_air[("GFL Perimeter Air ArcGIS FeatureServer (Barr, public)")]
   ds_smtp[("Email Recipients (SMTP)")]
   ds_anthropic[("Anthropic Claude API")]
   ds_config[("config.yml (risk register + settings)")]
@@ -22,6 +23,8 @@ graph LR
   mmpc_client -. read .-> ds_mmpc
   pfas_client["pfas_client"]
   pfas_client -. read .-> ds_pfas
+  gfl_air_client["gfl_air_client"]
+  gfl_air_client -. read .-> ds_gfl_air
   email_alerts["email_alerts"]
   email_alerts ==>|write| ds_smtp
   egle_doc_parser["egle_doc_parser"]
@@ -39,6 +42,7 @@ graph LR
   style ds_wds fill:#f59e0b,color:#000,stroke:#b45309
   style ds_mmpc fill:#f59e0b,color:#000,stroke:#b45309
   style ds_pfas fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_gfl_air fill:#f59e0b,color:#000,stroke:#b45309
   style ds_smtp fill:#f59e0b,color:#000,stroke:#b45309
   style ds_anthropic fill:#f59e0b,color:#000,stroke:#b45309
   style ds_config fill:#f59e0b,color:#000,stroke:#b45309

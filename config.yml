@@ -177,6 +177,68 @@ pfas:
     - label: "Arbor Hills Landfill PFAS investigation"
       url: "https://www.michigan.gov/pfasresponse/investigations/sites-aoi/washtenaw-county/arbor-hills-landfill"
 
+# --- GFL perimeter air (Stream E, ADR 014, added 2026-07-14) ---
+# OFF BY DEFAULT. The FIRST source of real fenceline READINGS (R3 odor / R4 air),
+# not documents: GFL self-reports HOURLY H2S (ppb) and CH4 (ppm) at six perimeter
+# stations (MS-1..MS-6) on a public ArcGIS dashboard backed by a keyless Barr
+# Engineering FeatureServer. When enabled, gfl_air_watcher.py polls the readings
+# table incrementally (OBJECTID cursor stored in the "GFL Air" tab — NOT _meta, so
+# a separate workflow can't clobber the daily watcher's state), writes readings to
+# the shared Measurements tab (basis=measured), refreshes a small latest-per-station
+# snapshot, and emails a same-day alert when a reading crosses a config action level
+# using the stream's OWN classifier (never the temperature-oriented is_urgent).
+#
+# ACTIVATION — same three-step pattern as Stream C / Mirror D / PFAS. All Trisha's:
+#   1. review + merge,
+#   2. the first enabled run just baselines the current readings (records the
+#      snapshot + sets the cursor, alerts on NONE) — no seed script needed, and it
+#      cannot blast the ~214k-row history,
+#   3. CONFIRM the alert thresholds below (a wrong threshold floods or starves —
+#      see ADR 014), then set enabled: true here and commit.
+# Until enabled: true is on main, gfl-air.yml runs on schedule but
+# gfl_air_watcher._should_run() makes every run a quiet no-op. It is keyless — no
+# secret to provision.
+gfl_air:
+  enabled: false
+  # Barr Engineering ArcGIS Enterprise FeatureServer (public, GET-only). The
+  # readings live in the "Monitoring Data" table (layer 4). Verified 2026-07-14.
+  service_url: "https://enterprisegis.barr.com/server/rest/services/GFL/GFL_Arbor_Hills_Public_Web_Data/FeatureServer"
+  readings_layer: 4
+  dashboard_url: "https://barrgisonline.maps.arcgis.com/apps/dashboards/ac08a03f8018403ba6ae1c2243c00e99"
+  station_prefix: "MS-"             # perimeter gas stations; excludes the stale "10-Meter MET Tower" row
+  max_record_count: 2000            # page size for the incremental OBJECTID query (service cap is 10000)
+  # Which readings land in the shared Measurements tab. The feed is hourly (~288
+  # rows/day at 'all'), so the default 'digest' keeps every exceedance + a per-
+  # station daily peak (~12/day) — the source feed stays the system of record for
+  # full hourly history. Set 'all' for full fidelity in the Sheet. See ADR 014.
+  measurements_mode: digest
+  # Exceedance ACTION LEVELS — CONSERVATIVE defaults, CONFIRM before enabling.
+  #   h2s_ppb 72: Michigan EGLE has no ambient H2S standard; its Initial Threshold
+  #     Screening Level (ITSL) is 100 µg/m³ (24-hr avg) ≈ 72 ppb (health screening).
+  #     A LOWER odor-nuisance level is ~5-8 ppb — far more sensitive (H2S>=5 ppb
+  #     occurred ~2874× in 4 yrs); using it as an URGENT trigger would flood, so it
+  #     is a 'watch' reference, not the default alert. Trisha's call.
+  #   ch4_ppm 12500: 25% of the methane LEL (LEL = 5% vol = 50,000 ppm); 40 CFR
+  #     258.23 requires methane below the LEL at the facility boundary. Perimeter
+  #     readings run ~4-27 ppm, so this fires only on a genuine gas-migration event;
+  #     a lower 'elevated landfill gas' watch level (~100 ppm) is available. Trisha's call.
+  thresholds:
+    h2s_ppb: 72
+    ch4_ppm: 12500
+  # Sentinel / no-data values in the feed (ambiguous no-data vs off-scale-high).
+  # Excluded from the measured series; surfaced as anomalies. ADR 014 RECOMMENDS
+  # treating them as alert-worthy (fail-safe — don't infer 'benign' when the
+  # semantics are unknowable); flip alert_on_sentinel to false to silence them.
+  sentinels:
+    h2s_ppb: 999
+    ch4_ppm: 99999
+  alert_on_sentinel: true
+  # Anti-stampede: if one poll yields more new readings than this (e.g. the source
+  # reinserts the whole table, bumping every OBJECTID), re-baseline instead of
+  # blasting the case file (mirrors wds.max_new_wds_alerts_per_run /
+  # watcher.max_new_docs_per_run). Normal daily volume is ~144 (6 stations × hourly).
+  max_new_readings_per_run: 1000
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 alert_recipients:

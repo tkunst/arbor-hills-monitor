@@ -47,6 +47,14 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
    place — no feed to parse). Emails a diff when the page's `<main>` content
    changes, ignoring the site's rotating theme cache-busters. Off by default; see
    `docs/decisions/012-pfas-page-watch.md` for activation.
+7. **GFL perimeter air (Stream E)** (daily, optional — `gfl_air.enabled: true`):
+   the first source of real fenceline **readings**, not documents — GFL's own
+   hourly H2S (ppb) / CH4 (ppm) at six perimeter stations, pulled from its public
+   ArcGIS FeatureServer. Readings ride the *Measurements* tab (`basis=measured`),
+   a small *GFL Air* tab holds the latest-per-station snapshot, and a same-day
+   email fires when a reading crosses a conservative, config-driven action level
+   (**R3/R4**). Off by default until Trisha confirms the thresholds; see
+   `docs/decisions/014-gfl-perimeter-air-stream-e.md` for activation.
 
 > **A note on the document links (expected behavior).** Every case-file row's
 > **Link** column points to EGLE's nSITE portal
@@ -164,6 +172,14 @@ docs/day) is essentially free. Model is configurable in `config.yml`.
   traffic; if CivicClerk changes it, the fetch fails loudly (aborts the run)
   rather than silently archiving nothing. The older poll-a-URL "go check the
   minutes" reminder this superseded was retired in ADR 013.
+- **GFL perimeter air rides GFL's undocumented ArcGIS service (Stream E, ADR 014).**
+  The poller reads Barr Engineering's public FeatureServer behind GFL's dashboard;
+  if Barr changes the service or schema the fetch fails loudly (aborts the run)
+  rather than silently capturing nothing, and a per-poll reading-count log makes a
+  drop to zero visible. It is also GFL's own **self-reported** data (attributed as
+  such in every row), and by default the shared Measurements tab keeps a daily
+  digest of the hourly feed (the source remains the system of record for full
+  history — see ADR 014). Off by default (`gfl_air.enabled: false`).
 - **Classification is model output.** `key_data_point` and `measurements` can be
   wrong. The original PDF link is on every row; the `basis` flag and the
   measured-only urgency rule guard the highest-stakes error (permitted ceiling

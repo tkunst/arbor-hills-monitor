@@ -58,10 +58,12 @@ DOMAIN = {
     "wds_archiver": "orchestration",   # nightly WDS page-snapshot runner (ADR 009)
     "mmpc_archiver": "orchestration",  # nightly MMPC PDF mirror — Mirror D (ADR 010)
     "pfas_watcher": "orchestration",   # daily PFAS page-watch runner (ADR 012)
-    # Ingestion — one client per external source (nSITE, WDS, MMPC, PFAS)
+    "gfl_air_watcher": "orchestration",# daily GFL perimeter-air poll — Stream E (ADR 014)
+    # Ingestion — one client per external source (nSITE, WDS, MMPC, PFAS, GFL air)
     "nsite_client": "ingestion", "mmpc_client": "ingestion",
     "wds_watcher": "ingestion", "wds_client": "ingestion",
     "pfas_client": "ingestion",        # PFAS page fetch + content-hash normalize (ADR 012)
+    "gfl_air_client": "ingestion",     # GFL ArcGIS FeatureServer fetch + ADR-004 mapping (ADR 014)
     # Document processing & risk
     "egle_doc_parser": "processing", "risk_register": "processing",
     "retry_policy": "processing", "woi_table_parser": "processing",
@@ -100,6 +102,7 @@ DATASTORES = [
     ("ds:wds", "EGLE WDS Portal (Solid Waste)"),
     ("ds:mmpc", "Washtenaw County MMPC Site"),
     ("ds:pfas", "EGLE PFAS Investigation Pages (michigan.gov)"),
+    ("ds:gfl-air", "GFL Perimeter Air ArcGIS FeatureServer (Barr, public)"),
     ("ds:smtp", "Email Recipients (SMTP)"),
     ("ds:anthropic", "Anthropic Claude API"),
     ("ds:config", "config.yml (risk register + settings)"),
@@ -114,6 +117,7 @@ DATA_EDGES = [
     ("wds_client", "ds:wds", "read"),
     ("mmpc_client", "ds:mmpc", "read"),            # CivicClerk JSON API (Mirror D)
     ("pfas_client", "ds:pfas", "read"),            # fetches EGLE PFAS pages, hashes <main>
+    ("gfl_air_client", "ds:gfl-air", "read"),      # GET the ArcGIS FeatureServer readings (Stream E)
     ("email_alerts", "ds:smtp", "write"),
     ("egle_doc_parser", "ds:anthropic", "read"),   # sends doc, reads classification
     ("config_loader", "ds:config", "read"),
@@ -131,7 +135,7 @@ DATA_EDGES = [
 DISPATCH_EDGES = [("watcher", "wds_watcher"), ("wds_watcher", "wds_client")]
 
 OBSERVATIONS = [
-    "watcher.py is a single orchestration hub importing ~10 of the 22 runtime "
+    "watcher.py is a single orchestration hub importing ~10 of the 24 runtime "
     "modules — a star topology and the daily run's single point of failure. "
     "Partly mitigated: the Stream C (WDS) step is wrapped in its own try/except "
     "so a fault there can't sink the nSITE path.",
@@ -143,16 +147,22 @@ OBSERVATIONS = [
     "egle_doc_parser -> Anthropic is the only external-LLM dependency and the "
     "sole per-document cost driver; it is isolated to one module (swappable) and "
     "reached only on the backfill/watcher classify path.",
-    "Four ingestion streams — nSITE/Air, WDS/Solid-Waste, MMPC (CivicClerk), and "
-    "PFAS pages — are cleanly separated into their own client modules with no "
-    "cross-talk (good service-extraction seams). The MMPC minutes *reminder* was "
-    "retired (ADR 013); MMPC is now archive-only via Mirror D (mmpc_archiver -> "
+    "Five ingestion streams — nSITE/Air, WDS/Solid-Waste, MMPC (CivicClerk), PFAS "
+    "pages, and GFL perimeter air (ArcGIS FeatureServer) — are cleanly separated "
+    "into their own client modules with no cross-talk (good service-extraction "
+    "seams). Stream E (gfl_air_watcher -> gfl_air_client, ADR 014) is the first "
+    "source of real fenceline READINGS (H2S/CH4), not documents; config-gated "
+    "(gfl_air.enabled, off by default). The MMPC minutes *reminder* was retired "
+    "(ADR 013); MMPC is now archive-only via Mirror D (mmpc_archiver -> "
     "mmpc_client). Stream C (wds_watcher -> wds_client) is config-gated and active.",
-    "Five independent runners now write to the Sheet/Drive spine, each on its own "
+    "Six independent runners now write to the Sheet/Drive spine, each on its own "
     "morning cron + concurrency group so they never race the shared _meta state: "
     "archiver (nSITE PDFs, 3am), wds_archiver (WDS HTML snapshots, 4am), "
-    "mmpc_archiver (MMPC PDFs, 5am), watcher (nSITE + WDS + alerts, 6am), and "
-    "pfas_watcher (PFAS page hash, 7am). backfill is a sixth, now manual-only.",
+    "mmpc_archiver (MMPC PDFs, 5am), watcher (nSITE + WDS + alerts, 6am), "
+    "pfas_watcher (PFAS page hash, 7am), and gfl_air_watcher (GFL perimeter air, "
+    "8am). backfill is a seventh, now manual-only. Like pfas_watcher, gfl_air_watcher "
+    "keeps its cursor in its OWN tab (GFL Air), never _meta — a separate workflow "
+    "must not write the shared _meta cell (ADR 014).",
     "Three runners write into the same Drive archive store (archive_client for "
     "nSITE PDFs, wds_archiver for WDS HTML snapshots, mmpc_archiver for MMPC PDFs) "
     "— watch for a shared-folder or quota coupling as they scale (Mirror D uses a "

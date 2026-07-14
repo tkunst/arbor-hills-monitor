@@ -31,6 +31,12 @@ external users but no sensitive data). Public repo.
   `<main>`, ignores Sitecore theme cache-busters). Pure; stdlib-only.
 - `pfas_watcher.py` — daily page-watch: alerts on any change vs. the last
   snapshot in the `PFAS Page Watch` tab. Gated on `pfas.enabled`. See ADR 012.
+- `gfl_air_client.py` — Stream E: GFL's public ArcGIS perimeter-air FeatureServer
+  (H2S/CH4 fenceline readings). Fetch + pure ADR-004 mapping; structured-API
+  source, never goes through `egle_doc_parser`. See ADR 014.
+- `gfl_air_watcher.py` — daily poll of the GFL air feed: incremental OBJECTID
+  cursor (in the `GFL Air` tab), readings → Measurements (`basis=measured`),
+  same-day exceedance alerts via its own classifier. Gated on `gfl_air.enabled`.
 
 ## Forbidden patterns (do not do these)
 

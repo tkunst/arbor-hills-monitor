@@ -120,6 +120,19 @@ TAB_ALL_EVIDENCE = "All Evidence by Risk"
 # ride the Measurements tab, and the exhaustive ~14k-reading dump stays
 # reproducible via scripts/woi_summary.py.
 TAB_WOI_SUMMARY = "WOI Well Summary"
+# GFL perimeter air (Stream E, ADR 014) — same on-demand policy as the WDS/MMPC/
+# PFAS/WOI tabs: no tab appears until gfl_air_watcher actually polls. This tab is
+# BOTH the small human-facing snapshot (latest reading per perimeter station) AND
+# the watcher's cursor store: its OBJECTID column holds the highest reading id
+# ingested so far, and gfl_air_watcher reads max(OBJECTID) back as the incremental
+# cursor. It is written REPLACE (clear body + rewrite the ~6 station rows every
+# run), so it stays small and always shows the current snapshot — unlike the
+# append-only PFAS/WDS tabs. Safe as a non-append-only state store because only
+# gfl-air.yml writes it (its own concurrency group serializes it with itself), so
+# there is no cross-workflow clobber the way shared _meta has — which is exactly
+# why the cursor lives here, not in _meta (a separate workflow must never write
+# _meta; see pfas_watcher / ADR 014).
+TAB_GFL_AIR = "GFL Air"
 # Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
 # TAB_NEW/TAB_HISTORICAL. "Change" is new/changed (live) or historical (dump).
 WDS_HEADERS = [
@@ -177,6 +190,18 @@ WOI_SUMMARY_HEADERS = [
     "Report Date", "Well", "On WOI List", "Max Temp (F)", "Date of Max Temp",
     "O2 % at Max Temp", "CH4 % at Max Temp", "Max O2 % (any reading)",
     "# Readings", "Document Name", "Link",
+]
+
+# GFL perimeter air (Stream E, ADR 014). One row per perimeter station, the latest
+# reading (REPLACE semantics — refreshed every run). "OBJECTID" is load-bearing:
+# it is the watcher's cursor (max across rows = last reading ingested). "H2S/CH4
+# Status" is gfl_air_client.classify_reading's per-pollutant verdict (ok /
+# exceedance / sentinel / missing) so a human sees a flagged reading at a glance.
+# Temp/Wind are meteorological CONTEXT only — never an alert metric (the feed's
+# newest-hour Temp is briefly Celsius before it finalizes to Fahrenheit; see ADR).
+GFL_AIR_SUMMARY_HEADERS = [
+    "Station", "As-Of (UTC)", "H2S (ppb)", "H2S Status", "CH4 (ppm)", "CH4 Status",
+    "Wind (mph)", "Wind Dir", "Temp (F)", "OBJECTID", "Note", "Link",
 ]
 
 _TAB_HEADERS = {
@@ -282,6 +307,34 @@ def woi_summary_rows(summary: list[dict], metadata: dict, link: str) -> list[lis
             cell(d.get("max_o2_pct")),
             cell(d.get("n_readings")),
             metadata.get("document_name", ""),
+            link,
+        ])
+    return rows
+
+
+def gfl_air_summary_rows(stations: list[dict], link: str) -> list[list]:
+    """One row per perimeter station from the latest-reading snapshot the watcher
+    builds (pure — unit-tested without the Sheets API). Each dict carries the
+    reading's values + classify_reading statuses + the OBJECTID (the cursor).
+    None numeric cells render blank so a station with no current reading doesn't
+    write the literal 'None'."""
+    def cell(v):
+        return "" if v is None else v
+
+    rows = []
+    for s in stations:
+        rows.append([
+            s.get("station", ""),
+            s.get("as_of", ""),
+            cell(s.get("h2s")),
+            s.get("h2s_status", ""),
+            cell(s.get("ch4")),
+            s.get("ch4_status", ""),
+            cell(s.get("wind")),
+            cell(s.get("direction")),
+            cell(s.get("temp")),
+            cell(s.get("oid")),
+            s.get("note", ""),
             link,
         ])
     return rows
@@ -903,6 +956,80 @@ def write_woi_summary(
     a report (rare — normal operation processes each once) re-appends its rows, the
     same 'duplicate row, never a drop' tradeoff the feed/Measurements tabs accept."""
     append_rows(service, sheet_id, TAB_WOI_SUMMARY, woi_summary_rows(summary, metadata, link))
+
+
+# ---------------------------------------------------------------------------
+# GFL perimeter air (Stream E, ADR 014) — the "GFL Air" tab is BOTH the latest-
+# reading snapshot AND the watcher's OBJECTID cursor. Created on demand; written
+# REPLACE (not append) so it stays a small current snapshot.
+# ---------------------------------------------------------------------------
+
+
+def ensure_gfl_air_tabs(service, sheet_id: str) -> None:
+    """Create the GFL Air tab if missing and reconcile its header row on every run
+    (same self-healing policy as ensure_pfas_tabs()/ensure_woi_tabs()). Called only
+    from gfl_air_watcher.py, so the tab doesn't appear until the watch actually
+    runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_GFL_AIR not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_GFL_AIR}}}]},
+        ).execute()
+    _set_header(service, sheet_id, TAB_GFL_AIR, GFL_AIR_SUMMARY_HEADERS)
+
+
+def write_gfl_air_summary(service, sheet_id: str, stations: list[dict], link: str) -> None:
+    """REPLACE the GFL Air snapshot: clear the body (rows 2+) and write the current
+    latest-reading-per-station rows. Replace (not append) keeps the tab small and
+    always current, and — because the OBJECTID column IS the cursor — makes the
+    stored cursor exactly max(OBJECTID) over the current stations. Written AFTER
+    the Measurements rows for the same poll (crash-safe order: a kill between them
+    re-ingests the batch next run — a duplicate reading, never a dropped one — and
+    the cursor only advances once the snapshot lands)."""
+    service.spreadsheets().values().clear(
+        spreadsheetId=sheet_id, range=f"'{TAB_GFL_AIR}'!A2:L", body={}
+    ).execute()
+    rows = gfl_air_summary_rows(stations, link)
+    if rows:
+        service.spreadsheets().values().update(
+            spreadsheetId=sheet_id,
+            range=f"'{TAB_GFL_AIR}'!A2",
+            valueInputOption="RAW",
+            body={"values": rows},
+        ).execute()
+
+
+def gfl_air_cursor(service, sheet_id: str):
+    """The stored incremental cursor = the highest OBJECTID in the GFL Air tab, or
+    None if the tab has no data rows yet (a genuine first run → the watcher
+    baselines). MUST be called AFTER ensure_gfl_air_tabs (so the tab exists).
+
+    Two correctness details:
+      - Parse OBJECTID to int before max(). Sheets returns RAW cells as text, and
+        "9" > "17614325" as strings — a string max() would silently REWIND the
+        cursor and re-ingest ~214k rows. int(float(...)) also tolerates a "1234.0".
+      - This does NOT swallow a read error the way _tab_rows does. A clean read
+        with no rows returns None (baseline); an API failure PROPAGATES, so the
+        watcher can skip-and-warn instead of mistaking a transient blip for 'first
+        run' and re-baselining (which would skip real readings). See ADR 014."""
+    oid_col = GFL_AIR_SUMMARY_HEADERS.index("OBJECTID")
+    resp = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_GFL_AIR}'!A2:L")
+        .execute()
+    )
+    best = None
+    for r in resp.get("values", []):
+        if len(r) > oid_col and str(r[oid_col]).strip():
+            try:
+                oid = int(float(str(r[oid_col]).strip()))
+            except ValueError:
+                continue
+            best = oid if best is None else max(best, oid)
+    return best
 
 
 # ---------------------------------------------------------------------------

@@ -43,13 +43,19 @@ facts from analyst judgement:
 
 ## Snapshot
 
-Regenerated 2026-07-13 — current with the WOI auto-routing wire-in (`woi_router`,
+Regenerated 2026-07-14 — adds Stream E, GFL perimeter air (`gfl_air_watcher` /
+`gfl_air_client`, ADR 014), on top of the WOI auto-routing wire-in (`woi_router`,
 ADR 005), Mirror D (`mmpc_archiver` / `mmpc_client`), the PFAS page-watch
 (`pfas_watcher` / `pfas_client`), poison-doc extraction (`poison_doc_extractor`),
 and the retired MMPC minutes reminder (ADR 013).
 
-29 modules (22 runtime + 7 ops jobs) · 9 logical data stores · 77 edges ·
+31 modules (24 runtime + 7 ops jobs) · 10 logical data stores · 83 edges ·
 5 persona flows. `watcher.py` is the orchestration hub (star topology, daily
 SPOF); the Conservancy Google Sheet is the single read+write data spine. Full
 architect notes render in the viewer's **Observations** panel (and in a
 regenerated `topology.json` → `observations`).
+
+> **Note:** `extract_topology.py`, `topology.json`, and the `.mmd` diagrams here
+> are current with Stream E. The self-contained **`TOPOLOGY.html`** viewer carries
+> an *inline* snapshot injected by the `/modernize-map` plugin command; re-inject
+> it (per the Regenerate step) to refresh the interactive viewer with Stream E.
