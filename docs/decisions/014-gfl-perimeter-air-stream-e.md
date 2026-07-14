@@ -106,22 +106,33 @@ are unknowable — the WDS `0.0`-years precedent), **this ADR recommends treatin
 sentinel as an alert-worthy anomaly**, which is the shipped default. Trisha can set
 `alert_on_sentinel: false` if she learns the sentinel is pure no-data.
 
-### 4. Conservative, cited, config-driven alert thresholds — Trisha confirms
+### 4. Conservative, cited, config-driven alert thresholds — H2S settled, CH4 pending
 
 A wrong threshold floods or starves, so "what counts as an exceedance" is a value
-Trisha confirms before enabling. The shipped defaults are conservative published
-action levels, cited so the artifact stays credible:
+that must rest on published action levels, cited so the artifact stays credible:
 
-- **H2S `72 ppb`.** Michigan (EGLE) has no ambient H2S standard; its Initial
-  Threshold Screening Level (ITSL) is 100 µg/m³ over a 24-hr average ≈ **72 ppb**
-  (health screening). A far lower **odor-nuisance** level (~5–8 ppb) exists but is
-  a *watch* reference, not the alert default: `H2S >= 5 ppb` occurred ~2,874× in 4
-  years, so alerting there would flood.
-- **CH4 `12,500 ppm`.** `40 CFR 258.23` requires methane below the **Lower
-  Explosive Limit** (LEL = 5% vol = 50,000 ppm) at the facility boundary;
-  `12,500 ppm` is 25% of the LEL, a common action trigger. Perimeter readings run
-  ~4–27 ppm, so this fires only on a genuine gas-migration event; a lower "elevated
-  landfill gas" watch level (~100 ppm) is noted for Trisha's consideration.
+- **H2S `72 ppb` — SETTLED (2026-07-14).** 72 ppb is *both* the Michigan EGLE H2S
+  Initial Threshold Screening Level (ITSL, 100 µg/m³ over a 24-hr average ≈
+  **72 ppb**, health screening) *and* the **Ridge Wood Elementary monitor's own
+  published 24-hr action level** (data-sources item 8 / Stream F — Barr's
+  school-adjacent H2S monitor). Two independent official sources landing on the same
+  number settles it: use 72 ppb for both air-monitor streams, no longer "pending
+  confirmation". **Nuance:** 72 ppb is a *24-hour-average* level, and Stream E
+  applies it to *hourly instantaneous* readings — deliberately conservative (a
+  single hot hour alerts); whether to compute a rolling 24-hr average to match the
+  action level exactly is a refinement, not a blocker. The Ridge Wood source also
+  publishes a **750 ppb 15-minute *acute*** level; adding that as a higher-urgency
+  second tier is a small follow-on (a classifier tier). A far lower **odor-nuisance**
+  level (~5–8 ppb) stays a *watch* reference, not the alert default: `H2S >= 5 ppb`
+  occurred ~2,874× in 4 years, so alerting there would flood.
+- **CH4 `12,500 ppm` — PENDING (not cross-validated).** No second monitor measures
+  CH4, so there is no equivalent to confirm it against. `40 CFR 258.23` requires
+  methane below the **Lower Explosive Limit** (LEL = 5% vol = 50,000 ppm) at the
+  facility boundary; `12,500 ppm` is 25% of the LEL, a common action trigger.
+  Perimeter readings run ~4–27 ppm, so this fires only on a genuine gas-migration
+  event; a lower "elevated landfill gas" watch level (~100 ppm) is an option. An
+  overnight-worker research item (queue #75) is staged to find published/recommended
+  CH4 (and H2S) thresholds and firm this up before the stream is enabled.
 
 The stream uses its **OWN classifier** (`gfl_air_client.classify_reading`), never
 `email_alerts.is_urgent` — that one thresholds on Fahrenheit temperature and would
@@ -217,8 +228,10 @@ Same three-step pattern as Streams C/D and PFAS:
 2. the first enabled run baselines the current readings (records the snapshot +
    sets the cursor, alerts on none) — no seed script needed, and it cannot blast
    the ~214k-row history;
-3. **confirm the alert thresholds** (`gfl_air.thresholds`), then set
-   `enabled: true` and commit.
+3. **confirm the alert thresholds** (`gfl_air.thresholds`) — H2S 72 ppb is settled
+   (equivalent across both air monitors; decision 4), CH4 12,500 ppm is pending the
+   overnight-worker threshold research (queue #75) — then set `enabled: true` and
+   commit.
 
 It is keyless — no secret to provision.
 
