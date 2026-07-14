@@ -67,7 +67,7 @@ def _force_reprocess_doc_ids() -> set:
     the one override that bypasses the processed gate. For re-extracting a doc
     whose classification/measurements should change because the parser did (the
     WOI Status Reports processed via the old windowed path, now routed exhaustively
-    through woi_router — see ADR 005 / docs/handoffs/woi-auto-routing.md).
+    through woi_router — see ADR 005 / docs/overnight-coder-handoffs/woi-auto-routing.md).
 
     Comma-separated nSITE doc_ids via the FORCE_REPROCESS_DOC_IDS env (a backfill
     workflow_dispatch input). Because re-processing an already-recorded doc would

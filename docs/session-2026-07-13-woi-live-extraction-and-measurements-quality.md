@@ -9,7 +9,7 @@ Base at session start: `662d592`. All commits below are this session.
 
 ## 1. WOI auto-routing — PR #9 (`87e5bb8` + `114705d`)
 
-Ran the overnight-coder loop against `docs/handoffs/woi-auto-routing.md`. New
+Ran the overnight-coder loop against `docs/overnight-coder-handoffs/woi-auto-routing.md`. New
 `woi_router.py` wires the already-tested `woi_table_parser` into `watcher.py` +
 `backfill.py`, ABOVE `parse_document` (Decode base stays domain-agnostic). On a
 detected WOI report it REPLACES `parsed.measurements` with the exhaustive set
