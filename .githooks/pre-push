@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Privacy pre-push gate (prevention layer).
+#
+# For every ref being pushed, scans the PUSHED COMMIT RANGE (not just the tip)
+# with scripts/privacy_scan.sh and ABORTS the push on any hit — so a family name
+# can't leave this machine into a PUBLIC repo, even if it was added and then
+# removed within the same multi-commit push. Terms come from
+# ~/.config/privacy-gate/terms.txt (see scripts/install-hooks.sh). Activated
+# per-clone via core.hooksPath=.githooks.
+#
+# This is the sole enforcement layer (no CI): it protects pushes FROM this Mac.
+# Caveat (be honest): it is machine-local and bypassable with
+# `git push --no-verify`, and does not cover pushes from other machines.
+set -uo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+scan="$root/scripts/privacy_scan.sh"
+
+if [ ! -f "$scan" ]; then
+  echo "pre-push: $scan missing — refusing to push (fail-closed)." >&2
+  exit 1
+fi
+
+fail=0
+# stdin lines: <local_ref> <local_sha> <remote_ref> <remote_sha>
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$local_sha" in
+    *[!0]*) : ;;        # real sha -> something to scan
+    *) continue ;;      # all zeros -> branch deletion, nothing to scan
+  esac
+  case "$remote_sha" in
+    *[!0]*) range=( "$remote_sha..$local_sha" ) ;;   # existing remote branch: new commits only
+    *)      range=( "$local_sha" --not --remotes ) ;; # new branch: commits not yet on any remote
+  esac
+  bash "$scan" --range "${range[@]}" || fail=1
+done
+
+if [ "$fail" -ne 0 ]; then
+  echo "" >&2
+  echo "Push blocked by privacy gate. Fix the above, then push again." >&2
+  echo "(Override only if you are certain: git push --no-verify)" >&2
+  exit 1
+fi
+exit 0

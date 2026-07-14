@@ -128,3 +128,36 @@ bug fix, and not scoped in detail yet.
 011/overnight-worker session that surfaced it — accepted as a known gap
 for now (see the doc's Sheet row, which already honestly flags the photos
 as unassessed rather than guessing).
+
+## Finish `vision-ocr` to protect the privacy pre-push scan
+
+**Status:** proposed 2026-07-14. Not started. Companion to the privacy
+pre-push gate (`scripts/privacy_scan.sh` + `.githooks/pre-push`) added the
+same day.
+
+**The gap.** The pre-push privacy gate blocks a push if a configured
+private string appears in tracked text OR in a PDF's text layer. A
+**non-searchable (image-only) PDF has no text layer**, so the gate cannot
+read it and — correctly — **blocks it outright** rather than let an
+unverifiable scan through. Today the remedy is a manual OCR step
+(`ocrmypdf`, Tesseract engine) before re-checking. Tesseract is good on
+clean typeset but weaker on degraded scans, and a character it MISSES is a
+name that could slip past a later check.
+
+**The plan.** Finish the `tkunst/vision-ocr` project (on-device Apple
+Vision OCR → searchable PDF) and make it the gate's OCR path: higher recall
+than Tesseract on real-world scans, fully local (nothing leaves the
+machine — essential, since the PDF is exactly the thing that might contain
+a private name), and native Apple Silicon. **Do NOT use ABBYY** — it is
+x86-only and its Windows-to-Mac (Rosetta) support is being retired.
+
+**What it would take.** Package `vision-ocr` for one-command scriptable use
+(build the Swift binary, pin the PyMuPDF dep); keep it documented as the
+recommended remedy in the gate's block message and each repo's README
+(done — currently names both `ocrmypdf` and `vision-ocr`); optionally wire
+it as an assisted step so a blocked non-searchable PDF is auto-OCR'd to a
+temp file and its text re-scanned. Report-only — **never auto-clear on a
+clean OCR result**; recall is best-effort, so "block + human judgment"
+stays the guarantee. Distinct from the "Vision-based classification for
+image-only content" item above, which is about classifying photo CONTENT
+via Claude vision, not OCR for the privacy gate.
