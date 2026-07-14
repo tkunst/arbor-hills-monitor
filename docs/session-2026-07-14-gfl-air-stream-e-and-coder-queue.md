@@ -141,3 +141,23 @@ Per Trisha: where the two air monitors' thresholds are equivalent, use them.
   recommended H2S/CH4 thresholds (values + averaging periods + sources) to firm up
   CH4 before enabling. `[coder: none]`; a multi-tier outcome could later stage a
   `coder:gfl-air-thresholds` build. Item 6 backlog cell updated to match.
+
+## Addendum — Stream E H2S 24-hr rolling-average coder task (2026-07-14)
+
+Per Trisha: make Stream E compute a rolling 24-hr average so the H2S alert matches
+the action level's own averaging period (the ADR-014 decision-4 nuance).
+
+- New coder-queue item **`coder:gfl-air-24h-average`** (dependency `null`, ready)
+  with a full repo handoff `docs/overnight-coder-handoffs/gfl-air-24h-average.md`
+  (`c0b2a85`).
+- Design: fire the H2S alert on a **rolling 24-hr per-station average** (computed
+  server-side in one grouped ArcGIS `avg(H2S)` query over `Date > now-24h`,
+  excluding the 999 sentinel, grouped by station). **H2S only** — CH4 stays
+  instantaneous (its LEL threshold is an explosivity limit, not an average). Config
+  `h2s_avg_window_hours` (default 24; `0` = old behavior) + `h2s_avg_min_readings`
+  guard; no-op while disabled. Doesn't touch the 750 ppb 15-min acute tier.
+- Cross-referenced from ADR 014 decision 4 + the config comment. Touches the same
+  watcher as `coder:gfl-air-liveness` (build either order, or combine).
+- Ready coder items are now, in order: `coder:ridgewood-h2s`,
+  `coder:gfl-air-liveness`, `coder:gfl-air-24h-average` (all `null`), then the
+  worker-gated ones.
