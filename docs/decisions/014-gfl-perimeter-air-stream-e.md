@@ -1,8 +1,10 @@
 # ADR 014 — GFL perimeter air monitoring (ArcGIS FeatureServer, Stream E)
 
-*Status: built — 2026-07-14 (`gfl_air.enabled: false` pending Trisha's review of
-the alert thresholds; see Activation). Spike + implementation verified against the
-live feed end-to-end.*
+*Status: built — 2026-07-14; **enabled 2026-07-15** (`gfl_air.enabled: true`,
+`d3bac7b`). Spike + implementation verified against the live feed end-to-end. The
+"OBJECTID-reset silent stall" residual (see Adversarial review) was **mitigated
+2026-07-15** by a config-driven liveness check (`gfl_air.max_stale_days`) shipped
+before/at enable-time.*
 
 ## Context
 
@@ -250,16 +252,29 @@ It is keyless — no secret to provision.
   stream ships disabled so Trisha reviews them before any alert can fire.
 - **GFL-reported data is the operator's own self-report:** attributed as such in the
   row (decision 7).
-- **OBJECTID-reset silent stall (accepted, watch before enabling):** the cursor is
-  verified monotonic-with-time *today* (decision 1). But if Barr ever rebuilds the
-  service and the new OIDs reset **below** the stored cursor (~17.6M), `OBJECTID >
-  cursor` would return nothing **forever** — a permanent silent zero that looks
-  identical to "no new readings." The over-cap guard only catches the opposite
-  (OIDs bumped *higher*). There is no auto-recovery beyond the per-poll reading-
-  count log, and a log line is not an alert — so for a stream that is quiet-by-
-  design until an exceedance, this is the one way a real reading could go unseen.
-  **Before enabling, add a liveness check** (alert if N days pass with zero new
-  readings); until then, `enabled: false` bounds the blast radius to nil.
+- **OBJECTID-reset silent stall — MITIGATED (2026-07-15, liveness check shipped):**
+  the cursor is verified monotonic-with-time *today* (decision 1). But if Barr ever
+  rebuilds the service and the new OIDs reset **below** the stored cursor (~17.6M),
+  `OBJECTID > cursor` would return nothing **forever** — a permanent silent zero that
+  looks identical to "no new readings." The over-cap guard only catches the opposite
+  (OIDs bumped *higher*). Originally this ADR left it accepted-until-enabled and
+  relied on `enabled: false` to bound the blast radius; the stream was enabled
+  2026-07-15 (`d3bac7b`), so that bound no longer applies and the residual is now
+  **mitigated by a config-driven liveness check** (`gfl_air.max_stale_days`, default
+  3): on any poll that finds **zero** new readings, if the newest reading on record
+  is older than `max_stale_days`, the watcher sends **one** same-day "GFL air feed
+  appears stale" alert — its OWN message, explicitly not an exceedance — and fires it
+  **at most once per stale episode** (gated on a stale-warned marker in the GFL Air
+  tab's column N, which self-resets when the feed recovers to a newer reading). This
+  turns the silent zero into a loud one. The default is well inside normal cadence:
+  over 2022-05…2026-07 (36,446 hourly stamps) the healthy feed's largest gap is 17h
+  and it never went quiet >24h, so 72h has a ~4.2× margin and cannot false-fire on a
+  routine quiet spell (verified live, 2026-07-15). Scope note: this covers the
+  empty-result path — a *persistent fetch error* (the layer is renamed / the service
+  goes offline) is a separate silent-quiet vector that returns early at the
+  `GflAirFetchError` handler and logs each run; extending the same check to that path
+  is a small follow-on. See `gfl_air_watcher.liveness_decision` + ADR-014 residual
+  tests in `tests/test_gfl_air.py`.
 - **Over-cap suppresses a genuine catch-up's alerts (accepted):** a poll returning
   more than `max_new_readings_per_run` re-baselines and alerts on **none** — correct
   as stale-data deferral (the `watcher.max_new_docs_per_run` posture), but it does

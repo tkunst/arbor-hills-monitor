@@ -249,6 +249,16 @@ gfl_air:
   # blasting the case file (mirrors wds.max_new_wds_alerts_per_run /
   # watcher.max_new_docs_per_run). Normal daily volume is ~144 (6 stations × hourly).
   max_new_readings_per_run: 1000
+  # LIVENESS guard (ADR 014's OBJECTID-reset silent-stall mitigation). If a poll
+  # finds ZERO new readings AND the newest reading on record is older than this many
+  # days, send ONE 'feed appears stale' alert (its own message, NOT an exceedance) —
+  # so a permanent silent zero (e.g. Barr rebuilds the service and OBJECTIDs reset
+  # below the stored cursor, making `OBJECTID > cursor` return nothing forever) can't
+  # look identical to "no new readings." Fires at most once per stale episode.
+  # Default 3 days = 72h: the healthy feed's largest gap in 4+ yrs (2022-05..2026-07,
+  # 36,446 hourly stamps) is 17h and it has NEVER gone quiet >24h, so 72h is a ~4.2×
+  # margin that cannot false-fire on normal cadence (verified live, 2026-07-15).
+  max_stale_days: 3
 
 # --- CivicClerk meeting-change watch (Stream F, ADR 015, added 2026-07-14) ---
 # Watches a HAND-PICKED list of Washtenaw County CivicClerk meeting events for ANY

@@ -37,6 +37,10 @@ external users but no sensitive data). Public repo.
 - `gfl_air_watcher.py` — daily poll of the GFL air feed: incremental OBJECTID
   cursor (in the `GFL Air` tab), readings → Measurements (`basis=measured`),
   same-day exceedance alerts via its own classifier. Gated on `gfl_air.enabled`.
+  A liveness check (`gfl_air.max_stale_days`) alerts once if a poll finds zero new
+  readings while the newest is stale — mitigates ADR 014's OBJECTID-reset silent
+  stall (the cursor resetting below the stored value → `OBJECTID > cursor` empty
+  forever). Marker in the `GFL Air` tab's column N; self-resets on recovery.
 - `civicclerk_watcher.py` — Stream F: twice-daily change-watch on a hand-picked
   list of MMPC + Washtenaw County BOC meeting events (via `mmpc_client.fetch_event`).
   Snapshots each event's title/date/status/document-set into the `Meeting Watch`
