@@ -218,7 +218,7 @@ gfl_air:
   #   h2s_ppb 72 — CONFIRMED (equivalent across BOTH air monitors, 2026-07-14):
   #     72 ppb is BOTH the Michigan EGLE H2S ITSL (100 µg/m³, 24-hr avg ≈ 72 ppb)
   #     AND the Ridge Wood Elementary monitor's OWN published 24-hr action level
-  #     (data-sources item 8 / Stream F). Two independent official sources agree, so
+  #     (data-sources item 8 / Stream G, ADR 016). Two independent official sources agree, so
   #     this value is settled — not "pending confirmation". NUANCE: 72 ppb is a
   #     24-HOUR-AVERAGE level, and Stream E applies it to HOURLY instantaneous
   #     readings (deliberately conservative — a single hot hour alerts; a rolling
@@ -308,6 +308,50 @@ civicclerk_watch:
         - {id: 3967, event_date: "2026-11-18", label: "BOC Working Session — Nov 18, 2026"}
         - {id: 3955, event_date: "2026-11-18", label: "BOC Meeting — Nov 18, 2026"}
         - {id: 3944, event_date: "2026-12-02", label: "BOC Meeting — Dec 2, 2026"}
+
+# --- Ridge Wood Elementary H2S monthly reports (Stream G, ADR 016, added 2026-07-14) ---
+# OFF BY DEFAULT. Barr Engineering (the same consultant behind Stream E) runs an H2S
+# air monitor at Ridge Wood Elementary School under a U.S. EPA agreement and posts a
+# monthly, QA'd, born-digital 24-hour-average PDF report to a public page. This is a
+# DOCUMENT-archive source (the "new PDF appears -> mirror + extract" shape of Mirror
+# D / mmpc_archiver), NOT a live numeric feed like Stream E. When enabled,
+# ridgewood_archiver.py scrapes the report list off the page (never constructs a URL —
+# the filename carries an unpredictable cache-buster), diffs by YYYY-MM against the
+# "Ridge Wood Reports" tab, mirrors each new PDF to Drive, extracts the month's max
+# 24-hr average into the shared Measurements tab (basis=measured, attributed to the
+# Barr/EPA monitor), and emails a same-day alert on a stated 24-hr exceedance of 72 ppb
+# or 15-min exceedance of 750 ppb. The 72 ppb level is the SAME one Stream E ships
+# (cross-confirmed across both air monitors, ADR 014); 750 ppb is a new acute level.
+#
+# ACTIVATION — same pattern as Stream C / Mirror D / PFAS / GFL air. All Trisha's:
+#   1. review + merge,
+#   2. provision the Drive folder secret GOAUTH_RIDGEWOOD_FOLDER_ID (a NEW folder for
+#      the Ridge Wood PDFs — see scripts/setup notes + ADR 016). The three shared
+#      GOAUTH_CLIENT_ID/_SECRET/_REFRESH_TOKEN secrets are already live. This secret
+#      is OPTIONAL: without it the stream still extracts + alerts, it just doesn't
+#      mirror to Drive (the exceedance alert never depends on the mirror).
+#   3. set enabled: true here and commit. The first enabled run backfills ~66
+#      historical months (alerts SUPPRESSED during the backfill — those are years-old
+#      all-clear reports; their data is still recorded), then steady-state ~1/month.
+# Until enabled: true is on main, ridgewood.yml runs on schedule but
+# ridgewood_archiver._should_run() makes every run a quiet no-op.
+ridgewood:
+  enabled: false
+  page_url: "https://arborhillsmonitoring.com/Home/Ridgewood"
+  # Relative /Files/... report links on the page are absolutized against this host.
+  base_url: "https://www.arborhillsmonitoring.com"
+  # Published action levels (the monitor's own; ADR 016). h2s_24h_ppb is checked
+  # against the report's numeric daily 24-hr averages; h2s_15min_ppb is the acute
+  # level cited in the alert text (a 15-min exceedance only ever appears in prose, so
+  # the classifier catches it via the ABSENCE of the report's all-clear statement —
+  # see ridgewood_client.classify_report, which is fail-safe + footnote-safe).
+  thresholds:
+    h2s_24h_ppb: 72
+    h2s_15min_ppb: 750
+  # Anti-stampede / timeout guard: process at most this many new months per run
+  # (newest first, resumable via the dedup tab). A run draining more than this is a
+  # historical backfill -> alerts suppressed for it. Normal monthly volume is 1.
+  max_new_reports_per_run: 12
 
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.

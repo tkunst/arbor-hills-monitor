@@ -59,11 +59,14 @@ DOMAIN = {
     "mmpc_archiver": "orchestration",  # nightly MMPC PDF mirror — Mirror D (ADR 010)
     "pfas_watcher": "orchestration",   # daily PFAS page-watch runner (ADR 012)
     "gfl_air_watcher": "orchestration",# daily GFL perimeter-air poll — Stream E (ADR 014)
-    # Ingestion — one client per external source (nSITE, WDS, MMPC, PFAS, GFL air)
+    "civicclerk_watcher": "orchestration", # twice-daily meeting-change watch — Stream F (ADR 015)
+    "ridgewood_archiver": "orchestration", # daily Ridge Wood H2S mirror+extract — Stream G (ADR 016)
+    # Ingestion — one client per external source (nSITE, WDS, MMPC, PFAS, GFL air, Ridge Wood)
     "nsite_client": "ingestion", "mmpc_client": "ingestion",
     "wds_watcher": "ingestion", "wds_client": "ingestion",
     "pfas_client": "ingestion",        # PFAS page fetch + content-hash normalize (ADR 012)
     "gfl_air_client": "ingestion",     # GFL ArcGIS FeatureServer fetch + ADR-004 mapping (ADR 014)
+    "ridgewood_client": "ingestion",   # Ridge Wood H2S report scrape + fail-safe extract (ADR 016)
     # Document processing & risk
     "egle_doc_parser": "processing", "risk_register": "processing",
     "retry_policy": "processing", "woi_table_parser": "processing",
@@ -103,6 +106,7 @@ DATASTORES = [
     ("ds:mmpc", "Washtenaw County MMPC Site"),
     ("ds:pfas", "EGLE PFAS Investigation Pages (michigan.gov)"),
     ("ds:gfl-air", "GFL Perimeter Air ArcGIS FeatureServer (Barr, public)"),
+    ("ds:ridgewood", "Ridge Wood Elementary H2S Report Page (Barr, public)"),
     ("ds:smtp", "Email Recipients (SMTP)"),
     ("ds:anthropic", "Anthropic Claude API"),
     ("ds:config", "config.yml (risk register + settings)"),
@@ -124,6 +128,8 @@ DATA_EDGES = [
     ("wds_archiver", "ds:wds", "read"),            # fetches the 5 collection pages
     ("wds_archiver", "ds:drive-archive", "write"), # uploads raw-HTML snapshots
     ("mmpc_archiver", "ds:drive-archive", "write"),# uploads MMPC PDFs (Mirror D, ADR 010)
+    ("ridgewood_client", "ds:ridgewood", "read"),  # scrape the monthly report list + PDFs (Stream G)
+    ("ridgewood_archiver", "ds:drive-archive", "write"), # mirrors Ridge Wood PDFs (optional, ADR 016)
 ]
 # DISPATCH edges — call targets resolved against config, not a static symbol.
 # Represented as `dispatch` (and the equivalent plain import edge is suppressed,
@@ -147,26 +153,34 @@ OBSERVATIONS = [
     "egle_doc_parser -> Anthropic is the only external-LLM dependency and the "
     "sole per-document cost driver; it is isolated to one module (swappable) and "
     "reached only on the backfill/watcher classify path.",
-    "Five ingestion streams — nSITE/Air, WDS/Solid-Waste, MMPC (CivicClerk), PFAS "
-    "pages, and GFL perimeter air (ArcGIS FeatureServer) — are cleanly separated "
-    "into their own client modules with no cross-talk (good service-extraction "
-    "seams). Stream E (gfl_air_watcher -> gfl_air_client, ADR 014) is the first "
-    "source of real fenceline READINGS (H2S/CH4), not documents; config-gated "
-    "(gfl_air.enabled, off by default). The MMPC minutes *reminder* was retired "
-    "(ADR 013); MMPC is now archive-only via Mirror D (mmpc_archiver -> "
-    "mmpc_client). Stream C (wds_watcher -> wds_client) is config-gated and active.",
-    "Six independent runners now write to the Sheet/Drive spine, each on its own "
-    "morning cron + concurrency group so they never race the shared _meta state: "
-    "archiver (nSITE PDFs, 3am), wds_archiver (WDS HTML snapshots, 4am), "
-    "mmpc_archiver (MMPC PDFs, 5am), watcher (nSITE + WDS + alerts, 6am), "
-    "pfas_watcher (PFAS page hash, 7am), and gfl_air_watcher (GFL perimeter air, "
-    "8am). backfill is a seventh, now manual-only. Like pfas_watcher, gfl_air_watcher "
-    "keeps its cursor in its OWN tab (GFL Air), never _meta — a separate workflow "
-    "must not write the shared _meta cell (ADR 014).",
-    "Three runners write into the same Drive archive store (archive_client for "
-    "nSITE PDFs, wds_archiver for WDS HTML snapshots, mmpc_archiver for MMPC PDFs) "
-    "— watch for a shared-folder or quota coupling as they scale (Mirror D uses a "
-    "distinct Drive folder from Mirror B/C).",
+    "Six ingestion streams — nSITE/Air, WDS/Solid-Waste, MMPC (CivicClerk), PFAS "
+    "pages, GFL perimeter air (ArcGIS FeatureServer), and Ridge Wood Elementary H2S "
+    "(monthly Barr report PDFs) — are cleanly separated into their own client modules "
+    "with no cross-talk (good service-extraction seams). Stream E (gfl_air_watcher -> "
+    "gfl_air_client, ADR 014) is the first source of real fenceline READINGS (H2S/CH4), "
+    "not documents; config-gated (gfl_air.enabled, off by default). Stream G "
+    "(ridgewood_archiver -> ridgewood_client, ADR 016) is the school-adjacent Barr/EPA "
+    "H2S monitor — a document-archive stream whose 72 ppb action level cross-confirms "
+    "Stream E's H2S threshold; config-gated (ridgewood.enabled, off by default). The "
+    "MMPC minutes *reminder* was retired (ADR 013); MMPC is now archive-only via Mirror "
+    "D (mmpc_archiver -> mmpc_client), plus a meeting-change watch (Stream F, "
+    "civicclerk_watcher -> mmpc_client.fetch_event, ADR 015). Stream C (wds_watcher -> "
+    "wds_client) is config-gated and active.",
+    "Independent runners now write to the Sheet/Drive spine, each on its own cron + "
+    "concurrency group so they never race the shared _meta state: archiver (nSITE "
+    "PDFs, 3am), wds_archiver (WDS HTML snapshots, 4am), mmpc_archiver (MMPC PDFs, "
+    "5am), watcher (nSITE + WDS + alerts, 6am), pfas_watcher (PFAS page hash, 7am), "
+    "gfl_air_watcher (GFL perimeter air, 8am), ridgewood_archiver (Ridge Wood H2S, "
+    "9am), plus civicclerk_watcher (meeting-change watch, twice daily). backfill is "
+    "manual-only. Like pfas_watcher / gfl_air_watcher, ridgewood_archiver keeps its "
+    "dedup state in its OWN append-only tab (Ridge Wood Reports), never _meta — a "
+    "separate workflow must not write the shared _meta cell (ADR 014 / 016).",
+    "Four runners write into the Drive archive store (archive_client for nSITE PDFs, "
+    "wds_archiver for WDS HTML snapshots, mmpc_archiver for MMPC PDFs, and "
+    "ridgewood_archiver for Ridge Wood H2S PDFs) — watch for a shared-folder or quota "
+    "coupling as they scale. Each mirror uses a DISTINCT Drive folder (Mirror B/C "
+    "share one; Mirror D and Ridge Wood each have their own), and Ridge Wood's mirror "
+    "is optional — its extract+alert path runs even without the Drive folder secret.",
     "poison_doc_extractor (ADR 011) lets nsite_client salvage legacy .msg/.docx "
     "sources the downloadpdf endpoint can't render, synthesizing a PDF from the "
     "extracted text + embedded images. Reached only from the ingestion path; a "
