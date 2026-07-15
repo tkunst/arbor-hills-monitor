@@ -336,7 +336,7 @@ civicclerk_watch:
 # Until enabled: true is on main, ridgewood.yml runs on schedule but
 # ridgewood_archiver._should_run() makes every run a quiet no-op.
 ridgewood:
-  enabled: false
+  enabled: true                     # activated 2026-07-15 (Trisha) — see ADR 016. NOTE: GOAUTH_RIDGEWOOD_FOLDER_ID is not set, so the Drive mirror is a no-op; extraction + alerts are live. Set the secret to also mirror (historical months already processed won't be back-mirrored without a manual re-run).
   page_url: "https://arborhillsmonitoring.com/Home/Ridgewood"
   # Relative /Files/... report links on the page are absolutized against this host.
   base_url: "https://www.arborhillsmonitoring.com"
