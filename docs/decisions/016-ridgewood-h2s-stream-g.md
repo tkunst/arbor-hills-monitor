@@ -118,6 +118,15 @@ to alerting when external semantics are unknowable):
 A false alert here is cheap (Trisha reads it); a missed exceedance defeats the
 monitor's only job. When in doubt, it alerts.
 
+**Alert routing is two-tier** (the meeting-watch `recipients=` override pattern). A
+real **24-hr exceedance** (a numeric daily value ≥ 72 ppb) is a public-health signal
+and goes to the full `alert_recipients` list (the Conservancy). The lower-severity
+**review-tier** alerts — missing all-clear phrase / no text layer / parse anomaly, all
+of which mean "an automated check couldn't confirm this report, someone look" — go to
+`ridgewood.review_recipients` **verbatim (Trisha only)**, so a format hiccup doesn't
+email the external advocacy list. Leave `review_recipients` empty/unset to send the
+review-tier to the full list too.
+
 ### 4. Schema mapping — one monthly row, existing Measurements tab
 
 The report's granular data is a **per-day** table of 24-hr averages, but the single

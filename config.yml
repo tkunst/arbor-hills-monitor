@@ -352,6 +352,16 @@ ridgewood:
   # (newest first, resumable via the dedup tab). A run draining more than this is a
   # historical backfill -> alerts suppressed for it. Normal monthly volume is 1.
   max_new_reports_per_run: 12
+  # Two-tier alert routing. A real 24-hr EXCEEDANCE (a numeric daily value >=
+  # h2s_24h_ppb) is a public-health signal and goes to the full alert_recipients
+  # list below. The lower-severity REVIEW-tier alerts (missing all-clear phrase /
+  # no text layer / parse anomaly — "someone should check this report") are
+  # operational and go to review_recipients VERBATIM (Trisha only), the same
+  # per-watch override the meeting-watch uses, so the external advocacy list isn't
+  # emailed about a format hiccup. Leave review_recipients empty/unset to send
+  # review-tier alerts to the full list too.
+  review_recipients:
+    - arbor-hills@trishakunst.com          # Trisha only (not the advocacy list)
 
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.

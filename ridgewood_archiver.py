@@ -185,6 +185,10 @@ def run() -> int:
     base_url = rw.get("base_url", rc.DEFAULT_BASE_URL)
     thresholds = rw.get("thresholds") or {}
     cap = int(rw.get("max_new_reports_per_run", _DEFAULT_CAP))
+    # Review-tier alerts (missing all-clear / no-text / parse anomaly) go to this
+    # list VERBATIM when set (Trisha only); a real EXCEEDANCE always goes to the full
+    # alert_recipients list. Empty/unset -> review-tier falls back to the full list.
+    review_recipients = rw.get("review_recipients") or None
     sheet_id = os.environ["GSHEET_ID"]
 
     sheets = dc.sheets_service()
@@ -295,13 +299,18 @@ def run() -> int:
             print(f"  ok  {month}  max={max_cell:>4}  days={verdict['n_days']:>2}  "
                   f"{alert_cell}")
 
-            # (4) Alert email (best-effort, last), unless draining a backlog.
+            # (4) Alert email (best-effort, last), unless draining a backlog. A real
+            # EXCEEDANCE goes to the full alert_recipients list (public-health signal);
+            # a lower-severity review-tier alert goes to review_recipients (Trisha only)
+            # when configured, so the advocacy list isn't emailed about a format hiccup.
             if verdict.get("alert") and not backlog:
                 subject = _alert_subject(month, verdict)
                 body = format_alert_body(month, verdict, source_url, archive_link, thresholds)
+                to = None if verdict.get("exceed_24h") else review_recipients
                 try:
-                    ea.send_email(subject, body, cfg)
-                    print(f"      emailed: {subject}")
+                    ea.send_email(subject, body, cfg, recipients=to)
+                    print(f"      emailed: {subject} "
+                          f"({'all recipients' if to is None else f'{len(to)} review recipient(s)'})")
                 except Exception as e:  # noqa: BLE001 — alert best-effort; record kept
                     print(f"      record written but alert email FAILED: {e}")
         except Exception as e:  # noqa: BLE001 — one month's failure must not abort the batch

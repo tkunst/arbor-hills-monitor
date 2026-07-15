@@ -304,6 +304,7 @@ def _cfg(**over):
         "base_url": "https://www.arborhillsmonitoring.com",
         "thresholds": copy.deepcopy(THR),
         "max_new_reports_per_run": 12,
+        "review_recipients": ["trisha@example.test"],
     }
     rw.update(over)
     return {"ridgewood": rw, "alert_recipients": ["a@example.com"]}
@@ -321,7 +322,7 @@ def _wire(monkeypatch, cfg, *, months, specs, drive=True):
     monkeypatch.setattr(ra.dc, "sheets_service", lambda: fake)
     monkeypatch.setattr(ra.rc, "fetch_page", lambda url=None, timeout=60: page_html(months))
     monkeypatch.setattr(ra.ea, "send_email",
-                        lambda subj, body, c, recipients=None: sent.append((subj, body)))
+                        lambda subj, body, c, recipients=None: sent.append((subj, body, recipients)))
 
     def fake_download(url, dest, timeout=60):
         month = rc.parse_month(url.split("/Files/", 1)[-1])
@@ -402,6 +403,7 @@ def test_incremental_exceedance_writes_rows_and_emails(monkeypatch):
     assert reports[0][4] == "EXCEEDANCE" and reports[0][2] == "85"
     assert _rows(fake, sw.TAB_MEASUREMENTS)[0][3] == "85"     # Measurements Value
     assert len(sent) == 1 and "URGENT" in sent[0][0]
+    assert sent[0][2] is None                                # exceedance -> full alert_recipients list
 
 
 def test_missing_all_clear_emails_review_not_urgent(monkeypatch):
@@ -412,6 +414,7 @@ def test_missing_all_clear_emails_review_not_urgent(monkeypatch):
     assert ra.run() == 0
     assert _rows(fake, sw.TAB_RIDGEWOOD)[0][4] == "review"
     assert len(sent) == 1 and "review" in sent[0][0] and "URGENT" not in sent[0][0]
+    assert sent[0][2] == ["trisha@example.test"]             # review-tier -> Trisha only, not the full list
 
 
 def test_dedup_skips_already_archived_month(monkeypatch):
@@ -488,4 +491,14 @@ def test_no_text_layer_mirrors_and_alerts_without_measurement(monkeypatch):
     assert reports[0][4] == "review"                 # flagged for OCR/manual review
     assert reports[0][7].startswith("http://drive/") # still mirrored
     assert _rows(fake, sw.TAB_MEASUREMENTS) == []     # no fabricated measurement
-    assert len(sent) == 1
+    assert len(sent) == 1 and sent[0][2] == ["trisha@example.test"]   # review-tier -> Trisha only
+
+
+def test_review_recipients_unset_falls_back_to_full_list(monkeypatch):
+    # With review_recipients unset, a review-tier alert falls back to the full list.
+    cfg = _cfg(review_recipients=None)
+    fake, sent, _ = _wire(
+        monkeypatch, cfg, months=[("2026-07", None)],
+        specs={"2026-07": {"values": ["<1", "<1"], "all_clear": False}})
+    assert ra.run() == 0
+    assert len(sent) == 1 and sent[0][2] is None      # None -> send_email uses alert_recipients
