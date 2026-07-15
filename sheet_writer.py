@@ -141,6 +141,15 @@ TAB_GFL_AIR = "GFL Air"
 # Drive by fileId; this watches a HAND-PICKED list of MMPC + BOC events for ANY
 # change — date, title, status, or its document set — and alerts, no Drive).
 TAB_MEETING_WATCH = "Meeting Watch"
+# Ridge Wood Elementary H2S monthly reports (Stream G, ADR 016) — same on-demand
+# policy as the WDS/MMPC/PFAS/WOI/GFL/Meeting tabs: no tab appears until
+# ridgewood_archiver actually runs. Append-only, keyed by Month (YYYY-MM) in col A
+# for dedup — the mmpc_archived_file_ids idiom (Sheet-derived ⇒ race-free, NOT
+# _meta, since this is its own workflow). Distinct from the GFL Air tab (that is
+# Stream E's live perimeter feed; this is the school-adjacent Barr/EPA-agreement
+# monitor's monthly QA'd reports). The month's 24-hr-average value rides the shared
+# Measurements tab; this tab is the archive index + provenance record.
+TAB_RIDGEWOOD = "Ridge Wood Reports"
 # Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
 # TAB_NEW/TAB_HISTORICAL. "Change" is new/changed (live) or historical (dump).
 WDS_HEADERS = [
@@ -198,6 +207,18 @@ PFAS_SNAPSHOT_HEADERS = [
 MEETING_WATCH_HEADERS = [
     "Date", "Group", "Meeting", "Event ID", "URL", "Change",
     "Snapshot Hash", "# Files", "Note", "Checked At", "Snapshot JSON",
+]
+
+# Ridge Wood Elementary H2S monthly reports (Stream G, ADR 016). One row per
+# archived month, keyed by Month (YYYY-MM, col A) for dedup — same idiom as
+# MMPC_ARCHIVE_HEADERS. Carries provenance (source URL / content hash / fetched-at),
+# because this is evidence, plus the extracted monthly max 24-hr average and the
+# classifier's alert verdict. The Drive mirror link is optional (blank when the
+# Drive folder secret isn't provisioned — the extract+alert safety function does
+# not depend on it; see ridgewood_archiver.py).
+RIDGEWOOD_REPORT_HEADERS = [
+    "Month", "Report Title", "Max 24-hr Avg (ppb)", "# Days", "Alert",
+    "Source URL", "Content Hash", "Archive Link", "Fetched At",
 ]
 
 # WOI Well Summary (ADR 005 integration). One row per well from a routed WOI
@@ -999,6 +1020,49 @@ def append_meeting_watch_row(
     append_rows(service, sheet_id, TAB_MEETING_WATCH, [[
         date, group, meeting, event_id, url, change,
         snapshot_hash, n_files, note, checked_at, snapshot_json,
+    ]])
+
+
+# ---------------------------------------------------------------------------
+# Ridge Wood Elementary H2S monthly reports (Stream G, ADR 016) — Month-keyed
+# dedup, the mmpc_archived_file_ids idiom (Sheet-derived ⇒ race-free, NOT _meta).
+# ---------------------------------------------------------------------------
+
+
+def ensure_ridgewood_tabs(service, sheet_id: str) -> None:
+    """Create the Ridge Wood Reports tab if missing and reconcile its header row on
+    every run (same self-healing policy as ensure_mmpc_tabs()). Called only from
+    ridgewood_archiver.py, so the tab doesn't appear until the archiver runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_RIDGEWOOD not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_RIDGEWOOD}}}]},
+        ).execute()
+    _set_header(service, sheet_id, TAB_RIDGEWOOD, RIDGEWOOD_REPORT_HEADERS)
+
+
+def ridgewood_archived_months(service, sheet_id: str) -> set:
+    """The set of report months (YYYY-MM) already archived (col A of Ridge Wood
+    Reports, as strings). Modeled on mmpc_archived_file_ids(); _tab_rows() returns
+    [] for a tab that doesn't exist yet (first run, before ensure_ridgewood_tabs()
+    has created it), so no extra first-run handling is needed."""
+    return {str(r[0]) for r in _tab_rows(service, sheet_id, TAB_RIDGEWOOD, "A2:A") if r and r[0]}
+
+
+def append_ridgewood_report_row(
+    service, sheet_id: str, month: str, title: str, max_24h: str, n_days,
+    alert: str, source_url: str, content_hash: str, archive_link: str, fetched_at: str,
+) -> None:
+    """Append one Ridge Wood Reports row. This row is the dedup 'done' marker,
+    written LAST (after the Drive upload + the Measurements write) so a crash before
+    it re-processes the month next run — an idempotent Drive re-upload plus at most a
+    duplicate monthly measurement, never a dropped month. Full crash-safe ordering
+    rationale in ridgewood_archiver.py."""
+    append_rows(service, sheet_id, TAB_RIDGEWOOD, [[
+        month, title, max_24h, n_days, alert,
+        source_url, content_hash, archive_link, fetched_at,
     ]])
 
 

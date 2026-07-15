@@ -65,6 +65,20 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
    decided in code per event (MMPC every run; BOC weekly + daily in the 3 days
    before each meeting). First run baselines silently; see
    `docs/decisions/015-civicclerk-meeting-watch.md`.
+9. **Ridge Wood Elementary H2S (Stream G)** (daily, optional —
+   `ridgewood.enabled: true`): mirrors + extracts Barr Engineering's monthly,
+   QA'd H2S data reports for the monitor at Ridge Wood Elementary School (run
+   under a U.S. EPA agreement — a *different location* from the Stream E
+   perimeter fenceline, complementary evidence). Scrapes the monthly report PDFs
+   off the public page (never constructs a URL — the filename has an
+   unpredictable cache-buster), mirrors each new month to Drive, and writes the
+   month's max 24-hr-average concentration to the *Measurements* tab
+   (`basis=measured`, attributed to the **Barr/EPA-agreement** monitor — not GFL
+   self-report, not an EGLE measurement). A same-day email fires on a stated
+   24-hr exceedance of **72 ppb** or 15-min exceedance of **750 ppb** — the
+   monitor's own published action levels (the 72 ppb value independently confirms
+   Stream E's H2S threshold; **R3/R4**). Off by default; see
+   `docs/decisions/016-ridgewood-h2s-stream-g.md` for activation.
 
 > **A note on the document links (expected behavior).** Every case-file row's
 > **Link** column points to EGLE's nSITE portal
@@ -190,6 +204,16 @@ docs/day) is essentially free. Model is configurable in `config.yml`.
   such in every row), and by default the shared Measurements tab keeps a daily
   digest of the hourly feed (the source remains the system of record for full
   history — see ADR 014). Off by default (`gfl_air.enabled: false`).
+- **Ridge Wood H2S rides an undocumented public report list (Stream G, ADR 016).**
+  The archiver scrapes the monthly report links off Barr Engineering's public page
+  (there is no API); if the page restructures or a link path changes, the scrape
+  fails loudly (aborts the run) and a per-poll report-count log makes a drop to zero
+  visible — it never diffs a partial list as "no reports". The exceedance classifier
+  is deliberately **fail-safe**: it alerts on any numeric daily value ≥ 72 ppb and on
+  the *absence* of the report's standard all-clear statement (never positive-matching
+  a 750 ppb exceedance format that no published report has yet shown), and a report
+  with no text layer (a future scan) is mirrored + flagged for manual/OCR review, not
+  dropped. Off by default (`ridgewood.enabled: false`).
 - **Classification is model output.** `key_data_point` and `measurements` can be
   wrong. The original PDF link is on every row; the `basis` flag and the
   measured-only urgency rule guard the highest-stakes error (permitted ceiling

@@ -1,0 +1,67 @@
+name: ridgewood
+
+# Stream G (ADR 016): daily poll of Barr Engineering's public Ridge Wood Elementary
+# H2S monthly-report page. Scrapes the report list, mirrors each new monthly PDF to
+# Drive, extracts the month's max 24-hr-average H2S into the shared Measurements tab
+# (basis=measured, attributed to the Barr/EPA-agreement monitor), and emails a
+# same-day alert on a stated 24-hr exceedance of 72 ppb or 15-min exceedance of 750 ppb.
+#
+# Safe to leave scheduled from day one: ridgewood.enabled is false by default, so
+# ridgewood_archiver._should_run() makes every run a quiet no-op (exit 0) until Trisha
+# reviews it and flips it on. Monthly source, so most daily runs find nothing new.
+# No Anthropic (a deterministic extractor, not the Claude classifier) and no OCR
+# binary (every report to date is text-layer; a future scanned report is mirrored +
+# alerted for manual review, not OCR'd here). 9am ET keeps it clear of the 3-8am
+# cluster; state is the "Ridge Wood Reports" tab (Month-keyed dedup), NOT _meta, so
+# it never races the other jobs. The Drive OAuth folder secret is OPTIONAL — without
+# it the stream still extracts + alerts, it just doesn't mirror.
+on:
+  schedule:
+    - cron: "0 14 * * *"    # 9am ET (2pm UTC). DST drift of +/-1h is acceptable.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ridgewood
+  cancel-in-progress: false
+
+jobs:
+  ridgewood:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Archive + extract Ridge Wood H2S reports
+        env:
+          # Sheets I/O uses the service account; the PDF mirror uses OAuth-as-user
+          # (GOAUTH_*, into GOAUTH_RIDGEWOOD_FOLDER_ID); exceedance alerts use SMTP.
+          # GOAUTH_RIDGEWOOD_FOLDER_ID is OPTIONAL: if unset, the stream extracts +
+          # alerts but skips the Drive mirror (never blocks the safety alert).
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}
+          GOAUTH_RIDGEWOOD_FOLDER_ID: ${{ secrets.GOAUTH_RIDGEWOOD_FOLDER_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
+        run: python ridgewood_archiver.py

@@ -114,7 +114,7 @@ that must rest on published action levels, cited so the artifact stays credible:
 - **H2S `72 ppb` — SETTLED (2026-07-14).** 72 ppb is *both* the Michigan EGLE H2S
   Initial Threshold Screening Level (ITSL, 100 µg/m³ over a 24-hr average ≈
   **72 ppb**, health screening) *and* the **Ridge Wood Elementary monitor's own
-  published 24-hr action level** (data-sources item 8 / Stream F — Barr's
+  published 24-hr action level** (data-sources item 8 / Stream G, ADR 016 — Barr's
   school-adjacent H2S monitor). Two independent official sources landing on the same
   number settles it: use 72 ppb for both air-monitor streams, no longer "pending
   confirmation". **Nuance:** 72 ppb is a *24-hour-average* level, and Stream E

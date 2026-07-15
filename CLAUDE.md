@@ -43,6 +43,16 @@ external users but no sensitive data). Public repo.
   tab and alerts (Trisha only) on any change. Cadence is a pure function per event
   (`is_due_today`): MMPC every run; BOC weekly + daily in the 3 days before a
   meeting. Alert-only (no Drive). Gated on `civicclerk_watch.enabled`. See ADR 015.
+- `ridgewood_client.py` — Stream G: fetch + parse Barr Engineering's monthly Ridge
+  Wood Elementary H2S reports. Scrapes the `Files/*.pdf` report links off the public
+  page (never constructs a URL), parses `YYYY-MM`, extracts text via fitz, and runs a
+  pure, fail-safe + footnote-safe classifier (numeric ≥72 ppb → alert; missing
+  all-clear phrase → alert). Stdlib + fitz; keeps `egle_doc_parser` untouched. ADR 016.
+- `ridgewood_archiver.py` — Stream G: diff scraped months vs. the `Ridge Wood Reports`
+  tab, mirror each new PDF to Drive (optional — the extract+alert safety function
+  doesn't depend on it), write the month's max 24-hr average → Measurements
+  (`basis=measured`, Barr/EPA-agreement monitor), same-day alert on a stated 72/750 ppb
+  exceedance. Modeled on `mmpc_archiver`. Gated on `ridgewood.enabled`. See ADR 016.
 
 ## Forbidden patterns (do not do these)
 
