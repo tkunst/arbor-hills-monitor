@@ -99,8 +99,13 @@ poller.
   alerts only on a stated 72/750 ppb exceedance (review-tier → Trisha, exceedance →
   full list). All 66 historical months archived + mirrored.
 - Nothing left for Trisha on Ridge Wood. Overnight-coder queue: `coder:ridgewood-h2s`
-  archived; next ready item is `coder:gfl-air-liveness` (verified ready — handoff
-  committed, dependency-free, precondition holds since Stream E is still disabled).
+  archived; next ready item is `coder:gfl-air-liveness`.
+- **Concurrent with this session, Trisha enabled Stream E** (`d3bac7b`,
+  `gfl_air.enabled: true`). That *raises* the priority of `coder:gfl-air-liveness`: it
+  closes ADR 014's "OBJECTID-reset silent stall" residual, which was meant to ship
+  **before** enabling Stream E — so Stream E is now live **without** that guard (a
+  silent-stall risk until the hardening merges). The item's "do before enabling"
+  framing is overtaken by events; reframe as "Stream E is live — add the guard soon."
 
 ## Non-blocking follow-up
 
