@@ -7,6 +7,7 @@ incremental / skip-seen / over-cap / sentinel) driven through a fake Sheets serv
 """
 import copy
 import re
+from datetime import datetime, timedelta, timezone
 
 import gfl_air_client as gc
 import gfl_air_watcher as gw
@@ -131,6 +132,28 @@ def _start_row(rng):
     return int(m.group(1)) if m else 1
 
 
+def _col_to_idx(letters):
+    n = 0
+    for ch in letters:
+        n = n * 26 + (ord(ch) - ord("A") + 1)
+    return n - 1
+
+
+def _start_col(rng):
+    """0-based start column of a range ('A2'->0, 'A2:L'->0, 'N1'->13). The mock
+    must honor columns so a write/read outside the A:L station span (the liveness
+    stale-marker in column N) neither clobbers nor is clobbered by the station
+    snapshot — exactly the real Sheets behavior."""
+    m = re.search(r"!([A-Z]+)\d+", rng)
+    return _col_to_idx(m.group(1)) if m else 0
+
+
+def _end_col(rng):
+    """0-based end column when the range names one ('A2:L'->11), else None (open)."""
+    m = re.search(r":([A-Z]+)", rng)
+    return _col_to_idx(m.group(1)) if m else None
+
+
 class _Req:
     def __init__(self, result):
         self._result = result
@@ -147,20 +170,36 @@ class _Values:
         rows = self._tabs.get(_tab(range))
         if rows is None:
             raise KeyError("no such tab")         # real API raises; gfl_air_cursor propagates
-        return _Req({"values": [list(r) for r in rows[_start_row(range) - 1:]]})
+        sc, ec = _start_col(range), _end_col(range)
+        out = []
+        for r in rows[_start_row(range) - 1:]:
+            r = list(r)
+            if ec is not None:
+                r = r[: ec + 1]                   # 'A2:L' returns only cols A..L (real API)
+            out.append(r[sc:] if sc else r)       # 'N2' returns col N onward
+        return _Req({"values": out})
 
     def append(self, spreadsheetId, range, valueInputOption, insertDataOption, body):
         self._tabs.setdefault(_tab(range), []).extend(list(r) for r in body["values"])
         return _Req({})
 
     def update(self, spreadsheetId, range, valueInputOption, body):
+        # OVERLAY at [start_col:], preserving cells OUTSIDE the written span — the
+        # real Sheets behavior (an A2:L station write leaves the column-N marker
+        # intact, and vice versa). The old `rows[idx] = list(row)` wiped trailing
+        # cells, which would have made the marker vanish on the next snapshot write.
         rows = self._tabs.setdefault(_tab(range), [])
-        start = _start_row(range) - 1
+        start_r, sc = _start_row(range) - 1, _start_col(range)
         for i, row in enumerate(body["values"]):
-            idx = start + i
+            idx = start_r + i
             while len(rows) <= idx:
                 rows.append([])
-            rows[idx] = list(row)
+            cur = list(rows[idx])
+            while len(cur) < sc + len(row):
+                cur.append("")
+            for j, v in enumerate(row):
+                cur[sc + j] = v
+            rows[idx] = cur
         return _Req({})
 
     def clear(self, spreadsheetId, range, body):
@@ -390,3 +429,184 @@ def test_cursor_parses_int_not_string_max():
     fake._values._tabs[sw.TAB_GFL_AIR] = [hdr, row("9"), row("100")]
     assert fake._values._tabs[sw.TAB_GFL_AIR][1][j] == "9"
     assert sw.gfl_air_cursor(fake, "SID") == 100
+
+
+# --- liveness / silent-stall guard (ADR 014 residual) --------------------------
+#
+# The OBJECTID-reset stall makes `OBJECTID > cursor` return [] FOREVER, which is
+# indistinguishable from a healthy quiet. These pin the guard that turns that
+# silent zero into ONE same-day "feed appears stale" alert (its own message, not
+# an exceedance), fired at most once per stale episode, and always a no-op while
+# disabled and on the non-incremental paths.
+
+def _dt(s):
+    return datetime.strptime(s, "%Y-%m-%dT%H:%MZ").replace(tzinfo=timezone.utc)
+
+
+def _ms_ago(**kw):
+    """Epoch-ms for a real-now-relative time — the liveness check compares the
+    stored As-Of against the real clock, so run()-level tests anchor to now."""
+    when = datetime.now(timezone.utc) - timedelta(**kw)
+    return int(when.timestamp() * 1000)
+
+
+# pure decision (now injected — fully deterministic) ----------------------------
+
+def test_liveness_decision_fires_when_stale_and_unwarned():
+    warn, days = gw.liveness_decision("2026-07-10T12:00Z", _dt("2026-07-15T12:00Z"), 3, None)
+    assert warn is True and days == 5
+
+
+def test_liveness_decision_silent_when_fresh():
+    warn, days = gw.liveness_decision("2026-07-14T13:00Z", _dt("2026-07-15T12:00Z"), 3, None)
+    assert warn is False and days == 0
+
+
+def test_liveness_decision_silent_when_already_warned_same_episode():
+    # same As-Of we already alerted on -> once-per-episode gate holds
+    warn, _ = gw.liveness_decision("2026-07-10T12:00Z", _dt("2026-07-15T12:00Z"), 3,
+                                   "2026-07-10T12:00Z")
+    assert warn is False
+
+
+def test_liveness_decision_rearms_on_a_newer_as_of():
+    # feed recovered to a newer reading then stalled again -> different As-Of -> re-warn
+    warn, _ = gw.liveness_decision("2026-07-16T00:00Z", _dt("2026-07-20T12:00Z"), 3,
+                                   "2026-07-10T12:00Z")
+    assert warn is True
+
+
+def test_liveness_decision_unparseable_as_of_does_not_fire():
+    warn, days = gw.liveness_decision("not-a-timestamp", _dt("2026-07-15T12:00Z"), 3, None)
+    assert warn is False and days is None
+
+
+# run() flow --------------------------------------------------------------------
+
+def _baseline_then_zero(monkeypatch, cfg, date_ms):
+    """Baseline the tab with readings dated `date_ms`, then wire an empty
+    incremental poll. Returns (fake, sent) positioned just before the stale poll."""
+    fake, sent = _wire(monkeypatch, cfg)
+    base = [_reading(100 + i, s, 0.0, 5.0, date_ms) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
+    assert gw.run() == 0                       # baseline: no alert, incl. no liveness
+    assert sent == []
+    return fake, sent
+
+
+def test_liveness_fires_one_stale_alert_on_zero_readings(monkeypatch):
+    fake, sent = _baseline_then_zero(monkeypatch, CFG, _ms_ago(days=10))
+    assert gw.run() == 0                        # zero new readings + stale -> fire
+    assert len(sent) == 1
+    subj, body = sent[0]
+    assert "liveness" in subj.lower() and "STALE" in subj
+    assert "URGENT" not in subj                 # NOT an exceedance
+    assert "not an exceedance" in body.lower()
+    assert sw.gfl_air_stale_marker(fake, "SID") is not None   # episode marker recorded
+
+
+def test_liveness_silent_when_newest_reading_is_fresh(monkeypatch):
+    fake, sent = _baseline_then_zero(monkeypatch, CFG, _ms_ago(hours=1))
+    assert gw.run() == 0                        # zero new readings but fresh -> silent
+    assert sent == []
+    assert sw.gfl_air_stale_marker(fake, "SID") is None
+
+
+def test_liveness_alerts_at_most_once_per_episode(monkeypatch):
+    fake, sent = _baseline_then_zero(monkeypatch, CFG, _ms_ago(days=10))
+    gw.run()                                    # stale -> 1 alert
+    gw.run()                                    # still stale, same As-Of -> no re-alert
+    gw.run()
+    assert len(sent) == 1
+
+
+def test_liveness_is_noop_when_disabled(monkeypatch):
+    cfg = copy.deepcopy(CFG)
+    cfg["gfl_air"]["enabled"] = False
+    fake, sent = _wire(monkeypatch, cfg)
+    # disabled short-circuits before any poll — never even reaches the liveness path
+    monkeypatch.setattr(gw.gc, "fetch_baseline",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no work when disabled")))
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no work when disabled")))
+    assert gw.run() == 0
+    assert sent == []
+
+
+def test_liveness_not_consulted_on_baseline_path(monkeypatch):
+    # First-ever run baselines even from a stale-dated feed and must NOT liveness-alert
+    # (the baseline path returns before the zero-readings branch).
+    fake, sent = _wire(monkeypatch, CFG)
+    base = [_reading(100 + i, s, 0.0, 5.0, _ms_ago(days=30)) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no fetch on baseline")))
+    assert gw.run() == 0
+    assert sent == []
+
+
+def test_liveness_not_consulted_on_over_cap_rebaseline(monkeypatch):
+    cfg = copy.deepcopy(CFG)
+    cfg["gfl_air"]["max_new_readings_per_run"] = 3
+    fake, sent = _baseline_then_zero(monkeypatch, cfg, _ms_ago(days=10))   # stale tab
+    # A full-table reinsert takes the OVER-CAP branch, not the zero-readings branch,
+    # so liveness must NOT fire even though the tab was stale beforehand.
+    reinsert = [_reading(500 + i, STATIONS[i % 6], 0.0, 5.0, _ms_ago(days=10)) for i in range(10)]
+    newbase = [_reading(600 + i, s, 0.0, 5.0, _ms_ago(hours=1)) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: list(reinsert)[: (limit or 0) + 1])
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(newbase))
+    assert gw.run() == 0
+    assert sent == []
+
+
+def test_liveness_exception_never_breaks_the_poll(monkeypatch):
+    fake, sent = _baseline_then_zero(monkeypatch, CFG, _ms_ago(days=10))
+    monkeypatch.setattr(gw.sw, "gfl_air_latest_as_of",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert gw.run() == 0                        # poll completes cleanly despite the error
+    assert sent == []                           # error swallowed, no alert
+
+
+def test_liveness_unparseable_as_of_no_false_alert(monkeypatch):
+    fake, sent = _baseline_then_zero(monkeypatch, CFG, _ms_ago(days=10))
+    # Blank out every stored As-Of: freshness can't be computed -> no misleading alert.
+    asof = sw.GFL_AIR_SUMMARY_HEADERS.index("As-Of (UTC)")
+    for r in fake._values._tabs[sw.TAB_GFL_AIR][1:]:
+        if len(r) > asof:
+            r[asof] = ""
+    assert gw.run() == 0
+    assert sent == []
+
+
+# marker isolation (column N must not disturb the station snapshot) --------------
+
+def test_gfl_air_stale_marker_roundtrips_and_survives_a_snapshot_write():
+    fake = FakeSheets()
+    sw.ensure_gfl_air_tabs(fake, "SID")
+    six = [{"station": s, "as_of": "2026-07-10T12:00Z", "h2s": 0, "h2s_status": "ok",
+            "ch4": 5, "ch4_status": "ok", "wind": 1, "direction": 200, "temp": 75,
+            "oid": 100 + i, "note": "n"} for i, s in enumerate(STATIONS)]
+    sw.write_gfl_air_summary(fake, "SID", six, "link")
+    assert sw.gfl_air_stale_marker(fake, "SID") is None
+    sw.set_gfl_air_stale_marker(fake, "SID", "2026-07-10T12:00Z")
+    assert sw.gfl_air_stale_marker(fake, "SID") == "2026-07-10T12:00Z"
+    # column-N marker leaves the snapshot / cursor / latest-As-Of untouched
+    assert len(_summary(fake)) == 6
+    assert sw.gfl_air_cursor(fake, "SID") == 105
+    assert sw.gfl_air_latest_as_of(fake, "SID") == "2026-07-10T12:00Z"
+    # and a fresh REPLACE snapshot write (over A:L) does NOT wipe the marker
+    sw.write_gfl_air_summary(fake, "SID", six, "link")
+    assert sw.gfl_air_stale_marker(fake, "SID") == "2026-07-10T12:00Z"
+
+
+def test_gfl_air_latest_as_of_takes_the_newest_and_ignores_non_reading_rows():
+    fake = FakeSheets()
+    sw.ensure_gfl_air_tabs(fake, "SID")
+    six = [{"station": s, "as_of": f"2026-07-1{i}T00:00Z", "h2s": 0, "h2s_status": "ok",
+            "ch4": 5, "ch4_status": "ok", "wind": 1, "direction": 200, "temp": 75,
+            "oid": 100 + i, "note": "n"} for i, s in enumerate(STATIONS)]
+    sw.write_gfl_air_summary(fake, "SID", six, "link")
+    assert sw.gfl_air_latest_as_of(fake, "SID") == "2026-07-15T00:00Z"   # max across stations
+    assert sw.gfl_air_latest_as_of(fake, "SID") is not None

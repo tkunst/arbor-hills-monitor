@@ -1185,6 +1185,71 @@ def gfl_air_cursor(service, sheet_id: str):
     return best
 
 
+def gfl_air_latest_as_of(service, sheet_id: str):
+    """The newest reading timestamp currently stored in the GFL Air tab — max over
+    the station rows' 'As-Of (UTC)' column — or None if no row carries a parseable
+    one. The liveness check (gfl_air_watcher) reads this on a zero-new-readings poll
+    to tell a healthy quiet (recent As-Of) from a silent stall (an As-Of that is
+    days old — ADR 014's OBJECTID-reset residual). Only rows that carry a real
+    OBJECTID are considered, so a marker/annotation cell can never be mistaken for a
+    reading. As-Of is stored as 'YYYY-MM-DDTHH:MMZ', which sorts chronologically, so
+    the string max is the latest time. MUST be called after ensure_gfl_air_tabs."""
+    asof_col = GFL_AIR_SUMMARY_HEADERS.index("As-Of (UTC)")
+    oid_col = GFL_AIR_SUMMARY_HEADERS.index("OBJECTID")
+    resp = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_GFL_AIR}'!A2:L")
+        .execute()
+    )
+    best = None
+    for r in resp.get("values", []):
+        if len(r) <= max(asof_col, oid_col) or not str(r[oid_col]).strip():
+            continue                         # blank/padding row, or not a reading row
+        val = str(r[asof_col]).strip()
+        if val and (best is None or val > best):
+            best = val
+    return best
+
+
+# The stale-warned marker lives in column N — OUTSIDE the A:L station write span
+# (GFL_AIR_SUMMARY_HEADERS is 12 cols) — so write_gfl_air_summary's REPLACE update
+# never clobbers it, and there is no clear() to wipe it. It records the As-Of we
+# last sent a liveness alert for; the gate is "warned == current newest As-Of". This
+# SELF-RESETS without an explicit clear because As-Of is monotonic: when the feed
+# recovers and later stalls again, the new stall carries a NEWER As-Of that differs
+# from this marker, re-arming the alert. See ADR 014.
+_GFL_STALE_MARKER_LABEL_CELL = "N1"
+_GFL_STALE_MARKER_VALUE_CELL = "N2"
+
+
+def gfl_air_stale_marker(service, sheet_id: str):
+    """The As-Of string the liveness check last alerted on (once-per-stale-episode
+    gate), or None if it has never fired. Stored in column N (see the note above)."""
+    resp = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_GFL_AIR}'!{_GFL_STALE_MARKER_VALUE_CELL}")
+        .execute()
+    )
+    vals = resp.get("values", [])
+    if vals and vals[0] and str(vals[0][0]).strip():
+        return str(vals[0][0]).strip()
+    return None
+
+
+def set_gfl_air_stale_marker(service, sheet_id: str, as_of: str) -> None:
+    """Record the As-Of a liveness alert just fired on, so the next quiet poll for
+    the SAME stall stays silent (once per episode). Writes a human label (N1) + the
+    value (N2) in one update; column N is outside the station write span."""
+    service.spreadsheets().values().update(
+        spreadsheetId=sheet_id,
+        range=f"'{TAB_GFL_AIR}'!{_GFL_STALE_MARKER_LABEL_CELL}",
+        valueInputOption="RAW",
+        body={"values": [["Stale-Warned As-Of (liveness)"], [as_of]]},
+    ).execute()
+
+
 # ---------------------------------------------------------------------------
 # Force-reprocess support: purge a doc's rows so a re-extract is clean, not
 # additive (backfill FORCE_REPROCESS_DOC_IDS — see backfill.py).

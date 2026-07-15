@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 try:
     from zoneinfo import ZoneInfo
@@ -159,6 +159,73 @@ def format_alert_body(lines: list[str], has_exceedance: bool, link: str,
 
 
 # ---------------------------------------------------------------------------
+# Liveness / silent-stall guard (ADR 014 residual — the OBJECTID-reset stall).
+# Pure decision + body; the orchestration wrapper (_check_liveness) is below.
+# ---------------------------------------------------------------------------
+
+_AS_OF_FMT = "%Y-%m-%dT%H:%MZ"       # the format sheet_writer stores As-Of in
+
+
+def _parse_as_of(s: str):
+    """Parse a stored 'As-Of (UTC)' string back to an aware UTC datetime, or None
+    on blank/garbage (never raises — a parse miss must not fire a misleading alert
+    or break the poll)."""
+    if not s or not str(s).strip():
+        return None
+    try:
+        return datetime.strptime(str(s).strip(), _AS_OF_FMT).replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
+
+
+def liveness_decision(newest_as_of: str, now_utc: datetime, max_stale_days: int,
+                      warned_as_of) -> tuple[bool, int | None]:
+    """Pure. Returns (should_warn, stale_days).
+
+    should_warn is True iff the newest reading we've ingested is at least
+    max_stale_days old AND we have not already warned for this exact As-Of (the
+    once-per-episode gate — self-resetting because As-Of is monotonic, so a later
+    stall carries a newer As-Of that differs from `warned_as_of`). stale_days is the
+    integer age in whole days, or None if `newest_as_of` is unparseable (in which
+    case should_warn is False — we do not fire a 'stale' alert we can't quantify;
+    the caller logs that case loudly instead). `now_utc` is injected so this is
+    fully unit-testable."""
+    dt = _parse_as_of(newest_as_of)
+    if dt is None:
+        return False, None
+    stale_days = int((now_utc - dt).total_seconds() // 86400)
+    if stale_days < max_stale_days:
+        return False, stale_days
+    if warned_as_of and str(warned_as_of).strip() == str(newest_as_of).strip():
+        return False, stale_days                 # already warned for this episode
+    return True, stale_days
+
+
+def format_liveness_body(newest_as_of: str, stale_days: int, max_stale_days: int,
+                         link: str) -> str:
+    """The stale-feed email body — deliberately NOT the exceedance formatter and
+    clearly labeled a feed-health notice, never an exceedance."""
+    return "\n".join([
+        "GFL Arbor Hills perimeter air monitoring — LIVENESS / feed-health notice.\n",
+        "This is NOT an exceedance and NOT a reading. The poller has seen NO new "
+        f"perimeter readings for {stale_days} day(s) (alert threshold: "
+        f"{max_stale_days}).\n",
+        f"Newest reading on record: {newest_as_of} (UTC).\n",
+        "A healthy feed updates roughly hourly, so a multi-day silence means it may "
+        "have stalled — e.g. the ArcGIS service was rebuilt and the OBJECTID cursor "
+        "no longer advances (ADR 014's OBJECTID-reset residual), or the source went "
+        "offline. The rest of the pipeline is intact; it simply isn't seeing "
+        "anything new.\n",
+        "Check: open the dashboard and see whether new readings are appearing there. "
+        "If they are but this monitor is not, the stored cursor likely needs a "
+        "reset.\n",
+        f"Live dashboard:\n  {link}\n",
+        "(You will not get another liveness alert for this same stall — it fires "
+        "once per stale episode, re-arming only after the feed recovers.)",
+    ])
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
@@ -196,6 +263,48 @@ def _baseline(sheets, sheet_id: str, cfg_gfl: dict, link: str, prefix: str,
           f"{gc.max_oid(baseline)}, no alerts.")
 
 
+def _check_liveness(sheets, sheet_id: str, cfg: dict, link: str,
+                    max_stale_days: int) -> None:
+    """On a poll that found ZERO new readings, alert ONCE if the newest reading on
+    record is older than max_stale_days — the mitigation for ADR 014's OBJECTID-reset
+    silent stall (a permanent silent zero that is indistinguishable from a healthy
+    quiet). Runs ONLY on the zero-new-readings path (deliberately not on baseline /
+    over-cap / fetch-error — see the note where it's called), AFTER the poll has
+    already decided to write nothing and leave the cursor unadvanced, so it can
+    touch neither the measurements system-of-record nor the cursor.
+
+    FULLY ISOLATED + best-effort: every failure here (a bad tab read, a send error)
+    is caught-and-logged and NEVER propagates — a liveness bug must not break the
+    poll. The stale marker is written only AFTER a successful send, so a failed send
+    simply retries next run until it lands exactly once (mirrors the exceedance
+    email's 'alert best-effort; readings recorded' posture in run())."""
+    try:
+        newest = sw.gfl_air_latest_as_of(sheets, sheet_id)
+        if newest is None:
+            print("[gfl-air]   liveness: no parseable As-Of in the tab — skipping "
+                  "(cannot quantify freshness; not firing a misleading 'stale' "
+                  "alert). This is itself unexpected; investigate the tab.")
+            return
+        warned = sw.gfl_air_stale_marker(sheets, sheet_id)
+        should_warn, stale_days = liveness_decision(
+            newest, datetime.now(timezone.utc), max_stale_days, warned)
+        if not should_warn or stale_days is None:   # None only when should_warn False
+            return
+        subject = (f"[GFL air liveness] Arbor Hills perimeter feed appears STALE — "
+                   f"no new readings in {stale_days} day(s)")
+        body = format_liveness_body(newest, stale_days, max_stale_days, link)
+        try:
+            ea.send_email(subject, body, cfg)
+            sw.set_gfl_air_stale_marker(sheets, sheet_id, newest)   # once per episode
+            print(f"[gfl-air]   liveness: STALE alert emailed (newest={newest}, "
+                  f"{stale_days}d >= {max_stale_days}d); marker set.")
+        except Exception as e:  # noqa: BLE001 — alert best-effort, marker NOT set → retries
+            print(f"[gfl-air]   liveness: STALE detected (newest={newest}, "
+                  f"{stale_days}d) but alert email FAILED (will retry next run): {e}")
+    except Exception as e:  # noqa: BLE001 — liveness must NEVER break the poll
+        print(f"[gfl-air]   liveness check errored (ignored — poll unaffected): {e}")
+
+
 def run() -> int:
     cfg = load_config()
     should_run, reason = _should_run(cfg)
@@ -210,6 +319,7 @@ def run() -> int:
     mode = cfg_gfl.get("measurements_mode", "digest")
     cap = int(cfg_gfl.get("max_new_readings_per_run", 1000))
     alert_on_sentinel = bool(cfg_gfl.get("alert_on_sentinel", True))
+    max_stale_days = int(cfg_gfl.get("max_stale_days", 3))
     link = cfg_gfl.get("dashboard_url") or cfg_gfl.get("service_url", "")
 
     sheet_id = os.environ["GSHEET_ID"]
@@ -259,6 +369,14 @@ def run() -> int:
         return 0
 
     if not readings:
+        # Zero new readings past the cursor. Normally a healthy quiet — but this is
+        # also EXACTLY what ADR 014's OBJECTID-reset silent stall looks like, so run
+        # the liveness guard here (and only here: baseline/over-cap take other
+        # branches, and a persistent fetch error returns above at the GflAirFetchError
+        # handler — a separate silent-quiet vector, out of scope by design, that at
+        # least logs each run rather than looking like a healthy zero). Isolated +
+        # best-effort: it cannot touch measurements or the cursor.
+        _check_liveness(sheets, sheet_id, cfg, link, max_stale_days)
         print(f"[gfl-air] no new readings (cursor {cursor}).")
         return 0
 

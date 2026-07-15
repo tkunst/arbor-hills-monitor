@@ -53,8 +53,10 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
    ArcGIS FeatureServer. Readings ride the *Measurements* tab (`basis=measured`),
    a small *GFL Air* tab holds the latest-per-station snapshot, and a same-day
    email fires when a reading crosses a conservative, config-driven action level
-   (**R3/R4**). Off by default until Trisha confirms the thresholds; see
-   `docs/decisions/014-gfl-perimeter-air-stream-e.md` for activation.
+   (**R3/R4**). A liveness guard (`gfl_air.max_stale_days`) turns a silent stall
+   into a same-day "feed appears stale" alert, so a reset ArcGIS cursor can't go
+   unseen. Enabled 2026-07-15; see
+   `docs/decisions/014-gfl-perimeter-air-stream-e.md`.
 8. **CivicClerk meeting-change watch (Stream F)** (twice daily —
    `civicclerk_watch.enabled: true`): watches a hand-picked list of MMPC and
    Washtenaw County Board-of-Commissioners meeting events for **any** change —
@@ -203,7 +205,10 @@ docs/day) is essentially free. Model is configurable in `config.yml`.
   drop to zero visible. It is also GFL's own **self-reported** data (attributed as
   such in every row), and by default the shared Measurements tab keeps a daily
   digest of the hourly feed (the source remains the system of record for full
-  history — see ADR 014). Off by default (`gfl_air.enabled: false`).
+  history — see ADR 014). One silent stall the loud-fetch guard can't catch — the
+  ArcGIS cursor resetting below the stored value, so `OBJECTID > cursor` returns
+  nothing forever — is covered by a liveness check that alerts after
+  `gfl_air.max_stale_days` (default 3) of zero new readings. Enabled 2026-07-15.
 - **Ridge Wood H2S rides an undocumented public report list (Stream G, ADR 016).**
   The archiver scrapes the monthly report links off Barr Engineering's public page
   (there is no API); if the page restructures or a link path changes, the scrape
