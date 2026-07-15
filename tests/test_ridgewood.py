@@ -458,6 +458,26 @@ def test_drive_not_configured_still_extracts_and_alerts(monkeypatch):
     assert len(sent) == 1                            # alert still fired
 
 
+def test_transient_drive_upload_failure_still_measures_and_alerts(monkeypatch):
+    # A single upload throwing (healthy token, network blip) must NOT block the
+    # month's measurement + exceedance alert — the mirror is best-effort per file.
+    cfg = _cfg()
+    fake, sent, _ = _wire(
+        monkeypatch, cfg, months=[("2026-06", None)],
+        specs={"2026-06": {"values": ["90"], "all_clear": True}}, drive=True)
+
+    def boom(service, local, name, folder):
+        raise RuntimeError("transient ArcGIS/Drive 503")
+    monkeypatch.setattr(ra.ac, "upload_pdf", boom)
+
+    assert ra.run() == 0
+    reports = _rows(fake, sw.TAB_RIDGEWOOD)
+    assert reports[0][0] == "2026-06" and reports[0][7] == ""   # recorded, blank Archive Link
+    assert reports[0][4] == "EXCEEDANCE"
+    assert len(_rows(fake, sw.TAB_MEASUREMENTS)) == 1           # measurement still written
+    assert len(sent) == 1                                       # alert still fired despite mirror failure
+
+
 def test_no_text_layer_mirrors_and_alerts_without_measurement(monkeypatch):
     cfg = _cfg()
     fake, sent, uploads = _wire(

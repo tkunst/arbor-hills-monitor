@@ -244,11 +244,22 @@ def run() -> int:
             chash = rc.content_hash(local)
             text, npages, has_text = rc.extract_text(local)
 
-            # (1) Drive mirror (optional, idempotent), then classify + extract.
+            # (1) Drive mirror (optional, idempotent) — BEST-EFFORT per file, then
+            # classify + extract. The upload is wrapped so a transient Drive failure
+            # (network blip on a healthy token) can't block this month's measurement +
+            # exceedance alert: the safety function must not depend on the mirror, in
+            # the transient case as well as the not-configured case (a dead token still
+            # fails loudly up front in _resolve_drive). A month whose upload fails is
+            # recorded + alerted with a blank archive link; re-mirroring it is a manual
+            # re-run (remove its row from the tab). See ADR 016.
             archive_link = ""
             if drive is not None:
-                archive_link = ac.upload_pdf(
-                    drive, local, f"ridgewood-h2s-{month}.pdf", ac.folder_id(FOLDER_ENV))
+                try:
+                    archive_link = ac.upload_pdf(
+                        drive, local, f"ridgewood-h2s-{month}.pdf", ac.folder_id(FOLDER_ENV))
+                except Exception as e:  # noqa: BLE001 — mirror best-effort; never block the alert
+                    print(f"      Drive mirror FAILED for {month} "
+                          f"(recorded + alerted with no mirror link): {e}")
 
             if has_text:
                 verdict = rc.classify_report(text, thresholds)
