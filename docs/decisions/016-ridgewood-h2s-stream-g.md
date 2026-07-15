@@ -151,6 +151,13 @@ and must **not** depend on an optional Drive folder secret being present.
   mirror doesn't fall behind invisibly (mmpc's posture).
 - Folder **not** configured → skip the mirror (blank link), but **still extract +
   alert**. Enabling the stream without the folder secret is a valid, safe state.
+- Folder configured + healthy token but a **single upload throws** (a transient
+  network blip) → that one upload is caught **best-effort**: the month is still
+  extracted, measured, and alerted, and recorded with a **blank** archive link. The
+  alert never depends on the mirror in the transient case either, not just the
+  not-configured case. Residual: that month stays un-mirrored (re-mirroring it is a
+  manual re-run — remove its row from the tab); acceptable, since the alert is the
+  safety-critical output and the exceedance is also visible on the public source page.
 
 ### 6. Crash-safe write order (three durable writes, not two)
 
