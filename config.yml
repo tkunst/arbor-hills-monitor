@@ -201,7 +201,7 @@ pfas:
 # gfl_air_watcher._should_run() makes every run a quiet no-op. It is keyless — no
 # secret to provision.
 gfl_air:
-  enabled: false
+  enabled: true
   # Barr Engineering ArcGIS Enterprise FeatureServer (public, GET-only). The
   # readings live in the "Monitoring Data" table (layer 4). Verified 2026-07-14.
   service_url: "https://enterprisegis.barr.com/server/rest/services/GFL/GFL_Arbor_Hills_Public_Web_Data/FeatureServer"
