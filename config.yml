@@ -373,6 +373,51 @@ ridgewood:
   review_recipients:
     - arbor-hills@trishakunst.com          # Trisha only (not the advocacy list)
 
+# --- ROP (air Title V permit) watch (ADR 017, added 2026-07-15) ---
+# OFF BY DEFAULT. All three Arbor Hills air facilities have a ROP renewal IN
+# PROCESS: N2688 (landfill, ROP0000224 v3), N1504 (Energy, ROP0000656 v3), P1488
+# (Emerald RNG, ROP0000236 v3). A renewal reaching its 30-day PUBLIC COMMENT
+# window is a second advocacy venue (air-permit conditions) — easy to miss amid
+# a ~1,800-row statewide CSV. When enabled, rop_watcher.py watches THREE public
+# EGLE sources and alerts on any change:
+#   1. the EPA ROP Monthly Report CSV (facility-level workflow tasks) for the
+#      three target SRNs below — task-status / permit-status / dates advancing,
+#      or a new task/version row appearing (e.g. N2688's renewal sub-task "Send
+#      working draft conditions to applicant" going Unstarted -> started);
+#   2. the N2688 renewal folder's file list — a new file (a draft renewal ROP /
+#      staff report);
+#   3. the statewide ROP_Public_Notice.pdf — whether N2688 appears (the 30-day-
+#      comment-window trip-wire).
+# The FIRST sighting of each of the five derived items baselines silently, same
+# as pfas_watcher/civicclerk_watcher. See rop_client.py / rop_watcher.py.
+#
+# ⚠️ M3333 ("Conway Products Corporation d/b/a Emerald Spa Corp") is an
+# unrelated facility that also contains "Emerald" in its name (P1488 is
+# "Emerald RNG LLC") — rop_client filters by exact SRN, never by name, so
+# M3333 can never be pulled in by construction.
+#
+# ACTIVATION — same three-step pattern as Stream C / Mirror D / PFAS / GFL air /
+# Ridge Wood. All Trisha's:
+#   1. review + merge,
+#   2. the first enabled run just baselines all five items (records a snapshot,
+#      alerts on NONE) — no seed script needed,
+#   3. set enabled: true here and commit.
+# Until enabled: true is on main, rop-watch.yml runs on schedule but
+# rop_watcher._should_run() makes every run a quiet no-op.
+rop:
+  enabled: false
+  srns:
+    - "N2688"    # Arbor Hills Landfill — the primary advocacy concern
+    - "N1504"    # Arbor Hills Energy
+    - "P1488"    # Emerald RNG
+  # Optional per-watch recipient override (Trisha only, like Meeting Watch /
+  # Ridge Wood's review_recipients). Leave unset to send to the full
+  # alert_recipients list below — the default, since a ROP renewal advancing
+  # (especially reaching public comment) is a substantive advocacy signal for
+  # the whole Conservancy, not an operational/format concern.
+  # recipients:
+  #   - arbor-hills@trishakunst.com
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 alert_recipients:

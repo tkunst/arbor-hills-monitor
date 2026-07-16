@@ -81,6 +81,17 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
    monitor's own published action levels (the 72 ppb value independently confirms
    Stream E's H2S threshold; **R3/R4**). Off by default; see
    `docs/decisions/016-ridgewood-h2s-stream-g.md` for activation.
+10. **ROP renewal watch (Stream H)** (daily, optional — `rop.enabled: true`): all
+    three Arbor Hills air facilities have a ROP (Title V air permit) renewal *in
+    process* — a renewal reaching its **30-day public comment window** is a
+    second advocacy venue, easy to miss in a ~1,800-row statewide export. Watches
+    EGLE's EPA ROP Monthly Report CSV (task-status/permit-status/dates for
+    N2688/N1504/P1488 — excluding the unrelated "Emerald" name-collision M3333),
+    the N2688 renewal folder's file list (a new draft ROP appearing), and the
+    statewide public-notice PDF (whether N2688 appears). Emails a change alert to
+    the full advocacy list on any of the five watched items changing; first
+    sighting baselines silently. Off by default; see
+    `docs/decisions/017-rop-watch.md` for activation.
 
 > **A note on the document links (expected behavior).** Every case-file row's
 > **Link** column points to EGLE's nSITE portal
