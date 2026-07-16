@@ -327,8 +327,14 @@ def test_incremental_writes_measurements_and_emails_on_exceedance(monkeypatch):
 
 
 def test_second_incremental_with_no_new_readings_is_noop(monkeypatch):
+    # Baseline dated near real "now" (not the fixed DAY0) — this test's only new
+    # reading is the baseline itself, so the newest-on-record timestamp never
+    # advances; anchoring it to DAY0 would eventually cross max_stale_days as real
+    # calendar time passes and spuriously trip the liveness guard (ADR 014),
+    # which is a DIFFERENT behavior than what this test is pinning. See
+    # test_liveness_silent_when_newest_reading_is_fresh for the same idiom.
     fake, sent = _wire(monkeypatch)
-    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
+    base = [_reading(100 + i, s, 0.0, 5.0, _ms_ago(hours=1)) for i, s in enumerate(STATIONS)]
     monkeypatch.setattr(gw.gc, "fetch_baseline", lambda cfg, station_prefix="MS-": list(base))
     monkeypatch.setattr(gw.gc, "fetch_readings", lambda cfg, since, limit=None: [])
     gw.run()                                        # baseline
