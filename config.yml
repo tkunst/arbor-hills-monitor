@@ -405,7 +405,7 @@ ridgewood:
 # Until enabled: true is on main, rop-watch.yml runs on schedule but
 # rop_watcher._should_run() makes every run a quiet no-op.
 rop:
-  enabled: false
+  enabled: true                      # activated 2026-07-16 (Trisha) — see ADR 017
   srns:
     - "N2688"    # Arbor Hills Landfill — the primary advocacy concern
     - "N1504"    # Arbor Hills Energy
