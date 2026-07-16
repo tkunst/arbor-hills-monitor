@@ -115,15 +115,27 @@ diffing — on the partial key alone is unsafe two ways:
 
 ### 4. Fail-safe per source, not per item
 
-A source's fetch/parse failure (`RopFetchError` / `RopParseError`) is
-**transient**: skip-and-warn if every item derived from that source already has
-a baseline; **loud exit 1** if any of them has none yet (an activation-time
-block must surface, never silently no-op forever — the same posture as
-`pfas_watcher`/`civicclerk_watcher`). Because the three sources are independent,
-a failure in one (e.g. the notice PDF 403s on a runner) does **not** block the
-other two from baselining or diffing normally — a **partial** activation block,
-not all-or-nothing, so a single flaky source can't hide the other two working
-correctly. `tests/test_rop.py` pins this per source.
+A source's fetch failure (`RopFetchError`) is treated as **transient**:
+skip-and-warn if every item derived from that source already has a baseline
+(`_all_baselined`); **loud exit 1** if any of them has none yet (an
+activation-time block must surface, never silently no-op forever — the same
+posture as `pfas_watcher`/`civicclerk_watcher`). Because the three sources are
+independent, a failure in one (e.g. the notice PDF 403s on a runner) does
+**not** block the other two from baselining or diffing normally — a
+**partial** activation block, not all-or-nothing, so a single flaky source
+can't hide the other two working correctly. `tests/test_rop.py` pins this per
+source.
+
+A **structural** CSV parse failure (`RopParseError` — wrong column count) is
+a different failure class and is deliberately **not** folded into that
+same baseline-gated logic: it is always loud (`exit 1`), regardless of
+whether every CSV item already has a baseline. A column-layout break is very
+unlikely to be a transient blip, and the earlier draft of this stream bucketed
+it with `RopFetchError` — meaning once all three CSV items had baselined, a
+genuine structural break would have silently no-op'd forever behind a log
+line, the exact silent-stall failure class ADR 014's liveness guard exists to
+catch. Fixed before merge; `test_csv_structural_parse_error_is_always_loud_even_with_existing_baseline`
+pins it.
 
 ### 5. Recipients default to the FULL advocacy list
 
