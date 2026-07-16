@@ -1113,15 +1113,31 @@ def last_rop_snapshot(service, sheet_id: str, item_key: str) -> tuple[str, str] 
     mismatch means 'changed'. Reading the last matching row (not a _meta cell) is
     what makes the watch race-free — the tab is append-only, so no concurrent job
     can clobber it (same idiom as last_pfas_snapshot/last_meeting_snapshot)."""
-    latest = None
+    return last_rop_snapshots(service, sheet_id, [item_key])[item_key]
+
+
+def last_rop_snapshots(
+    service, sheet_id: str, item_keys: list[str],
+) -> dict[str, tuple[str, str] | None]:
+    """Batched form of last_rop_snapshot: ONE tab read for however many keys are
+    asked for, instead of one full-tab read per key. Same race-free append-only
+    read as the singular form. Matters for a source that derives more than one
+    item (the CSV's per-facility keys) — checking whether EVERY key already has
+    a baseline previously cost one full-tab read per key (worst case N
+    sequential Sheets API round trips just to confirm N booleans); this costs
+    one, regardless of how many keys are asked for."""
+    latest_by_key: dict[str, list] = {}
     for r in _tab_rows(service, sheet_id, TAB_ROP, "A2:H"):
-        if len(r) > 1 and r[1] == item_key:
-            latest = r
-    if latest is None:
-        return None
-    snap_hash = latest[4] if len(latest) > 4 else ""
-    snap_json = latest[7] if len(latest) > 7 else ""
-    return snap_hash, snap_json
+        if len(r) > 1:
+            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
+    result: dict[str, tuple[str, str] | None] = {}
+    for key in item_keys:
+        r = latest_by_key.get(key)
+        if r is None:
+            result[key] = None
+        else:
+            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
+    return result
 
 
 def append_rop_watch_row(

@@ -25,12 +25,15 @@ WHAT IT DOES per item (mirrors pfas_watcher/civicclerk_watcher exactly):
     changed (row first = durable record; email best-effort),
   - hash unchanged -> no-op.
 
-FETCH FAILURE is TRANSIENT per source (RopFetchError/RopParseError): skip-and-
-warn if every item derived from that source already has a baseline; LOUD exit 1
-if ANY of them has none yet (an activation-time block must surface, not
-silently no-op forever — same posture as pfas_watcher/civicclerk_watcher). A
-successful CSV fetch that structurally can't be parsed (RopParseError) gets the
-same treatment, never a silent fall-through to garbage rows.
+FETCH FAILURE (RopFetchError) is TRANSIENT per source: skip-and-warn if every
+item derived from that source already has a baseline; LOUD exit 1 if ANY of
+them has none yet (an activation-time block must surface, not silently no-op
+forever — same posture as pfas_watcher/civicclerk_watcher). A successful CSV
+fetch that structurally can't be parsed (RopParseError) is NOT given the same
+treatment — it's ALWAYS loud, regardless of baseline status, since a column-
+layout break is far more likely to persist than a network blip, and letting it
+go quiet behind a baseline would hide a real EGLE format change forever (the
+same silent-stall class ADR 014's liveness guard exists to catch).
 
 GATED on rop.enabled (false by default). A brand-new poller against a live
 external system ships disabled and a human flips it on (overnight-coder
@@ -97,6 +100,15 @@ _FACILITY_ROW_FIELDS = (
     "task_status", "task_due", "task_completed", "permit_status",
     "issue_date", "effective_date", "expiration_date",
 )
+
+# Every field a row's ADDED/REMOVED alert line must show besides
+# permit_number/version/task_name (already in the surrounding line) —
+# DERIVED from _FACILITY_ROW_FIELDS, not a separately hand-maintained list, so
+# a future field added to the row's hash/diff identity can't silently go
+# unprinted the way task_status alone once did (a change confined to any
+# unprinted field renders two identical-looking ADDED/REMOVED lines).
+_DETAIL_FIELDS = tuple(f for f in _FACILITY_ROW_FIELDS
+                       if f not in ("permit_number", "version", "task_name"))
 
 
 def facility_snapshot(rows: list[dict], srn: str) -> dict:
@@ -168,13 +180,7 @@ def summarize_facility_change(old: dict, new: dict) -> tuple[str, str]:
     removed = old_counts - new_counts
 
     def _detail(r: dict) -> str:
-        # The decision-relevant fields this stream exists to watch — printed on
-        # BOTH the added and removed line so a reader can see what actually
-        # changed (a permit_status-only change would otherwise show two
-        # identical-looking lines differing only by +/-, since task_status
-        # alone was the only field ever shown here previously).
-        return (f"task_status={r['task_status']}, permit_status={r['permit_status']}, "
-                f"due={r['task_due'] or '—'}, completed={r['task_completed'] or '—'}")
+        return ", ".join(f"{f}={r[f] or '—'}" for f in _DETAIL_FIELDS)
 
     parts: list[str] = []
     lines: list[str] = []
@@ -276,8 +282,18 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, summarize_fn,
     sw.append_rop_watch_row(sheets, sheet_id, today, key, label, "changed",
                              new_hash, note, _now(), snap_json)
     print(f"[rop-watch] {label}: CHANGED ({last_hash} -> {new_hash}; {note}).")
-    email_body = format_change_body(label, note, body)  # outside the try: a bug here
-    # must not be misattributed to "alert email FAILED" below (it's a pure function).
+    # The row above is already durable — everything from here down is
+    # best-effort alerting for THIS item only. Each step gets its own try so a
+    # bug in either one (a) is never misattributed to the other's failure mode,
+    # and (b) can never escape _diff_and_record and abort run()'s processing of
+    # every other independent item (other CSV facilities, the folder check, the
+    # notice check) — the "partial activation block, not all-or-nothing"
+    # guarantee (ADR 017 section 4) applies per ITEM, not just per SOURCE.
+    try:
+        email_body = format_change_body(label, note, body)
+    except Exception as e:  # noqa: BLE001 — formatting is best-effort; row is recorded
+        print(f"[rop-watch] {label}: change recorded but alert body FORMATTING failed: {e}")
+        return "changed"
     try:
         ea.send_email(f"[ROP watch] {label} changed", email_body, cfg, recipients=recipients)
     except Exception as e:  # noqa: BLE001 — alert is best-effort; row is recorded
@@ -293,8 +309,10 @@ def _all_baselined(sheets, sheet_id, keys) -> bool:
     item has no baseline yet even though its siblings do, and a fetch failure
     right then must still surface loudly — `any(...)` would wrongly treat the
     siblings' baselines as enough to go quiet, silently skipping the new
-    facility's activation-time block forever."""
-    return all(sw.last_rop_snapshot(sheets, sheet_id, k) is not None for k in keys)
+    facility's activation-time block forever. One batched tab read for all
+    `keys` (sw.last_rop_snapshots), not one full-tab read per key."""
+    snaps = sw.last_rop_snapshots(sheets, sheet_id, keys)
+    return all(v is not None for v in snaps.values())
 
 
 def run() -> int:
