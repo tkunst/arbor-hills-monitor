@@ -150,6 +150,15 @@ TAB_MEETING_WATCH = "Meeting Watch"
 # monitor's monthly QA'd reports). The month's 24-hr-average value rides the shared
 # Measurements tab; this tab is the archive index + provenance record.
 TAB_RIDGEWOOD = "Ridge Wood Reports"
+# ROP (air Title V permit) watch (ADR 017) — same on-demand policy as the
+# WDS/MMPC/PFAS/WOI/GFL/Meeting/Ridgewood tabs: no tab appears until rop_watcher
+# actually runs. Append-only, keyed by Item (e.g. "csv:N2688") in col B for
+# dedup/state — the PFAS/Meeting Watch idiom (Sheet-derived ⇒ race-free, NOT
+# _meta). One row per observed state of one of the FIVE watched items (the three
+# target facilities' ROP CSV rows, the N2688 folder listing, the statewide
+# public-notice N2688 mention) — "baseline" (first sighting, silent) or
+# "changed" (fires an alert). See rop_watcher.py.
+TAB_ROP = "ROP Watch"
 # Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
 # TAB_NEW/TAB_HISTORICAL. "Change" is new/changed (live) or historical (dump).
 WDS_HEADERS = [
@@ -219,6 +228,16 @@ MEETING_WATCH_HEADERS = [
 RIDGEWOOD_REPORT_HEADERS = [
     "Month", "Report Title", "Max 24-hr Avg (ppb)", "# Days", "Alert",
     "Source URL", "Content Hash", "Archive Link", "Fetched At",
+]
+
+# ROP watch (ADR 017). One row per observed state of a watched item — "baseline"
+# (first sighting, silent) or "changed" (fires an alert). The last column carries
+# the canonical snapshot JSON: what next run diffs against AND a durable dated
+# record of what the source said. Last so the human columns read cleanly to its
+# left (same layout choice as PFAS_SNAPSHOT_HEADERS/MEETING_WATCH_HEADERS).
+ROP_WATCH_HEADERS = [
+    "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
+    "Snapshot JSON",
 ]
 
 # WOI Well Summary (ADR 005 integration). One row per well from a routed WOI
@@ -1063,6 +1082,57 @@ def append_ridgewood_report_row(
     append_rows(service, sheet_id, TAB_RIDGEWOOD, [[
         month, title, max_24h, n_days, alert,
         source_url, content_hash, archive_link, fetched_at,
+    ]])
+
+
+# ---------------------------------------------------------------------------
+# ROP watch (ADR 017) — the tab is the state (append-only ⇒ race-free), exactly
+# like the PFAS Page Watch / Meeting Watch tabs above.
+# ---------------------------------------------------------------------------
+
+
+def ensure_rop_tabs(service, sheet_id: str) -> None:
+    """Create the ROP Watch tab if missing and reconcile its header row on every
+    run (same self-healing policy as ensure_pfas_tabs()/ensure_meeting_watch_tabs()).
+    Called only from rop_watcher.py, so the tab doesn't appear until the watch
+    actually runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_ROP not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_ROP}}}]},
+        ).execute()
+    _set_header(service, sheet_id, TAB_ROP, ROP_WATCH_HEADERS)
+
+
+def last_rop_snapshot(service, sheet_id: str, item_key: str) -> tuple[str, str] | None:
+    """Return (snapshot_hash, snapshot_json) from the most recent row for this
+    item_key (e.g. "csv:N2688", "folder:N2688", "notice:N2688"), or None if the
+    item has never been snapshotted. None means 'baseline this item'; a hash
+    mismatch means 'changed'. Reading the last matching row (not a _meta cell) is
+    what makes the watch race-free — the tab is append-only, so no concurrent job
+    can clobber it (same idiom as last_pfas_snapshot/last_meeting_snapshot)."""
+    latest = None
+    for r in _tab_rows(service, sheet_id, TAB_ROP, "A2:H"):
+        if len(r) > 1 and r[1] == item_key:
+            latest = r
+    if latest is None:
+        return None
+    snap_hash = latest[4] if len(latest) > 4 else ""
+    snap_json = latest[7] if len(latest) > 7 else ""
+    return snap_hash, snap_json
+
+
+def append_rop_watch_row(
+    service, sheet_id: str, date: str, item_key: str, label: str, change: str,
+    snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
+) -> None:
+    """Append one ROP Watch row. Written BEFORE the change email is sent (durable
+    record first, alert best-effort second — same crash-safe ordering as
+    append_pfas_snapshot_row/append_meeting_watch_row)."""
+    append_rows(service, sheet_id, TAB_ROP, [[
+        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
     ]])
 
 

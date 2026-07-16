@@ -57,6 +57,16 @@ external users but no sensitive data). Public repo.
   doesn't depend on it), write the month's max 24-hr average → Measurements
   (`basis=measured`, Barr/EPA-agreement monitor), same-day alert on a stated 72/750 ppb
   exceedance. Modeled on `mmpc_archiver`. Gated on `ridgewood.enabled`. See ADR 016.
+- `rop_client.py` — Stream H: fetch + parse for the ROP (air Title V permit)
+  watch. EPA ROP Monthly Report CSV rows for N2688/N1504/P1488 (excludes the
+  M3333 "Emerald" name-collision by exact SRN match, never by name), the N2688
+  renewal folder's file list, and the statewide ROP_Public_Notice.pdf's N2688
+  mention. Stdlib + fitz; keeps `egle_doc_parser` untouched. See ADR 017.
+- `rop_watcher.py` — Stream H: snapshots + diffs the three ROP sources' five
+  derived items vs. the `ROP Watch` tab, alerting on any change — a facility's
+  task/permit status advancing, a new file in the N2688 folder, or N2688
+  appearing in the statewide public notice (the 30-day-comment trip-wire).
+  Gated on `rop.enabled`. See ADR 017.
 
 ## Forbidden patterns (do not do these)
 
