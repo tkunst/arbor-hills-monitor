@@ -87,8 +87,11 @@ class RopFetchError(RuntimeError):
 class RopParseError(RuntimeError):
     """The CSV fetched but its header doesn't match the expected column layout —
     almost certainly EGLE changed the export format. Never trust a positional
-    parse against an unrecognized layout; same skip-not-diff / loud-on-no-
-    baseline treatment as RopFetchError."""
+    parse against an unrecognized layout. UNLIKE RopFetchError, this is treated
+    as ALWAYS loud in rop_watcher.run(), never gated on baseline status — a
+    structural break is far more likely to persist across runs than a network
+    blip, so letting it go quiet once every item has a baseline would hide a
+    real format change forever instead of surfacing it."""
 
 
 def _opener():
@@ -237,19 +240,22 @@ def notice_mentions_srn(pdf_bytes: bytes, srn: str = "N2688") -> tuple[bool, str
     Raises RopFetchError if the bytes can't actually be parsed as a PDF — the
     `%PDF` magic-byte check in fetch_notice_pdf only confirms the HEADER; a
     truncated download (a network cut mid-transfer) can still start with `%PDF`
-    while the rest of the document is corrupt, which raises a raw mupdf/fitz
-    exception here. Wrapping it as RopFetchError routes a corrupt body through
-    the same skip-and-warn-or-loud fail-safe as any other fetch failure, instead
-    of crashing the whole run uncaught."""
+    while the rest of the document is corrupt, which raises a fitz/mupdf
+    FileDataError here. Wrapping ONLY that (and its EmptyFileError subclass)
+    as RopFetchError routes a corrupt body through the same skip-and-warn-or-
+    loud fail-safe as any other fetch failure, instead of crashing the whole
+    run uncaught. Deliberately NOT a bare `except Exception`: a genuine bug in
+    this function (or a future pymupdf API change) must surface as an
+    uncaught, loud crash rather than be silently relabeled as a routine
+    transient fetch blip and skip-and-warned forever once notice:N2688 has a
+    baseline."""
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         try:
             text = "\n".join(doc[i].get_text() for i in range(len(doc)))
         finally:
             doc.close()
-    except RopFetchError:
-        raise
-    except Exception as e:  # noqa: BLE001 — a corrupt/unparseable PDF body -> transient
+    except fitz.FileDataError as e:  # corrupt/truncated body -> transient
         raise RopFetchError(f"notice PDF could not be parsed: {e}") from e
     m = re.search(rf"\b{re.escape(srn)}\b", text)
     if not m:

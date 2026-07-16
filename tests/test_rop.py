@@ -260,6 +260,19 @@ def test_notice_mentions_srn_raises_ropfetcherror_on_corrupt_pdf():
         rc.notice_mentions_srn(corrupt, "N2688")
 
 
+def test_notice_mentions_srn_does_not_mask_a_genuine_bug_as_ropfetcherror(monkeypatch):
+    # notice_mentions_srn must catch ONLY fitz.FileDataError (corrupt/truncated
+    # body), never a bare `except Exception`. A genuine bug elsewhere in this
+    # function (or a future pymupdf API change) has to surface as an uncaught,
+    # loud crash — not get relabeled as a routine transient RopFetchError and
+    # skip-and-warned forever once notice:N2688 has a baseline.
+    def _boom(*a, **k):
+        raise ValueError("some unrelated programming bug, not a PDF problem")
+    monkeypatch.setattr(rc.fitz, "open", _boom)
+    with pytest.raises(ValueError):
+        rc.notice_mentions_srn(b"%PDF-1.7\nirrelevant", "N2688")
+
+
 # ==============================================================================
 # Snapshot / hash / diff (pure)
 # ==============================================================================
@@ -332,7 +345,37 @@ def test_summarize_handles_partial_key_collision_without_dropping_a_row():
     # driven entirely by permit_status, not task_status, so the fix that
     # surfaces permit_status (not just task_status) is what makes this readable.
     assert "permit_status=Extended" in body
-    assert "permit_status=In Effect" in body
+
+
+def test_summarize_shows_every_hashed_field_not_just_a_hand_picked_subset():
+    # _detail() must track _FACILITY_ROW_FIELDS in full, not enumerate a
+    # hand-picked subset (the original alert-clarity fix only showed
+    # task_status, then a later fix added permit_status/task_due/
+    # task_completed — but rop_action, rop_action_status, issue_date,
+    # effective_date, and expiration_date are ALSO part of the hashed/diffed
+    # identity). A row that changes ONLY in one of those fields must still
+    # render distinguishable ADDED/REMOVED lines, not two identical ones.
+    common = {
+        "permit_number": "ROP0000224", "version": "3",
+        "task_name": "EPA Review (45 day) - Initiate",
+        "rop_action": "ROP - Renewal", "task_status": "Unstarted",
+        "task_due": "", "task_completed": "", "permit_status": "In Process",
+        "issue_date": "", "effective_date": "",
+    }
+    row_old = {**common, "srn": "N2688", "rop_action_status": "In Process",
+               "expiration_date": ""}
+    row_new = {**common, "srn": "N2688", "rop_action_status": "Complete",
+               "expiration_date": "5/28/2029"}
+    old = rw.facility_snapshot([row_old], "N2688")
+    new = rw.facility_snapshot([row_new], "N2688")
+    assert rw.snapshot_hash(old) != rw.snapshot_hash(new)
+    _, body = rw.summarize_facility_change(old, new)
+    assert "rop_action_status=In Process" in body
+    assert "rop_action_status=Complete" in body
+    assert "expiration_date=5/28/2029" in body
+    # The two rendered lines must not be identical (the bug this fixes).
+    lines = [ln for ln in body.split("\n") if ln.strip()]
+    assert len(lines) == 2 and lines[0] != lines[1]
 
 
 def test_facility_snapshot_unaffected_by_other_facilities():
@@ -612,3 +655,71 @@ def test_recipients_override_narrows_audience(monkeypatch):
     rw.run()
     matches = [s for s in sent if "N2688" in s[0]]
     assert len(matches) == 1 and matches[0][2] == ["trisha@example.test"]
+
+
+def test_alert_formatting_crash_on_one_item_does_not_abort_the_run(monkeypatch):
+    # A bug in format_change_body (or a summarize_fn) for ONE item must be
+    # isolated to that item — never escape _diff_and_record and abort run()'s
+    # processing of every other independent item. ADR 017's "partial
+    # activation block, not all-or-nothing" guarantee applies per ITEM, not
+    # just per SOURCE.
+    fake, sent = _wire(monkeypatch, ROP_CFG)
+    rw.run()   # baseline all 5 items
+
+    real_format = rw.format_change_body
+
+    def _boom(label, note, body):
+        if label == "ROP monthly report — N2688":
+            raise RuntimeError("simulated formatting bug")
+        return real_format(label, note, body)
+
+    monkeypatch.setattr(rw, "format_change_body", _boom)
+
+    # Change BOTH N2688 (crashes) and N1504 (must still succeed, same run).
+    changed_csv = csv_with({
+        "EPA Review (45 day) - Initiate,Unstarted,Kelly Orent,,,ROP0000224,3,In Process,,,":
+        "EPA Review (45 day) - Initiate,Started,Kelly Orent,,,ROP0000224,3,In Process,,,",
+        "EPA Review (45 day) - Initiate,Pending,Kelly Orent,,,ROP0000656,3,In Process,,,":
+        "EPA Review (45 day) - Initiate,Started,Kelly Orent,,,ROP0000656,3,In Process,,,",
+    })
+    monkeypatch.setattr(rw.rc, "fetch_csv", lambda url=None, timeout=60: (changed_csv, "later"))
+
+    exit_code = rw.run()   # must NOT raise
+    assert exit_code == 0  # a formatting bug is best-effort, not a fetch fail-safe
+
+    rows_by_key = {r[1]: r for r in _rows(fake) if r[3] == "changed"}
+    # N2688's row is still durably recorded (written before formatting runs)...
+    assert "csv:N2688" in rows_by_key
+    # ...but got NO alert email, since format_change_body raised for it.
+    assert not any(s[0] == "[ROP watch] ROP monthly report — N2688 changed" for s in sent)
+    # N1504 — an independent item in the SAME run — was unaffected: recorded
+    # AND alerted normally, proving the crash didn't abort the rest of run().
+    assert "csv:N1504" in rows_by_key
+    assert any(s[0] == "[ROP watch] ROP monthly report — N1504 changed" for s in sent)
+
+
+def test_last_rop_snapshots_batches_into_one_tab_read(monkeypatch):
+    # _all_baselined's any()->all() fix means every key must be checked (no
+    # any() short-circuit) — last_rop_snapshots must satisfy that with ONE
+    # tab read for however many keys are asked, not one full-tab read per key.
+    fake = FakeSheets()
+    sw.ensure_rop_tabs(fake, "SID")
+    sw.append_rop_watch_row(fake, "SID", "2026-07-01", "csv:N2688", "l", "baseline",
+                             "h1", "n", "t", "{}")
+    sw.append_rop_watch_row(fake, "SID", "2026-07-01", "csv:N1504", "l", "baseline",
+                             "h2", "n", "t", "{}")
+    # csv:P1488 deliberately absent -> never baselined.
+
+    calls = []
+    real_get = fake._values.get
+
+    def _counting_get(*a, **k):
+        calls.append(1)
+        return real_get(*a, **k)
+    monkeypatch.setattr(fake._values, "get", _counting_get)
+
+    result = sw.last_rop_snapshots(fake, "SID", ["csv:N2688", "csv:N1504", "csv:P1488"])
+    assert result["csv:N2688"] == ("h1", "{}")
+    assert result["csv:N1504"] == ("h2", "{}")
+    assert result["csv:P1488"] is None
+    assert len(calls) == 1  # one tab read for three keys, not three
