@@ -249,6 +249,17 @@ def test_notice_mentions_srn_is_whole_word_only():
     assert mentioned is False
 
 
+def test_notice_mentions_srn_raises_ropfetcherror_on_corrupt_pdf():
+    # fetch_notice_pdf's "%PDF" magic-byte check only confirms the HEADER — a
+    # truncated download can still start with "%PDF" while the rest is
+    # unparseable. That must surface as RopFetchError (routed through the
+    # normal skip-and-warn/loud fail-safe), never a raw, uncaught fitz/mupdf
+    # exception that would crash the whole run.
+    corrupt = b"%PDF-1.7\n" + b"\x00" * 50  # valid magic bytes, garbage body
+    with pytest.raises(rc.RopFetchError):
+        rc.notice_mentions_srn(corrupt, "N2688")
+
+
 # ==============================================================================
 # Snapshot / hash / diff (pure)
 # ==============================================================================
@@ -275,6 +286,11 @@ def test_facility_snapshot_changes_when_task_status_advances():
     assert "new task/version row" in note and "task/version row removed" in note
     assert "REMOVED" in body and "ADDED" in body
     assert "EPA Review (45 day) - Initiate" in body
+    # The OLD and NEW task_status must both be visible in the body — a reader
+    # must be able to tell what changed, not see two identical-looking lines
+    # differing only by the +/- marker (the bug this fixes).
+    assert "task_status=Unstarted" in body
+    assert "task_status=Started" in body
 
 
 def test_facility_snapshot_changes_when_new_version_row_appears():
@@ -312,6 +328,11 @@ def test_summarize_handles_partial_key_collision_without_dropping_a_row():
     assert "new task/version row" in note and "task/version row removed" in note
     # Both the vanished Extended-shape row and the new In-Effect-shape row appear.
     assert body.count("Send working draft conditions to applicant") == 2
+    # And both permit_status values are visible — this facility change is
+    # driven entirely by permit_status, not task_status, so the fix that
+    # surfaces permit_status (not just task_status) is what makes this readable.
+    assert "permit_status=Extended" in body
+    assert "permit_status=In Effect" in body
 
 
 def test_facility_snapshot_unaffected_by_other_facilities():
@@ -401,7 +422,7 @@ def _notice_bytes_ok(mentioned=False):
     return make_notice_pdf(text)
 
 
-def _wire(monkeypatch, cfg, *, csv_text=None, folder_html_text=None, notice_pdf=None,
+def _wire(monkeypatch, cfg, *, csv_text=None, notice_pdf=None,
           csv_error=None, folder_error=None, notice_error=None):
     fake = FakeSheets()
     sent = []
@@ -420,7 +441,7 @@ def _wire(monkeypatch, cfg, *, csv_text=None, folder_html_text=None, notice_pdf=
     def _fetch_folder(url=None, timeout=60):
         if folder_error:
             raise folder_error
-        return folder_html_text if folder_html_text is not None else _folder_bytes_ok()
+        return _folder_bytes_ok()
     monkeypatch.setattr(rw.rc, "fetch_folder_listing", _fetch_folder)
 
     def _fetch_notice(url=None, timeout=60):
@@ -492,7 +513,8 @@ def test_folder_new_file_emails_alert(monkeypatch):
                         lambda url=None, timeout=60: folder_html(new_entries))
     assert rw.run() == 0
     matches = [s for s in sent if "folder" in s[0].lower() or "N2688" in s[0]]
-    assert any("Draft Renewal" in body for _, body, _ in sent)
+    assert len(matches) == 1
+    assert "Draft Renewal" in matches[0][1]
 
 
 def test_notice_mention_appearing_emails_alert(monkeypatch):
@@ -542,6 +564,39 @@ def test_csv_parse_error_without_baseline_exits_loud(monkeypatch):
     fake, sent = _wire(monkeypatch, ROP_CFG, csv_text=_HEADER_ROW1)  # too few lines
     assert rw.run() == 1
     assert {r[1] for r in _rows(fake)} == {"folder:N2688", "notice:N2688"}
+
+
+def test_csv_partial_baseline_still_exits_loud_on_fetch_failure(monkeypatch):
+    # A CSV-derived item can lack a baseline while its siblings have one (e.g.
+    # rop.srns edited later to add a facility). A subsequent fetch failure must
+    # still surface loudly for the still-unbaselined item — gating the skip on
+    # _all_baselined, not "any baseline exists among the three", is what this
+    # pins (the bug: any() would wrongly treat the siblings' baselines as
+    # enough to go quiet).
+    fake, sent = _wire(monkeypatch, ROP_CFG)
+    rw.run()   # baseline all 5 items
+    tab = fake._values._tabs[sw.TAB_ROP]
+    fake._values._tabs[sw.TAB_ROP] = [tab[0]] + [r for r in tab[1:] if r[1] != "csv:P1488"]
+    monkeypatch.setattr(rw.rc, "fetch_csv",
+                        lambda url=None, timeout=60: (_ for _ in ()).throw(rc.RopFetchError("blip")))
+    assert rw.run() == 1   # loud — P1488 was never (re-)baselined, even though N2688/N1504 were
+    assert sent == []
+
+
+def test_csv_structural_parse_error_is_always_loud_even_with_existing_baseline(monkeypatch):
+    # RopParseError (a structural column-layout break) is NOT transient the way
+    # a network blip is — it's likely to persist across runs. Once every CSV
+    # item already has a baseline, treating it the same as RopFetchError would
+    # let a genuine EGLE format change go unnoticed behind a quiet log line
+    # forever (the OBJECTID-reset silent-stall failure class, ADR 014). This
+    # pins that RopParseError is ALWAYS loud, regardless of baseline status.
+    fake, sent = _wire(monkeypatch, ROP_CFG)
+    rw.run()   # baseline all 5 items — every CSV item now has a baseline
+    bad_csv = _HEADER_ROW1 + "\nA,B,C\n" + _N2688_ROWS[0]  # wrong column count
+    monkeypatch.setattr(rw.rc, "fetch_csv", lambda url=None, timeout=60: (bad_csv, "later"))
+    assert rw.run() == 1
+    assert len(_rows(fake)) == 5   # nothing new appended; CSV items stayed at their prior baseline
+    assert sent == []
 
 
 def test_recipients_override_narrows_audience(monkeypatch):

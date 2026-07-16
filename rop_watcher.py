@@ -167,18 +167,27 @@ def summarize_facility_change(old: dict, new: dict) -> tuple[str, str]:
     added = new_counts - old_counts
     removed = old_counts - new_counts
 
+    def _detail(r: dict) -> str:
+        # The decision-relevant fields this stream exists to watch — printed on
+        # BOTH the added and removed line so a reader can see what actually
+        # changed (a permit_status-only change would otherwise show two
+        # identical-looking lines differing only by +/-, since task_status
+        # alone was the only field ever shown here previously).
+        return (f"task_status={r['task_status']}, permit_status={r['permit_status']}, "
+                f"due={r['task_due'] or '—'}, completed={r['task_completed'] or '—'}")
+
     parts: list[str] = []
     lines: list[str] = []
     for t, n in sorted(added.items()):
         r = dict(zip(_FACILITY_ROW_FIELDS, t))
         parts.append("new task/version row")
         lines.extend([f"+ ADDED    permit {r['permit_number']} v{r['version']} — "
-                      f"{r['task_name']} ({r['task_status']})"] * n)
+                      f"{r['task_name']} ({_detail(r)})"] * n)
     for t, n in sorted(removed.items()):
         r = dict(zip(_FACILITY_ROW_FIELDS, t))
         parts.append("task/version row removed")
         lines.extend([f"- REMOVED  permit {r['permit_number']} v{r['version']} — "
-                      f"{r['task_name']}"] * n)
+                      f"{r['task_name']} ({_detail(r)})"] * n)
 
     if not parts:
         return "changed (no row-level diff — see snapshot)", ""
@@ -267,16 +276,25 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, summarize_fn,
     sw.append_rop_watch_row(sheets, sheet_id, today, key, label, "changed",
                              new_hash, note, _now(), snap_json)
     print(f"[rop-watch] {label}: CHANGED ({last_hash} -> {new_hash}; {note}).")
+    email_body = format_change_body(label, note, body)  # outside the try: a bug here
+    # must not be misattributed to "alert email FAILED" below (it's a pure function).
     try:
-        ea.send_email(f"[ROP watch] {label} changed",
-                      format_change_body(label, note, body), cfg, recipients=recipients)
+        ea.send_email(f"[ROP watch] {label} changed", email_body, cfg, recipients=recipients)
     except Exception as e:  # noqa: BLE001 — alert is best-effort; row is recorded
         print(f"[rop-watch] {label}: change recorded but alert email FAILED: {e}")
     return "changed"
 
 
-def _any_baseline(sheets, sheet_id, keys) -> bool:
-    return any(sw.last_rop_snapshot(sheets, sheet_id, k) is not None for k in keys)
+def _all_baselined(sheets, sheet_id, keys) -> bool:
+    """Whether EVERY key already has a baseline — the gate for treating a fetch
+    failure as a transient skip-and-warn rather than a loud activation-time
+    block. Matters when a source derives more than one item (the CSV's per-
+    facility keys): if `rop.srns` is edited later to add a facility, that new
+    item has no baseline yet even though its siblings do, and a fetch failure
+    right then must still surface loudly — `any(...)` would wrongly treat the
+    siblings' baselines as enough to go quiet, silently skipping the new
+    facility's activation-time block forever."""
+    return all(sw.last_rop_snapshot(sheets, sheet_id, k) is not None for k in keys)
 
 
 def run() -> int:
@@ -287,9 +305,6 @@ def run() -> int:
         return 0
 
     rcfg = cfg.get("rop") or {}
-    csv_url = rcfg.get("csv_url", rc.DEFAULT_CSV_URL)
-    folder_url = rcfg.get("n2688_folder_url", rc.DEFAULT_N2688_FOLDER_URL)
-    notice_url = rcfg.get("notice_url", rc.DEFAULT_NOTICE_URL)
     srns = tuple(rcfg.get("srns") or rc.TARGET_SRNS)
     recipients = rcfg.get("recipients") or None  # None -> full alert_recipients list
 
@@ -305,16 +320,26 @@ def run() -> int:
     csv_keys = [f"csv:{srn}" for srn in srns]
     rows = None
     try:
-        csv_text, last_modified = rc.fetch_csv(csv_url)
+        csv_text, last_modified = rc.fetch_csv()
         rows = rc.parse_csv_rows(csv_text, srns)
         print(f"[rop-watch] CSV: fetched {len(rows)} target row(s) "
               f"(Last-Modified: {last_modified or 'unknown'}).")
-    except (rc.RopFetchError, rc.RopParseError) as e:
-        if _any_baseline(sheets, sheet_id, csv_keys):
-            print(f"[rop-watch] CSV: fetch/parse failed, skipping this run "
+    except rc.RopParseError as e:
+        # A structural break (wrong column layout), not a network blip — this
+        # is likely to PERSIST across runs, unlike a fetch error. Once every
+        # item already has a baseline, a plain skip-and-warn would let a real
+        # EGLE format change go unnoticed forever behind a quiet log line (the
+        # same silent-stall failure class ADR 014's liveness guard exists to
+        # catch for Stream E). Always loud, regardless of baseline status.
+        print(f"[rop-watch] CSV: STRUCTURAL parse failure (failing loudly — this "
+              f"is not a transient blip): {e}")
+        exit_code = 1
+    except rc.RopFetchError as e:
+        if _all_baselined(sheets, sheet_id, csv_keys):
+            print(f"[rop-watch] CSV: fetch failed, skipping this run "
                   f"(baseline preserved, not diffed): {e}")
         else:
-            print(f"[rop-watch] CSV: NO BASELINE and fetch/parse failed "
+            print(f"[rop-watch] CSV: NO BASELINE and fetch failed "
                   f"(failing loudly so activation surfaces it): {e}")
             exit_code = 1
 
@@ -329,11 +354,11 @@ def run() -> int:
     # --- 2. N2688 folder listing --------------------------------------------
     entries = None
     try:
-        html_text = rc.fetch_folder_listing(folder_url)
+        html_text = rc.fetch_folder_listing()
         entries = rc.parse_folder_listing(html_text)
         print(f"[rop-watch] N2688 folder: {len(entries)} entries listed.")
     except rc.RopFetchError as e:
-        if _any_baseline(sheets, sheet_id, ["folder:N2688"]):
+        if _all_baselined(sheets, sheet_id, ["folder:N2688"]):
             print(f"[rop-watch] N2688 folder: fetch failed, skipping this run "
                   f"(baseline preserved, not diffed): {e}")
         else:
@@ -352,11 +377,11 @@ def run() -> int:
     mentioned = None
     context = ""
     try:
-        pdf_bytes = rc.fetch_notice_pdf(notice_url)
+        pdf_bytes = rc.fetch_notice_pdf()
         mentioned, context = rc.notice_mentions_srn(pdf_bytes, "N2688")
         print(f"[rop-watch] Statewide notice: N2688 mentioned = {mentioned}.")
     except rc.RopFetchError as e:
-        if _any_baseline(sheets, sheet_id, ["notice:N2688"]):
+        if _all_baselined(sheets, sheet_id, ["notice:N2688"]):
             print(f"[rop-watch] Statewide notice: fetch failed, skipping this run "
                   f"(baseline preserved, not diffed): {e}")
         else:

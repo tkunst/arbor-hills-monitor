@@ -232,12 +232,25 @@ def fetch_notice_pdf(url: str = DEFAULT_NOTICE_URL, timeout: int = 60) -> bytes:
 def notice_mentions_srn(pdf_bytes: bytes, srn: str = "N2688") -> tuple[bool, str]:
     """(mentioned, context): whether `srn` appears in the notice's text (a
     whole-word match, so N2688 doesn't accidentally match inside a longer token),
-    and a short surrounding-text excerpt when it does (empty string otherwise)."""
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    and a short surrounding-text excerpt when it does (empty string otherwise).
+
+    Raises RopFetchError if the bytes can't actually be parsed as a PDF — the
+    `%PDF` magic-byte check in fetch_notice_pdf only confirms the HEADER; a
+    truncated download (a network cut mid-transfer) can still start with `%PDF`
+    while the rest of the document is corrupt, which raises a raw mupdf/fitz
+    exception here. Wrapping it as RopFetchError routes a corrupt body through
+    the same skip-and-warn-or-loud fail-safe as any other fetch failure, instead
+    of crashing the whole run uncaught."""
     try:
-        text = "\n".join(doc[i].get_text() for i in range(len(doc)))
-    finally:
-        doc.close()
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            text = "\n".join(doc[i].get_text() for i in range(len(doc)))
+        finally:
+            doc.close()
+    except RopFetchError:
+        raise
+    except Exception as e:  # noqa: BLE001 — a corrupt/unparseable PDF body -> transient
+        raise RopFetchError(f"notice PDF could not be parsed: {e}") from e
     m = re.search(rf"\b{re.escape(srn)}\b", text)
     if not m:
         return False, ""
