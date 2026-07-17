@@ -299,3 +299,29 @@ It is keyless — no secret to provision.
   committed data) covers the mapping, classifier, digest/all selection, cursor
   int-parse, and every `run()` flow (baseline / incremental / skip-seen / over-cap /
   sentinel / read-error).
+
+## Addendum 2026-07-17: two-tier severity — early-warning WATCH level (coder:gfl-air-thresholds)
+
+Stream E's classifier gained an OPTIONAL lower-urgency **watch** tier below the action
+levels of decision 3. A reading `>=` a `gfl_air.watch_thresholds` level but below the
+matching `gfl_air.thresholds` action level classifies as `severity=watch`: it emails at
+lower urgency (`[GFL air watch]`, never `[URGENT]`) and shows a `watch` status in the
+snapshot tab. Severity precedence is `urgent > watch > anomaly > ok`.
+
+- **CH4 watch = 40 ppm** — GFL's own perimeter early-warning alarm level (~0.08% of the
+  methane LEL; overnight-worker #75 air-thresholds research). It flags a rising landfill-
+  gas trend well below the **500 ppm NESHAP action level** (itself set 2026-07-17,
+  replacing the near-explosive 12500). **H2S has no watch tier** — its odor-nuisance level
+  (~5-8 ppb) fired ~2874x in 4 years and would flood.
+- **Backward-compatible:** `watch_thresholds` is optional + partial. Absent → the original
+  single-tier behavior; `classify_reading(..., watch_thresholds=None)` is unchanged.
+  `select_measurements` is untouched — watch is an alerting concept, not a
+  measurement-selection one, so `digest` still selects on the action level.
+- **Guard:** `watch_config_warnings()` logs (does not raise) if a watch level is set `>=`
+  its action level, since the action branch is evaluated first and would make the watch
+  tier dead. When `alert_on_sentinel` is off, a co-located sentinel's detail is filtered
+  out of a real exceedance/watch line (a pure-sentinel reading is still dropped entirely).
+- **Reviews:** `/code-review` (high) + `/security-review` (zero med/high, see
+  `docs/security-review-2026-07-17-gfl-air-watch-tier.md`). The four low-severity
+  code-review findings (config guard, sentinel-detail leak, hardcoded pollutant keys in
+  the levels line, and this ADR addendum) were all corrected in the same change.

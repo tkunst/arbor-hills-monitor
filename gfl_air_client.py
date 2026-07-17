@@ -82,6 +82,10 @@ _READING_FIELDS = "OBJECTID,LocName,Date,H2S,CH4,H2S_Text,CH4_Text,Speed,Directi
 
 # Pollutant spec: (result-key, ArcGIS field, unit, threshold/sentinel config key,
 # metric name). One place both the mapping and the classifier read from.
+# Marker substring present in every sentinel reason string (classify_reading), used to
+# filter sentinel detail out of a real exceedance/watch line when alert_on_sentinel is off.
+SENTINEL_REASON = "sentinel/no-data value"
+
 _POLLUTANTS = (
     ("h2s", "H2S", "ppb", "h2s_ppb", METRIC_H2S),
     ("ch4", "CH4", "ppm", "ch4_ppm", METRIC_CH4),
@@ -292,7 +296,7 @@ def classify_reading(row: dict, thresholds: dict, sentinels: Optional[dict] = No
         if _is_sentinel(val, sent.get(cfgkey)):
             result[key] = (val, "sentinel")
             result["reasons"].append(
-                f"{field}={val:g} is a sentinel/no-data value (ambiguous — surfaced as anomaly)")
+                f"{field}={val:g} is a {SENTINEL_REASON} (ambiguous — surfaced as anomaly)")
             _bump("anomaly")
             continue
         thr = thresholds.get(cfgkey)
@@ -311,6 +315,25 @@ def classify_reading(row: dict, thresholds: dict, sentinels: Optional[dict] = No
             result[key] = (val, "ok")
     result["severity"] = severity
     return result
+
+
+def watch_config_warnings(thresholds: dict, watch_thresholds: dict) -> list[str]:
+    """Config-sanity: each watch level must sit BELOW its action level, or that
+    pollutant's watch tier is DEAD — classify_reading checks the action level first,
+    so a watch >= action can never be reached. Returns one human warning per inverted
+    or degenerate watch level (empty when the config is sane). Pure; the caller logs."""
+    thr = thresholds or {}
+    watch = watch_thresholds or {}
+    out: list[str] = []
+    for cfgkey, wval in watch.items():
+        if wval is None:
+            continue
+        aval = thr.get(cfgkey)
+        if aval is not None and float(wval) >= float(aval):
+            out.append(
+                f"watch_thresholds.{cfgkey}={wval} >= action level {aval} — the watch "
+                f"tier for {cfgkey} can never fire (the action level is checked first).")
+    return out
 
 
 def reading_note(row: dict, field: str) -> str:
