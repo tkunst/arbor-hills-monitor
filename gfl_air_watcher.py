@@ -134,15 +134,33 @@ def alert_lines(readings: list[dict], thresholds: dict, sentinels: dict | None,
             continue
         st = gc.station_of(r)
         when = gc.reading_iso(r)
+        reasons = c["reasons"]
+        # When sentinels are configured silent, don't let a co-located sentinel's
+        # detail ride along inside a real exceedance/watch line (a pure-sentinel
+        # reading is already dropped by the anomaly branch below).
+        if not alert_on_sentinel:
+            reasons = [rn for rn in reasons if gc.SENTINEL_REASON not in rn]
         if sev == "urgent":
             has_exceedance = True
-            lines.append(f"EXCEEDANCE  {st} {when}: " + "; ".join(c["reasons"]))
+            lines.append(f"EXCEEDANCE  {st} {when}: " + "; ".join(reasons))
         elif sev == "watch":
             has_watch = True
-            lines.append(f"watch       {st} {when}: " + "; ".join(c["reasons"]))
+            lines.append(f"watch       {st} {when}: " + "; ".join(reasons))
         elif sev == "anomaly" and alert_on_sentinel:
-            lines.append(f"anomaly     {st} {when}: " + "; ".join(c["reasons"]))
+            lines.append(f"anomaly     {st} {when}: " + "; ".join(reasons))
     return lines, has_exceedance, has_watch
+
+
+def _levels_line(label: str, levels: dict | None) -> str | None:
+    """One 'label: H2S >= X ppb, CH4 >= Y ppm.' line built from gc._POLLUTANTS (the
+    single source of pollutant identity + units), skipping pollutants absent from
+    `levels`. Returns None when there is nothing to show. Shared by the action-levels
+    and watch-levels lines so they can never drift or duplicate the pollutant list."""
+    lv = levels or {}
+    parts = [f"{field} >= {lv[cfgkey]} {unit}"
+             for _key, field, unit, cfgkey, _metric in gc._POLLUTANTS
+             if lv.get(cfgkey) is not None]
+    return f"{label}: " + ", ".join(parts) + ".\n" if parts else None
 
 
 def format_alert_body(lines: list[str], has_exceedance: bool, has_watch: bool,
@@ -160,18 +178,11 @@ def format_alert_body(lines: list[str], has_exceedance: bool, has_watch: bool,
         f"GFL Arbor Hills perimeter air monitoring — {kind}.\n",
         "These are GFL's OWN self-reported perimeter readings (H2S in ppb, CH4 in "
         "ppm), not an EGLE measurement.\n",
-        f"Action levels (config, Trisha-confirmed): "
-        f"H2S >= {thresholds.get('h2s_ppb', '?')} ppb, "
-        f"CH4 >= {thresholds.get('ch4_ppm', '?')} ppm.\n",
     ]
-    watch = watch_thresholds or {}
-    wparts = []
-    if watch.get("h2s_ppb") is not None:
-        wparts.append(f"H2S >= {watch['h2s_ppb']} ppb")
-    if watch.get("ch4_ppm") is not None:
-        wparts.append(f"CH4 >= {watch['ch4_ppm']} ppm")
-    if wparts:
-        body.append("Early-warning WATCH levels (lower urgency): " + ", ".join(wparts) + ".\n")
+    for levels_line in (_levels_line("Action levels (config, Trisha-confirmed)", thresholds),
+                        _levels_line("Early-warning WATCH levels (lower urgency)", watch_thresholds)):
+        if levels_line:
+            body.append(levels_line)
     body.extend("  " + ln for ln in shown)
     if more > 0:
         body.append(f"  ... and {more} more (see the GFL Air tab / dashboard).")
@@ -344,6 +355,9 @@ def run() -> int:
     alert_on_sentinel = bool(cfg_gfl.get("alert_on_sentinel", True))
     max_stale_days = int(cfg_gfl.get("max_stale_days", 3))
     link = cfg_gfl.get("dashboard_url") or cfg_gfl.get("service_url", "")
+
+    for _w in gc.watch_config_warnings(thresholds, watch_thresholds):
+        print(f"[gfl-air] CONFIG WARNING: {_w}")
 
     sheet_id = os.environ["GSHEET_ID"]
     sheets = dc.sheets_service()

@@ -134,6 +134,28 @@ def test_classify_no_watch_thresholds_is_single_tier():
     assert c["ch4"][1] == "ok"
 
 
+def test_watch_config_warnings_flags_inverted_and_passes_sane():
+    # watch >= action => the watch tier is dead; warn on both equal and greater.
+    assert gc.watch_config_warnings({"ch4_ppm": 500}, {"ch4_ppm": 500})
+    warns = gc.watch_config_warnings({"ch4_ppm": 500}, {"ch4_ppm": 600})
+    assert warns and "can never fire" in warns[0]
+    # sane (watch < action), missing action, and empty watch => no warnings.
+    assert gc.watch_config_warnings({"ch4_ppm": 500}, {"ch4_ppm": 40}) == []
+    assert gc.watch_config_warnings({}, {"ch4_ppm": 40}) == []
+    assert gc.watch_config_warnings({"ch4_ppm": 500}, {}) == []
+
+
+def test_watch_line_suppresses_sentinel_detail_when_sentinels_silent():
+    # A watch reading with a co-located sentinel: alert_on_sentinel False must keep the
+    # sentinel detail OUT of the watch line; True lets it ride along.
+    r = _reading(1, "MS-1", 999.0, 100.0)          # H2S sentinel + CH4 watch
+    lines, has_exc, has_watch = gw.alert_lines([r], THRESH, SENT, False, WATCH)
+    assert has_watch and not has_exc and len(lines) == 1
+    assert "watch level" in lines[0] and "sentinel" not in lines[0]
+    lines_on, _, _ = gw.alert_lines([r], THRESH, SENT, True, WATCH)
+    assert "sentinel" in lines_on[0]
+
+
 # --- pure client: select_measurements (digest vs all) --------------------------
 
 def test_select_all_returns_every_reading():
