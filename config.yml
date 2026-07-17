@@ -242,6 +242,18 @@ gfl_air:
   thresholds:
     h2s_ppb: 72
     ch4_ppm: 500
+  # WATCH thresholds — the lower-urgency EARLY-WARNING tier (added 2026-07-17,
+  # coder:gfl-air-thresholds). A reading at/above a watch level but BELOW the matching
+  # action level above is a 'watch': it emails at LOWER urgency ([GFL air watch], not
+  # [URGENT]) and shows 'watch' status in the snapshot tab. OPTIONAL + partial — only
+  # pollutants listed here get a watch tier; omit the block entirely for single-tier.
+  #   ch4_ppm 40 — GFL's OWN perimeter early-warning alarm level (overnight-worker #75
+  #     air-thresholds research). Not a health standard (~0.08% of the methane LEL); it
+  #     flags a rising landfill-gas trend well below the 500 ppm NESHAP action level.
+  #     H2S has NO watch tier here on purpose — its odor-nuisance level (~5-8 ppb) fired
+  #     ~2874x in 4 yrs and would flood (see the h2s_ppb note above).
+  watch_thresholds:
+    ch4_ppm: 40
   # Sentinel / no-data values in the feed (ambiguous no-data vs off-scale-high).
   # Excluded from the measured series; surfaced as anomalies. ADR 014 RECOMMENDS
   # treating them as alert-worthy (fail-safe — don't infer 'benign' when the

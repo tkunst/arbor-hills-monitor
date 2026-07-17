@@ -20,6 +20,7 @@ DAY0 = 1_783_900_800_000          # arbitrary fixed epoch-ms (a day boundary)
 DAY1 = DAY0 + 86_400_000
 THRESH = {"h2s_ppb": 72, "ch4_ppm": 12500}
 SENT = {"h2s_ppb": 999, "ch4_ppm": 99999}
+WATCH = {"ch4_ppm": 40}          # early-warning tier: 40 <= CH4 < 12500 (action) => 'watch'
 
 
 def _reading(oid, station, h2s, ch4, date_ms=DAY0, *, temp=75.0, h2s_text="BDL",
@@ -93,6 +94,44 @@ def test_classify_sentinel_is_anomaly_not_dropped():
 def test_classify_missing_value():
     c = gc.classify_reading(_reading(1, "MS-1", None, 5.0), THRESH, SENT)
     assert c["h2s"] == (None, "missing")
+
+
+# --- pure client: classify — WATCH tier (coder:gfl-air-thresholds) --------------
+
+def test_classify_watch_below_action_is_watch():
+    # CH4 100 is >= watch 40 but < action 12500 -> 'watch' (early-warning), not urgent.
+    c = gc.classify_reading(_reading(1, "MS-1", 3.0, 100.0), THRESH, SENT, WATCH)
+    assert c["severity"] == "watch"
+    assert c["ch4"] == (100.0, "watch")
+    assert c["h2s"][1] == "ok"
+    assert any("watch level" in r for r in c["reasons"])
+
+
+def test_classify_below_watch_is_ok():
+    c = gc.classify_reading(_reading(1, "MS-1", 3.0, 20.0), THRESH, SENT, WATCH)
+    assert c["severity"] == "ok"                 # CH4 20 < watch 40
+    assert c["ch4"][1] == "ok"
+
+
+def test_classify_exceedance_outranks_watch():
+    # H2S exceedance (urgent) + CH4 watch on the same reading -> urgent wins.
+    c = gc.classify_reading(_reading(1, "MS-1", 80.0, 100.0), THRESH, SENT, WATCH)
+    assert c["severity"] == "urgent"
+    assert c["h2s"][1] == "exceedance" and c["ch4"][1] == "watch"
+
+
+def test_classify_watch_outranks_anomaly():
+    # H2S sentinel (anomaly) + CH4 watch -> watch outranks anomaly.
+    c = gc.classify_reading(_reading(1, "MS-1", 999.0, 100.0), THRESH, SENT, WATCH)
+    assert c["severity"] == "watch"
+    assert c["h2s"][1] == "sentinel" and c["ch4"][1] == "watch"
+
+
+def test_classify_no_watch_thresholds_is_single_tier():
+    # Omitting watch_thresholds preserves the original single-tier behavior (CH4 100 -> ok).
+    c = gc.classify_reading(_reading(1, "MS-1", 3.0, 100.0), THRESH, SENT)
+    assert c["severity"] == "ok"
+    assert c["ch4"][1] == "ok"
 
 
 # --- pure client: select_measurements (digest vs all) --------------------------
@@ -324,6 +363,31 @@ def test_incremental_writes_measurements_and_emails_on_exceedance(monkeypatch):
     assert any(row[10] == "Arbor Hills Landfill" for row in meas)    # facility attribution in row
     assert len(sent) == 1 and "URGENT" in sent[0][0]
     assert sw.gfl_air_cursor(fake, "SID") == 111    # advanced past the batch
+
+
+def test_incremental_emails_watch_not_urgent_on_watch_level(monkeypatch):
+    # A CH4 reading in [watch, action) sends a LOWER-urgency [GFL air watch] email,
+    # never [URGENT]. Wires a CFG that carries watch_thresholds.
+    cfg = copy.deepcopy(CFG)
+    cfg["gfl_air"]["watch_thresholds"] = {"ch4_ppm": 40}
+    fake, sent = _wire(monkeypatch, cfg)
+    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
+    gw.run()                                        # baseline -> cursor 105
+
+    new = [_reading(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
+    new[2]["CH4"] = 100.0                           # MS-3 CH4 100: >= watch 40, < action 12500
+
+    def fetch(c, since, limit=None):
+        return [r for r in new if r["OBJECTID"] > since]
+    monkeypatch.setattr(gw.gc, "fetch_readings", fetch)
+
+    assert gw.run() == 0
+    assert len(sent) == 1
+    subj, body = sent[0]
+    assert "GFL air watch" in subj and "URGENT" not in subj
+    assert "watch level" in body.lower()
 
 
 def test_second_incremental_with_no_new_readings_is_noop(monkeypatch):

@@ -252,26 +252,38 @@ def _is_sentinel(value: Optional[float], sentinel) -> bool:
     return value is not None and sentinel is not None and value == float(sentinel)
 
 
-def classify_reading(row: dict, thresholds: dict, sentinels: Optional[dict] = None) -> dict:
+def classify_reading(row: dict, thresholds: dict, sentinels: Optional[dict] = None,
+                     watch_thresholds: Optional[dict] = None) -> dict:
     """Per-reading severity from the config action levels — GFL's OWN classifier.
     It deliberately does NOT reuse email_alerts.is_urgent, which thresholds on
     Fahrenheit temperature and would never fire on H2S/CH4 (WDS Rule D: a new
     stream brings its own classifier).
 
     Returns:
-      {'severity': 'urgent' | 'anomaly' | 'ok',
+      {'severity': 'urgent' | 'watch' | 'anomaly' | 'ok',
        'h2s': (value|None, status), 'ch4': (value|None, status),
        'reasons': [str, ...]}
-    where status is 'exceedance' | 'sentinel' | 'ok' | 'missing'.
+    where status is 'exceedance' | 'watch' | 'sentinel' | 'ok' | 'missing'.
 
-    Precedence: a real over-threshold reading is 'urgent'; a sentinel with no real
-    exceedance is 'anomaly' (surfaced, never silently dropped — the sentinel is
-    ambiguous no-data vs off-scale-high, and the fail-safe default is to flag it);
-    otherwise 'ok'. Thresholds/sentinels are config-driven (ADR 014)."""
+    Precedence (highest wins): a real reading >= its action level is 'urgent'; a
+    real reading >= its (lower) WATCH level but below the action level is 'watch'
+    (early-warning); a sentinel with no real exceedance/watch is 'anomaly' (surfaced,
+    never silently dropped — the sentinel is ambiguous no-data vs off-scale-high, and
+    the fail-safe default is to flag it); otherwise 'ok'. `watch_thresholds` is an
+    OPTIONAL lower tier (partial dict — only listed pollutants get a watch level);
+    omit it (None) for the original single-tier behavior. Config-driven (ADR 014)."""
     thresholds = thresholds or {}
     sent = sentinels or {}
+    watch = watch_thresholds or {}
     result: dict = {"reasons": []}
+    _RANK = {"ok": 0, "anomaly": 1, "watch": 2, "urgent": 3}
     severity = "ok"
+
+    def _bump(level: str) -> None:
+        nonlocal severity
+        if _RANK[level] > _RANK[severity]:
+            severity = level
+
     for key, field, _unit, cfgkey, _metric in _POLLUTANTS:
         val = _as_float(row.get(field))
         if val is None:
@@ -281,14 +293,20 @@ def classify_reading(row: dict, thresholds: dict, sentinels: Optional[dict] = No
             result[key] = (val, "sentinel")
             result["reasons"].append(
                 f"{field}={val:g} is a sentinel/no-data value (ambiguous — surfaced as anomaly)")
-            if severity == "ok":
-                severity = "anomaly"
+            _bump("anomaly")
             continue
         thr = thresholds.get(cfgkey)
+        wthr = watch.get(cfgkey)
         if thr is not None and val >= float(thr):
             result[key] = (val, "exceedance")
             result["reasons"].append(f"{field}={val:g} >= action level {float(thr):g}")
-            severity = "urgent"
+            _bump("urgent")
+        elif wthr is not None and val >= float(wthr):
+            result[key] = (val, "watch")
+            _below = f" (below the {float(thr):g} action level)" if thr is not None else ""
+            result["reasons"].append(
+                f"{field}={val:g} >= watch level {float(wthr):g}, early-warning{_below}")
+            _bump("watch")
         else:
             result[key] = (val, "ok")
     result["severity"] = severity
