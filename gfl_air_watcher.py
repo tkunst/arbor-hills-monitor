@@ -79,7 +79,7 @@ def _should_run(cfg: dict) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 def station_snapshot(readings: list[dict], thresholds: dict, sentinels: dict | None,
-                     station_prefix: str) -> list[dict]:
+                     station_prefix: str, watch_thresholds: dict | None = None) -> list[dict]:
     """Latest reading per perimeter station among `readings`, with the classifier's
     per-pollutant status attached — the rows the GFL Air snapshot tab shows AND the
     OBJECTID cursor store. Latest = highest OBJECTID for that station. Sorted by
@@ -100,7 +100,7 @@ def station_snapshot(readings: list[dict], thresholds: dict, sentinels: dict | N
     out = []
     for st in sorted(latest):
         r = latest[st]
-        c = gc.classify_reading(r, thresholds, sentinels)
+        c = gc.classify_reading(r, thresholds, sentinels, watch_thresholds)
         h2s_val, h2s_status = c["h2s"]
         ch4_val, ch4_status = c["ch4"]
         out.append({
@@ -116,31 +116,44 @@ def station_snapshot(readings: list[dict], thresholds: dict, sentinels: dict | N
 
 
 def alert_lines(readings: list[dict], thresholds: dict, sentinels: dict | None,
-                alert_on_sentinel: bool) -> tuple[list[str], bool]:
-    """(lines, has_exceedance): one human line per reading that crossed an action
-    level, plus (if alert_on_sentinel) one per sentinel/no-data reading. has_exceedance
-    is True iff at least one REAL exceedance (not just a sentinel) appears — it
-    decides whether the email is [URGENT] vs a lower-key anomaly notice. Pure."""
+                alert_on_sentinel: bool,
+                watch_thresholds: dict | None = None) -> tuple[list[str], bool, bool]:
+    """(lines, has_exceedance, has_watch): one human line per reading that crossed an
+    action level ('EXCEEDANCE'), reached the lower early-warning WATCH level ('watch'),
+    or (if alert_on_sentinel) is a sentinel/no-data reading ('anomaly'). has_exceedance
+    is True iff >=1 REAL action-level exceedance appears; has_watch iff >=1 watch-level
+    reading appears. Together they set the email urgency: [URGENT] > [GFL air watch] >
+    [GFL air anomaly]. Pure."""
     lines: list[str] = []
     has_exceedance = False
+    has_watch = False
     for r in readings:
-        c = gc.classify_reading(r, thresholds, sentinels)
-        if c["severity"] == "ok":
+        c = gc.classify_reading(r, thresholds, sentinels, watch_thresholds)
+        sev = c["severity"]
+        if sev == "ok":
             continue
         st = gc.station_of(r)
         when = gc.reading_iso(r)
-        if c["severity"] == "urgent":
+        if sev == "urgent":
             has_exceedance = True
             lines.append(f"EXCEEDANCE  {st} {when}: " + "; ".join(c["reasons"]))
-        elif c["severity"] == "anomaly" and alert_on_sentinel:
+        elif sev == "watch":
+            has_watch = True
+            lines.append(f"watch       {st} {when}: " + "; ".join(c["reasons"]))
+        elif sev == "anomaly" and alert_on_sentinel:
             lines.append(f"anomaly     {st} {when}: " + "; ".join(c["reasons"]))
-    return lines, has_exceedance
+    return lines, has_exceedance, has_watch
 
 
-def format_alert_body(lines: list[str], has_exceedance: bool, link: str,
-                      thresholds: dict) -> str:
-    kind = ("readings crossed a perimeter action level"
-            if has_exceedance else "sensor anomalies were flagged")
+def format_alert_body(lines: list[str], has_exceedance: bool, has_watch: bool,
+                      link: str, thresholds: dict,
+                      watch_thresholds: dict | None = None) -> str:
+    if has_exceedance:
+        kind = "readings crossed a perimeter action level"
+    elif has_watch:
+        kind = "readings reached an early-warning WATCH level (below the action level)"
+    else:
+        kind = "sensor anomalies were flagged"
     shown = lines[:_MAX_ALERT_LINES]
     more = len(lines) - len(shown)
     body = [
@@ -151,6 +164,14 @@ def format_alert_body(lines: list[str], has_exceedance: bool, link: str,
         f"H2S >= {thresholds.get('h2s_ppb', '?')} ppb, "
         f"CH4 >= {thresholds.get('ch4_ppm', '?')} ppm.\n",
     ]
+    watch = watch_thresholds or {}
+    wparts = []
+    if watch.get("h2s_ppb") is not None:
+        wparts.append(f"H2S >= {watch['h2s_ppb']} ppb")
+    if watch.get("ch4_ppm") is not None:
+        wparts.append(f"CH4 >= {watch['ch4_ppm']} ppm")
+    if wparts:
+        body.append("Early-warning WATCH levels (lower urgency): " + ", ".join(wparts) + ".\n")
     body.extend("  " + ln for ln in shown)
     if more > 0:
         body.append(f"  ... and {more} more (see the GFL Air tab / dashboard).")
@@ -251,13 +272,14 @@ def _write_measurements(sheets, sheet_id: str, measurements: list[dict], link: s
 
 
 def _baseline(sheets, sheet_id: str, cfg_gfl: dict, link: str, prefix: str,
-              thresholds: dict, sentinels: dict, why: str) -> None:
+              thresholds: dict, sentinels: dict, why: str,
+              watch_thresholds: dict | None = None) -> None:
     """Record the current latest-per-station snapshot + set the cursor, alerting on
     NONE (WDS Rule B). Used on the first-ever run and on the over-cap re-baseline.
     Writes the snapshot only (no measurement backlog, no emails) — the whole point
     is to establish state without stampeding history."""
     baseline = gc.fetch_baseline(cfg_gfl, station_prefix=prefix)
-    snapshot = station_snapshot(baseline, thresholds, sentinels, prefix)
+    snapshot = station_snapshot(baseline, thresholds, sentinels, prefix, watch_thresholds)
     sw.write_gfl_air_summary(sheets, sheet_id, snapshot, link)
     print(f"[gfl-air] {why}: baselined {len(snapshot)} station(s), cursor -> "
           f"{gc.max_oid(baseline)}, no alerts.")
@@ -314,6 +336,7 @@ def run() -> int:
 
     cfg_gfl = cfg.get("gfl_air") or {}
     thresholds = cfg_gfl.get("thresholds") or {}
+    watch_thresholds = cfg_gfl.get("watch_thresholds") or {}
     sentinels = cfg_gfl.get("sentinels") or {}
     prefix = cfg_gfl.get("station_prefix", gc.DEFAULT_STATION_PREFIX)
     mode = cfg_gfl.get("measurements_mode", "digest")
@@ -341,7 +364,7 @@ def run() -> int:
     if cursor is None:
         try:
             _baseline(sheets, sheet_id, cfg_gfl, link, prefix, thresholds, sentinels,
-                      "first run")
+                      "first run", watch_thresholds)
         except gc.GflAirFetchError as e:
             print(f"[gfl-air] NO BASELINE and feed fetch failed (failing loudly so "
                   f"activation surfaces it): {e}")
@@ -362,7 +385,8 @@ def run() -> int:
         # of blasting the case file (WDS Rule B(ii)).
         try:
             _baseline(sheets, sheet_id, cfg_gfl, link, prefix, thresholds, sentinels,
-                      f"OVER-CAP ({len(readings)} > {cap}) — suspected feed reinsert")
+                      f"OVER-CAP ({len(readings)} > {cap}) — suspected feed reinsert",
+                      watch_thresholds)
         except gc.GflAirFetchError as e:
             print(f"[gfl-air] over-cap re-baseline fetch failed, skipping (cursor "
                   f"preserved): {e}")
@@ -386,19 +410,27 @@ def run() -> int:
         readings, mode, thresholds, sentinels=sentinels, station_prefix=prefix)
     n_rows = _write_measurements(sheets, sheet_id, measurements, link)
 
-    snapshot = station_snapshot(readings, thresholds, sentinels, prefix)
+    snapshot = station_snapshot(readings, thresholds, sentinels, prefix, watch_thresholds)
     sw.write_gfl_air_summary(sheets, sheet_id, snapshot, link)  # advances the cursor
     new_cursor = gc.max_oid(readings)
     print(f"[gfl-air] {len(readings)} new reading(s) across {len(snapshot)} "
           f"station(s); {n_rows} measurement row(s) ({mode}); cursor {cursor} -> "
           f"{new_cursor}.")
 
-    lines, has_exceedance = alert_lines(readings, thresholds, sentinels, alert_on_sentinel)
+    lines, has_exceedance, has_watch = alert_lines(
+        readings, thresholds, sentinels, alert_on_sentinel, watch_thresholds)
     if lines:
-        tag = "URGENT" if has_exceedance else "GFL air anomaly"
+        if has_exceedance:
+            tag = "URGENT"
+        elif has_watch:
+            tag = "GFL air watch"
+        else:
+            tag = "GFL air anomaly"
         subject = f"[{tag}] Arbor Hills GFL perimeter air: {len(lines)} flagged reading(s)"
         try:
-            ea.send_email(subject, format_alert_body(lines, has_exceedance, link, thresholds), cfg)
+            ea.send_email(subject,
+                          format_alert_body(lines, has_exceedance, has_watch, link,
+                                            thresholds, watch_thresholds), cfg)
             print(f"[gfl-air]   emailed: {subject}")
         except Exception as e:  # noqa: BLE001 — alert best-effort; readings recorded
             print(f"[gfl-air]   readings recorded but alert email FAILED: {e}")
