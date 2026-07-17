@@ -195,8 +195,8 @@ pfas:
 #      cannot blast the ~214k-row history,
 #   3. CONFIRM the alert thresholds below (a wrong threshold floods or starves —
 #      see ADR 014). H2S 72 ppb is already settled (equivalent across both air
-#      monitors); CH4 12500 ppm is still pending (overnight-worker #75 researches
-#      recommended values). Then set enabled: true here and commit.
+#      monitors); CH4 = 500 ppm (NESHAP corrective-action level, set 2026-07-17 per
+#      overnight-worker #75). Then set enabled: true here and commit.
 # Until enabled: true is on main, gfl-air.yml runs on schedule but
 # gfl_air_watcher._should_run() makes every run a quiet no-op. It is keyless — no
 # secret to provision.
@@ -227,15 +227,21 @@ gfl_air:
   #     higher-urgency second tier is a small follow-on (needs a classifier tier).
   #     Lower odor-nuisance ~5-8 ppb stays a 'watch' reference, not the alert
   #     (H2S>=5 ppb hit ~2874× in 4 yrs — it would flood).
-  #   ch4_ppm 12500 — PENDING (no second monitor measures CH4, so NOT cross-validated):
-  #     25% of the methane LEL (LEL = 5% vol = 50,000 ppm); 40 CFR 258.23 requires
-  #     methane below the LEL at the facility boundary. Perimeter readings run ~4-27
-  #     ppm, so this fires only on a genuine gas-migration event; a lower 'elevated
-  #     landfill gas' watch level (~100 ppm) is an option. Overnight-worker item #75
-  #     researches published/recommended CH4 (+ H2S) thresholds to firm this up.
+  #   ch4_ppm 500 — SET 2026-07-17 (was 12500), per overnight-worker #75 air-thresholds
+  #     research (Lotext: documents/arbor-hills/draft/DRAFT-arbor-hills-air-thresholds-research-2026-07-16.md).
+  #     500 ppm = the NESHAP surface-emission corrective-action level (40 CFR 63.1958(d) /
+  #     Michigan Part 115). A PERIMETER reading of 500 ppm is NOT itself a NESHAP violation
+  #     (NESHAP is a surface-scan standard, not a fenceline reading), but it is a meaningful
+  #     regulatory signal. 500 < the old 12500 (25% LEL / 40 CFR 258.23), so this alert is
+  #     strictly MORE protective — it still catches anything that would have hit 12500, and
+  #     will not flood (perimeter readings run ~4-27 ppm, so 500 fires only on a real gas-
+  #     migration event, ~20x normal). The 40 ppm 'early-warning watch' (GFL's own perimeter
+  #     alarm level; not a health standard, ~0.08% LEL) is a documented WATCH REFERENCE only —
+  #     a true 40-ppm lower-urgency watch tier that also emails needs a classifier tier
+  #     (coder:gfl-air-thresholds), same as the H2S 750 ppb 15-min follow-on noted above.
   thresholds:
     h2s_ppb: 72
-    ch4_ppm: 12500
+    ch4_ppm: 500
   # Sentinel / no-data values in the feed (ambiguous no-data vs off-scale-high).
   # Excluded from the measured series; surfaced as anomalies. ADR 014 RECOMMENDS
   # treating them as alert-worthy (fail-safe — don't infer 'benign' when the
