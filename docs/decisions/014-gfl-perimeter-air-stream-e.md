@@ -119,11 +119,12 @@ that must rest on published action levels, cited so the artifact stays credible:
   published 24-hr action level** (data-sources item 8 / Stream G, ADR 016 — Barr's
   school-adjacent H2S monitor). Two independent official sources landing on the same
   number settles it: use 72 ppb for both air-monitor streams, no longer "pending
-  confirmation". **Nuance:** 72 ppb is a *24-hour-average* level, and Stream E
-  applies it to *hourly instantaneous* readings — deliberately conservative (a
-  single hot hour alerts); computing a rolling 24-hr average per station to match
-  the action level exactly is a refinement (queued as the `coder:gfl-air-24h-average`
-  build), not a blocker. The Ridge Wood source also
+  confirmation". **72 ppb is a *24-hour-average* level.** Stream E originally applied
+  it to *hourly instantaneous* readings (conservative — a single hot hour alerted);
+  **as of 2026-07-18 the H2S exceedance ALERT fires on a rolling 24-hr per-station
+  AVERAGE** to match the action level's own averaging period (`coder:gfl-air-24h-average`;
+  see the **2026-07-18 addendum** below — the instantaneous path remains available via
+  `h2s_avg_window_hours: 0`). The Ridge Wood source also
   publishes a **750 ppb 15-minute *acute*** level; adding that as a higher-urgency
   second tier is a small follow-on (a classifier tier). A far lower **odor-nuisance**
   level (~5–8 ppb) stays a *watch* reference, not the alert default: `H2S >= 5 ppb`
@@ -325,3 +326,47 @@ snapshot tab. Severity precedence is `urgent > watch > anomaly > ok`.
   `docs/security-review-2026-07-17-gfl-air-watch-tier.md`). The four low-severity
   code-review findings (config guard, sentinel-detail leak, hardcoded pollutant keys in
   the levels line, and this ADR addendum) were all corrected in the same change.
+
+## Addendum 2026-07-18: H2S alerts on a rolling 24-hr per-station AVERAGE (coder:gfl-air-24h-average)
+
+The 72 ppb H2S action level is itself a **24-hour-average** level (decision 4 —
+Michigan ITSL / Ridge Wood published level), but Stream E was applying it to a
+*single instantaneous hourly* reading, so one hot hour alerted even when the day's
+average was far under 72. The H2S **exceedance alert now fires on a rolling per-station
+average** to match the level's own averaging period. **CH4 is unchanged** — its
+500 ppm level is an explosivity / surface-emission boundary, not a 24-hr-average
+health level, so CH4 stays instantaneous. Individual instantaneous readings still land
+in the Measurements tab unchanged (`basis=measured`); only the H2S **alerting quantity**
+changed. The snapshot tab still shows each station's instantaneous H2S status.
+
+- **Config-driven, with a rollback lever.** `gfl_air.h2s_avg_window_hours` (default
+  `24`) sets the window; `0` restores the old instantaneous H2S alert. A sparse-window
+  guard `gfl_air.h2s_avg_min_readings` (default `12`) suppresses (and logs) the average
+  alert when a feed gap leaves too few readings in the window, so a couple of readings
+  can't masquerade as "the 24-hr average". A failed average query is skip-and-warn,
+  **never** read as 0 ppb (`gc.fetch_h2s_window_avg` raises `GflAirFetchError`).
+- **Computed server-side in one grouped-statistics query** (avg + count per station) —
+  no client row loop, no 214k pull. The average is independent of the OBJECTID poll
+  batch: it always looks back a true `now - window`, so an off-schedule poll can't skew
+  it. The instantaneous H2S tier is dropped from the per-reading alert path
+  (`alert_lines(..., h2s_averaged=True)` passes `classify_reading` a thresholds dict
+  with `h2s_ppb` removed), while CH4 exceedance, the CH4 watch tier, and the H2S
+  sentinel→anomaly path are all untouched.
+- **⚠️ Timezone trap — use the standardized `date '...'` literal, NOT `TIMESTAMP '...'`.**
+  Spike (live feed, 2026-07-18): layer 4's `dateFieldsTimeReference` is fixed **Eastern
+  Standard Time (UTC-5, DST-insensitive)**, and ArcGIS interprets a `TIMESTAMP` literal
+  in that field timezone — so a UTC-computed cutoff lands ~5h late and the "24-hour"
+  window silently becomes ~19h. The standardized-query `date 'YYYY-MM-DD HH:MM:SS'`
+  literal is interpreted in **UTC** and returns the exact UTC-24h row set (raw-epoch
+  `Date > <ms>` is rejected HTTP 400 — decision 1). This is documented in
+  `gfl_air_client.fetch_h2s_window_avg`; do not "simplify" `date` → `TIMESTAMP`.
+- **Live-path merge gate (Stream E is enabled).** Verified against the real feed before
+  merge: the server-side grouped average equals a client-side exact-UTC-24h average
+  computed from raw epoch rows to 1e-6 across all six stations, n=23/window (hourly
+  feed), sentinel excluded, all station averages 0.0–3.0 ppb (<< 72) — confirming the
+  single-hot-hour over-alerting the change removes.
+- **Deferred (flagged, not shipped):** the handoff's optional "H2S 24-hr avg" **column
+  on the GFL Air snapshot tab** — it would require threading the average through the
+  snapshot/baseline write path and shifting the `A2:L` cursor read ranges around the
+  column-N stale marker, disproportionate for a nice-to-have. The averaged value is
+  visible in the exceedance email; adding the column is a small follow-on.

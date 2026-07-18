@@ -219,12 +219,13 @@ gfl_air:
   #     72 ppb is BOTH the Michigan EGLE H2S ITSL (100 µg/m³, 24-hr avg ≈ 72 ppb)
   #     AND the Ridge Wood Elementary monitor's OWN published 24-hr action level
   #     (data-sources item 8 / Stream G, ADR 016). Two independent official sources agree, so
-  #     this value is settled — not "pending confirmation". NUANCE: 72 ppb is a
-  #     24-HOUR-AVERAGE level, and Stream E applies it to HOURLY instantaneous
-  #     readings (deliberately conservative — a single hot hour alerts; a rolling
-  #     24-hr-average build is queued as coder:gfl-air-24h-average). The operator
-  #     also publishes a 750 ppb 15-MINUTE ACUTE level; adding that as a
-  #     higher-urgency second tier is a small follow-on (needs a classifier tier).
+  #     this value is settled — not "pending confirmation". 72 ppb is a 24-HOUR-AVERAGE
+  #     level, so Stream E fires the H2S exceedance alert on a rolling per-station 24-hr
+  #     AVERAGE (computed server-side; see h2s_avg_window_hours below and ADR 014
+  #     decision 4), matching the level's own averaging period rather than a single
+  #     instantaneous hour. Set h2s_avg_window_hours: 0 to restore the old
+  #     instantaneous behavior. The operator also publishes a 750 ppb 15-MINUTE ACUTE
+  #     level; adding that as a higher-urgency second tier is a small follow-on (needs a classifier tier).
   #     Lower odor-nuisance ~5-8 ppb stays a 'watch' reference, not the alert
   #     (H2S>=5 ppb hit ~2874× in 4 yrs — it would flood).
   #   ch4_ppm 500 — SET 2026-07-17 (was 12500), per overnight-worker #75 air-thresholds
@@ -242,6 +243,25 @@ gfl_air:
   thresholds:
     h2s_ppb: 72
     ch4_ppm: 500
+  # H2S 24-hr ROLLING AVERAGE (coder:gfl-air-24h-average, added 2026-07-18). The
+  # 72 ppb H2S action level above is itself a 24-HOUR-AVERAGE level, so the H2S
+  # exceedance alert fires when the trailing per-station AVERAGE over this many hours
+  # is >= h2s_ppb — matching the level's own averaging period instead of over-alerting
+  # on one hot hour. Computed server-side in one cheap ArcGIS grouped-stats query
+  # (avg + count per station) using a UTC `date` literal (NOT a `TIMESTAMP` literal —
+  # the layer's date fields are fixed EST/UTC-5, so a TIMESTAMP cutoff would silently
+  # shift the window ~5h; see ADR 014 decision 4 + gfl_air_client.fetch_h2s_window_avg).
+  #   h2s_avg_window_hours 24 — the averaging window. Set to 0 to restore the OLD
+  #     instantaneous H2S alert (a rollback lever). CH4 is NEVER averaged — its 500 ppm
+  #     level is an explosivity/surface-emission boundary, not a 24-hr-average health
+  #     level, so CH4 stays instantaneous. Individual instantaneous readings still land
+  #     in the Measurements tab unchanged (basis=measured); only the H2S ALERT changes.
+  #   h2s_avg_min_readings 12 — a sparse-window guard: if a feed gap leaves fewer than
+  #     this many readings in the window, the average alert is SUPPRESSED (and logged),
+  #     so a couple of readings can't masquerade as "the 24-hr average". A healthy feed
+  #     posts hourly (~23-24 readings/window; verified live 2026-07-18), so 12 is a safe floor.
+  h2s_avg_window_hours: 24
+  h2s_avg_min_readings: 12
   # WATCH thresholds — the lower-urgency EARLY-WARNING tier (added 2026-07-17,
   # coder:gfl-air-thresholds). A reading at/above a watch level but BELOW the matching
   # action level above is a 'watch': it emails at LOWER urgency ([GFL air watch], not

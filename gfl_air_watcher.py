@@ -117,13 +117,28 @@ def station_snapshot(readings: list[dict], thresholds: dict, sentinels: dict | N
 
 def alert_lines(readings: list[dict], thresholds: dict, sentinels: dict | None,
                 alert_on_sentinel: bool,
-                watch_thresholds: dict | None = None) -> tuple[list[str], bool, bool]:
+                watch_thresholds: dict | None = None,
+                h2s_averaged: bool = False) -> tuple[list[str], bool, bool]:
     """(lines, has_exceedance, has_watch): one human line per reading that crossed an
     action level ('EXCEEDANCE'), reached the lower early-warning WATCH level ('watch'),
     or (if alert_on_sentinel) is a sentinel/no-data reading ('anomaly'). has_exceedance
     is True iff >=1 REAL action-level exceedance appears; has_watch iff >=1 watch-level
     reading appears. Together they set the email urgency: [URGENT] > [GFL air watch] >
-    [GFL air anomaly]. Pure."""
+    [GFL air anomaly]. Pure.
+
+    When `h2s_averaged` is True the INSTANTANEOUS H2S action-level tier is dropped from
+    THIS (per-reading) alert path — the H2S exceedance alert is driven instead by the
+    rolling 24-hr per-station average (run() computes it via
+    gc.fetch_h2s_window_avg + h2s_average_alert_lines), to match the 72 ppb action
+    level's own 24-hour averaging period. We express that by passing classify_reading a
+    thresholds dict with `h2s_ppb` removed: instantaneous H2S then classifies as 'ok'
+    (a single hot hour no longer emails), while CH4 exceedance, the CH4 watch tier, and
+    the H2S sentinel->anomaly path are ALL untouched (the sentinel check keys off the
+    sentinel config, not the threshold). The snapshot tab still uses the full thresholds
+    (station_snapshot), so it keeps showing the instantaneous H2S status. CH4 is never
+    averaged (its level is an explosivity/surface-emission boundary, not a 24-hr level)."""
+    if h2s_averaged:
+        thresholds = {k: v for k, v in (thresholds or {}).items() if k != "h2s_ppb"}
     lines: list[str] = []
     has_exceedance = False
     has_watch = False
@@ -151,6 +166,42 @@ def alert_lines(readings: list[dict], thresholds: dict, sentinels: dict | None,
     return lines, has_exceedance, has_watch
 
 
+def h2s_average_alert_lines(avgs: dict, h2s_thr, min_readings: int,
+                            window_hours: int = 24) -> tuple[list[str], bool, list[str]]:
+    """(lines, has_exceedance, notes) for the per-station rolling H2S average — the
+    quantity the H2S exceedance alert fires on (the 72 ppb level IS a 24-hr average;
+    ADR 014 decision 4). `avgs` is gc.fetch_h2s_window_avg's {station: {'avg', 'n'}}.
+
+    A station's average alerts ONLY when avg >= the action level AND n >= min_readings.
+    The n guard stops a SPARSE window (a feed gap leaving only a couple of readings)
+    from letting one spike masquerade as 'the 24-hr average': such a station is added
+    to `notes` (for the watcher to LOG, not email) rather than alerted, so a too-thin
+    window never fires and never silently over-alerts. avg=None (no usable readings) or
+    h2s_thr=None (no configured level) yields nothing. Stations are processed in sorted
+    order for a stable, readable email. Pure — unit-tested."""
+    lines: list[str] = []
+    notes: list[str] = []
+    has_exceedance = False
+    if h2s_thr is None:
+        return lines, has_exceedance, notes
+    thr = float(h2s_thr)
+    for st in sorted(avgs):
+        rec = avgs.get(st) or {}
+        avg = rec.get("avg")
+        n = int(rec.get("n") or 0)
+        if avg is None or avg < thr:
+            continue
+        if n >= min_readings:
+            has_exceedance = True
+            lines.append(f"EXCEEDANCE  {st}: {window_hours}-hr avg H2S = {avg:g} ppb "
+                         f">= {thr:g} ppb action level (n={n} readings)")
+        else:
+            notes.append(f"{st}: {window_hours}-hr avg H2S = {avg:g} ppb >= {thr:g} "
+                         f"action level but only n={n} < {min_readings} readings — "
+                         f"sparse window, average alert SUPPRESSED")
+    return lines, has_exceedance, notes
+
+
 def _levels_line(label: str, levels: dict | None) -> str | None:
     """One 'label: H2S >= X ppb, CH4 >= Y ppm.' line built from gc._POLLUTANTS (the
     single source of pollutant identity + units), skipping pollutants absent from
@@ -165,7 +216,8 @@ def _levels_line(label: str, levels: dict | None) -> str | None:
 
 def format_alert_body(lines: list[str], has_exceedance: bool, has_watch: bool,
                       link: str, thresholds: dict,
-                      watch_thresholds: dict | None = None) -> str:
+                      watch_thresholds: dict | None = None,
+                      h2s_averaged: bool = False, h2s_window_hours: int = 24) -> str:
     if has_exceedance:
         kind = "readings crossed a perimeter action level"
     elif has_watch:
@@ -179,6 +231,12 @@ def format_alert_body(lines: list[str], has_exceedance: bool, has_watch: bool,
         "These are GFL's OWN self-reported perimeter readings (H2S in ppb, CH4 in "
         "ppm), not an EGLE measurement.\n",
     ]
+    if h2s_averaged:
+        body.append(
+            f"H2S exceedance alerts fire on the rolling {h2s_window_hours}-hour "
+            "per-station AVERAGE (matching the 72 ppb H2S action level's own 24-hour "
+            "averaging period), not a single instantaneous hour; CH4 alerts on the "
+            "instantaneous reading.\n")
     for levels_line in (_levels_line("Action levels (config, Trisha-confirmed)", thresholds),
                         _levels_line("Early-warning WATCH levels (lower urgency)", watch_thresholds)):
         if levels_line:
@@ -354,6 +412,13 @@ def run() -> int:
     cap = int(cfg_gfl.get("max_new_readings_per_run", 1000))
     alert_on_sentinel = bool(cfg_gfl.get("alert_on_sentinel", True))
     max_stale_days = int(cfg_gfl.get("max_stale_days", 3))
+    # H2S alerts on a rolling per-station average to match the 72 ppb 24-hr action
+    # level (ADR 014 decision 4). window_hours=0 restores the old instantaneous H2S
+    # behavior (a rollback lever); min_readings guards a sparse window. CH4 is always
+    # instantaneous. See gc.fetch_h2s_window_avg + h2s_average_alert_lines.
+    h2s_avg_window_hours = int(cfg_gfl.get("h2s_avg_window_hours", 24))
+    h2s_avg_min_readings = int(cfg_gfl.get("h2s_avg_min_readings", 12))
+    h2s_averaged = h2s_avg_window_hours > 0
     link = cfg_gfl.get("dashboard_url") or cfg_gfl.get("service_url", "")
 
     for _w in gc.watch_config_warnings(thresholds, watch_thresholds):
@@ -432,7 +497,29 @@ def run() -> int:
           f"{new_cursor}.")
 
     lines, has_exceedance, has_watch = alert_lines(
-        readings, thresholds, sentinels, alert_on_sentinel, watch_thresholds)
+        readings, thresholds, sentinels, alert_on_sentinel, watch_thresholds,
+        h2s_averaged=h2s_averaged)
+
+    # H2S exceedance alerting is the rolling per-station average (the 72 ppb level IS a
+    # 24-hr-average level; ADR 014 decision 4) — NOT the instantaneous readings, which
+    # alert_lines dropped above when averaging is on. Computed server-side in one query;
+    # a failed query is skip-and-warn (best-effort), NEVER read as 0 ppb. Independent of
+    # the OBJECTID poll batch: it always looks back a true now-window, so a missed/off-
+    # schedule poll doesn't skew it. CH4 stays instantaneous (handled in alert_lines).
+    if h2s_averaged:
+        try:
+            avgs = gc.fetch_h2s_window_avg(cfg_gfl, h2s_avg_window_hours, station_prefix=prefix)
+        except gc.GflAirFetchError as e:
+            print(f"[gfl-air]   H2S {h2s_avg_window_hours}-hr average query FAILED "
+                  f"(skipping the average alert this poll; readings recorded): {e}")
+        else:
+            avg_lines, avg_exc, avg_notes = h2s_average_alert_lines(
+                avgs, thresholds.get("h2s_ppb"), h2s_avg_min_readings, h2s_avg_window_hours)
+            for note in avg_notes:
+                print(f"[gfl-air]   H2S average NOTE: {note}")
+            lines.extend(avg_lines)
+            has_exceedance = has_exceedance or avg_exc
+
     if lines:
         if has_exceedance:
             tag = "URGENT"
@@ -444,7 +531,9 @@ def run() -> int:
         try:
             ea.send_email(subject,
                           format_alert_body(lines, has_exceedance, has_watch, link,
-                                            thresholds, watch_thresholds), cfg)
+                                            thresholds, watch_thresholds,
+                                            h2s_averaged=h2s_averaged,
+                                            h2s_window_hours=h2s_avg_window_hours), cfg)
             print(f"[gfl-air]   emailed: {subject}")
         except Exception as e:  # noqa: BLE001 — alert best-effort; readings recorded
             print(f"[gfl-air]   readings recorded but alert email FAILED: {e}")
