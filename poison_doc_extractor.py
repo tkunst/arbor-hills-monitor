@@ -34,9 +34,14 @@ from __future__ import annotations
 
 import io
 import textwrap
-import xml.etree.ElementTree as ET
 import zipfile
 from typing import Optional
+
+# defusedxml, not stdlib xml.etree: the .docx bytes are an untrusted nSITE
+# download, so document.xml is parsed with XXE / external-entity / billion-
+# laughs defenses on. Same .fromstring API; a hostile doc raises (→ caught as
+# a poison strike below) instead of expanding entities. See ADR 011 / SAST.
+import defusedxml.ElementTree as ET
 
 import fitz  # pymupdf
 

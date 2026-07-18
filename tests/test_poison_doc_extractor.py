@@ -57,6 +57,16 @@ def _make_docx_raw_body(body_xml: str) -> bytes:
     return buf.getvalue()
 
 
+def _make_docx_with_document_xml(document_xml: str) -> bytes:
+    """Like _make_docx but takes the ENTIRE word/document.xml (including any
+    XML prolog / DOCTYPE), for the XXE tests that need a malicious DTD ahead of
+    the root element — something the fixed-prolog helpers above can't express."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("word/document.xml", document_xml)
+    return buf.getvalue()
+
+
 def _make_pdf_bytes(text: str) -> bytes:
     doc = fitz.open()
     page = doc.new_page()
@@ -179,6 +189,45 @@ def test_docx_body_text_does_not_duplicate_nested_textbox_paragraphs():
     text = pde._docx_body_text(data)
     assert text == "Outer text\nInner textbox text"
     assert text.count("Inner textbox text") == 1
+
+
+def test_docx_billion_laughs_is_refused_as_poison_not_expanded(tmp_path):
+    # The .docx bytes are an untrusted nSITE download. A document.xml carrying
+    # internal entity definitions (the classic billion-laughs XML bomb) must be
+    # REFUSED by the defusedxml parser (EntitiesForbidden) and surface at the
+    # public boundary as an ExtractionError — i.e. a poison strike, never an
+    # entity expansion or an uncaught crash. defusedxml raises on the entity
+    # *definition* itself, so no deep nesting is needed to trip the guard.
+    malicious = _make_docx_with_document_xml(
+        '<?xml version="1.0"?>'
+        '<!DOCTYPE w:document ['
+        '<!ENTITY lol "lol">'
+        '<!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">'
+        ']>'
+        f'<w:document xmlns:w="{WORD_NS}"><w:body><w:p><w:r>'
+        '<w:t>&lol2;</w:t></w:r></w:p></w:body></w:document>'
+    )
+    dest = str(tmp_path / "out.pdf")
+    with pytest.raises(pde.ExtractionError):
+        pde.synthesize_pdf(malicious, dest)
+
+
+def test_docx_external_entity_xxe_is_refused_as_poison(tmp_path):
+    # The XXE that Bandit B314 flags: an external SYSTEM entity that would, with
+    # a naive stdlib parser, exfiltrate a local file. defusedxml forbids
+    # external entities; the doc must become an ExtractionError (poison strike),
+    # and — the point of the test — must NOT read the referenced path.
+    malicious = _make_docx_with_document_xml(
+        '<?xml version="1.0"?>'
+        '<!DOCTYPE w:document ['
+        '<!ENTITY xxe SYSTEM "file:///etc/passwd">'
+        ']>'
+        f'<w:document xmlns:w="{WORD_NS}"><w:body><w:p><w:r>'
+        '<w:t>&xxe;</w:t></w:r></w:p></w:body></w:document>'
+    )
+    dest = str(tmp_path / "out.pdf")
+    with pytest.raises(pde.ExtractionError):
+        pde.synthesize_pdf(malicious, dest)
 
 
 def test_docx_to_pdf_produces_classifiable_text(tmp_path):
