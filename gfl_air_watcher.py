@@ -234,9 +234,9 @@ def format_alert_body(lines: list[str], has_exceedance: bool, has_watch: bool,
     if h2s_averaged:
         body.append(
             f"H2S exceedance alerts fire on the rolling {h2s_window_hours}-hour "
-            "per-station AVERAGE (matching the 72 ppb H2S action level's own 24-hour "
-            "averaging period), not a single instantaneous hour; CH4 alerts on the "
-            "instantaneous reading.\n")
+            "per-station AVERAGE (matching the H2S action level's own 24-hour averaging "
+            "period; see the action level below), not a single instantaneous hour; CH4 "
+            "alerts on the instantaneous reading.\n")
     for levels_line in (_levels_line("Action levels (config, Trisha-confirmed)", thresholds),
                         _levels_line("Early-warning WATCH levels (lower urgency)", watch_thresholds)):
         if levels_line:
