@@ -47,7 +47,7 @@ from __future__ import annotations
 import json
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 _UA = "arbor-hills-monitor/gfl-air (+https://github.com/tkunst/arbor-hills-monitor)"
@@ -200,6 +200,79 @@ def fetch_baseline(cfg_gfl: dict, *, station_prefix: str = DEFAULT_STATION_PREFI
         if st and st not in latest:
             latest[st] = a
     return list(latest.values())
+
+
+def _utc_date_literal(now: datetime, hours: int) -> str:
+    """The `now - hours` cutoff formatted for an ArcGIS standardized-query `date`
+    literal ('YYYY-MM-DD HH:MM:SS'). Pure — unit-tested. `now` MUST be UTC; the
+    literal is written in UTC because the query below uses the `date` keyword (see
+    fetch_h2s_window_avg's docstring on the date-vs-TIMESTAMP timezone trap)."""
+    return (now - timedelta(hours=int(hours))).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def fetch_h2s_window_avg(
+    cfg_gfl: dict,
+    hours: int,
+    *,
+    now: Optional[datetime] = None,
+    station_prefix: str = DEFAULT_STATION_PREFIX,
+) -> dict[str, dict]:
+    """Per-station TRAILING-WINDOW H2S average over the last `hours`, computed
+    SERVER-SIDE in one grouped-statistics query (no client row loop, no 214k pull).
+    Returns {station: {'avg': float|None, 'n': int}} for MS-* stations; 'avg' is
+    None when the window holds no usable readings for that station. Raises
+    GflAirFetchError on any fetch/HTTP/ArcGIS-error (via _query) — a failed average
+    query must NEVER be read as '0 ppb'; the watcher skips the average alert and warns.
+
+    The 72 ppb H2S action level is itself a 24-HOUR AVERAGE level (Michigan ITSL /
+    Ridge Wood published level; ADR 014 decision 4), so the H2S exceedance ALERT is
+    driven by this rolling average, not a single instantaneous hour.
+
+    ⚠️ TIMEZONE TRAP (spike-verified 2026-07-18, live feed) — DO NOT change the
+    `date '...'` literal below to `TIMESTAMP '...'`. Layer 4's `dateFieldsTimeReference`
+    is fixed Eastern Standard Time (UTC-5, DST-insensitive), and ArcGIS interprets a
+    `TIMESTAMP` literal in THAT field timezone — so a UTC-computed cutoff would land
+    ~5h late and this "24-hour" window would silently become a ~19-hour one. The
+    standardized-query `date 'YYYY-MM-DD HH:MM:SS'` literal is interpreted in UTC
+    (verified: it returns the exact UTC-24h row set, matching a client-side epoch
+    computation to 1e-6 across all six stations). Raw-epoch `Date > <ms>` is rejected
+    HTTP 400 (ADR 014 decision 1), so `date` is the one correct form.
+
+    The sentinel (config `sentinels.h2s_ppb`, default 999 — ambiguous no-data /
+    off-scale) is excluded in the WHERE so a no-data marker can't corrupt the
+    average; BDL readings (0.0) correctly count as reported. Cheap (bounded window)."""
+    c = _svc(cfg_gfl)
+    now = now or datetime.now(timezone.utc)
+    cutoff = _utc_date_literal(now, hours)
+    sentinel = (cfg_gfl.get("sentinels") or {}).get("h2s_ppb", DEFAULT_SENTINEL_H2S)
+    where = f"Date > date '{cutoff}'"
+    if sentinel is not None:
+        where += f" AND H2S <> {float(sentinel):g}"   # keep the no-data sentinel out
+    data = _query(c["service_url"], c["readings_layer"], {
+        "where": where,
+        "groupByFieldsForStatistics": "LocName",
+        "outStatistics": json.dumps([
+            {"statisticType": "avg", "onStatisticField": "H2S",
+             "outStatisticFieldName": "avgH2S"},
+            {"statisticType": "count", "onStatisticField": "H2S",
+             "outStatisticFieldName": "n"},
+        ]),
+        "returnGeometry": "false",
+    })
+    out: dict[str, dict] = {}
+    for a in _features(data):
+        st = (a.get("LocName") or "").strip()
+        if station_prefix and not st.startswith(station_prefix):
+            continue
+        if not st:
+            continue
+        n_raw = a.get("n")
+        try:
+            n = int(n_raw) if n_raw is not None else 0
+        except (TypeError, ValueError):
+            n = 0
+        out[st] = {"avg": _as_float(a.get("avgH2S")), "n": n}
+    return out
 
 
 # ---------------------------------------------------------------------------

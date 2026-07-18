@@ -9,6 +9,8 @@ import copy
 import re
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 import gfl_air_client as gc
 import gfl_air_watcher as gw
 import sheet_writer as sw
@@ -310,6 +312,10 @@ def _wire(monkeypatch, cfg=CFG):
     monkeypatch.setattr(gw, "load_config", lambda: copy.deepcopy(cfg))
     monkeypatch.setattr(gw.dc, "sheets_service", lambda: fake)
     monkeypatch.setattr(gw.ea, "send_email", lambda subj, body, c: sent.append((subj, body)))
+    # Default: the H2S 24-hr average query returns no stations (no average exceedance),
+    # so an incremental poll stays hermetic (no real ArcGIS call). Tests that exercise
+    # the average alert override this with their own {station: {avg, n}} mapping.
+    monkeypatch.setattr(gw.gc, "fetch_h2s_window_avg", lambda *a, **k: {})
     return fake, sent
 
 
@@ -364,7 +370,10 @@ def test_first_run_baselines_no_alert_and_sets_cursor(monkeypatch):
     assert sw.gfl_air_cursor(fake, "SID") == 105    # cursor = max OBJECTID
 
 
-def test_incremental_writes_measurements_and_emails_on_exceedance(monkeypatch):
+def test_incremental_writes_measurements_and_emails_on_ch4_exceedance(monkeypatch):
+    # Under H2S averaging (the default), an instantaneous H2S=80 still LANDS in
+    # Measurements (evidence unchanged) but no longer drives the email — the URGENT
+    # here is a CH4 instantaneous exceedance. The average query is _wire's default {}.
     fake, sent = _wire(monkeypatch)
     base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
     monkeypatch.setattr(gw.gc, "fetch_baseline", lambda cfg, station_prefix="MS-": list(base))
@@ -373,7 +382,8 @@ def test_incremental_writes_measurements_and_emails_on_exceedance(monkeypatch):
     assert sw.gfl_air_cursor(fake, "SID") == 105
 
     new = [_reading(106 + i, s, 0.0, 6.0, DAY1) for i, s in enumerate(STATIONS)]
-    new[5]["H2S"] = 80.0                            # MS-6 exceedance (>= 72)
+    new[5]["H2S"] = 80.0                            # MS-6 instantaneous H2S >= 72 (recorded, NOT alerted)
+    new[2]["CH4"] = 13000.0                         # MS-3 instantaneous CH4 >= 12500 action -> URGENT
 
     def fetch(cfg, since, limit=None):
         return [r for r in new if r["OBJECTID"] > since]   # honors the cursor (skip-seen)
@@ -381,9 +391,13 @@ def test_incremental_writes_measurements_and_emails_on_exceedance(monkeypatch):
 
     assert gw.run() == 0
     meas = _measurements(fake)
-    assert meas and any(row[2] == "hydrogen_sulfide" and row[5] == "measured" for row in meas)
+    assert meas and any(row[2] == "hydrogen_sulfide" and row[3] == 80.0 and row[5] == "measured"
+                        for row in meas)            # the hot H2S hour still archived as evidence
     assert any(row[10] == "Arbor Hills Landfill" for row in meas)    # facility attribution in row
     assert len(sent) == 1 and "URGENT" in sent[0][0]
+    _, body = sent[0]
+    assert "13000" in body                          # CH4 instantaneous exceedance drove the alert
+    assert "H2S=80" not in body                     # instantaneous H2S no longer alerts (averaged)
     assert sw.gfl_air_cursor(fake, "SID") == 111    # advanced past the batch
 
 
@@ -505,6 +519,192 @@ def test_summary_is_single_update_and_blanks_a_shrunk_station_set(monkeypatch):
     sw.write_gfl_air_summary(fake, "SID", six[:5], "link")
     assert len(_summary(fake)) == 5
     assert sw.gfl_air_cursor(fake, "SID") == 104    # no stale 105 orphan
+
+
+# --- H2S 24-hr rolling average (coder:gfl-air-24h-average) ---------------------
+#
+# The 72 ppb H2S action level is a 24-HOUR-AVERAGE level, so the H2S exceedance
+# alert fires on a rolling per-station AVERAGE (server-side), not one hot hour. CH4
+# stays instantaneous. Individual readings still land in Measurements unchanged.
+
+# pure client: the window-cutoff literal + the grouped-stats query/parse -----------
+
+def test_utc_date_literal_is_utc_and_offsets_by_hours():
+    now = datetime(2026, 7, 18, 5, 34, 13, tzinfo=timezone.utc)
+    assert gc._utc_date_literal(now, 24) == "2026-07-17 05:34:13"
+    assert gc._utc_date_literal(now, 0) == "2026-07-18 05:34:13"    # window 0 = no look-back
+
+
+def test_fetch_h2s_window_avg_query_shape_and_parse(monkeypatch):
+    captured = {}
+
+    def fake_query(service_url, layer, params, *, timeout=60):
+        captured.update(service_url=service_url, layer=layer, params=params)
+        return {"features": [
+            {"attributes": {"LocName": "MS-1", "avgH2S": 3.5, "n": 20}},
+            {"attributes": {"LocName": "MS-2", "avgH2S": None, "n": 0}},
+            {"attributes": {"LocName": "10-Meter MET Tower", "avgH2S": 5.0, "n": 3}},
+        ]}
+    monkeypatch.setattr(gc, "_query", fake_query)
+    cfg_gfl = {"service_url": "http://svc/FeatureServer", "readings_layer": 4,
+               "sentinels": {"h2s_ppb": 999}}
+    now = datetime(2026, 7, 18, 5, 0, tzinfo=timezone.utc)
+    out = gc.fetch_h2s_window_avg(cfg_gfl, 24, now=now)
+
+    where = captured["params"]["where"]
+    # UTC standardized `date` literal — NOT `TIMESTAMP` (layer date fields are EST-fixed,
+    # so a TIMESTAMP cutoff would silently shift the window ~5h; spike 2026-07-18).
+    assert "date '2026-07-17 05:00:00'" in where and "TIMESTAMP" not in where
+    assert "H2S <> 999" in where                            # sentinel excluded server-side
+    assert captured["params"]["groupByFieldsForStatistics"] == "LocName"
+    assert '"avg"' in captured["params"]["outStatistics"]   # avg + count grouped stats
+    assert '"count"' in captured["params"]["outStatistics"]
+    assert captured["layer"] == 4
+    # MET tower filtered out by station_prefix; None avg preserved, n coerced to int.
+    assert out == {"MS-1": {"avg": 3.5, "n": 20}, "MS-2": {"avg": None, "n": 0}}
+
+
+def test_fetch_h2s_window_avg_raises_on_fetch_error_never_zero(monkeypatch):
+    # A failed average query must PROPAGATE (GflAirFetchError), never be read as 0 ppb.
+    monkeypatch.setattr(gc, "_query",
+                        lambda *a, **k: (_ for _ in ()).throw(gc.GflAirFetchError("down")))
+    with pytest.raises(gc.GflAirFetchError):
+        gc.fetch_h2s_window_avg({"service_url": "http://svc", "readings_layer": 4}, 24,
+                                now=datetime(2026, 7, 18, tzinfo=timezone.utc))
+
+
+def test_fetch_h2s_window_avg_omits_sentinel_clause_when_unconfigured(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(gc, "_query",
+                        lambda su, ly, params, **k: captured.update(params=params) or {"features": []})
+    gc.fetch_h2s_window_avg({"service_url": "http://svc", "readings_layer": 4,
+                             "sentinels": {"h2s_ppb": None}}, 24,
+                            now=datetime(2026, 7, 18, tzinfo=timezone.utc))
+    assert "H2S <>" not in captured["params"]["where"]      # no sentinel key -> no exclusion clause
+
+
+# pure watcher: the average -> alert-line decision --------------------------------
+
+def test_h2s_average_alert_lines_fires_when_avg_ge_thr_and_enough_n():
+    avgs = {"MS-2": {"avg": 78.0, "n": 20}, "MS-1": {"avg": 3.0, "n": 22}}
+    lines, has_exc, notes = gw.h2s_average_alert_lines(avgs, 72, 12, 24)
+    assert has_exc and len(lines) == 1 and notes == []
+    assert "MS-2" in lines[0] and "24-hr avg" in lines[0] and "78" in lines[0]
+
+
+def test_h2s_average_alert_lines_suppresses_sparse_window():
+    avgs = {"MS-2": {"avg": 78.0, "n": 5}}          # >= 72 but only 5 readings in the window
+    lines, has_exc, notes = gw.h2s_average_alert_lines(avgs, 72, 12, 24)
+    assert lines == [] and has_exc is False
+    assert len(notes) == 1 and "SUPPRESSED" in notes[0] and "MS-2" in notes[0]
+
+
+def test_h2s_average_alert_lines_silent_below_threshold_or_no_data():
+    avgs = {"MS-2": {"avg": 10.0, "n": 24}, "MS-1": {"avg": None, "n": 0}}
+    lines, has_exc, notes = gw.h2s_average_alert_lines(avgs, 72, 12, 24)
+    assert lines == [] and has_exc is False and notes == []
+
+
+def test_h2s_average_alert_lines_no_threshold_is_noop():
+    avgs = {"MS-2": {"avg": 999.0, "n": 24}}
+    lines, has_exc, notes = gw.h2s_average_alert_lines(avgs, None, 12, 24)
+    assert lines == [] and has_exc is False and notes == []
+
+
+# run() flow ----------------------------------------------------------------------
+
+def test_h2s_instantaneous_no_longer_alerts_under_averaging(monkeypatch):
+    # A single hot H2S hour (>= 72) with a benign 24-hr average must NOT email — the
+    # whole point of the change — but the reading is still archived to Measurements.
+    fake, sent = _wire(monkeypatch)
+    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
+    gw.run()                                         # baseline
+    new = [_reading(106, "MS-6", 80.0, 5.0, DAY1)]   # one hot H2S hour, CH4 benign
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0                             # _wire's default avg {} => benign average
+    assert sent == []                                # instantaneous H2S suppressed
+    meas = _measurements(fake)
+    assert any(row[2] == "hydrogen_sulfide" and row[3] == 80.0 for row in meas)   # still archived
+
+
+def test_h2s_average_exceedance_alerts_on_zero_instantaneous(monkeypatch):
+    # Every instantaneous reading benign (< 72), but the rolling 24-hr per-station
+    # average is >= 72 -> ONE URGENT email that names the AVERAGE, not a single reading.
+    fake, sent = _wire(monkeypatch)
+    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
+    gw.run()
+    new = [_reading(106 + i, s, 3.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]   # all < 72
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    monkeypatch.setattr(gw.gc, "fetch_h2s_window_avg",
+                        lambda *a, **k: {"MS-4": {"avg": 78.0, "n": 20}})
+    assert gw.run() == 0
+    assert len(sent) == 1
+    subj, body = sent[0]
+    assert "URGENT" in subj
+    assert "MS-4" in body and "78" in body and "24-hr avg" in body
+
+
+def test_h2s_average_sparse_window_does_not_alert(monkeypatch):
+    fake, sent = _wire(monkeypatch)
+    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
+    gw.run()
+    new = [_reading(106 + i, s, 3.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    # avg >= 72 but n below min_readings (12) -> suppressed, no email.
+    monkeypatch.setattr(gw.gc, "fetch_h2s_window_avg",
+                        lambda *a, **k: {"MS-4": {"avg": 78.0, "n": 4}})
+    assert gw.run() == 0
+    assert sent == []
+
+
+def test_h2s_average_query_failure_is_skip_and_warn_not_zero(monkeypatch):
+    # A failed average query must not break the poll and must not be read as 0 ppb:
+    # the run still completes (measurements recorded), just without an average alert.
+    fake, sent = _wire(monkeypatch)
+    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
+    gw.run()
+    new = [_reading(106 + i, s, 3.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    monkeypatch.setattr(gw.gc, "fetch_h2s_window_avg",
+                        lambda *a, **k: (_ for _ in ()).throw(gc.GflAirFetchError("down")))
+    assert gw.run() == 0                             # poll completes despite the failed avg query
+    assert sent == []                                # no average alert, and NOT a false 0-ppb alert
+    assert len(_measurements(fake)) > 0              # readings still recorded
+
+
+def test_h2s_avg_window_zero_restores_instantaneous_and_skips_avg_query(monkeypatch):
+    # Rollback lever: h2s_avg_window_hours=0 => instantaneous H2S alerts again AND the
+    # average query is never issued.
+    cfg = copy.deepcopy(CFG)
+    cfg["gfl_air"]["h2s_avg_window_hours"] = 0
+    fake, sent = _wire(monkeypatch, cfg)
+    called = []
+    monkeypatch.setattr(gw.gc, "fetch_h2s_window_avg",
+                        lambda *a, **k: called.append(1) or {})
+    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
+    gw.run()
+    new = [_reading(106, "MS-6", 80.0, 5.0, DAY1)]   # instantaneous H2S >= 72
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0
+    assert len(sent) == 1 and "URGENT" in sent[0][0]
+    _, body = sent[0]
+    assert "H2S=80" in body                          # instantaneous H2S exceedance line restored
+    assert called == []                              # average query never issued when window=0
 
 
 # --- cursor int-parse (the string-max trap) ------------------------------------

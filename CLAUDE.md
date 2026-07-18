@@ -37,6 +37,9 @@ external users but no sensitive data). Public repo.
 - `gfl_air_watcher.py` — daily poll of the GFL air feed: incremental OBJECTID
   cursor (in the `GFL Air` tab), readings → Measurements (`basis=measured`),
   same-day exceedance alerts via its own classifier. Gated on `gfl_air.enabled`.
+  H2S alerts on a rolling per-station 24-hr AVERAGE (`gfl_air.h2s_avg_window_hours`,
+  server-side query; matches the 72 ppb 24-hr action level — set `0` to restore the
+  instantaneous alert); CH4 stays instantaneous. See ADR 014 decision 4 + addendum.
   A liveness check (`gfl_air.max_stale_days`) alerts once if a poll finds zero new
   readings while the newest is stale — mitigates ADR 014's OBJECTID-reset silent
   stall (the cursor resetting below the stored value → `OBJECTID > cursor` empty
