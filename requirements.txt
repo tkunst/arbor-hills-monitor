@@ -21,6 +21,10 @@ requests>=2.32
 # and openpyxl are BSD/MIT. This repo has no LICENSE file of its own yet, so
 # there's no direct copyleft conflict today, but flag before adding a license
 # or redistributing, since the README invites reuse by other advocacy groups.
+# defusedxml hardens the .docx word/document.xml parse against XXE / billion-
+# laughs: the bytes are an untrusted nSITE download, so a hostile document.xml
+# must be refused (raised → caught as a poison strike), never entity-expanded.
+defusedxml>=0.7          # XXE-safe drop-in for xml.etree in _docx_body_text
 extract-msg>=0.55       # .msg envelope + attachment extraction (GPL)
 xlrd>=2.0                # legacy .xls attachments (e.g. lab-report EDDs)
 openpyxl>=3.1             # .xlsx attachments, in case a future EDD is that format
