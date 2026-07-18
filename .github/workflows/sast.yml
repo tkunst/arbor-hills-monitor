@@ -1,0 +1,57 @@
+name: sast
+
+# Static application security testing (Bandit) for the Python codebase.
+# REPORT-ONLY for now: it scans every PR + push and surfaces findings in the
+# job summary + an artifact, but does not fail the build. Reason: 5 pre-existing
+# medium+ findings need triage first (see docs/decisions or the enabling PR).
+# To promote to a blocking gate once those are cleared: change the final
+# `exit 0` to `exit "$rc"`, then add `sast` to the required status checks.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  bandit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install bandit
+        run: python -m pip install --upgrade pip bandit
+      - name: Run bandit (medium+ severity + confidence; tests excluded)
+        run: |
+          set +e
+          bandit -r . -x ./tests,./.venv,./.git \
+            --severity-level medium --confidence-level medium \
+            -f custom --msg-template "{severity}/{confidence} {test_id} {relpath}:{line} -- {msg}" \
+            | tee bandit-report.txt
+          rc=${PIPESTATUS[0]}
+          {
+            echo "## Bandit SAST (report-only)"
+            echo ""
+            if [ -s bandit-report.txt ]; then
+              echo "Findings at medium+ severity/confidence:"
+              echo ""
+              echo '```'
+              cat bandit-report.txt
+              echo '```'
+            else
+              echo "No findings at medium+ severity/confidence. ✅"
+            fi
+            echo ""
+            echo "_Report-only until the pre-existing findings are triaged. To gate: change the final \`exit 0\` to \`exit \"\$rc\"\` and add \`sast\` to required checks._"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0   # report-only: do not fail the build yet
+      - name: Upload SAST report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.txt
