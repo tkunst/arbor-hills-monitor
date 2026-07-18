@@ -124,6 +124,17 @@ confirm, don't just take the merge on faith.
     (per the spike step above) before merging autonomously. If no real
     specimen is obtainable for this goal, don't merge — that's a Step-3
     stop too.
+  - **Which of the two cases above applies is read from the live `config.yml`,
+    never from the handoff.** A handoff is a snapshot from the day it was written;
+    if the target stream was *enabled* after that, the handoff's "ships
+    `enabled: false`" / "merge on mocked-green" / "stays disabled" framing is stale,
+    and trusting it would autonomously merge an unverified change to a live path
+    (exactly what happened to `coder:gfl-air-24h-average`: its handoff was written
+    while Stream E was disabled, but `gfl_air.enabled` had been flipped to `true`
+    before the build). So at build time, check the target's *actual* `enabled` flag
+    in `config.yml` — if it is `true`, treat this as a live-path change (real-specimen
+    verification mandatory, no mocked-green merge) regardless of any disabled-framing
+    in the handoff, and do not flip the flag either way (its on/off state is Trisha's).
 - Write tests alongside the implementation. Run `pytest -q` — must be fully
   green before moving on. Follow every rule in this repo's `CLAUDE.md`
   (no committed data files, no hardcoded paths/secrets, crash-safe write
