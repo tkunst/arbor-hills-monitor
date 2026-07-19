@@ -197,7 +197,7 @@ def _idkey(spec, r) -> str:
 
 def _content_hash(spec, r) -> str:
     raw = "|".join(str(x) for x in spec["content"](r))
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 
 def _event_from_row(name: str, r: dict, kind: str, cfg_wds: dict, prev_hash=None) -> dict:
