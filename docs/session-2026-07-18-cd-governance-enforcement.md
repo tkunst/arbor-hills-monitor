@@ -71,6 +71,23 @@ Claude = the check with extra steps, no independence gained); human-approval gat
   names; set `required_status_checks` (`pytest`,`bandit`,`gitleaks`,`block-data-files`,`CodeQL`,
   review job) with `enforce_admins:false`; prove a real green PR merges; **then** flip
   `enforce_admins:true`.
+  - **Check-context names (read off PR #23's real runs — supersede the research guess):** the
+    review job's context is **`review`** (NOT `claude-review / review`, which the claude-code-guide
+    research guessed — the actual check-run `name` is just the job id). Other names as they appear:
+    `pytest`, `bandit`, `gitleaks`, `block-data-files`, `lint` (markdownlint), `lychee` (links),
+    `CodeQL` **and** `Analyze (python)` / `Analyze (actions)` both show up for CodeQL — resolve which
+    one branch-protection accepts on the throwaway PR before requiring it (don't guess).
+  - **Phase-C PRECONDITION — prove `claude-review` actually posts (owed, relocated here):** on PR #23
+    the `review` check was **green but the action SKIPPED** — claude-code-action deliberately skips
+    (and still exits 0) on any PR that MODIFIES a workflow file (log: "Action skipped due to workflow
+    validation"). PR B necessarily modifies workflows, so it could not self-verify. The first
+    NON-workflow PR is the first time `claude-review` can really run. **Use Phase C's opening throwaway
+    PR (a non-workflow change) to confirm a review COMMENT actually posts** — add "a review comment
+    posted" as a pass condition. If it skips or posts nothing *there* too, the config is broken (not
+    merely guarded) and must be fixed BEFORE `review` joins `required_status_checks`. Corollary for the
+    threat model: a workflow-touching PR will always pass a required `review` WITHOUT a review — fine,
+    because `review` is advisory-by-design and the real gates (`bandit`/`pytest`/`CodeQL`/`gitleaks`)
+    still run; the in-session `/code-review` is the documented fallback (overnight-coder Step 5).
   - **Phase-C TO-DO — Dependabot secrets gotcha (don't lose this):** once the `claude-review` job
     is a REQUIRED check, Dependabot-authored PRs may not merge. Dependabot-triggered workflow runs
     use a SEPARATE secrets store (`secrets.DEPENDABOT_*`, not Actions secrets) and a read-only
@@ -117,13 +134,24 @@ directly); **AI findings** preview (Bandit already covers Python).
   @ `9569e53`). CI green (pytest/bandit/gitleaks/block-data-files); `/code-review` clean;
   `/security-review` zero med/high. Real-specimen live-path check passed (4 real Word docs,
   byte-identical stdlib↔defusedxml). Branch deleted. B314 cleared → SAST gate unblocked.
-- **NEXT: PR B — required-check readiness** (autonomous-safe, no enforcement flip):
-  1. de-filter `tests.yml` (drop top-level `paths:` so `pytest` always reports)
-  2. add `claude-review.yml` (`claude-code-action@v1`, `ANTHROPIC_API_KEY`, always-reports)
-  3. clear the 4 known low-risk Bandit findings — `gfl_air_client.py:117` (B310 urlopen scheme),
-     `pfas_client.py:154` + `wds_archiver.py:62` + `wds_watcher.py:200` (B324 SHA1 →
-     `usedforsecurity=False`) — then flip `sast.yml` `exit 0` → `exit "$rc"`
-  4. `overnight-coder.md` edits (Step 8 → `gh pr merge`; Step 4 waits on new checks; Step 7
-     consumes CI review comments; Step 5 preflight demote; low-sev policy; 6/9/auth unchanged)
-- Then **STOP** before Phase C (enforcement flip) — that's HITL with Trisha.
-- This session file is still UNTRACKED on `main` — commit as housekeeping at a checkpoint.
+- **PR B — MERGED** (PR #23 → `main`, rebased/linear, `dc0136c`→`47f5d0c`; branch deleted).
+  Autonomous-safe, **no enforcement flip** (branch protection untouched — can't lock anyone out).
+  Shipped exactly as planned:
+  1. `tests.yml` — dropped both `paths:` filters; `pytest` now always reports.
+  2. `claude-review.yml` (new) — advisory `claude-code-action@v1` review; deliberately NOT
+     `continue-on-error` (research confirmed the action already exits 0 on findings, so green ⟺
+     it ran, red ⟺ it couldn't — except the workflow-skip case, see Phase C precondition above).
+  3. Cleared the 4 Bandit findings (B310 `# nosec` + 3× B324 `usedforsecurity=False`, digests
+     byte-identical) and armed `sast.yml` `exit "$rc"`; **pinned `bandit==1.9.4`** (added over the
+     plan — a required check must be deterministic so a future release can't silently red it).
+  4. `overnight-coder.md` — Step 8 `gh pr merge <n> --rebase --delete-branch` (explicit method,
+     non-interactive; `--auto` deferred to Phase C); Step 4 waits on new checks; Step 5 CI-review-
+     authoritative + **workflow-skip fallback** (if `claude-review` skips, in-session `/code-review`
+     IS the review); Step 6 low-sev policy; Step 7 consumes CI review comments; 9/Standing-auth
+     unchanged.
+  - Verified: 406 tests green; Bandit 0 findings; all 10 PR checks + push-to-main CI green;
+    `/security-review` (+ independent adversarial subagent) **zero** med/high; `/code-review` one
+     low doc-consistency nit, fixed; privacy pre-push gate passed.
+- **NEXT: Phase C — enforcement flip (HITL with Trisha; do NOT start autonomously).** See the Phase C
+  bullet above — now carries the exact check-context names + the `claude-review` empirical precondition
+  discovered building PR B. **This is where the session STOPS.**
