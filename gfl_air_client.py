@@ -114,7 +114,7 @@ def _query(service_url: str, layer, params: dict, *, timeout: int = 60) -> dict:
     url = f"{service_url.rstrip('/')}/{layer}/query?{urllib.parse.urlencode(q)}"
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 — https GET
+        with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310  # nosec B310 — url built from trusted config https service_url, not user input
             raw = r.read().decode("utf-8", "ignore")
     except Exception as e:  # noqa: BLE001 — network / HTTP → transient
         raise GflAirFetchError(f"GET {url} failed: {e}") from e
