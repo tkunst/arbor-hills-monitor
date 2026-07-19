@@ -151,23 +151,36 @@ confirm, don't just take the merge on faith.
   established shape: Summary (bullets), Test plan (checked boxes), and a
   "Before merging" section if there's anything a human should know before
   the merge (e.g. new secrets needed, a manual activation step).
-- Wait for CI to finish (`gh pr checks <n> --watch`). If a check fails for a
-  reason unrelated to the feature (e.g. markdownlint on a doc — this repo's
-  CI is picky about blank lines around lists/fences and restarts ordered-list
-  numbering at 1 for every list block, not just the first), fix it and push
-  again before proceeding. Don't merge on red CI.
+- Wait for CI to finish (`gh pr checks <n> --watch`). The check set now
+  includes the armed **`bandit`** SAST gate (fails the PR on any medium+
+  finding) and the independent **`claude-review`** job (an advisory review that
+  posts inline comments and stays green *unless it could not run* — a red
+  `claude-review` means the review itself failed, not that it found problems).
+  Both must finish before Step 5, so the review it posts exists to consume. If
+  a check fails for a reason unrelated to the feature (e.g. markdownlint on a
+  doc — this repo's CI is picky about blank lines around lists/fences and
+  restarts ordered-list numbering at 1 for every list block, not just the
+  first), fix it and push again before proceeding. Don't merge on red CI.
 
-### 5. `/review` the PR, resolve every finding
+### 5. Resolve the code review (CI `claude-review` is authoritative)
 
-- Run `/review <pr-number>`.
+- The authoritative code review is the independent **`claude-review` CI job** —
+  a cold, diff-only read with none of this session's context, which makes it
+  more independent than an in-session pass. Read its posted findings with
+  `gh pr view <pr-number> --comments` (fall back to `gh api
+  repos/{owner}/{repo}/pulls/<pr-number>/reviews` if the summary lands as a
+  formal review rather than a comment).
+- A light in-session `/code-review` is now only a **pre-push preflight** — run
+  it in Step 4 before pushing to catch the obvious, but it is not the system of
+  record; the CI job is.
 - Fix every finding directly in the same PR, **except**: if a finding is
-  high-severity *and* substantial enough that folding it in would
-  meaningfully bloat this PR's scope, open a **second, separate PR** for
-  that fix instead (still autonomous, still gets fixed — this is a
-  scope-discipline split, not an escalation). Note the split in both PRs'
-  descriptions so the history reads clearly later.
-- Push fixes, re-run `/review` if the changes were non-trivial, until no
-  findings remain.
+  high-severity *and* substantial enough that folding it in would meaningfully
+  bloat this PR's scope, open a **second, separate PR** for that fix instead
+  (still autonomous, still gets fixed — a scope-discipline split, not an
+  escalation). Note the split in both PRs' descriptions so the history reads
+  clearly later.
+- Push fixes; the `claude-review` job re-runs automatically on the new commit.
+  Re-read its comments in the Step 7 loop until no findings remain open.
 
 ### 6. `/security-review` the PR
 
@@ -180,22 +193,33 @@ confirm, don't just take the merge on faith.
   escalation condition in this whole procedure — security findings are
   Trisha's call, always, regardless of how confident the fix looks. See
   "Standing authorization" above.
-- This escalation isn't gated on which skill surfaced the finding. If
-  `/review` in Step 5 turns up something security-relevant (not just
-  `/security-review`), it gets the same treatment — stop and escalate,
-  not the autonomous-fix-or-second-PR path Step 5 otherwise allows.
-  Severity, not which command found it, is what decides the route.
+- This escalation isn't gated on which skill surfaced the finding. If the code
+  review (Step 5's CI `claude-review` job or the in-session `/code-review`)
+  turns up something security-relevant (not just `/security-review`), it gets
+  the same treatment — stop and escalate, not the autonomous-fix-or-second-PR
+  path Step 5 otherwise allows. Severity, not which command found it, is what
+  decides the route.
+- **Low-severity security findings** (below the med/high hard-stop above —
+  these come from the LLM reviewers, since Bandit is medium+ and gitleaks is
+  binary): fix them in the Step 7 convergence loop by default. If a fix is
+  substantial enough to bloat this PR's scope, record it as a **tracked
+  follow-up in the PR description** — never leave it as a buried inline comment.
+  **If a finding's severity is uncertain, round UP and escalate** per the hard
+  stop above (fail-safe): a finding you can't confidently call "low" is treated
+  as medium.
 
 ### 7. Convergence loop
 
 Steps 5 and 6 can surface new findings after a fix (a fix can introduce its
 own issue — this happened twice in this repo's own history, see ADR 011).
-So: after applying fixes, re-run `/review` and `/security-review` again
-before declaring done. Loop:
+So: after applying fixes and pushing, re-read the `claude-review` CI job's
+comments on the new commit (`gh pr view <pr-number> --comments` — the job
+re-runs automatically on each push) and re-run `/security-review` before
+declaring done. Loop:
 
-- Re-review → nothing open, no security findings → done, go to Step 8.
-- Re-review → new *non-security* findings → fix, loop again.
-- Re-review → any medium/high security finding appears → stop per Step 6,
+- Re-check → nothing open, no security findings → done, go to Step 8.
+- Re-check → new *non-security* findings → fix, loop again.
+- Re-check → any medium/high security finding appears → stop per Step 6,
   regardless of what round this is.
 - **Cap at 3 resolve-and-re-review rounds.** If still not converged after 3
   rounds, stop — post a PR comment explaining what's still open and why the
@@ -206,11 +230,17 @@ before declaring done. Loop:
 
 ### 8. Merge and document (only reached with zero open items)
 
-- Confirm CI is green on the latest commit.
-- Merge to `main` — prefer a local fast-forward merge and push (this repo's
-  established pattern: `git checkout main && git pull --ff-only && git merge
-  --ff-only <branch> && git push origin main`) when the branch is cleanly
-  ahead; fall back to `gh pr merge` if it isn't.
+- Confirm CI is green on the latest commit — including the armed `bandit` gate
+  and the `claude-review` job.
+- Merge to `main` with `gh pr merge <pr-number> --rebase --delete-branch`
+  (this replaces the old local `git merge --ff-only` + `git push origin main`).
+  Going through `gh pr merge` respects branch protection once Phase C requires
+  PRs + status checks, and `--rebase` keeps the repo's linear history while
+  preserving the individual commits (use `--squash` instead when the PR reads
+  better as a single commit — both stay linear). **Always pass an explicit
+  merge method**: a bare `gh pr merge` prompts interactively and will hang an
+  unattended run. Do NOT use `--auto` yet — merge-when-green needs branch
+  protection, which is the separate Phase C step, not this loop's.
 - If the change produced an ADR (`docs/decisions/NNN-*.md`) or a security
   review doc (`docs/security-review-*.md`), make sure both are committed and
   reflect the code's *final* state — not the state at first-draft time. Both
