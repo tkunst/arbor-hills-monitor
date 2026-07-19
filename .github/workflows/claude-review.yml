@@ -1,0 +1,44 @@
+name: claude-review
+
+# Independent, advisory CI code review — a "cold process" second read of every
+# PR diff (fresh context, no in-session state), so a review PROVABLY ran on the
+# change. This complements (does not replace) the in-session /security-review,
+# which stays authoritative for security per the CD-governance plan.
+#
+# ADVISORY / NON-BLOCKING BY DESIGN: claude-code-action posts its findings as PR
+# comments and never sets a blocking review status, so it exits 0 even when it
+# finds problems. It is deliberately NOT wrapped in `continue-on-error` / `|| true`:
+# a RED check here means the review could not run (bad/missing key, API timeout,
+# action crash) — exactly the failure a "provably ran" gate must surface. So
+# green ⟺ a review actually executed. Phase C adds `claude-review / review` to
+# branch-protection required checks (read the exact context name off a real run
+# first). See docs/session-2026-07-18-cd-governance-enforcement.md.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read # read the repo + PR diff
+  pull-requests: write # post the review as PR comments
+  id-token: write # OIDC token claude-code-action uses to authenticate
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The action auto-detects the PR from the event context — no need to
+          # (and we must not) interpolate attacker-controlled PR title/body/ref
+          # into this prompt. Keep it a static instruction.
+          prompt: |
+            Review this pull request's diff for:
+            - correctness bugs (logic errors, crash paths, wrong edge-case handling)
+            - security issues
+            - clear simplifications or reuse of an existing helper
+            Post findings as inline comments on the specific lines they concern.
+            Be concise and specific; skip style nits. If the diff looks clean,
+            say so briefly.
