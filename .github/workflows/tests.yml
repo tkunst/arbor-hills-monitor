@@ -1,15 +1,14 @@
 name: tests
 
+# No `paths:` filter, deliberately: `pytest` is a REQUIRED status check (see the
+# CD-governance package / docs/session-2026-07-18-cd-governance-enforcement.md).
+# A required check that is path-filtered stays "pending forever" on any PR that
+# doesn't touch the filtered paths, which blocks the merge. So it runs on every
+# PR and every push to main and always reports a definite pass/fail.
 on:
   pull_request:
-    paths:
-      - "**/*.py"
-      - requirements.txt
-      - .github/workflows/tests.yml
   push:
     branches: [main]
-    paths:
-      - "**/*.py"
 
 jobs:
   pytest:
