@@ -8,11 +8,23 @@ name: claude-review
 # ADVISORY / NON-BLOCKING BY DESIGN: claude-code-action posts its findings as PR
 # comments and never sets a blocking review status, so it exits 0 even when it
 # finds problems. It is deliberately NOT wrapped in `continue-on-error` / `|| true`:
-# a RED check here means the review could not run (bad/missing key, API timeout,
-# action crash) — exactly the failure a "provably ran" gate must surface. So
-# green ⟺ a review actually executed. Phase C adds `claude-review / review` to
-# branch-protection required checks (read the exact context name off a real run
-# first). See docs/session-2026-07-18-cd-governance-enforcement.md.
+# a RED check here means the review genuinely could not run (bad/missing key, API
+# timeout, action crash) — the failure a "provably ran" gate must surface.
+#
+# ONE CAVEAT (green does NOT unconditionally mean "a review ran"): the action
+# deliberately SKIPS, and still exits 0 / green, on any PR that modifies a
+# workflow file — a security guard so a PR can't make the reviewer run against
+# its own edited workflow + secrets. So green means "reviewed (clean or with
+# advisory comments) OR skipped because this PR touched a workflow". For a
+# workflow-touching PR, the in-session /code-review is the fallback review
+# (see docs/overnight-coder.md Step 5). This doesn't weaken the real gates —
+# bandit / pytest / CodeQL / gitleaks still run — which is why the locked plan
+# keeps this review advisory, not a hard gate.
+#
+# The required check-run context is `review` (confirmed on PR #23's first run;
+# the earlier-guessed `claude-review / review` was wrong). Phase C adds it to
+# branch-protection required checks ONLY after a non-workflow PR proves a real
+# review comment posts. See docs/session-2026-07-18-cd-governance-enforcement.md.
 
 on:
   pull_request:

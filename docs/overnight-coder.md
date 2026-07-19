@@ -173,6 +173,13 @@ confirm, don't just take the merge on faith.
 - A light in-session `/code-review` is now only a **pre-push preflight** — run
   it in Step 4 before pushing to catch the obvious, but it is not the system of
   record; the CI job is.
+- **Fallback — if `claude-review` skipped:** the action deliberately skips (and
+  still reports the `review` check GREEN) on any PR that modifies a workflow
+  file, as a security guard. When that happens there is no CI review, so the
+  in-session `/code-review` is NOT merely a preflight for this PR — it *is* the
+  review, and its findings must be resolved before merging. Confirm by checking
+  the `review` job's log for "Action skipped due to workflow validation". Never
+  merge a workflow-touching PR on a green-but-skipped `review` alone.
 - Fix every finding directly in the same PR, **except**: if a finding is
   high-severity *and* substantial enough that folding it in would meaningfully
   bloat this PR's scope, open a **second, separate PR** for that fix instead
