@@ -1,11 +1,13 @@
 name: sast
 
 # Static application security testing (Bandit) for the Python codebase.
-# REPORT-ONLY for now: it scans every PR + push and surfaces findings in the
-# job summary + an artifact, but does not fail the build. Reason: 5 pre-existing
-# medium+ findings need triage first (see docs/decisions or the enabling PR).
-# To promote to a blocking gate once those are cleared: change the final
-# `exit 0` to `exit "$rc"`, then add `sast` to the required status checks.
+# BLOCKING GATE: it scans every PR + push and FAILS the build on any medium+
+# severity/confidence finding (final `exit "$rc"`). The pre-existing findings
+# (1 XXE B314, 1 B310 urlopen, 3 B324 SHA1) were all cleared in the
+# CD-governance package (see docs/session-2026-07-18-cd-governance-enforcement.md);
+# the current scan is green. Bandit is PINNED (see below) so a future release
+# can't silently turn this required check red without a deliberate bump.
+# Phase C adds `bandit` to branch-protection required_status_checks.
 
 on:
   pull_request:
@@ -24,7 +26,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install bandit
-        run: python -m pip install --upgrade pip bandit
+        # PINNED (not --upgrade): once `bandit` is a required check, an
+        # unpinned release that adds a rule or raises a severity would turn the
+        # gate red with zero code change and block all merges. Bump deliberately.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "bandit==1.9.4"
       - name: Run bandit (medium+ severity + confidence; tests excluded)
         run: |
           set +e
@@ -34,10 +41,10 @@ jobs:
             | tee bandit-report.txt
           rc=${PIPESTATUS[0]}
           {
-            echo "## Bandit SAST (report-only)"
+            echo "## Bandit SAST (blocking gate)"
             echo ""
             if [ -s bandit-report.txt ]; then
-              echo "Findings at medium+ severity/confidence:"
+              echo "Findings at medium+ severity/confidence (BUILD FAILS):"
               echo ""
               echo '```'
               cat bandit-report.txt
@@ -46,9 +53,9 @@ jobs:
               echo "No findings at medium+ severity/confidence. ✅"
             fi
             echo ""
-            echo "_Report-only until the pre-existing findings are triaged. To gate: change the final \`exit 0\` to \`exit \"\$rc\"\` and add \`sast\` to required checks._"
+            echo "_Blocking gate: any medium+ finding fails this check. Phase C adds \`bandit\` to branch-protection required checks._"
           } >> "$GITHUB_STEP_SUMMARY"
-          exit 0   # report-only: do not fail the build yet
+          exit "$rc"   # blocking gate: fail the build on any medium+ finding
       - name: Upload SAST report
         if: always()
         uses: actions/upload-artifact@v4
