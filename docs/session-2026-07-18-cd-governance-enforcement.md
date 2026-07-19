@@ -155,3 +155,62 @@ directly); **AI findings** preview (Bandit already covers Python).
 - **NEXT: Phase C — enforcement flip (HITL with Trisha; do NOT start autonomously).** See the Phase C
   bullet above — now carries the exact check-context names + the `claude-review` empirical precondition
   discovered building PR B. **This is where the session STOPS.**
+
+## Session record — building & merging PR B (2026-07-18, interactive)
+
+Trisha-directed interactive session (not the overnight loop): resumed this doc and built PR B end
+to end. Chronology and the decisions that shaped it:
+
+1. **Oriented before building.** Read the coordination file + this resume doc, claimed surfaces in
+   `.claude/COORDINATION.md`, and established Bandit ground truth by actually running the exact
+   `sast.yml` scan locally (bandit 1.9.4): confirmed exactly the 4 predicted medium+ findings after
+   PR A cleared the XXE — `B310 gfl_air_client.py:117` + `B324` ×3 (`pfas_client.py:154`,
+   `wds_archiver.py:62`, `wds_watcher.py:200`). Verified the fix mechanics empirically: bandit honors
+   `# noqa: S310  # nosec B310` on one line, and `hashlib.sha1(..., usedforsecurity=False)` is
+   byte-identical to the bare call (so no stored change-token migrates).
+
+2. **Delegated the one uncertain piece.** A `claude-code-guide` subagent researched the exact
+   `claude-code-action@v1` workflow shape (inputs, permissions, always-passes-on-findings, check-name).
+
+3. **Advisor pass before writing changed the design in three ways** (all folded in): (a) the review
+   job must **not** be `continue-on-error` — the action already exits 0 on findings, so adding nothing
+   keeps "green ⟺ it ran," which is the whole point of a provably-ran check; (b) **pin Bandit** so a
+   required check stays deterministic; (c) the `overnight-coder.md` edits must be **executable
+   unattended** — an explicit `gh pr merge` method (a bare one hangs interactively) and a concrete
+   command for the convergence loop to read the CI review.
+
+4. **Built + shipped** the five pieces (see Status/next above) across five commits on branch
+   `cd-required-check-readiness`.
+
+5. **First CI run surfaced the key discovery.** The new `review` check went **green in 11s having
+   posted nothing** — the log showed `claude-code-action` *deliberately skips* any PR that modifies a
+   workflow file ("Action skipped due to workflow validation"), a guard so a PR can't make the reviewer
+   run against its own edited workflow + secrets. PR B necessarily edits workflows, so it can't
+   self-verify. This (a) corrected the required check-name to **`review`** (the research had guessed
+   `claude-review / review`), and (b) relocated the "prove a real review posts" check to Phase C's
+   opening non-workflow PR. Corrected two now-inaccurate comments (claude-review.yml's "green ⟺ ran";
+   added the overnight-coder Step 5 workflow-skip fallback so an unattended run never merges a
+   workflow-touching PR on a green-but-skipped review).
+
+6. **Reviewed before merge** (the advisor caught that CI's `review` had skipped, so the in-session
+   passes were the *only* review the diff got): `/security-review` + an independent adversarial subagent
+   → **zero** med/high (traced the B310 suppression to trusted-config-only `service_url`, no SSRF; the
+   workflow is `pull_request` so fork PRs get no secret); `/code-review` at xhigh → one LOW
+   doc-consistency nit (Step 4 wording), fixed.
+
+7. **Merged** via the newly-documented `gh pr merge 23 --rebase --delete-branch`; push-to-main CI green;
+   updated this doc + the `COORDINATION.md` closing entry.
+
+**Residual / accepted:** a required `review` check will always pass a workflow-touching PR *without* a
+review — accepted because the check is advisory-by-design and the real gates (`bandit`/`pytest`/
+`CodeQL`/`gitleaks`) still run, with the in-session `/code-review` as the documented fallback. Bandit
+is pinned, so security-rule coverage advances only on a deliberate bump.
+
+**Left for Trisha (Phase C — HITL, not started):** the enforcement flip itself, gated on the throwaway
+non-workflow PR proving `claude-review` actually posts; resolve the `CodeQL` vs `Analyze (python)`
+context name on that same PR; the Dependabot-secret gotcha (add `ANTHROPIC_API_KEY` to the Dependabot
+secret store once `review` is required). All detailed in the Phase C section above.
+
+**Safe to close.** `main` is a clean green base at `7c86518` (this doc's commit updates that HEAD).
+Nothing of this session's is uncommitted or unpushed; all surfaces released; **PR B done, stopped
+before Phase C as planned.**
