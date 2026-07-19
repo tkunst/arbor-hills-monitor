@@ -154,9 +154,10 @@ confirm, don't just take the merge on faith.
 - Wait for CI to finish (`gh pr checks <n> --watch`). The check set now
   includes the armed **`bandit`** SAST gate (fails the PR on any medium+
   finding) and the independent **`claude-review`** job (an advisory review that
-  posts inline comments and stays green *unless it could not run* — a red
-  `claude-review` means the review itself failed, not that it found problems).
-  Both must finish before Step 5, so the review it posts exists to consume. If
+  posts inline comments; a red `claude-review` means the review itself failed,
+  not that it found problems, and green means it ran *or* was skipped — see the
+  Step 5 workflow-skip fallback). Both must finish before Step 5, so the review
+  it posts exists to consume. If
   a check fails for a reason unrelated to the feature (e.g. markdownlint on a
   doc — this repo's CI is picky about blank lines around lists/fences and
   restarts ordered-list numbering at 1 for every list block, not just the
