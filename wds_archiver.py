@@ -59,7 +59,7 @@ def _today() -> str:
 
 
 def _hash(html: str) -> str:
-    return hashlib.sha1(html.encode("utf-8", "ignore")).hexdigest()[:12]
+    return hashlib.sha1(html.encode("utf-8", "ignore"), usedforsecurity=False).hexdigest()[:12]
 
 
 def _should_run(cfg: dict, oauth_configured: bool) -> tuple[bool, str]:

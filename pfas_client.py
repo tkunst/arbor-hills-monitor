@@ -151,7 +151,7 @@ def hash_text(content: str) -> str:
     """12→16-char SHA-1 of a normalized content string (from extract_content).
     Short by design: it's a change token stored in a Sheet cell, never a security
     digest. Same idiom as wds_archiver._hash."""
-    return hashlib.sha1(content.encode("utf-8", "ignore")).hexdigest()[:16]
+    return hashlib.sha1(content.encode("utf-8", "ignore"), usedforsecurity=False).hexdigest()[:16]
 
 
 def visible_text(content: str) -> str:
