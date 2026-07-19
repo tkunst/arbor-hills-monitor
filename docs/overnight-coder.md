@@ -1,9 +1,17 @@
 # Overnight coder loop
 
 A procedure for running unattended, autonomous coding sessions against this
-repo — feed the goal in when you kick off the loop (e.g. via `/loop`), then
-this document is the standing instruction for how each iteration proceeds
-without further check-ins from Trisha.
+repo. Kick-off is a single paste into a fresh `claude` session in this repo —
+Trisha's standard invocation:
+
+> Follow docs/overnight-coder.md. Goal + full spec: [handoff file path] —
+> read that file first, it IS the goal.
+
+This document is then the standing instruction for how the session proceeds
+without further check-ins from Trisha. (It is **not** `/loop` — that skill
+re-runs a prompt on an interval; this is one paste, one continuous session
+that carries the build through merge. Earlier phrasing here suggested
+`/loop`, which caused repeated wrong advice; corrected 2026-07-19.)
 
 Not to be confused with the Lotext **overnight-worker** Routine
 (`Cowork-claude/skills/overnight-worker/SKILL.md`) — that one drains a
