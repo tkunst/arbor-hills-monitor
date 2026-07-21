@@ -1,0 +1,60 @@
+name: mmd-watch
+
+# EGLE MMD Open Data watch (Stream I, ADR 018): daily snapshot-diff on EGLE
+# Materials Management Division's keyless ArcGIS registry (layer 0) for the
+# watched wdsids — the landfill (475946, incl. its map-hidden compost
+# registration) and the compost area (465941, whose APPEARANCE in the service
+# is the trip-wire). Emails an alert on any change vs. the last snapshot in
+# the "MMD Watch" tab. First sighting of each wdsid baselines silently.
+#
+# Safe to leave scheduled from day one: mmd.enabled gates the run —
+# mmd_watcher._should_run() makes every run a quiet no-op (exit 0) while it's
+# false. No Anthropic (a deterministic snapshot-diff, not the Claude
+# classifier) and no Drive/OAuth (the deliverable is the alert + the durable
+# Sheet row, same scope call as pfas/rop — ADR 012). 11am ET takes the free
+# slot after rop-watch's 10am; state is the "MMD Watch" tab, NOT _meta, so it
+# never races the other jobs.
+on:
+  schedule:
+    - cron: "0 16 * * *"    # 11am ET (4pm UTC). DST drift of +/-1h is acceptable.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mmd-watch
+  cancel-in-progress: false
+
+jobs:
+  mmd-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Watch MMD Open Data for changes
+        env:
+          # Sheets I/O uses the service account; the change alert uses SMTP.
+          # No Anthropic (nothing to classify) and no OAuth (no Drive mirror).
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
+        run: python mmd_watcher.py
