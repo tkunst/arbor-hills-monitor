@@ -456,6 +456,33 @@ rop:
   # recipients:
   #   - arbor-hills@trishakunst.com
 
+# --- EGLE MMD Open Data watch (Stream I, ADR 018) ---
+# Daily snapshot-diff on EGLE Materials Management Division's KEYLESS ArcGIS
+# registry (gisagoegle.state.mi.us .../EGLE/MmdOpenData/MapServer, layer 0 —
+# the master (facility, module) table). This is the STATE'S OWN registry view
+# of the facility: one watched item per wdsid below, alerting on any change to
+# its record set — a disposal-area/Part 115 status flip, the map-hidden
+# (show=0) compost registration changing or surfacing, or a watched wdsid
+# APPEARING in the service at all (465941 is absent today; its first record
+# showing up means the state has started tracking the compost/expansion
+# parcel). Statuses change rarely — near-silent in steady state. The FIRST
+# sighting of each wdsid baselines silently (an EMPTY record set is a valid
+# baseline). See mmd_client.py / mmd_watcher.py.
+#
+# ACTIVATION — same pattern as Stream C / Mirror D / PFAS / GFL air / Ridge
+# Wood / ROP: review + merge; the first enabled run just baselines; flip
+# enabled here to pause/resume without losing state (the MMD Watch tab).
+mmd:
+  enabled: true                      # activated at build (Trisha's 2026-07-21 "automate for monitor to use it") — see ADR 018
+  wdsids:
+    - 475946   # Arbor Hills Landfill, Inc — landfill + (map-hidden) compost registration records
+    - 465941   # Arbor Hills Compost Area — ABSENT from the service today; appearing = trip-wire
+  # Recipient override: Trisha only to start (Meeting Watch precedent for a
+  # brand-new stream). Delete/comment this block to send to the full
+  # alert_recipients list once the alert copy has been seen in the wild.
+  recipients:
+    - arbor-hills@trishakunst.com
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 alert_recipients:
