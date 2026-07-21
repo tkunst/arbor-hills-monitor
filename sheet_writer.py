@@ -159,6 +159,13 @@ TAB_RIDGEWOOD = "Ridge Wood Reports"
 # public-notice N2688 mention) — "baseline" (first sighting, silent) or
 # "changed" (fires an alert). See rop_watcher.py.
 TAB_ROP = "ROP Watch"
+# EGLE MMD Open Data watch (Stream I, ADR 018) — same on-demand policy: no tab
+# appears until mmd_watcher actually runs. Append-only, keyed by Item (e.g.
+# "mmd:475946") in col B for dedup/state — the PFAS/Meeting/ROP Watch idiom
+# (Sheet-derived ⇒ race-free, NOT _meta). One row per observed state of a
+# watched wdsid's layer-0 record set — "baseline" (first sighting, silent) or
+# "changed" (fires an alert). See mmd_watcher.py.
+TAB_MMD = "MMD Watch"
 # Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
 # TAB_NEW/TAB_HISTORICAL. "Change" is new/changed (live) or historical (dump).
 WDS_HEADERS = [
@@ -236,6 +243,14 @@ RIDGEWOOD_REPORT_HEADERS = [
 # record of what the source said. Last so the human columns read cleanly to its
 # left (same layout choice as PFAS_SNAPSHOT_HEADERS/MEETING_WATCH_HEADERS).
 ROP_WATCH_HEADERS = [
+    "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
+    "Snapshot JSON",
+]
+
+# EGLE MMD Open Data watch (Stream I, ADR 018). Same row shape and rationale as
+# ROP_WATCH_HEADERS: the last column's canonical snapshot JSON is what next run
+# diffs against AND a durable dated record of what the state's registry said.
+MMD_WATCH_HEADERS = [
     "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
     "Snapshot JSON",
 ]
@@ -1148,6 +1163,69 @@ def append_rop_watch_row(
     record first, alert best-effort second — same crash-safe ordering as
     append_pfas_snapshot_row/append_meeting_watch_row)."""
     append_rows(service, sheet_id, TAB_ROP, [[
+        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
+    ]])
+
+
+# ---------------------------------------------------------------------------
+# MMD Open Data watch (Stream I, ADR 018) — the tab is the state (append-only ⇒
+# race-free), exactly like the PFAS / Meeting / ROP Watch tabs above.
+# ---------------------------------------------------------------------------
+
+
+def ensure_mmd_tabs(service, sheet_id: str) -> None:
+    """Create the MMD Watch tab if missing and reconcile its header row on every
+    run (same self-healing policy as ensure_rop_tabs()). Called only from
+    mmd_watcher.py, so the tab doesn't appear until the watch actually runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_MMD not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_MMD}}}]},
+        ).execute()
+    _set_header(service, sheet_id, TAB_MMD, MMD_WATCH_HEADERS)
+
+
+def last_mmd_snapshot(service, sheet_id: str, item_key: str) -> tuple[str, str] | None:
+    """Return (snapshot_hash, snapshot_json) from the most recent row for this
+    item_key (e.g. "mmd:475946"), or None if the item has never been
+    snapshotted. None means 'baseline this item'; a hash mismatch means
+    'changed'. Reading the last matching row (not a _meta cell) is what makes
+    the watch race-free — the tab is append-only, so no concurrent job can
+    clobber it (same idiom as last_rop_snapshot)."""
+    return last_mmd_snapshots(service, sheet_id, [item_key])[item_key]
+
+
+def last_mmd_snapshots(
+    service, sheet_id: str, item_keys: list[str],
+) -> dict[str, tuple[str, str] | None]:
+    """Batched form of last_mmd_snapshot: ONE tab read for however many keys are
+    asked for (the all-baselined check on a fetch failure), instead of one
+    full-tab read per key. Same race-free append-only read as the singular
+    form — the last_rop_snapshots idiom."""
+    latest_by_key: dict[str, list] = {}
+    for r in _tab_rows(service, sheet_id, TAB_MMD, "A2:H"):
+        if len(r) > 1:
+            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
+    result: dict[str, tuple[str, str] | None] = {}
+    for key in item_keys:
+        r = latest_by_key.get(key)
+        if r is None:
+            result[key] = None
+        else:
+            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
+    return result
+
+
+def append_mmd_watch_row(
+    service, sheet_id: str, date: str, item_key: str, label: str, change: str,
+    snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
+) -> None:
+    """Append one MMD Watch row. Written BEFORE the change email is sent
+    (durable record first, alert best-effort second — same crash-safe ordering
+    as append_rop_watch_row)."""
+    append_rows(service, sheet_id, TAB_MMD, [[
         date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
     ]])
 
