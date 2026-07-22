@@ -1414,6 +1414,54 @@ def set_gfl_air_stale_marker(service, sheet_id: str, as_of: str) -> None:
     ).execute()
 
 
+# The CH4 watch-episode marker lives in column O — outside the A:L station write
+# span AND distinct from column N's liveness stale-marker — so write_gfl_air_summary
+# never clobbers it. It records which stations are CURRENTLY inside an already-
+# alerted >=40ppm episode (coder:gfl-air-thresholds; ADR 014 addendum), the
+# once-per-episode gate for the separate CH4 WATCH-tier email. Unlike the single-
+# value stale marker, this is a SET (JSON array) since multiple stations can be
+# mid-episode at once.
+_GFL_WATCH_MARKER_LABEL_CELL = "O1"
+_GFL_WATCH_MARKER_VALUE_CELL = "O2"
+
+
+def gfl_air_watch_marker(service, sheet_id: str) -> set:
+    """Stations currently inside an already-alerted CH4 watch/exceedance episode
+    (>=40ppm) — read before deciding which stations' watch email is 'new' this poll.
+    Returns an EMPTY set (never raises) on a missing/blank/unparseable cell —
+    fail-safe toward alerting: an unreadable marker must look like 'nothing has
+    been alerted yet', never like 'everything is already covered', since the
+    latter would risk silently swallowing a real watch notification."""
+    resp = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_GFL_AIR}'!{_GFL_WATCH_MARKER_VALUE_CELL}")
+        .execute()
+    )
+    vals = resp.get("values", [])
+    if not vals or not vals[0] or not str(vals[0][0]).strip():
+        return set()
+    try:
+        data = json.loads(str(vals[0][0]))
+    except (ValueError, TypeError):
+        return set()
+    return {str(s) for s in data} if isinstance(data, list) else set()
+
+
+def set_gfl_air_watch_marker(service, sheet_id: str, stations) -> None:
+    """Persist the CURRENT full set of stations mid-episode (not an incremental
+    add) — a plain snapshot of 'who is >=40ppm right now, already notified about',
+    so a missed write just means next poll recomputes from current data rather than
+    drifting. Writes a human label (O1) + the JSON array (O2) in one update."""
+    service.spreadsheets().values().update(
+        spreadsheetId=sheet_id,
+        range=f"'{TAB_GFL_AIR}'!{_GFL_WATCH_MARKER_LABEL_CELL}",
+        valueInputOption="RAW",
+        body={"values": [["CH4 Watch-Episode Stations (>=40ppm, already alerted)"],
+                          [json.dumps(sorted(stations))]]},
+    ).execute()
+
+
 # ---------------------------------------------------------------------------
 # Force-reprocess support: purge a doc's rows so a re-extract is clean, not
 # additive (backfill FORCE_REPROCESS_DOC_IDS — see backfill.py).

@@ -311,7 +311,8 @@ def _wire(monkeypatch, cfg=CFG):
     monkeypatch.setenv("GSHEET_ID", "SID")
     monkeypatch.setattr(gw, "load_config", lambda: copy.deepcopy(cfg))
     monkeypatch.setattr(gw.dc, "sheets_service", lambda: fake)
-    monkeypatch.setattr(gw.ea, "send_email", lambda subj, body, c: sent.append((subj, body)))
+    monkeypatch.setattr(gw.ea, "send_email",
+                        lambda subj, body, c, recipients=None: sent.append((subj, body)))
     # Default: the H2S 24-hr average query returns no stations (no average exceedance),
     # so an incremental poll stays hermetic (no real ArcGIS call). Tests that exercise
     # the average alert override this with their own {station: {avg, n}} mapping.
@@ -902,3 +903,254 @@ def test_gfl_air_latest_as_of_takes_the_newest_and_ignores_non_reading_rows():
     sw.write_gfl_air_summary(fake, "SID", six, "link")
     assert sw.gfl_air_latest_as_of(fake, "SID") == "2026-07-15T00:00Z"   # max across stations
     assert sw.gfl_air_latest_as_of(fake, "SID") is not None
+
+
+# --- CH4 WATCH-tier notification (coder:gfl-air-thresholds) --------------------
+# The classifier tier itself (severity='watch', the config, the snapshot column)
+# predates this: it shipped 2026-07-17 (ac53d30/2c37d12) and already has coverage
+# above. What follows covers the NEW piece — a dedicated, once-per-episode,
+# Trisha-scoped email — which did not exist before this change.
+
+def _snap(station, ch4_status):
+    return {"station": station, "as_of": "2026-07-10T12:00Z", "h2s": 0,
+            "h2s_status": "ok", "ch4": 45, "ch4_status": ch4_status, "wind": 1,
+            "direction": 200, "temp": 75, "oid": 1, "note": "n"}
+
+
+def test_watch_episode_stations_includes_watch_and_exceedance_excludes_ok():
+    snapshot = [_snap("MS-1", "watch"), _snap("MS-2", "exceedance"),
+                _snap("MS-3", "ok"), _snap("MS-4", "sentinel")]
+    assert gw.watch_episode_stations(snapshot) == {"MS-1", "MS-2"}
+
+
+def test_recovered_watch_stations_requires_affirmative_evidence():
+    # MS-1 has a fresh reading THIS poll that's back to ok -> genuinely recovered.
+    # MS-2 is still elevated this poll -> not recovered.
+    # MS-3 has NO reading at all this poll (dark sensor / partial batch) -> left
+    # exactly as marked, NOT treated as recovered just because it's silent.
+    marked = {"MS-1", "MS-2", "MS-3"}
+    seen = {"MS-1", "MS-2"}                 # MS-3 absent from this poll's readings
+    elevated_now = {"MS-2"}                 # only MS-2 is still >=40 among those seen
+    assert gw.recovered_watch_stations(marked, seen, elevated_now) == {"MS-1"}
+
+
+def test_watch_alert_stations_skips_already_marked_and_non_watch():
+    readings = [
+        _reading(1, "MS-1", 3.0, 45.0),   # watch, not marked -> included
+        _reading(2, "MS-2", 3.0, 46.0),   # watch, already marked -> excluded
+        _reading(3, "MS-3", 3.0, 13000.0),  # exceedance (>= THRESH's 12500), not watch -> excluded
+        _reading(4, "MS-4", 3.0, 10.0),   # ok -> excluded
+    ]
+    out = gw.watch_alert_stations(readings, THRESH, SENT, WATCH, already_marked={"MS-2"})
+    assert set(out) == {"MS-1"}
+    val, when = out["MS-1"]
+    assert val == 45.0 and when
+
+
+def test_watch_alert_stations_last_reading_wins_within_one_poll():
+    readings = [_reading(1, "MS-1", 3.0, 45.0), _reading(2, "MS-1", 3.0, 48.0)]
+    out = gw.watch_alert_stations(readings, THRESH, SENT, WATCH, already_marked=set())
+    assert out["MS-1"][0] == 48.0
+
+
+def test_alert_lines_include_watch_false_drops_watch_lines_entirely():
+    r = _reading(1, "MS-1", 3.0, 100.0)             # CH4 100 -> watch severity
+    lines, has_exc, has_watch = gw.alert_lines([r], THRESH, SENT, True, WATCH,
+                                               include_watch=False)
+    assert lines == [] and has_exc is False and has_watch is False
+
+
+def test_alert_lines_include_watch_true_is_unchanged_default():
+    r = _reading(1, "MS-1", 3.0, 100.0)
+    lines, has_exc, has_watch = gw.alert_lines([r], THRESH, SENT, True, WATCH)
+    assert has_watch is True and len(lines) == 1
+
+
+# --- watch-episode marker (sheet_writer, column O) ------------------------------
+
+def test_gfl_air_watch_marker_roundtrips_and_survives_a_snapshot_write():
+    fake = FakeSheets()
+    sw.ensure_gfl_air_tabs(fake, "SID")
+    six = [{"station": s, "as_of": "2026-07-10T12:00Z", "h2s": 0, "h2s_status": "ok",
+            "ch4": 5, "ch4_status": "ok", "wind": 1, "direction": 200, "temp": 75,
+            "oid": 100 + i, "note": "n"} for i, s in enumerate(STATIONS)]
+    sw.write_gfl_air_summary(fake, "SID", six, "link")
+    assert sw.gfl_air_watch_marker(fake, "SID") == set()          # never fired yet
+    sw.set_gfl_air_watch_marker(fake, "SID", {"MS-3", "MS-5"})
+    assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3", "MS-5"}
+    # survives a fresh REPLACE snapshot write, and doesn't collide with column N
+    sw.set_gfl_air_stale_marker(fake, "SID", "2026-07-10T12:00Z")
+    sw.write_gfl_air_summary(fake, "SID", six, "link")
+    assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3", "MS-5"}
+    assert sw.gfl_air_stale_marker(fake, "SID") == "2026-07-10T12:00Z"
+    assert len(_summary(fake)) == 6
+
+
+def test_gfl_air_watch_marker_defaults_to_empty_set_on_blank_or_garbage():
+    fake = FakeSheets()
+    sw.ensure_gfl_air_tabs(fake, "SID")
+    assert sw.gfl_air_watch_marker(fake, "SID") == set()           # tab exists, cell blank
+    fake.values().update(
+        spreadsheetId="SID", range=f"'{sw.TAB_GFL_AIR}'!O2",
+        valueInputOption="RAW", body={"values": [["not json"]]},
+    ).execute()
+    assert sw.gfl_air_watch_marker(fake, "SID") == set()           # fail-safe, never raises
+
+
+# --- watch-tier run() integration: recipient scoping + once-per-episode --------
+
+_WATCH_RECIPIENTS = ["arbor-hills@trishakunst.com"]
+
+
+def _watch_cfg():
+    cfg = copy.deepcopy(CFG)
+    cfg["gfl_air"]["watch_thresholds"] = {"ch4_ppm": 40}
+    cfg["gfl_air"]["watch_alert_recipients"] = list(_WATCH_RECIPIENTS)
+    return cfg
+
+
+def _wire_with_recipients(monkeypatch, cfg):
+    fake = FakeSheets()
+    sent = []                     # (subj, body, recipients)
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.setattr(gw, "load_config", lambda: copy.deepcopy(cfg))
+    monkeypatch.setattr(gw.dc, "sheets_service", lambda: fake)
+    monkeypatch.setattr(gw.ea, "send_email",
+                        lambda subj, body, c, recipients=None: sent.append((subj, body, recipients)))
+    monkeypatch.setattr(gw.gc, "fetch_h2s_window_avg", lambda *a, **k: {})
+    return fake, sent
+
+
+def test_watch_recipients_empty_is_display_only_rollback_lever(monkeypatch):
+    # No watch_alert_recipients configured -> today's original behavior: the watch
+    # line rides the combined, full-list email (unchanged), no dedicated send.
+    cfg = copy.deepcopy(CFG)
+    cfg["gfl_air"]["watch_thresholds"] = {"ch4_ppm": 40}
+    fake, sent = _wire(monkeypatch, cfg)
+    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
+    gw.run()
+    new = [_reading(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
+    new[2]["CH4"] = 45.0
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0
+    assert len(sent) == 1
+    assert "GFL air watch" in sent[0][0]
+    assert sw.gfl_air_watch_marker(fake, "SID") == set()      # marker never touched
+
+
+def test_watch_recipients_configured_sends_scoped_email_and_marks_episode(monkeypatch):
+    cfg = _watch_cfg()
+    fake, sent = _wire_with_recipients(monkeypatch, cfg)
+    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
+    gw.run()                                            # baseline -> cursor 105
+
+    new = [_reading(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
+    new[2]["CH4"] = 45.0                                 # MS-3 enters watch
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0
+
+    assert len(sent) == 1                                # ONE email, not two
+    subj, body, recipients = sent[0]
+    assert "GFL air watch" in subj and "URGENT" not in subj
+    assert recipients == _WATCH_RECIPIENTS               # scoped, not the full list
+    assert "MS-3" in body and "not a health standard" in body.lower()
+    assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3"}
+
+
+def test_watch_continuing_episode_is_suppressed_then_recovery_rearms(monkeypatch):
+    cfg = _watch_cfg()
+    fake, sent = _wire_with_recipients(monkeypatch, cfg)
+    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
+    gw.run()                                            # baseline -> cursor 105
+
+    def poll(oid, ch4, day):
+        rows = [_reading(oid, "MS-3", 0.0, ch4, day)]
+        monkeypatch.setattr(gw.gc, "fetch_readings",
+                            lambda c, since, limit=None: [r for r in rows if r["OBJECTID"] > since])
+        return gw.run()
+
+    assert poll(106, 45.0, DAY1) == 0                    # enters watch -> emailed
+    assert len(sent) == 1
+    assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3"}
+
+    assert poll(107, 46.0, DAY1 + 3600_000) == 0         # still elevated -> suppressed
+    assert len(sent) == 1
+    assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3"}
+
+    assert poll(108, 10.0, DAY1 + 7200_000) == 0         # recovers below 40
+    assert len(sent) == 1                                # no email for a recovery
+    assert sw.gfl_air_watch_marker(fake, "SID") == set()  # marker reconciled
+
+    assert poll(109, 47.0, DAY1 + 10800_000) == 0        # re-enters -> fresh episode
+    assert len(sent) == 2
+    assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3"}
+
+
+def test_watch_send_failure_leaves_marker_unset_and_retries_next_poll(monkeypatch):
+    cfg = _watch_cfg()
+    fake = FakeSheets()
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.setattr(gw, "load_config", lambda: copy.deepcopy(cfg))
+    monkeypatch.setattr(gw.dc, "sheets_service", lambda: fake)
+    monkeypatch.setattr(gw.gc, "fetch_h2s_window_avg", lambda *a, **k: {})
+    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
+
+    def failing_send(subj, body, c, recipients=None):
+        raise RuntimeError("SMTP down")
+    monkeypatch.setattr(gw.ea, "send_email", failing_send)
+    gw.run()                                            # baseline
+
+    new = [_reading(106, "MS-3", 0.0, 45.0, DAY1)]
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0                                # best-effort: never crashes
+    assert sw.gfl_air_watch_marker(fake, "SID") == set()   # NOT marked — send failed
+
+    sent = []
+    monkeypatch.setattr(gw.ea, "send_email",
+                        lambda subj, body, c, recipients=None: sent.append((subj, body, recipients)))
+    new2 = [_reading(107, "MS-3", 0.0, 46.0, DAY1 + 3600_000)]
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new2 if r["OBJECTID"] > since])
+    assert gw.run() == 0
+    assert len(sent) == 1                               # retried and succeeded
+    assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3"}
+
+
+def test_watch_and_exceedance_on_different_stations_both_notify_independently(monkeypatch):
+    cfg = _watch_cfg()
+    fake, sent = _wire_with_recipients(monkeypatch, cfg)
+    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
+    gw.run()
+
+    new = [_reading(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
+    new[2]["CH4"] = 45.0                                 # MS-3: watch
+    new[4]["CH4"] = 600.0                                # MS-5: exceedance (action level 12500? no)
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0
+
+    # unchanged combined exceedance path did NOT fire here (THRESH ch4 action = 12500,
+    # so 600 is still 'watch' too) — bump one station past the fixture's action level
+    # instead, in a follow-up poll, to prove independence without re-deriving THRESH.
+    assert len(sent) == 1 and "GFL air watch" in sent[0][0]
+
+    new2 = [_reading(200, "MS-5", 0.0, 20000.0, DAY1 + 3600_000)]  # >= action 12500
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new2 if r["OBJECTID"] > since])
+    assert gw.run() == 0
+    assert len(sent) == 2
+    urgent = [s for s in sent if "URGENT" in s[0]]
+    assert len(urgent) == 1 and urgent[0][2] is None     # exceedance -> default full list

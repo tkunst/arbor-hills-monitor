@@ -245,9 +245,9 @@ gfl_air:
   #     strictly MORE protective — it still catches anything that would have hit 12500, and
   #     will not flood (perimeter readings run ~4-27 ppm, so 500 fires only on a real gas-
   #     migration event, ~20x normal). The 40 ppm 'early-warning watch' (GFL's own perimeter
-  #     alarm level; not a health standard, ~0.08% LEL) is a documented WATCH REFERENCE only —
-  #     a true 40-ppm lower-urgency watch tier that also emails needs a classifier tier
-  #     (coder:gfl-air-thresholds), same as the H2S 750 ppb 15-min follow-on noted above.
+  #     alarm level; not a health standard, ~0.08% LEL) has a classifier tier that DOES email
+  #     (see watch_thresholds below + watch_alert_recipients) — same as the H2S 750 ppb
+  #     15-min follow-on noted above, which is still a genuine open follow-on.
   thresholds:
     h2s_ppb: 72
     ch4_ppm: 500
@@ -270,11 +270,12 @@ gfl_air:
   #     posts hourly (~23-24 readings/window; verified live 2026-07-18), so 12 is a safe floor.
   h2s_avg_window_hours: 24
   h2s_avg_min_readings: 12
-  # WATCH thresholds — the lower-urgency EARLY-WARNING tier (added 2026-07-17,
-  # coder:gfl-air-thresholds). A reading at/above a watch level but BELOW the matching
-  # action level above is a 'watch': it emails at LOWER urgency ([GFL air watch], not
-  # [URGENT]) and shows 'watch' status in the snapshot tab. OPTIONAL + partial — only
-  # pollutants listed here get a watch tier; omit the block entirely for single-tier.
+  # WATCH thresholds — the lower-urgency EARLY-WARNING tier (classifier added
+  # 2026-07-17, coder:gfl-air-thresholds). A reading at/above a watch level but BELOW
+  # the matching action level above is a 'watch': it shows 'watch' status in the
+  # snapshot tab and, if watch_alert_recipients (below) is configured, sends a
+  # dedicated once-per-episode email. OPTIONAL + partial — only pollutants listed
+  # here get a watch tier; omit the block entirely for single-tier.
   #   ch4_ppm 40 — GFL's OWN perimeter early-warning alarm level (overnight-worker #75
   #     air-thresholds research). Not a health standard (~0.08% of the methane LEL); it
   #     flags a rising landfill-gas trend well below the 500 ppm NESHAP action level.
@@ -282,6 +283,20 @@ gfl_air:
   #     ~2874x in 4 yrs and would flood (see the h2s_ppb note above).
   watch_thresholds:
     ch4_ppm: 40
+  # WATCH-tier notification (added 2026-07-21, coder:gfl-air-thresholds — the
+  # notification half of the two-tier CH4 scheme; the classifier above already
+  # existed). A WATCH email sends ONCE per station per continuous >=40ppm episode
+  # (re-arms only after that station drops back below 40) — dedicated subject/body,
+  # NEVER mixed with the full-list [URGENT]/anomaly email, so the whole Conservancy
+  # list isn't pinged for a sub-action-level trend. Real-specimen check (live feed,
+  # 2026-07-21): CH4>=40 across the full ~4.4yr record is ~368 episodes total across
+  # all 6 stations (~92/yr, ~1.75/wk combined) — not a flood; zero watch/exceedance
+  # emails have fired since the classifier shipped 2026-07-17 (checked via the
+  # workflow's run logs). Empty list = DISPLAY-ONLY (the rollback lever): the watch
+  # line still shows on the snapshot tab and, unchanged from before this change,
+  # still rides along in the full-list combined email — just no dedicated send.
+  watch_alert_recipients:
+    - arbor-hills@trishakunst.com          # Trisha only (Ridge Wood review_recipients precedent)
   # Sentinel / no-data values in the feed (ambiguous no-data vs off-scale-high).
   # Excluded from the measured series; surfaced as anomalies. ADR 014 RECOMMENDS
   # treating them as alert-worthy (fail-safe — don't infer 'benign' when the

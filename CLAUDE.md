@@ -44,6 +44,13 @@ external users but no sensitive data). Public repo.
   readings while the newest is stale — mitigates ADR 014's OBJECTID-reset silent
   stall (the cursor resetting below the stored value → `OBJECTID > cursor` empty
   forever). Marker in the `GFL Air` tab's column N; self-resets on recovery.
+  A CH4 WATCH tier (`gfl_air.watch_thresholds`) fires below the action level; if
+  `gfl_air.watch_alert_recipients` is set, it emails once per station per
+  continuous episode (>=40ppm, re-arms below 40) to that list only — separate
+  from, and never mixed into, the full-list exceedance/anomaly email. Episode
+  marker in column O (fail-safe: unreadable/failed-write → more alerting, never
+  suppression). Empty `watch_alert_recipients` = display-only (rollback lever).
+  See ADR 014's 2026-07-21 addendum.
 - `civicclerk_watcher.py` — Stream F: twice-daily change-watch on a hand-picked
   list of MMPC + Washtenaw County BOC meeting events (via `mmpc_client.fetch_event`).
   Snapshots each event's title/date/status/document-set into the `Meeting Watch`

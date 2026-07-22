@@ -118,13 +118,21 @@ def station_snapshot(readings: list[dict], thresholds: dict, sentinels: dict | N
 def alert_lines(readings: list[dict], thresholds: dict, sentinels: dict | None,
                 alert_on_sentinel: bool,
                 watch_thresholds: dict | None = None,
-                h2s_averaged: bool = False) -> tuple[list[str], bool, bool]:
+                h2s_averaged: bool = False,
+                include_watch: bool = True) -> tuple[list[str], bool, bool]:
     """(lines, has_exceedance, has_watch): one human line per reading that crossed an
     action level ('EXCEEDANCE'), reached the lower early-warning WATCH level ('watch'),
     or (if alert_on_sentinel) is a sentinel/no-data reading ('anomaly'). has_exceedance
     is True iff >=1 REAL action-level exceedance appears; has_watch iff >=1 watch-level
     reading appears. Together they set the email urgency: [URGENT] > [GFL air watch] >
     [GFL air anomaly]. Pure.
+
+    `include_watch=False` (coder:gfl-air-thresholds) drops watch-severity readings
+    from THIS combined pass entirely — used once `gfl_air.watch_alert_recipients` is
+    configured, so the CH4 watch tier is emailed exactly once, via the separate
+    dedicated/deduped watch_alert_stations() path below, never also folded into this
+    full-list exceedance/anomaly email. Default True preserves the original
+    single-channel behavior (the rollback lever when watch_alert_recipients is empty).
 
     When `h2s_averaged` is True the INSTANTANEOUS H2S action-level tier is dropped from
     THIS (per-reading) alert path — the H2S exceedance alert is driven instead by the
@@ -159,8 +167,12 @@ def alert_lines(readings: list[dict], thresholds: dict, sentinels: dict | None,
             has_exceedance = True
             lines.append(f"EXCEEDANCE  {st} {when}: " + "; ".join(reasons))
         elif sev == "watch":
-            has_watch = True
-            lines.append(f"watch       {st} {when}: " + "; ".join(reasons))
+            if include_watch:
+                has_watch = True
+                lines.append(f"watch       {st} {when}: " + "; ".join(reasons))
+            # else: suppressed here on purpose — a dedicated, deduped watch email
+            # covers it instead (watch_alert_stations() below), so it isn't emailed
+            # twice (once to the full list here, once to watch_alert_recipients).
         elif sev == "anomaly" and alert_on_sentinel:
             lines.append(f"anomaly     {st} {when}: " + "; ".join(reasons))
     return lines, has_exceedance, has_watch
@@ -244,6 +256,87 @@ def format_alert_body(lines: list[str], has_exceedance: bool, has_watch: bool,
     body.extend("  " + ln for ln in shown)
     if more > 0:
         body.append(f"  ... and {more} more (see the GFL Air tab / dashboard).")
+    body.append(f"\nLive dashboard:\n  {link}\n")
+    return "\n".join(body)
+
+
+# ---------------------------------------------------------------------------
+# CH4 early-warning WATCH tier — dedicated, once-per-episode, Trisha-scoped email
+# (coder:gfl-air-thresholds; ADR 014 addendum). Independent of the exceedance/
+# anomaly path above: the 500 ppm CH4 exceedance alert is unchanged, and this
+# never fires twice for the same ongoing excursion. Pure helpers; run() wires
+# them to the marker read/write in sheet_writer.
+# ---------------------------------------------------------------------------
+
+def watch_episode_stations(snapshot: list[dict]) -> set[str]:
+    """Stations whose LATEST reading this poll (station_snapshot's ch4_status) is
+    'watch' OR 'exceedance' — i.e. CH4 >= the watch level, on either side of the
+    action level. This is the EPISODE-BOUNDARY set, not just the watch-tier set:
+    the handoff's episode resets on 'dropped back below 40', not 'dropped back
+    below 500', so a station descending from an exceedance through the watch band
+    on its way to full recovery must NOT get a fresh WATCH email mid-descent. Pure."""
+    return {s["station"] for s in snapshot
+            if s.get("ch4_status") in ("watch", "exceedance") and s.get("station")}
+
+
+def recovered_watch_stations(previously_marked: set[str], stations_seen: set[str],
+                             elevated_now: set[str]) -> set[str]:
+    """Stations to DROP from the episode marker this poll: those with a FRESH
+    reading this poll (affirmative evidence, via `stations_seen`) that is no longer
+    watch/exceedance severity. A station absent from this poll's readings entirely
+    (a dark sensor, a partial/short batch) is left exactly as marked — recovery is
+    only ever read from a positive 'back to ok' reading, never inferred from mere
+    silence, so a reporting gap can't masquerade as a recovery and prematurely
+    re-arm (and thus double-email) a station that is still mid-episode. Pure."""
+    return {st for st in previously_marked if st in stations_seen and st not in elevated_now}
+
+
+def watch_alert_stations(readings: list[dict], thresholds: dict, sentinels: dict | None,
+                         watch_thresholds: dict, already_marked: set[str]) -> dict[str, tuple]:
+    """{station: (ch4_value, when_iso)} for stations with >=1 CH4 'watch'-severity
+    reading THIS poll that are NOT already in `already_marked` (the once-per-episode
+    dedup gate). When a station has more than one watch reading in the poll's batch
+    (a catch-up after a missed run), the LAST one (readings are OBJECTID-ascending)
+    wins, so the value shown is the most recent. Reuses gc.classify_reading — the
+    same classifier the exceedance/anomaly path uses — so watch/action-level
+    semantics can never drift between the two email channels. Pure — unit-tested."""
+    already_marked = already_marked or set()
+    out: dict[str, tuple] = {}
+    for r in readings:
+        st = gc.station_of(r)
+        if not st or st in already_marked:
+            continue
+        c = gc.classify_reading(r, thresholds, sentinels, watch_thresholds)
+        ch4_val, ch4_status = c["ch4"]
+        if ch4_status == "watch":
+            out[st] = (ch4_val, gc.reading_iso(r))
+    return out
+
+
+def format_watch_body(stations: dict[str, tuple], watch_thresholds: dict,
+                      thresholds: dict, link: str) -> str:
+    """The dedicated CH4 WATCH-tier email body — deliberately NOT format_alert_body,
+    so a reader can never mistake this lower-urgency, Trisha-scoped notice for the
+    full-list [URGENT] exceedance alert."""
+    body = [
+        "GFL Arbor Hills perimeter air monitoring — CH4 EARLY-WARNING WATCH "
+        "(lower urgency).\n",
+        "This is GFL's OWN perimeter early-warning alarm level, NOT a health "
+        "standard and NOT the NESHAP corrective-action tier (which alerts "
+        "separately, at [URGENT], to the full list). It flags a rising landfill-"
+        "gas trend below the action level.\n",
+    ]
+    for levels_line in (_levels_line("Early-warning WATCH level", watch_thresholds),
+                        _levels_line("Action level (for comparison)", thresholds)):
+        if levels_line:
+            body.append(levels_line)
+    for st in sorted(stations):
+        val, when = stations[st]
+        body.append(f"  watch       {st} {when}: CH4={val:g} ppm >= watch level")
+    body.append(
+        "\n(You will not get another WATCH alert for a station already in this "
+        "episode — it re-arms once that station's CH4 drops back below the watch "
+        "level.)")
     body.append(f"\nLive dashboard:\n  {link}\n")
     return "\n".join(body)
 
@@ -419,6 +512,14 @@ def run() -> int:
     h2s_avg_window_hours = int(cfg_gfl.get("h2s_avg_window_hours", 24))
     h2s_avg_min_readings = int(cfg_gfl.get("h2s_avg_min_readings", 12))
     h2s_averaged = h2s_avg_window_hours > 0
+    # CH4 WATCH-tier notification (coder:gfl-air-thresholds). Empty/unset = display-
+    # only (today's rollback lever): the watch line still shows on the snapshot tab
+    # and rides along in the combined exceedance/anomaly email as before, but no
+    # dedicated email is sent. Configured (non-empty) = the watch tier graduates to
+    # its OWN once-per-episode email, scoped to this list (Trisha, per the Ridge
+    # Wood review_recipients precedent) — and is dropped from the combined pass
+    # (include_watch below) so it is never emailed via both channels at once.
+    watch_recipients = list(cfg_gfl.get("watch_alert_recipients") or [])
     link = cfg_gfl.get("dashboard_url") or cfg_gfl.get("service_url", "")
 
     for _w in gc.watch_config_warnings(thresholds, watch_thresholds):
@@ -498,7 +599,7 @@ def run() -> int:
 
     lines, has_exceedance, has_watch = alert_lines(
         readings, thresholds, sentinels, alert_on_sentinel, watch_thresholds,
-        h2s_averaged=h2s_averaged)
+        h2s_averaged=h2s_averaged, include_watch=not watch_recipients)
 
     # H2S exceedance alerting is the rolling per-station average (the 72 ppb level IS a
     # 24-hr-average level; ADR 014 decision 4) — NOT the instantaneous readings, which
@@ -537,6 +638,56 @@ def run() -> int:
             print(f"[gfl-air]   emailed: {subject}")
         except Exception as e:  # noqa: BLE001 — alert best-effort; readings recorded
             print(f"[gfl-air]   readings recorded but alert email FAILED: {e}")
+
+    # Dedicated CH4 WATCH-tier email (coder:gfl-air-thresholds) — independent of the
+    # exceedance/anomaly path above; runs every poll regardless of has_exceedance (the
+    # tiers don't suppress each other). Fully skipped (no Sheets read, no behavior
+    # change) when watch_recipients is empty — the display-only rollback lever.
+    if watch_thresholds and watch_recipients:
+        stations_this_poll = {gc.station_of(r) for r in readings if gc.station_of(r)}
+        elevated_now = watch_episode_stations(snapshot)
+        try:
+            previously_marked = sw.gfl_air_watch_marker(sheets, sheet_id)
+        except Exception as e:  # noqa: BLE001 — unreadable marker => empty (fail-safe
+            # toward alerting: looks like "nothing alerted yet", never like "already
+            # covered", so we'd rather re-alert than risk silently swallowing one).
+            print(f"[gfl-air]   watch marker read FAILED, treating as empty: {e}")
+            previously_marked = set()
+        recovered = recovered_watch_stations(previously_marked, stations_this_poll, elevated_now)
+
+        new_watch = watch_alert_stations(readings, thresholds, sentinels,
+                                         watch_thresholds, previously_marked)
+        if new_watch:
+            subject = (f"[GFL air watch] Arbor Hills perimeter: {len(new_watch)} "
+                       f"station(s) reached the CH4 early-warning level")
+            body = format_watch_body(new_watch, watch_thresholds, thresholds, link)
+            try:
+                ea.send_email(subject, body, cfg, recipients=watch_recipients)
+                # Marker write is GATED on send success (mirrors the liveness stale-
+                # marker): a failed send leaves the marker un-added-to, so the SAME
+                # station is retried next poll instead of being silently marked
+                # "already told" when nobody was actually told.
+                sw.set_gfl_air_watch_marker(
+                    sheets, sheet_id, (previously_marked - recovered) | set(new_watch))
+                print(f"[gfl-air]   WATCH emailed: {sorted(new_watch)}.")
+            except Exception as e:  # noqa: BLE001 — best-effort; marker NOT updated
+                print(f"[gfl-air]   WATCH detected but alert email FAILED "
+                      f"(marker not updated — will retry next run): {e}")
+        elif recovered:
+            # Nothing NEW this poll, but >=1 station has AFFIRMATIVE recovery evidence
+            # (a fresh reading back below 40) — reconcile the marker regardless of
+            # whether any email fired, so a station that fully cycles below 40 and
+            # back up is treated as a fresh episode next time, not permanently
+            # suppressed. A station with NO reading this poll is left untouched
+            # (see recovered_watch_stations — silence is never read as recovery).
+            reconciled = previously_marked - recovered
+            try:
+                sw.set_gfl_air_watch_marker(sheets, sheet_id, reconciled)
+                print(f"[gfl-air]   watch episode marker reconciled (recovered: "
+                      f"{sorted(recovered)}).")
+            except Exception as e:  # noqa: BLE001 — best-effort; retried next poll
+                print(f"[gfl-air]   watch marker recovery reconcile FAILED "
+                      f"(ignored, retried next poll): {e}")
 
     return 0
 
