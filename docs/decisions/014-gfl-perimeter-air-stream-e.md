@@ -370,3 +370,64 @@ changed. The snapshot tab still shows each station's instantaneous H2S status.
   snapshot/baseline write path and shifting the `A2:L` cursor read ranges around the
   column-N stale marker, disproportionate for a nice-to-have. The averaged value is
   visible in the exceedance email; adding the column is a small follow-on.
+
+## Addendum 2026-07-21: CH4 WATCH-tier notification — recipient scoping + once-per-episode dedup (coder:gfl-air-thresholds)
+
+**Correcting the record first:** the CH4 classifier tier documented in the 2026-07-17
+addendum above (`severity=watch`, `watch_thresholds.ch4_ppm: 40`) was already fully
+built, reviewed, and merged directly to `main` (`ac53d30`, `2c37d12`) — it already
+emailed a `[GFL air watch]`-tagged message to the **full** `alert_recipients` list on
+any watch-severity reading, every poll, with no dedup. The `docs/overnight-coder-
+handoffs/gfl-air-thresholds.md` handoff (staged 2026-07-18, one day *after* that work
+merged) described this as still-unbuilt ("crossing it sends nothing") — a stale
+premise; `config.yml`'s `thresholds:` comment carried the same stale claim and is
+fixed in this change. Whoever staged the handoff wasn't aware the direct commits
+existed. The GENUINE gap, once the premise is corrected, was Trisha's actual
+2026-07-18 ruling: notify + **Trisha-scoped** + **once-per-episode** + clearly
+labeled. Live code already had "notifies" and "labeled"; this addendum ships the
+other two.
+
+**What shipped:**
+
+- **`gfl_air.watch_alert_recipients`** (config, default: Trisha only, the Ridge Wood
+  `review_recipients` precedent) — when non-empty, the CH4 watch tier graduates to
+  its own dedicated email (distinct subject/body, states the tier basis so it can't
+  be mistaken for the 500 ppm exceedance), sent ONLY to this list — no longer to the
+  full Conservancy `alert_recipients`. **Empty list is the rollback lever**: behavior
+  reverts exactly to the pre-2026-07-21 original (watch lines ride the full-list
+  combined email, undeduped) — `alert_lines(..., include_watch=...)` gates this.
+- **Once-per-episode, per station.** A WATCH email sends when a station crosses into
+  >=40ppm and not again until it drops back below 40. The episode-boundary set
+  (`gfl_air_watcher.watch_episode_stations`) counts BOTH `watch` and `exceedance`
+  severity as "elevated" (>=40ppm on either side of the 500 ppm action level) — a
+  station descending from an exceedance through the watch band on recovery does not
+  get a spurious fresh WATCH email; the boundary is "below 40", not "below 500". The
+  500 ppm exceedance alert and the H2S 24-hr-average alert are **fully unchanged** —
+  this addendum touches neither their logic nor their recipients.
+- **Fail-safe marker design.** The episode marker (a station-name set, JSON in the
+  GFL Air tab's column O — outside both the `A:L` REPLACE span and column N's
+  liveness marker) is read before deciding, and updated in two independent ways: (1)
+  RECOVERIES are reconciled every poll regardless of whether any email fires — a
+  station that fully cycles below 40 and back is always treated as a fresh episode,
+  never permanently suppressed by an unrelated poll's silence; (2) new alerts are
+  only ADDED to the marker after a **successful** send — a failed send (SMTP down)
+  leaves the station unmarked, so it is retried next poll rather than silently
+  swallowed. Every failure path (unreadable marker, failed send, failed marker write)
+  was designed and tested to fail toward **more** alerting, never toward suppression
+  — the same fail-safe posture as the WDS `0.0`-years ruling and the sentinel-anomaly
+  handling elsewhere in this ADR.
+- **Real-specimen gate (live feed, 2026-07-21).** Full-record query: 1,256 of 215,597
+  rows have CH4>=40 (excl. sentinel), spread across all 6 stations (14–514 hits each).
+  Bucketing into day-runs per station yields ~368 episodes total over the ~4.4-year
+  record (~92/yr, ~1.75/wk combined across all stations) — well within a once-per-
+  episode design's headroom, not a flood. Zero watch or exceedance emails have
+  actually fired in production since the classifier shipped 2026-07-17 (confirmed via
+  `gh run view --log` on all 5 daily runs 07-17..07-21) — the flood risk this change
+  guards against was real (a sustained multi-day excursion would otherwise re-email
+  daily) but had not yet manifested.
+- **Not autonomously merged.** Although the real-specimen gate passed, this shipped as
+  a PR held for Trisha's explicit merge rather than an autonomous one: the authorizing
+  handoff's premise was proven wrong (so "what was actually authorized" needed a human
+  read, not just a green build), it reverses who receives a live notification (full
+  list → Trisha-only) on an already-`enabled` stream, and the episode-dedup adds new
+  suppression logic to a fail-safe-by-default alerting path.
