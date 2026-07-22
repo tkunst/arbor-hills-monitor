@@ -92,6 +92,17 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
     the full advocacy list on any of the five watched items changing; first
     sighting baselines silently. Off by default; see
     `docs/decisions/017-rop-watch.md` for activation.
+11. **EGLE MMD Open Data watch (Stream I)** (daily — `mmd.enabled: true`): the
+    state's own facility-registry view of the landfill, on EGLE Materials
+    Management Division's keyless public ArcGIS service (layer 0 — the master
+    facility/module table). Watches the record set per configured wdsid:
+    **475946** (the landfill — `disposalareastatus` "Active - Accepting" plus a
+    map-hidden `show=0` compost registration expiring 2030-08-05) and **465941**
+    (the compost area — absent from the service; its APPEARANCE is the trip-wire
+    that the state has started tracking the expansion parcel). Snapshot-diff
+    into the `MMD Watch` tab; alerts (Trisha-only to start) on any change; first
+    sighting baselines silently — an empty record set is a valid baseline. See
+    `docs/decisions/018-mmd-open-data-watch.md`.
 
 > **A note on the document links (expected behavior).** Every case-file row's
 > **Link** column points to EGLE's nSITE portal

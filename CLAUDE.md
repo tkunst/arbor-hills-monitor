@@ -70,6 +70,17 @@ external users but no sensitive data). Public repo.
   task/permit status advancing, a new file in the N2688 folder, or N2688
   appearing in the statewide public notice (the 30-day-comment trip-wire).
   Gated on `rop.enabled`. See ADR 017.
+- `mmd_client.py` — Stream I: EGLE MMD Open Data (keyless public ArcGIS
+  registry, layer 0). One `wdsid IN (...)` query + canonical record views
+  (OID/coords excluded — republish churn; `show` kept — hidden→visible is
+  signal; epoch-ms dates → ISO). Fetch-vs-structural error split mirrors
+  rop_client. Structured-API source, never goes through `egle_doc_parser`.
+  See ADR 018.
+- `mmd_watcher.py` — Stream I: daily snapshot-diff of each watched wdsid's
+  record set vs. the `MMD Watch` tab — status flips, the hidden compost
+  registration changing/surfacing, or a watched wdsid APPEARING in the service
+  at all (465941, the expansion-parcel trip-wire; an empty record set is a
+  valid baseline). Gated on `mmd.enabled`. See ADR 018.
 
 ## Forbidden patterns (do not do these)
 
