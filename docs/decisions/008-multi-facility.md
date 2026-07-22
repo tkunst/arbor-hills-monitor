@@ -24,6 +24,14 @@ adjacent EGLE-regulated facilities hold evidence the risk register (R1–R8) nee
 We do **not** track the empty sibling record `P1504` (0 docs), and `N1488` is an
 unrelated company (Minth Group), so neither is in the list.
 
+We also do **not** poll a **second nSITE record also named "EMERALD RNG, LLC" that
+carries no SRN** (nSITE id `-1194242252385100852` — distinct from the tracked P1488
+profile; likely a non-air-program pin with ~0 air docs). Tracking it would only add
+noise. It **is** recorded — as a commented-out entry in the `facilities:` block of
+`config.yml` — so a future maintainer can find it and enable it in one edit if it ever
+becomes material (the comment flags the empty-SRN handling and doc_id-collision checks to
+do first). *(Added 2026-07-22, per the Emerald RNG dossier follow-up.)*
+
 ## Decision
 
 Replace the single `facility_id` / `srn` config with a **`facilities` list**, and
