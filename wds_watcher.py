@@ -181,8 +181,21 @@ COLLECTIONS = {
         "classify": _classify_evaluation,
     },
     "compliance_actions": {
-        "identity": lambda r: (_g(r, "Compliance Action Date"), _g(r, "Compliance Action Type")),
-        "content": lambda r: (_g(r, "Corrective Action Component"), _g(r, "Company Response Date")),
+        # Identity includes Corrective Action Component + Company Response DUE
+        # Date (both set once, at issuance) because EGLE's WDS grid can list
+        # MULTIPLE distinct compliance-action records under the same (date,
+        # type) — e.g. two separate corrective-action components of the same
+        # violation notice. (date, type) alone collapsed those into one
+        # tracked slot, so the diff loop compared them against each other and
+        # flapped forever, firing a false 'changed' event every run with no
+        # real change on EGLE's side — found live 2026-07-22 on the Arbor
+        # Hills 10/10/2023 and 11/3/2023 violation notices. Company Response
+        # DATE (the actual response, filled in whenever it happens) stays in
+        # content — that's the genuine backfill this mutation-detection exists
+        # for (see test_compliance_action_changed_violation_is_not_repeat_urgent).
+        "identity": lambda r: (_g(r, "Compliance Action Date"), _g(r, "Compliance Action Type"),
+                               _g(r, "Corrective Action Component"), _g(r, "Company Response Due Date")),
+        "content": lambda r: (_g(r, "Company Response Date"),),
         "date": lambda r: _iso_date(_g(r, "Compliance Action Date")),
         "label": lambda r: f"Compliance action — {_g(r, 'Compliance Action Type') or '?'} ({_g(r, 'Compliance Action Date') or '?'})",
         "detail": lambda r: f"Lead program {_g(r, 'Lead Program')}; determined by {_g(r, 'Determined By')}".strip("; "),

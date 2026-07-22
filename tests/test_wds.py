@@ -231,6 +231,27 @@ def test_compliance_action_changed_violation_is_not_repeat_urgent():
     assert events[0]["severity"] == "notable"    # downgraded, not a duplicate urgent
 
 
+def test_compliance_action_distinct_records_sharing_date_and_type_dont_collide():
+    # EGLE's WDS grid can list multiple distinct compliance-action records
+    # under the same (Compliance Action Date, Compliance Action Type) — e.g.
+    # two separate corrective-action components of one violation notice (real
+    # example: Arbor Hills' 11/3/2023 notice). Before the identity fix these
+    # collapsed into one tracked slot and re-fired a false 'changed' event
+    # every single run forever, even though nothing on EGLE's side changed.
+    a = {"Compliance Action Type": "120 - VIOLATION NOTICE/LETTER OF WARNING",
+         "Compliance Action Date": "11/3/2023", "Corrective Action Component": "Yes",
+         "Company Response Due Date": "11/6/2023", "Company Response Date": "11/6/2023"}
+    b = {"Compliance Action Type": "120 - VIOLATION NOTICE/LETTER OF WARNING",
+         "Compliance Action Date": "11/3/2023", "Corrective Action Component": "Yes",
+         "Company Response Due Date": "1/6/2024", "Company Response Date": "1/6/2024"}
+    _e, entry, _n = ww.diff_collection("compliance_actions", [a, b], _empty(), {})
+    assert len(entry["records"]) == 2          # tracked as two distinct records
+    # Re-polling the SAME two rows must be a no-op forever, not flap.
+    events, entry2, _n = ww.diff_collection("compliance_actions", [a, b], entry, {})
+    assert events == []
+    assert entry2 == entry
+
+
 def test_operating_license_is_notable_construction_permit_urgent():
     assert ww._classify_application({"Application Type": "Operating License"}, False)[0] == "notable"
     assert ww._classify_application({"Application Type": "Construction Permit"}, False)[0] == "urgent"
