@@ -100,7 +100,17 @@ pause lever (state survives in the tab).
 
 - **A persistent fetch failure after baseline goes quiet** (skip-and-warn every
   run) — the same accepted residual as Stream H; a liveness-style guard is a
-  possible follow-on for both.
+  possible follow-on for both. Note the loud "structural" split only covers
+  breaks that still return ArcGIS-shaped JSON — a decommission/redirect/bot
+  wall is a fetch failure and lands here, so this residual is the likeliest
+  silent-death mode.
+- **A transient Sheets READ failure on a change day can eat that alert**
+  (adversarial review 2026-07-21): `_tab_rows` swallowing a read error returns
+  "no baseline", so the run re-baselines at the NEW hash — the change never
+  alerts, leaving a duplicate "baseline" row as the forensic marker. Inherited
+  byte-for-byte from the rop/pfas/civicclerk house idiom; accepted here for
+  pattern-parity, flagged as a cross-stream follow-on (treat a post-ensure
+  read exception as exit 1 instead of "never seen").
 - **Adding a field to `RECORD_FIELDS` re-hashes every snapshot** → one
   "changed" alert per wdsid on the next run (visible, reviewable, then quiet).
 - **EGLE could re-encode dates or re-type fields** → shows as a one-time
