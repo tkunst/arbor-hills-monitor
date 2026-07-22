@@ -237,7 +237,7 @@ def test_hidden_record_show_flip_is_visible_in_diff():
     changed[0]["show"] = 1  # the hidden compost record surfaces on the map
     new = mw.wdsid_snapshot(changed, 475946)
     assert mw.snapshot_hash(old) != mw.snapshot_hash(new)
-    note, body = mw.summarize_change(old, new)
+    _, body = mw.summarize_change(old, new)
     assert "show=0" in body and "show=1" in body
 
 
@@ -348,7 +348,6 @@ def test_compost_area_appearing_alerts(monkeypatch):
 def test_fetch_failure_after_baseline_is_skip_and_warn(monkeypatch):
     fake, sent = _wire(monkeypatch)
     assert mw.run() == 0
-    fake2, sent2 = None, None  # re-wire with an erroring fetch on the SAME sheet
     monkeypatch.setattr(mw.mc, "fetch_records",
                         lambda wdsids=None, url=None, timeout=60:
                         (_ for _ in ()).throw(mc.MmdFetchError("blip")))
