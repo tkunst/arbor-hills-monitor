@@ -125,10 +125,17 @@ def test_sniff_docx_zip_with_document_xml():
     assert pde.sniff_format(data) == "docx"
 
 
-def test_sniff_zip_without_document_xml_is_unsupported():
+def test_sniff_zip_without_document_xml_is_zipbundle():
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         z.writestr("not_word/foo.xml", "<x/>")
+    assert pde.sniff_format(buf.getvalue()) == "zipbundle"
+
+
+def test_sniff_empty_zip_is_unsupported():
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w"):
+        pass  # zero entries — nothing for a zipbundle to extract
     assert pde.sniff_format(buf.getvalue()) is None
 
 
@@ -541,6 +548,86 @@ def test_msg_image_insert_failure_leaves_no_orphaned_blank_page(monkeypatch):
     _patch_msg(monkeypatch, fake)
     doc, needs_ocr = pde._msg_to_pdf(pde.OLE2_MAGIC + b"...")
     assert len(doc) == 1  # envelope only — no orphaned blank page from the failed insert
+    doc.close()
+
+
+# ---------------------------------------------------------------------------
+# generic zip bundle — an nSITE record whose native source is a zip of files
+# (e.g. an nForm submission: a confirmation PDF plus attached SDS sheets),
+# found 2026-07-23 in the Arbor Hills Remediation Area gap-doc audit.
+# ---------------------------------------------------------------------------
+
+
+def _make_zip(files: dict) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, data in files.items():
+            z.writestr(name, data)
+    return buf.getvalue()
+
+
+def test_zipbundle_merges_multiple_real_pdfs():
+    zbytes = _make_zip({
+        "SubmissionDownload.pdf": _make_pdf_bytes("Confirmation of submission HN4-X6HG-53BVQ."),
+        "Nitrafix SDS.pdf": _make_pdf_bytes("Nitrafix safety data sheet."),
+        "Vitastim 6000 SDS.pdf": _make_pdf_bytes("Vitastim 6000 safety data sheet."),
+    })
+    doc, needs_ocr = pde._zipbundle_to_pdf(zbytes)
+    assert len(doc) == 3
+    full_text = "\n".join(p.get_text() for p in doc)
+    assert "Confirmation of submission HN4-X6HG-53BVQ." in full_text
+    assert "Nitrafix safety data sheet." in full_text
+    assert "Vitastim 6000 safety data sheet." in full_text
+    assert needs_ocr is False  # all-text PDFs, no image-only pages
+    doc.close()
+
+
+def test_zipbundle_routes_entries_through_the_same_dispatch_as_msg_attachments():
+    # A .docx entry (not just PDFs) should get real text extraction, same as
+    # a .docx .msg attachment — proves entries share _add_content_by_name,
+    # not a parallel/duplicated dispatch.
+    docx_bytes = _make_docx(["Zip-bundled compliance letter text."])
+    zbytes = _make_zip({"letter.docx": docx_bytes})
+    doc, needs_ocr = pde._zipbundle_to_pdf(zbytes)
+    full_text = "\n".join(p.get_text() for p in doc)
+    assert "Zip-bundled compliance letter text." in full_text
+    assert needs_ocr is False
+    doc.close()
+
+
+def test_zipbundle_image_entry_sets_needs_ocr():
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 40, 40))
+    pix.clear_with(180)
+    zbytes = _make_zip({"site_photo.jpg": pix.tobytes("jpg")})
+    doc, needs_ocr = pde._zipbundle_to_pdf(zbytes)
+    assert needs_ocr is True
+    assert len(doc) == 1
+    doc.close()
+
+
+def test_zipbundle_one_bad_entry_does_not_sink_the_whole_bundle():
+    zbytes = _make_zip({
+        "good.pdf": _make_pdf_bytes("Readable entry."),
+        "bad.jpg": b"not actually image bytes",
+    })
+    doc, needs_ocr = pde._zipbundle_to_pdf(zbytes)
+    assert len(doc) == 1  # only the good entry landed
+    assert "Readable entry." in doc[0].get_text()
+    doc.close()
+
+
+def test_zipbundle_all_entries_unsupported_raises_extraction_error():
+    zbytes = _make_zip({"tiny.xml": "<x/>"})  # below the 20-char text threshold
+    with pytest.raises(pde.ExtractionError, match="no pages"):
+        pde._zipbundle_to_pdf(zbytes)
+
+
+def test_synthesize_pdf_zipbundle_dispatches_correctly(tmp_path):
+    zbytes = _make_zip({"doc.pdf": _make_pdf_bytes("Zip bundle via synthesize_pdf.")})
+    dest = str(tmp_path / "out.pdf")
+    pde.synthesize_pdf(zbytes, dest)
+    doc = fitz.open(dest)
+    assert "Zip bundle via synthesize_pdf." in doc[0].get_text()
     doc.close()
 
 
