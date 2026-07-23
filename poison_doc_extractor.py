@@ -1,6 +1,6 @@
 """
 poison_doc_extractor.py — text extraction + PDF synthesis for nSITE documents
-whose sources aren't PDFs (.msg, .docx, bare images) — the gap
+whose sources aren't PDFs (.msg, .docx, bare images, zip bundles) — the gap
 nsite_client.download_pdf() alone can't close (ADR 011).
 
 Wired in as nsite_client.download_pdf()'s last-resort fallback: when neither
@@ -11,16 +11,19 @@ content — so egle_doc_parser.parse_document()'s existing classify/OCR/extract
 pipeline ingests it completely unchanged downstream.
 
 Supported: .msg (Outlook email, via extract-msg), .docx (Word, via stdlib
-zip/XML — no extra dependency), and bare raster images (JPEG/PNG/GIF/BMP/TIFF
-— nSITE's downloadpdf render endpoint 400s on some image-sourced records even
+zip/XML — no extra dependency), bare raster images (JPEG/PNG/GIF/BMP/TIFF —
+nSITE's downloadpdf render endpoint 400s on some image-sourced records even
 though the native endpoint serves the image fine; see the 2026-07-23 Arbor
-Hills Remediation Area gap-doc audit). Legacy binary .doc shares .msg's OLE2
-magic bytes but isn't a real .msg — extract-msg raises on it (verified against
-a real OLE2-but-not-msg specimen during design), which this module treats as
-"unsupported" (still a poison strike), the same outcome as before this module
-existed. (Some real .doc specimens found 2026-07-23 are additionally genuinely
-RC4-encrypted at the FIB level — a distinct, human-judgment-call problem, not
-a parser gap; see the same audit.)
+Hills Remediation Area gap-doc audit), and generic zip bundles (an nSITE
+"nForm" submission's zip of attachments — a confirmation PDF plus SDS sheets
+in the specimen this was built against — every entry routed through the same
+per-type dispatch a .msg attachment gets). Legacy binary .doc shares .msg's
+OLE2 magic bytes but isn't a real .msg — extract-msg raises on it (verified
+against a real OLE2-but-not-msg specimen during design), which this module
+treats as "unsupported" (still a poison strike), the same outcome as before
+this module existed. (Some real .doc specimens found 2026-07-23 are
+additionally genuinely RC4-encrypted at the FIB level — a distinct,
+human-judgment-call problem, not a parser gap; see the same audit.)
 
 .msg attachments are recursed into: a PDF attachment has its actual pages
 merged in (fitz.insert_pdf) rather than re-extracted as text — and if those
@@ -87,12 +90,15 @@ class ExtractionError(RuntimeError):
 
 
 def sniff_format(data: bytes) -> Optional[str]:
-    """Return 'msg', 'docx', 'image', or None (unsupported) based on magic
-    bytes. ZIP-magic content is further checked for word/document.xml before
-    being called 'docx' — other OOXML formats (xlsx, pptx) share the ZIP magic
-    but aren't Word documents this module knows how to read. Image magic is
-    checked last (after OLE2/ZIP), never confused with those since none of the
-    image signatures overlap OLE2_MAGIC/ZIP_MAGIC."""
+    """Return 'msg', 'docx', 'zipbundle', 'image', or None (unsupported)
+    based on magic bytes. ZIP-magic content is checked for word/document.xml
+    first (other OOXML formats like xlsx/pptx share the ZIP magic but aren't
+    Word documents this module reads as 'docx'); any other non-empty, valid
+    zip is a generic 'zipbundle' (e.g. an nForm submission's attachment zip)
+    — every entry gets routed through the same per-type dispatch a .msg
+    attachment does, so nothing in it is silently dropped. Image magic is
+    checked last (after OLE2/ZIP), never confused with those since none of
+    the image signatures overlap OLE2_MAGIC/ZIP_MAGIC."""
     if data.startswith(OLE2_MAGIC):
         return "msg"
     if data.startswith(ZIP_MAGIC):
@@ -100,6 +106,8 @@ def sniff_format(data: bytes) -> Optional[str]:
             with zipfile.ZipFile(io.BytesIO(data)) as z:
                 if "word/document.xml" in z.namelist():
                     return "docx"
+                if z.namelist():
+                    return "zipbundle"
         except zipfile.BadZipFile:
             pass
         return None
@@ -135,6 +143,8 @@ def synthesize_pdf(data: bytes, dest_path: str) -> str:
             doc, needs_ocr = _docx_to_pdf(data)
         elif fmt == "image":
             doc, needs_ocr = _image_to_pdf(data)
+        elif fmt == "zipbundle":
+            doc, needs_ocr = _zipbundle_to_pdf(data)
         else:
             raise ExtractionError(f"unsupported format (first bytes {data[:8]!r})")
     except ExtractionError:
@@ -298,8 +308,15 @@ def _add_attachment(doc: fitz.Document, att) -> bool:
     raw = getattr(att, "data", None)
     if not isinstance(raw, (bytes, bytearray)) or not raw:
         return False  # embedded-message / non-data attachments (MSG-in-MSG) — out of scope
-    raw = bytes(raw)
+    return _add_content_by_name(doc, name, bytes(raw))
 
+
+def _add_content_by_name(doc: fitz.Document, name: str, raw: bytes) -> bool:
+    """The actual per-type dispatch — shared by _add_attachment (.msg
+    attachments) and _zipbundle_to_pdf (generic zip-of-files nSITE records,
+    e.g. an nForm submission bundle). Returns True if `raw` needs the
+    proactive OCR pass synthesize_pdf() runs."""
+    name = name.lower()
     if name.endswith(".pdf") or raw[:4] == b"%PDF":
         with fitz.open(stream=raw, filetype="pdf") as attach:
             needs_ocr = _pdf_has_image_only_pages(attach)
@@ -360,6 +377,39 @@ def _spreadsheet_to_text(raw: bytes, name: str) -> str:
                 row = [str(sheet.cell_value(r, c)) for c in range(sheet.ncols)]
                 lines.append(" | ".join(row))
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# generic zip bundle — a nSITE record whose native source is a ZIP of several
+# files rather than a single document (e.g. an nForm submission: an EGLE
+# submission-confirmation PDF plus attached SDS sheets, found 2026-07-23 in
+# the Arbor Hills Remediation Area gap-doc audit). Any zip that isn't a
+# recognized .docx (sniff_format checks that first) falls here — every entry
+# is routed through the same per-type dispatch a .msg attachment gets.
+# ---------------------------------------------------------------------------
+
+
+def _zipbundle_to_pdf(data: bytes) -> tuple[fitz.Document, bool]:
+    doc = fitz.open()
+    needs_ocr = False
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        for info in z.infolist():
+            if info.is_dir():
+                continue
+            try:
+                raw = z.read(info.filename)
+            except Exception as e:  # noqa: BLE001 — one bad entry must not sink the whole bundle
+                print(f"[poison-doc-extractor] zip entry {info.filename!r} unreadable: {e}")
+                continue
+            try:
+                if _add_content_by_name(doc, info.filename, raw):
+                    needs_ocr = True
+            except Exception as e:  # noqa: BLE001 — same "one bad entry, not the whole doc" contract
+                print(f"[poison-doc-extractor] zip entry {info.filename!r} skipped: {e}")
+                continue
+    if len(doc) == 0:
+        raise ExtractionError("zip bundle produced no pages")
+    return doc, needs_ocr
 
 
 # ---------------------------------------------------------------------------
