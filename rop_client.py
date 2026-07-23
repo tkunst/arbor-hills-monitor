@@ -25,10 +25,14 @@ pfas_client/ridgewood_client — egle.state.mi.us does not 403 like michigan.gov
      freshly generated — so `parse_folder_listing` reads the listing's own
      per-file dates out of the HTML body; nothing here trusts folder-level mtime.
 
-  3. The statewide ROP_Public_Notice.pdf — parsed for an "N2688" mention (the
-     30-day-comment-window notice). Uses fitz (the repo's existing PDF text-layer
-     dependency, same as ridgewood_client) — egle_doc_parser.py is deliberately
-     left untouched (Decode base stays domain-agnostic).
+  3. The statewide ROP_Public_Notice.pdf — parsed for a mention of EACH target
+     SRN (N2688, N1504, P1488), one per facility (the 30-day-comment-window
+     notice). Originally N2688-only; broadened 2026-07-23 after Emerald RNG
+     (P1488) reached public comment (window July 20 – Aug 1) and slipped through
+     because the trip-wire only searched for "N2688". Uses fitz (the repo's
+     existing PDF text-layer dependency, same as ridgewood_client) —
+     egle_doc_parser.py is deliberately left untouched (Decode base stays
+     domain-agnostic).
 
 ⚠️ M3333 ("Conway Products Corporation d/b/a Emerald Spa Corp") is an UNRELATED
 facility that happens to also contain "Emerald" in its name (P1488 is "Emerald
@@ -97,7 +101,15 @@ class RopParseError(RuntimeError):
 def _opener():
     cj = http.cookiejar.CookieJar()
     op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
-    op.addheaders = [("User-Agent", _UA), ("Accept", "text/html,application/pdf,text/csv")]
+    # Accept: */* — NOT a specific type list. EGLE's server content-negotiates the
+    # CSV endpoint and returns HTTP 406 Not Acceptable for the previous
+    # "text/html,application/pdf,text/csv" header (verified 2026-07-23: that header
+    # 406'd the CSV on every scheduled run from activation 2026-07-16 onward, which
+    # silently blinded the csv:* items behind the already-baselined skip-and-warn
+    # path; `*/*` returns the full ~1.8 MB CSV, and all three sources — CSV, the
+    # N2688 folder index, the notice PDF — return 200 under it). `*/*` is strictly
+    # more permissive than the old list, so it cannot regress the folder/PDF fetches.
+    op.addheaders = [("User-Agent", _UA), ("Accept", "*/*")]
     return op
 
 

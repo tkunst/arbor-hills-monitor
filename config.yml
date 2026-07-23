@@ -447,9 +447,10 @@ ridgewood:
 #      working draft conditions to applicant" going Unstarted -> started);
 #   2. the N2688 renewal folder's file list — a new file (a draft renewal ROP /
 #      staff report);
-#   3. the statewide ROP_Public_Notice.pdf — whether N2688 appears (the 30-day-
-#      comment-window trip-wire).
-# The FIRST sighting of each of the five derived items baselines silently, same
+#   3. the statewide ROP_Public_Notice.pdf — whether each target SRN (N2688 /
+#      N1504 / P1488) appears, one item per facility (the 30-day-comment-window
+#      trip-wire; broadened from N2688-only 2026-07-23 after P1488's window slipped through).
+# The FIRST sighting of each of the seven derived items baselines silently, same
 # as pfas_watcher/civicclerk_watcher. See rop_client.py / rop_watcher.py.
 #
 # ⚠️ M3333 ("Conway Products Corporation d/b/a Emerald Spa Corp") is an
@@ -460,7 +461,7 @@ ridgewood:
 # ACTIVATION — same three-step pattern as Stream C / Mirror D / PFAS / GFL air /
 # Ridge Wood. All Trisha's:
 #   1. review + merge,
-#   2. the first enabled run just baselines all five items (records a snapshot,
+#   2. the first enabled run just baselines all seven items (records a snapshot,
 #      alerts on NONE) — no seed script needed,
 #   3. set enabled: true here and commit.
 # Until enabled: true is on main, rop-watch.yml runs on schedule but

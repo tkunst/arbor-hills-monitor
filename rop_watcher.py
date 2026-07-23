@@ -8,13 +8,16 @@ N2688 (landfill), N1504 (Energy), P1488 (Emerald RNG). A renewal reaching its
 30-day PUBLIC COMMENT window is a second advocacy venue, easy to miss amid a
 1,800-row statewide CSV. This watch is the trip-wire.
 
-FIVE watched items, derived from THREE fetches (one per rop_client source):
+SEVEN watched items, derived from THREE fetches (one per rop_client source):
   - csv:<SRN>     one item per target facility's extracted ROP task rows
                   (task-status / permit-status / dates advancing)
   - folder:N2688  the N2688 renewal folder's file list (a new draft ROP/staff
-                  report appearing)
-  - notice:N2688  whether N2688 appears in the statewide public-notice PDF
-                  (the 30-day-comment-window trip-wire)
+                  report appearing). N2688-only — that folder URL is the only one
+                  EGLE publishes; there is no verified N1504/P1488 equivalent.
+  - notice:<SRN>  one item per target facility — whether that SRN appears in the
+                  statewide public-notice PDF (the 30-day-comment-window trip-wire).
+                  Broadened from N2688-only 2026-07-23 after Emerald RNG (P1488)
+                  reached public comment and the N2688-only check missed it.
 
 WHAT IT DOES per item (mirrors pfas_watcher/civicclerk_watcher exactly):
   - build a canonical snapshot + hash it,
@@ -141,9 +144,9 @@ def folder_snapshot(entries: list[dict]) -> dict:
 
 
 def notice_snapshot(mentioned: bool, context: str) -> dict:
-    """Canonical snapshot of the statewide notice's N2688 mention. `context` is
-    only kept when mentioned (a False->False no-op must hash identically run to
-    run even if unrelated notice text elsewhere shifts)."""
+    """Canonical snapshot of one target SRN's mention in the statewide notice.
+    `context` is only kept when mentioned (a False->False no-op must hash
+    identically run to run even if unrelated notice text elsewhere shifts)."""
     return {"mentioned": bool(mentioned), "context": context if mentioned else ""}
 
 
@@ -223,14 +226,16 @@ def summarize_folder_change(old: dict, new: dict) -> tuple[str, str]:
     return "; ".join(parts), "\n".join(lines)
 
 
-def summarize_notice_change(old: dict, new: dict) -> tuple[str, str]:
-    """(note, body) for the N2688-mention trip-wire. Pure."""
+def summarize_notice_change(old: dict, new: dict, srn: str = "N2688") -> tuple[str, str]:
+    """(note, body) for one SRN's mention trip-wire. `srn` names the facility in
+    the alert text (defaults to N2688 for backward-compatible direct callers).
+    Pure."""
     was, now = bool(old.get("mentioned")), bool(new.get("mentioned"))
     if now and not was:
-        return ("N2688 now appears in the statewide ROP public notice — likely "
+        return (f"{srn} now appears in the statewide ROP public notice — likely "
                 "the 30-day public comment window has opened", new.get("context", ""))
     if was and not now:
-        return ("N2688 no longer appears in the statewide ROP public notice "
+        return (f"{srn} no longer appears in the statewide ROP public notice "
                 "(comment window likely closed)", "")
     return "changed (mention status unchanged, context text shifted)", new.get("context", "")
 
@@ -391,15 +396,22 @@ def run() -> int:
                                    summarize_folder_change, cfg, recipients)
         counts[result] += 1
 
-    # --- 3. Statewide public-notice PDF -------------------------------------
-    mentioned = None
-    context = ""
+    # --- 3. Statewide public-notice PDF (one item per target SRN) -----------
+    # One notice:<SRN> item per facility, NOT a single N2688 check — a renewal for
+    # ANY of the three (N2688 / N1504 / P1488) reaching public comment is the
+    # advocacy signal. The N2688-only version missed Emerald RNG's (P1488) window
+    # entirely (opened 2026-07-20); a whole-run fetch/parse failure is treated the
+    # same for the whole set (skip-and-warn iff every notice item is already
+    # baselined, else loud), since all three derive from the one PDF fetch.
+    notice_keys = [f"notice:{srn}" for srn in srns]
+    per_srn = None
     try:
         pdf_bytes = rc.fetch_notice_pdf()
-        mentioned, context = rc.notice_mentions_srn(pdf_bytes, "N2688")
-        print(f"[rop-watch] Statewide notice: N2688 mentioned = {mentioned}.")
+        per_srn = {srn: rc.notice_mentions_srn(pdf_bytes, srn) for srn in srns}
+        shown = ", ".join(f"{srn}={per_srn[srn][0]}" for srn in srns)
+        print(f"[rop-watch] Statewide notice: mentions — {shown}.")
     except rc.RopFetchError as e:
-        if _all_baselined(sheets, sheet_id, ["notice:N2688"]):
+        if _all_baselined(sheets, sheet_id, notice_keys):
             print(f"[rop-watch] Statewide notice: fetch failed, skipping this run "
                   f"(baseline preserved, not diffed): {e}")
         else:
@@ -407,12 +419,16 @@ def run() -> int:
                   f"(failing loudly so activation surfaces it): {e}")
             exit_code = 1
 
-    if mentioned is not None:
-        snap = notice_snapshot(mentioned, context)
-        result = _diff_and_record(sheets, sheet_id, today, "notice:N2688",
-                                   "Statewide ROP public notice — N2688 mention", snap,
-                                   summarize_notice_change, cfg, recipients)
-        counts[result] += 1
+    if per_srn is not None:
+        for srn in srns:
+            mentioned, context = per_srn[srn]
+            snap = notice_snapshot(mentioned, context)
+            result = _diff_and_record(
+                sheets, sheet_id, today, f"notice:{srn}",
+                f"Statewide ROP public notice — {srn} mention", snap,
+                lambda o, n, _srn=srn: summarize_notice_change(o, n, _srn),
+                cfg, recipients)
+            counts[result] += 1
 
     print(f"[rop-watch] done — {counts['changed']} changed, {counts['baseline']} "
           f"baselined, {counts['unchanged']} unchanged.")

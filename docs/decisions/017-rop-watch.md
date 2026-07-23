@@ -192,7 +192,7 @@ override (unset ⇒ the full `alert_recipients` list via `send_email`'s
 ## Activation (Trisha's call — same pattern as Stream C / Mirror D / PFAS / GFL air)
 
 1. Review + merge this branch to `main`.
-2. The first enabled run baselines all five items (records a snapshot, alerts
+2. The first enabled run baselines all seven items (records a snapshot, alerts
    on **none**) — no seed script needed.
 3. Set `rop.enabled: true` in `config.yml` and commit.
 
@@ -200,3 +200,50 @@ Until `enabled: true` is on `main`, `rop-watch.yml` runs on schedule but
 `rop_watcher._should_run()` makes every run a quiet no-op (verified by
 `tests/test_rop.py`, mirroring the gate test that has caught this exact class of
 bug before — ADR 009's Addendum).
+
+## Amendment — 2026-07-23 (two fixes after Emerald RNG's window slipped through)
+
+Trisha noticed the ROP watch produced **no email** when Emerald RNG's (P1488) ROP
+renewal reached its 30-day public comment window (EGLE notice 2026-07-22, comment
+period July 20 – Aug 1); it was surfaced only by the separate morning-briefing
+scan. Investigation (ROP Watch tab + the 2026-07-22 run log + a live fetch of the
+notice PDF) found two independent causes, both fixed here:
+
+1. **The public-notice trip-wire was hardcoded to N2688 only.** `rop_watcher.run()`
+   called `notice_mentions_srn(pdf_bytes, "N2688")` and stored a single
+   `notice:N2688` item — so P1488 (and N1504) appearing in `ROP_Public_Notice.pdf`
+   was never searched for. Confirmed against the live PDF: it currently contains
+   *"Emerald RNG LLC – SRN: P1488 … public comment period … July 20 … August 1"*
+   and **zero** occurrences of "N2688", yet the run recorded `N2688 mentioned =
+   False → unchanged` and sent nothing. **Fix:** one `notice:<SRN>` item per target
+   SRN (N2688 / N1504 / P1488), reusing the existing snapshot/diff/alert path — the
+   "one item per facility keeps alerts attributable" principle from *Alternatives
+   considered* above, now applied to the notice check itself (previously CSV-only).
+   The N2688 folder listing stays N2688-only (no verified N1504/P1488 folder URL).
+
+2. **The CSV monthly-report fetch had been failing HTTP 406 on every scheduled run
+   since activation (2026-07-16).** EGLE's server content-negotiates the CSV
+   endpoint and returned `406 Not Acceptable` for the opener's
+   `Accept: text/html,application/pdf,text/csv` header. Because all `csv:*` items
+   were already baselined, `RopFetchError` was (correctly, per this ADR's transient
+   rule) skip-and-warned every run — so the failure was silent, and the only path
+   that watches P1488 via the CSV was effectively blind. **Fix:** `_opener()` now
+   sends `Accept: */*` (verified: the CSV returns the full ~1.8 MB body, and all
+   three sources return 200). Reproduced from a non-Actions IP, so it was the
+   header, not an egress block.
+
+**Blast radius of merge — verified zero emails:** all three `csv:*` items hash
+*identically* to their 2026-07-16 baseline (the monthly report has not changed),
+so un-blinding the CSV fetch fires nothing on the next run. The notice fix is
+**forward-only**: the new `notice:N1504`/`notice:P1488` items baseline silently on
+first sighting (the uniform "first sighting is silent" invariant is deliberately
+left unchanged — not bolted-over in the shared `_diff_and_record` path). One
+consequence, documented so it is a choice not a surprise: **the currently-open
+P1488 window will NOT retroactively alert** — it baselines silent, and the only
+auto-fire would be a low-value "window closed" notice around Aug 1. If the
+Conservancy should be looped in on the *open* window, that is a one-time manual
+send. All *future* comment windows for any of the three SRNs now fire normally.
+
+Tests: `tests/test_rop.py` gains a P1488-appears-while-N2688-absent regression
+(`test_notice_p1488_appearing_emails_alert_the_exact_gap`) and an SRN-naming unit
+test; the item-count/key-set assertions move 5 → 7. Full suite green (438).

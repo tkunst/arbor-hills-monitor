@@ -424,6 +424,16 @@ def test_summarize_notice_change_flags_closing():
     assert "no longer appears" in note
 
 
+def test_summarize_notice_change_names_the_passed_srn():
+    # The alert text must name whichever SRN the item is for (not a hardcoded
+    # N2688), so a P1488/N1504 comment-window alert reads correctly.
+    old = rw.notice_snapshot(False, "")
+    new = rw.notice_snapshot(True, "Emerald RNG LLC - SRN: P1488 comment period")
+    note, _ = rw.summarize_notice_change(old, new, "P1488")
+    assert note.startswith("P1488 now appears")
+    assert "N2688" not in note
+
+
 def test_format_change_body_has_essentials():
     body = rw.format_change_body("ROP monthly report — N2688", "task/version row updated", "~ CHANGED foo")
     assert "N2688" in body and "task/version row updated" in body and "CHANGED foo" in body
@@ -508,14 +518,15 @@ def test_disabled_run_is_noop_touches_nothing(monkeypatch):
     assert rw.run() == 0
 
 
-def test_first_run_baselines_all_five_items_silently(monkeypatch):
+def test_first_run_baselines_all_seven_items_silently(monkeypatch):
     fake, sent = _wire(monkeypatch, ROP_CFG)
     assert rw.run() == 0
     rows = _rows(fake)
-    assert len(rows) == 5   # 3 CSV facilities + folder + notice
+    assert len(rows) == 7   # 3 CSV facilities + 1 folder + 3 per-SRN notice items
     assert all(r[3] == "baseline" for r in rows)   # Change column
     keys = {r[1] for r in rows}
-    assert keys == {"csv:N2688", "csv:N1504", "csv:P1488", "folder:N2688", "notice:N2688"}
+    assert keys == {"csv:N2688", "csv:N1504", "csv:P1488", "folder:N2688",
+                    "notice:N2688", "notice:N1504", "notice:P1488"}
     assert sent == []
 
 
@@ -523,7 +534,7 @@ def test_second_run_unchanged_is_noop(monkeypatch):
     fake, sent = _wire(monkeypatch, ROP_CFG)
     rw.run()
     assert rw.run() == 0
-    assert len(_rows(fake)) == 5   # no new rows
+    assert len(_rows(fake)) == 7   # no new rows
     assert sent == []
 
 
@@ -569,13 +580,39 @@ def test_notice_mention_appearing_emails_alert(monkeypatch):
     assert any("public comment window" in body for _, body, _ in sent)
 
 
+def test_notice_p1488_appearing_emails_alert_the_exact_gap(monkeypatch):
+    # THE regression for the bug this fix closes: Emerald RNG (P1488) reaching
+    # public comment must fire an alert even though N2688 is NOT in the notice.
+    # The old N2688-only trip-wire searched the statewide PDF for "N2688" and so
+    # missed P1488's real window (opened 2026-07-20) entirely.
+    fake, sent = _wire(monkeypatch, ROP_CFG, notice_pdf=_notice_bytes_ok(mentioned=False))
+    rw.run()   # baseline: no target SRN mentioned
+    p1488_pdf = make_notice_pdf(
+        "EGLE is seeking comment on the following ROP actions: "
+        "Emerald RNG LLC - SRN: P1488. Public comment period July 20, 2026 "
+        "until August 1, 2026.")
+    monkeypatch.setattr(rw.rc, "fetch_notice_pdf", lambda url=None, timeout=60: p1488_pdf)
+    assert rw.run() == 0
+    # Exactly one alert — for the P1488 notice item — describing the comment window.
+    p1488_alerts = [s for s in sent if "notice" in s[0].lower() and "P1488" in s[0]]
+    assert len(p1488_alerts) == 1
+    assert "public comment window" in p1488_alerts[0][1]
+    assert "P1488" in p1488_alerts[0][1]
+    # N2688's notice item did NOT fire (it isn't in this notice) — proving the
+    # alert came from the broadened per-SRN coverage, not the old N2688 check.
+    assert not any("notice" in s[0].lower() and "N2688" in s[0] for s in sent)
+    # ...and a durable "changed" row was recorded for notice:P1488.
+    changed = [r for r in _rows(fake) if r[1] == "notice:P1488" and r[3] == "changed"]
+    assert len(changed) == 1
+
+
 def test_csv_fetch_failure_after_baseline_is_skip_and_warn(monkeypatch):
     fake, sent = _wire(monkeypatch, ROP_CFG)
     rw.run()   # baseline
     monkeypatch.setattr(rw.rc, "fetch_csv",
                         lambda url=None, timeout=60: (_ for _ in ()).throw(rc.RopFetchError("blip")))
     assert rw.run() == 0   # not loud
-    assert len(_rows(fake)) == 5   # unchanged, nothing new appended
+    assert len(_rows(fake)) == 7   # unchanged, nothing new appended
     assert sent == []
 
 
@@ -586,7 +623,8 @@ def test_csv_fetch_failure_without_baseline_exits_loud(monkeypatch):
     fake, sent = _wire(monkeypatch, ROP_CFG,
                        csv_error=rc.RopFetchError("bot wall on the runner"))
     assert rw.run() == 1
-    assert {r[1] for r in _rows(fake)} == {"folder:N2688", "notice:N2688"}
+    assert {r[1] for r in _rows(fake)} == {
+        "folder:N2688", "notice:N2688", "notice:N1504", "notice:P1488"}
     assert sent == []
 
 
@@ -594,19 +632,24 @@ def test_folder_fetch_failure_without_baseline_exits_loud(monkeypatch):
     fake, sent = _wire(monkeypatch, ROP_CFG, folder_error=rc.RopFetchError("bot wall"))
     assert rw.run() == 1
     # CSV + notice items still baseline fine even though the folder fetch failed.
-    assert {r[1] for r in _rows(fake)} == {"csv:N2688", "csv:N1504", "csv:P1488", "notice:N2688"}
+    assert {r[1] for r in _rows(fake)} == {
+        "csv:N2688", "csv:N1504", "csv:P1488",
+        "notice:N2688", "notice:N1504", "notice:P1488"}
 
 
 def test_notice_fetch_failure_without_baseline_exits_loud(monkeypatch):
     fake, sent = _wire(monkeypatch, ROP_CFG, notice_error=rc.RopFetchError("bot wall"))
     assert rw.run() == 1
-    assert "notice:N2688" not in {r[1] for r in _rows(fake)}
+    # None of the per-SRN notice items baseline when the single PDF fetch fails.
+    assert not {r[1] for r in _rows(fake)} & {
+        "notice:N2688", "notice:N1504", "notice:P1488"}
 
 
 def test_csv_parse_error_without_baseline_exits_loud(monkeypatch):
     fake, sent = _wire(monkeypatch, ROP_CFG, csv_text=_HEADER_ROW1)  # too few lines
     assert rw.run() == 1
-    assert {r[1] for r in _rows(fake)} == {"folder:N2688", "notice:N2688"}
+    assert {r[1] for r in _rows(fake)} == {
+        "folder:N2688", "notice:N2688", "notice:N1504", "notice:P1488"}
 
 
 def test_csv_partial_baseline_still_exits_loud_on_fetch_failure(monkeypatch):
@@ -617,7 +660,7 @@ def test_csv_partial_baseline_still_exits_loud_on_fetch_failure(monkeypatch):
     # pins (the bug: any() would wrongly treat the siblings' baselines as
     # enough to go quiet).
     fake, sent = _wire(monkeypatch, ROP_CFG)
-    rw.run()   # baseline all 5 items
+    rw.run()   # baseline all 7 items
     tab = fake._values._tabs[sw.TAB_ROP]
     fake._values._tabs[sw.TAB_ROP] = [tab[0]] + [r for r in tab[1:] if r[1] != "csv:P1488"]
     monkeypatch.setattr(rw.rc, "fetch_csv",
@@ -634,11 +677,11 @@ def test_csv_structural_parse_error_is_always_loud_even_with_existing_baseline(m
     # forever (the OBJECTID-reset silent-stall failure class, ADR 014). This
     # pins that RopParseError is ALWAYS loud, regardless of baseline status.
     fake, sent = _wire(monkeypatch, ROP_CFG)
-    rw.run()   # baseline all 5 items — every CSV item now has a baseline
+    rw.run()   # baseline all 7 items — every CSV item now has a baseline
     bad_csv = _HEADER_ROW1 + "\nA,B,C\n" + _N2688_ROWS[0]  # wrong column count
     monkeypatch.setattr(rw.rc, "fetch_csv", lambda url=None, timeout=60: (bad_csv, "later"))
     assert rw.run() == 1
-    assert len(_rows(fake)) == 5   # nothing new appended; CSV items stayed at their prior baseline
+    assert len(_rows(fake)) == 7   # nothing new appended; CSV items stayed at their prior baseline
     assert sent == []
 
 
@@ -664,7 +707,7 @@ def test_alert_formatting_crash_on_one_item_does_not_abort_the_run(monkeypatch):
     # activation block, not all-or-nothing" guarantee applies per ITEM, not
     # just per SOURCE.
     fake, sent = _wire(monkeypatch, ROP_CFG)
-    rw.run()   # baseline all 5 items
+    rw.run()   # baseline all 7 items
 
     real_format = rw.format_change_body
 
