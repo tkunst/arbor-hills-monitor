@@ -1,7 +1,7 @@
 """
 poison_doc_extractor.py — text extraction + PDF synthesis for nSITE documents
-whose sources aren't PDFs (.msg, .docx) — the gap nsite_client.download_pdf()
-alone can't close (ADR 011).
+whose sources aren't PDFs (.msg, .docx, bare images) — the gap
+nsite_client.download_pdf() alone can't close (ADR 011).
 
 Wired in as nsite_client.download_pdf()'s last-resort fallback: when neither
 the record's own link nor the downloadpdf render endpoint yields a PDF, the
@@ -10,12 +10,17 @@ supported here, synthesized into a PDF containing every extractable piece of
 content — so egle_doc_parser.parse_document()'s existing classify/OCR/extract
 pipeline ingests it completely unchanged downstream.
 
-Supported: .msg (Outlook email, via extract-msg) and .docx (Word, via stdlib
-zip/XML — no extra dependency). Legacy binary .doc shares .msg's OLE2 magic
-bytes but isn't a real .msg — extract-msg raises on it (verified against a
-real OLE2-but-not-msg specimen during design), which this module treats as
+Supported: .msg (Outlook email, via extract-msg), .docx (Word, via stdlib
+zip/XML — no extra dependency), and bare raster images (JPEG/PNG/GIF/BMP/TIFF
+— nSITE's downloadpdf render endpoint 400s on some image-sourced records even
+though the native endpoint serves the image fine; see the 2026-07-23 Arbor
+Hills Remediation Area gap-doc audit). Legacy binary .doc shares .msg's OLE2
+magic bytes but isn't a real .msg — extract-msg raises on it (verified against
+a real OLE2-but-not-msg specimen during design), which this module treats as
 "unsupported" (still a poison strike), the same outcome as before this module
-existed.
+existed. (Some real .doc specimens found 2026-07-23 are additionally genuinely
+RC4-encrypted at the FIB level — a distinct, human-judgment-call problem, not
+a parser gap; see the same audit.)
 
 .msg attachments are recursed into: a PDF attachment has its actual pages
 merged in (fitz.insert_pdf) rather than re-extracted as text — and if those
@@ -54,6 +59,19 @@ _WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 # synthesize_pdf() OCRs these proactively — see its docstring.
 _IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif")
 
+# Magic-byte signatures for the same raster formats, checked against a bare
+# top-level download (no filename available at that point — unlike a .msg
+# attachment, which at least has a name to key _IMAGE_EXTS off of).
+_IMAGE_MAGIC = (
+    (b"\xff\xd8\xff", "jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"GIF87a", "gif"),
+    (b"GIF89a", "gif"),
+    (b"BM", "bmp"),
+    (b"II*\x00", "tiff"),
+    (b"MM\x00*", "tiff"),
+)
+
 # Manual line-wrap geometry for synthesized text pages (see _add_text_page).
 _LINE_WIDTH_CHARS = 90
 _LINES_PER_PAGE = 65
@@ -69,10 +87,12 @@ class ExtractionError(RuntimeError):
 
 
 def sniff_format(data: bytes) -> Optional[str]:
-    """Return 'msg', 'docx', or None (unsupported) based on magic bytes.
-    ZIP-magic content is further checked for word/document.xml before being
-    called 'docx' — other OOXML formats (xlsx, pptx) share the ZIP magic but
-    aren't Word documents this module knows how to read."""
+    """Return 'msg', 'docx', 'image', or None (unsupported) based on magic
+    bytes. ZIP-magic content is further checked for word/document.xml before
+    being called 'docx' — other OOXML formats (xlsx, pptx) share the ZIP magic
+    but aren't Word documents this module knows how to read. Image magic is
+    checked last (after OLE2/ZIP), never confused with those since none of the
+    image signatures overlap OLE2_MAGIC/ZIP_MAGIC."""
     if data.startswith(OLE2_MAGIC):
         return "msg"
     if data.startswith(ZIP_MAGIC):
@@ -82,6 +102,10 @@ def sniff_format(data: bytes) -> Optional[str]:
                     return "docx"
         except zipfile.BadZipFile:
             pass
+        return None
+    for magic, _label in _IMAGE_MAGIC:
+        if data.startswith(magic):
+            return "image"
     return None
 
 
@@ -109,6 +133,8 @@ def synthesize_pdf(data: bytes, dest_path: str) -> str:
             doc, needs_ocr = _msg_to_pdf(data)
         elif fmt == "docx":
             doc, needs_ocr = _docx_to_pdf(data)
+        elif fmt == "image":
+            doc, needs_ocr = _image_to_pdf(data)
         else:
             raise ExtractionError(f"unsupported format (first bytes {data[:8]!r})")
     except ExtractionError:
@@ -196,6 +222,25 @@ def _docx_to_pdf(data: bytes) -> tuple[fitz.Document, bool]:
     doc = fitz.open()
     _add_text_page(doc, text)
     return doc, False  # .docx never inserts raw images — no OCR needed
+
+
+# ---------------------------------------------------------------------------
+# bare raster image — a record whose only source is a photo (e.g. a site
+# inspection picture), where nSITE's own downloadpdf render endpoint 400s
+# instead of rasterizing it (unlike an image .msg attachment, which nSITE
+# never sees at all — that path never touches the render endpoint).
+# ---------------------------------------------------------------------------
+
+
+def _image_to_pdf(data: bytes) -> tuple[fitz.Document, bool]:
+    doc = fitz.open()
+    page = doc.new_page()
+    try:
+        page.insert_image(page.rect, stream=data)
+    except Exception as e:  # noqa: BLE001 — bad/truncated image bytes -> poison, not a crash
+        doc.close()
+        raise ExtractionError(f"image insert failed: {e}") from e
+    return doc, True  # always OCR — the whole point of this page is its content
 
 
 # ---------------------------------------------------------------------------

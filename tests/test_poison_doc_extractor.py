@@ -140,6 +140,18 @@ def test_sniff_malformed_zip_magic_is_unsupported():
     assert pde.sniff_format(pde.ZIP_MAGIC + b"not actually a zip") is None
 
 
+def test_sniff_jpeg_is_image():
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20))
+    pix.clear_with(90)
+    assert pde.sniff_format(pix.tobytes("jpg")) == "image"
+
+
+def test_sniff_png_is_image():
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20))
+    pix.clear_with(90)
+    assert pde.sniff_format(pix.tobytes("png")) == "image"
+
+
 # ---------------------------------------------------------------------------
 # .docx
 # ---------------------------------------------------------------------------
@@ -244,6 +256,41 @@ def test_docx_empty_body_raises_extraction_error():
     data = _make_docx([])
     with pytest.raises(pde.ExtractionError, match="empty"):
         pde.synthesize_pdf(data, "/dev/null")
+
+
+# ---------------------------------------------------------------------------
+# bare raster image — a top-level download that's just a photo (2026-07-23
+# Arbor Hills Remediation Area gap-doc audit: nSITE's downloadpdf render
+# endpoint 400s on some image-sourced records even though the native
+# downloadfile endpoint serves the raw JPEG fine).
+# ---------------------------------------------------------------------------
+
+
+def test_image_to_pdf_produces_one_page_and_always_needs_ocr():
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 40, 40))
+    pix.clear_with(90)
+    doc, needs_ocr = pde._image_to_pdf(pix.tobytes("jpg"))
+    assert needs_ocr is True
+    assert len(doc) == 1
+    doc.close()
+
+
+def test_image_to_pdf_bad_bytes_raises_extraction_error():
+    with pytest.raises(pde.ExtractionError, match="image insert failed"):
+        pde._image_to_pdf(b"not actually image bytes")
+
+
+def test_synthesize_pdf_image_invokes_ocr(monkeypatch, tmp_path):
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 40, 40))
+    pix.clear_with(90)
+
+    calls = []
+    import egle_doc_parser as edp
+    monkeypatch.setattr(edp, "ocr_in_place", lambda path, **kw: calls.append(path) or True)
+
+    dest = str(tmp_path / "out.pdf")
+    pde.synthesize_pdf(pix.tobytes("jpg"), dest)
+    assert calls == [dest]
 
 
 # ---------------------------------------------------------------------------
