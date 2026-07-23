@@ -2,8 +2,8 @@ name: rop-watch
 
 # ROP (air Title V permit) watch (ADR 017): daily watch on EGLE's EPA ROP Monthly
 # Report CSV (task-status/permit-status/dates for N2688/N1504/P1488), the N2688
-# renewal folder's file list, and the statewide ROP_Public_Notice.pdf's N2688
-# mention. Emails an alert on any change vs. the last snapshot in the "ROP Watch"
+# renewal folder's file list, and the statewide ROP_Public_Notice.pdf mention for
+# each target SRN. Emails an alert on any change vs. the last snapshot in the "ROP Watch"
 # tab. First sighting of each watched item baselines silently.
 #
 # Safe to leave scheduled from day one: rop.enabled is false by default, so

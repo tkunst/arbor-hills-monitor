@@ -154,10 +154,10 @@ TAB_RIDGEWOOD = "Ridge Wood Reports"
 # WDS/MMPC/PFAS/WOI/GFL/Meeting/Ridgewood tabs: no tab appears until rop_watcher
 # actually runs. Append-only, keyed by Item (e.g. "csv:N2688") in col B for
 # dedup/state — the PFAS/Meeting Watch idiom (Sheet-derived ⇒ race-free, NOT
-# _meta). One row per observed state of one of the FIVE watched items (the three
-# target facilities' ROP CSV rows, the N2688 folder listing, the statewide
-# public-notice N2688 mention) — "baseline" (first sighting, silent) or
-# "changed" (fires an alert). See rop_watcher.py.
+# _meta). One row per observed state of one of the SEVEN watched items (the three
+# target facilities' ROP CSV rows, the N2688 folder listing, and the statewide
+# public-notice mention for each of the three SRNs) — "baseline" (first sighting,
+# silent) or "changed" (fires an alert). See rop_watcher.py.
 TAB_ROP = "ROP Watch"
 # EGLE MMD Open Data watch (Stream I, ADR 018) — same on-demand policy: no tab
 # appears until mmd_watcher actually runs. Append-only, keyed by Item (e.g.

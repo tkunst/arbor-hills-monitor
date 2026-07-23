@@ -88,9 +88,9 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
     EGLE's EPA ROP Monthly Report CSV (task-status/permit-status/dates for
     N2688/N1504/P1488 — excluding the unrelated "Emerald" name-collision M3333),
     the N2688 renewal folder's file list (a new draft ROP appearing), and the
-    statewide public-notice PDF (whether N2688 appears). Emails a change alert to
-    the full advocacy list on any of the five watched items changing; first
-    sighting baselines silently. Off by default; see
+    statewide public-notice PDF (whether each target SRN appears — one item per
+    facility). Emails a change alert to the full advocacy list on any of the
+    seven watched items changing; first sighting baselines silently. Off by default; see
     `docs/decisions/017-rop-watch.md` for activation.
 11. **EGLE MMD Open Data watch (Stream I)** (daily — `mmd.enabled: true`): the
     state's own facility-registry view of the landfill, on EGLE Materials
