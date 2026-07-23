@@ -205,7 +205,7 @@ bug before — ADR 009's Addendum).
 
 Trisha noticed the ROP watch produced **no email** when Emerald RNG's (P1488) ROP
 renewal reached its 30-day public comment window (EGLE notice 2026-07-22, comment
-period July 20 – Aug 1); it was surfaced only by the separate morning-briefing
+period July 20 – Aug 19); it was surfaced only by the separate morning-briefing
 scan. Investigation (ROP Watch tab + the 2026-07-22 run log + a live fetch of the
 notice PDF) found two independent causes, both fixed here:
 
@@ -240,7 +240,7 @@ first sighting (the uniform "first sighting is silent" invariant is deliberately
 left unchanged — not bolted-over in the shared `_diff_and_record` path). One
 consequence, documented so it is a choice not a surprise: **the currently-open
 P1488 window will NOT retroactively alert** — it baselines silent, and the only
-auto-fire would be a low-value "window closed" notice around Aug 1. If the
+auto-fire would be a low-value "window closed" notice around Aug 19. If the
 Conservancy should be looped in on the *open* window, that is a one-time manual
 send. All *future* comment windows for any of the three SRNs now fire normally.
 
