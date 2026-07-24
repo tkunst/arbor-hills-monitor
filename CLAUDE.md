@@ -88,6 +88,17 @@ external users but no sensitive data). Public repo.
   registration changing/surfacing, or a watched wdsid APPEARING in the service
   at all (465941, the expansion-parcel trip-wire; an empty record set is a
   valid baseline). Gated on `mmd.enabled`. See ADR 018.
+- `ride_client.py` — Stream J: EGLE RIDE / Part 201 + UST status (keyless public
+  ArcGIS RRDOpenData, two layers — RIDE's own web app is auth-walled with no
+  anonymous API). One `SiteID IN (...)` / `FacilityID IN (...)` query per layer;
+  explicit `outFields` (never `*`) + `returnGeometry=false` keep OID/geometry
+  out of the fetch entirely (`ProjectManaager` excluded too — admin churn, not
+  signal). Fetch-vs-structural error split mirrors mmd_client. Structured-API
+  source, never goes through `egle_doc_parser`. See ADR 019.
+- `ride_watcher.py` — Stream J: daily snapshot-diff of each watched Part 201
+  site's / Part 211 UST's record vs. the `RIDE Watch` tab — a `RiskCondition`
+  flip, a `Contaminants` change, or a new `Open_Release` alerts (R5, water
+  quality). Gated on `ride.enabled` (new source; ships `false`). See ADR 019.
 
 ## Forbidden patterns (do not do these)
 

@@ -103,6 +103,20 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
     into the `MMD Watch` tab; alerts (Trisha-only to start) on any change; first
     sighting baselines silently — an empty record set is a valid baseline. See
     `docs/decisions/018-mmd-open-data-watch.md`.
+12. **EGLE RIDE / Part 201 + UST status watch (Stream J)** (daily, optional —
+    `ride.enabled: false`): RIDE's own web app is auth-walled with no anonymous
+    document API, but EGLE separately publishes the underlying per-site status on
+    a keyless public ArcGIS service (RRDOpenData — same host/idiom as Stream I,
+    two layers). Watches Layer 0 (Part 201 remediation status) for the 5 Arbor
+    Hills-area sites — Salem Landfill, Arbor Hills - East, 7667 Chubb Rd, 7941
+    Salem Rd, MITC Corridor — and Layer 1 (Part 211 UST) for the GFL facility.
+    A `RiskCondition` flip, a `Contaminants` change, or a new `Open_Release` is
+    early, citable **R5** (water quality) signal. Snapshot-diff into the `RIDE
+    Watch` tab; alerts (Trisha-only to start) on any change; first sighting
+    baselines silently. Rides EGLE's RRDOpenData ArcGIS service; if EGLE
+    reorganizes it, the fetch fails loudly rather than silently going quiet. New
+    source, ships disabled — see `docs/decisions/019-ride-part201-watch.md` for
+    activation.
 
 > **A note on the document links (expected behavior).** Every case-file row's
 > **Link** column points to EGLE's nSITE portal
