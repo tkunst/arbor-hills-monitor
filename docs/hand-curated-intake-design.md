@@ -198,6 +198,7 @@ everything ever published. Recovery is manual — remove the file from Drive
 removal is not recoverable.
 
 **Manageable risks:**
+
 - *Dead or unconfigured OAuth token* → loud exit 1, never a silent skip; the
   cp-to-mount fallback is documented above.
 - *Manifest typo / fuzzy-truthy `public`* → reject non-boolean values; the
@@ -227,10 +228,12 @@ pasted by hand; batch-editing existing rows.
    the service account's write scope, ahead of the script existing).
 3. Add to the **local** `.env` (not committed, not a GitHub secret — this
    script only ever runs locally):
+
    ```
    GOAUTH_HANDCURATED_FOLDER_ID=<the folder id from step 1>
    HAND_CURATED_SOURCE_DIR=<a local directory you designate>
    ```
+
    **As of 2026-07-23 the local `.env`'s `GOAUTH_CLIENT_ID` /
    `GOAUTH_CLIENT_SECRET` / `GOAUTH_REFRESH_TOKEN` are still
    `.env.example` placeholders, not live credentials** — the OAuth-upload
