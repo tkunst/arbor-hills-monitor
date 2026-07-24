@@ -1,9 +1,12 @@
 """
 nsite_submissions_watcher.py — daily watch on EGLE's nSITE Submissions profile
-(application/service-request intake) for every facility already tracked in
-config.yml's `facilities:` list. Standalone + self-terminating, the same shape
-as rop_watcher.py / mmd_watcher.py / ride_watcher.py. See
-docs/decisions/020-nsite-submissions-watch.md.
+(application/service-request intake) for every site in config.yml's
+`nsite_submissions.sites` list — a DIFFERENT, larger list than the Documents
+`facilities:` list (ADR 021), covering all 19 of Trisha's MiEnviro email
+subscriptions. Standalone + self-terminating, the same shape as
+rop_watcher.py / mmd_watcher.py / ride_watcher.py. See
+docs/decisions/020-nsite-submissions-watch.md and
+docs/decisions/021-tiered-submissions-polling.md.
 
 WHY: on 2026-07-24 a JPA (EGLE/USACE Joint Permit Application — wetlands /
 floodplain / inland lakes & streams / dams) for Arbor Hills reached Trisha only
@@ -46,6 +49,16 @@ was verified end-to-end via a real workflow_dispatch run before merging — see
 the ADR — so it ships enabled, not disabled-by-default like an unattended
 overnight new-source build).
 
+TIERED CADENCE (ADR 021): each site in `nsite_submissions.sites` carries a
+`poll: daily|biweekly|quarterly` field. `_is_due` is a pure, deterministic
+gate — no stored "last polled" state needed — that hash-staggers sites within
+a tier across the period so they don't all land on the same day, and fires
+across a 3-day WINDOW per period rather than one exact day, so a single
+missed/failed run (a GitHub Actions runner-acquisition miss, the same failure
+class this repo hit on rop-watch the morning of this build) doesn't blank a
+quarterly site out for a full quarter. A site that isn't due today is skipped
+entirely — no fetch, no Sheet read, no diff.
+
 NO DRIVE / OAUTH (same scope call as pfas_watcher/rop_watcher/etc, ADR 012):
 the deliverable is the ALERT + the durable Sheet row. SMTP + Sheets (both
 already live) are all this needs.
@@ -58,7 +71,7 @@ import hashlib
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import date, datetime
 
 try:
     from zoneinfo import ZoneInfo
@@ -77,8 +90,8 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-def _today() -> str:
-    return (datetime.now(_ET) if _ET else datetime.now()).date().isoformat()
+def _today_date() -> date:
+    return (datetime.now(_ET) if _ET else datetime.now()).date()
 
 
 def _load_json(raw: str, fallback):
@@ -96,6 +109,26 @@ def _should_run(cfg: dict) -> tuple[bool, str]:
     if not (cfg.get("nsite_submissions") or {}).get("enabled"):
         return False, "nsite_submissions.enabled is false — skipping (no-op)."
     return True, ""
+
+
+_POLL_PERIOD_DAYS = {"biweekly": 14, "quarterly": 90}
+_DUE_WINDOW_DAYS = 3  # a due tier fires on this many consecutive days per
+                       # period, not one exact day — see ADR 021 Decision 3.
+
+
+def _is_due(cadence: str, srn: str, today: date) -> bool:
+    """Pure: does `srn`'s cadence say to poll on `today`? "daily" is always
+    due. "biweekly"/"quarterly" stagger across sites via a stable hash of
+    srn (so same-tier sites don't all land on the same day) and are due for
+    a _DUE_WINDOW_DAYS-day window each period rather than one exact day, so
+    one missed/failed run doesn't push a quarterly site's next check out a
+    full quarter — it just retries the next day or two within the same
+    window. Deterministic and stateless: no "last polled" tracking needed."""
+    if cadence == "daily":
+        return True
+    period = _POLL_PERIOD_DAYS[cadence]
+    offset = int(hashlib.sha256(srn.encode("utf-8")).hexdigest(), 16) % period
+    return (today.toordinal() - offset) % period < _DUE_WINDOW_DAYS
 
 
 # ---------------------------------------------------------------------------
@@ -254,21 +287,29 @@ def run() -> int:
 
     scfg = cfg.get("nsite_submissions") or {}
     recipients = scfg.get("recipients") or None  # None -> full alert_recipients list
+    sites = scfg.get("sites") or []
 
     sheet_id = os.environ["GSHEET_ID"]
     sheets = dc.sheets_service()
     sw.ensure_submissions_tabs(sheets, sheet_id)
 
     session = nc.make_session()
-    today = _today()
-    counts = {"baseline": 0, "changed": 0, "unchanged": 0}
+    today_date = _today_date()
+    today = today_date.isoformat()
+    counts = {"baseline": 0, "changed": 0, "unchanged": 0, "skipped": 0}
     exit_code = 0
 
-    facilities = cfg["facilities"]
-    for f in facilities:
-        srn, name, nsite_id = f["srn"], f["name"], f["id"]
+    for site in sites:
+        srn, name, nsite_id = site["srn"], site["name"], site["id"]
+        cadence = site.get("poll", "daily")
         key = f"subm:{srn}"
         label = f"nSITE Submissions — {name} ({srn})"
+
+        if not _is_due(cadence, srn, today_date):
+            print(f"[nsite-submissions-watch] {label}: not due today ({cadence} cadence) — skipping.")
+            counts["skipped"] += 1
+            continue
+
         try:
             subs = nc.fetch_site_submissions(session, nsite_id)
             print(f"[nsite-submissions-watch] {label}: fetched {len(subs)} submission(s).")
@@ -288,8 +329,9 @@ def run() -> int:
         counts[result] += 1
 
     print(f"[nsite-submissions-watch] done — {counts['changed']} changed, "
-          f"{counts['baseline']} baselined, {counts['unchanged']} unchanged "
-          f"(across {len(facilities)} facilit{'y' if len(facilities) == 1 else 'ies'}).")
+          f"{counts['baseline']} baselined, {counts['unchanged']} unchanged, "
+          f"{counts['skipped']} not-due-today (across {len(sites)} site"
+          f"{'' if len(sites) == 1 else 's'}).")
     return exit_code
 
 
