@@ -99,23 +99,34 @@ external users but no sensitive data). Public repo.
   site's / Part 211 UST's record vs. the `RIDE Watch` tab — a `RiskCondition`
   flip, a `Contaminants` change, or a new `Open_Release` alerts (R5, water
   quality). Gated on `ride.enabled` (new source; ships `false`). See ADR 019.
-- `nsite_submissions_watcher.py` — Stream K: daily snapshot-diff of every
-  `facilities:` entry's nSITE **Submissions** profile (application/service-
-  request intake — a sibling profile to Documents, added after a JPA never
-  showed up in Documents at all) vs. the `Submissions Watch` tab. Keyed on
-  Submission Reference Number (globally unique per filing, unlike ROP's task
-  rows): a ref never seen before alerts as a brand-new filing, distinctly
-  from an existing ref's status advancing. `fetch_site_submissions`
-  (`nsite_client.py`) deliberately RAISES on fetch failure rather than
-  swallowing to `[]` like `fetch_site_documents` — this watcher diffs the
-  result, so a silent `[]` would misread a fetch outage as "everything
-  removed." Also added the WRD Land & Water Interface facility (the JPA's own
-  site — EGLE assigns a separate nSITE ID per program area even for the same
-  physical facility, same as the RA/AQD split in ADR 011) to `facilities:`.
-  Gated on `nsite_submissions.enabled` (ships `true` — Trisha directed this
-  build live and it was verified against a real `workflow_dispatch` run
-  before merging, so it skips the overnight-build new-source `false` default).
-  See ADR 020.
+- `nsite_submissions_watcher.py` — Stream K: snapshot-diff of every site in
+  `nsite_submissions.sites` (a SEPARATE, wider 19-entry list than the
+  Documents `facilities:` list — ADR 021) against its nSITE **Submissions**
+  profile (application/service-request intake — a sibling profile to
+  Documents, added after a JPA never showed up in Documents at all) vs. the
+  `Submissions Watch` tab. Keyed on Submission Reference Number (globally
+  unique per filing, unlike ROP's task rows): a ref never seen before alerts
+  as a brand-new filing, distinctly from an existing ref's status advancing.
+  `fetch_site_submissions` (`nsite_client.py`) deliberately RAISES on fetch
+  failure rather than swallowing to `[]` like `fetch_site_documents` — this
+  watcher diffs the result, so a silent `[]` would misread a fetch outage as
+  "everything removed." Also added the WRD Land & Water Interface facility
+  (the JPA's own site — EGLE assigns a separate nSITE ID per program area
+  even for the same physical facility, same as the RA/AQD split in ADR 011)
+  and `AHLI` (a bare duplicate registration with genuine recent activity) to
+  `facilities:`. Gated on `nsite_submissions.enabled` (ships `true` — Trisha
+  directed this build live and it was verified against a real
+  `workflow_dispatch` run before merging, so it skips the overnight-build
+  new-source `false` default). See ADR 020.
+- **Tiered polling (ADR 021):** each `nsite_submissions.sites` entry carries
+  a `poll: daily|biweekly|quarterly` field — resolving all 19 of Trisha's
+  MiEnviro subscriptions to real nSITE IDs surfaced 14 more sites beyond the
+  original 5, mostly dormant duplicate/historical registrations. Cadence is
+  `_is_due(cadence, srn, today)`, a pure, stateless function that hash-
+  staggers sites within a tier and fires across a 3-day window per period
+  (not one exact day), so a single missed/failed daily run doesn't blank a
+  quarterly site out for a full quarter. The Documents `facilities:` list is
+  deliberately untouched by this — only the Submissions watch reads `poll`.
 
 ## Forbidden patterns (do not do these)
 

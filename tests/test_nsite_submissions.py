@@ -211,26 +211,77 @@ def test_should_run_true_when_enabled():
 
 
 # ==============================================================================
+# _is_due — tiered cadence (ADR 021)
+# ==============================================================================
+
+import datetime as _dt
+
+
+def test_is_due_daily_is_always_true():
+    for i in range(30):
+        assert nw._is_due("daily", "ANYTHING", _dt.date(2026, 7, 24) + _dt.timedelta(days=i))
+
+
+def test_is_due_biweekly_fires_exactly_3_days_per_14_day_period():
+    # 140 days = exactly 10 periods; window may straddle a period boundary
+    # (e.g. due on the last 2 days of one period + the first of the next) —
+    # still 3 consecutive calendar days per period either way.
+    due_days = [i for i in range(140)
+                if nw._is_due("biweekly", "P1504", _dt.date(2026, 1, 1) + _dt.timedelta(days=i))]
+    assert len(due_days) == 30
+
+
+def test_is_due_quarterly_fires_exactly_3_days_per_90_day_period():
+    due_days = [i for i in range(900)
+                if nw._is_due("quarterly", "COMP", _dt.date(2026, 1, 1) + _dt.timedelta(days=i))]
+    assert len(due_days) == 30
+
+
+def test_is_due_staggers_different_srns_within_a_tier():
+    """The whole point of hashing on srn: two biweekly sites shouldn't
+    reliably land on the same day, or the "spread the load" design is moot."""
+    today = _dt.date(2026, 7, 24)
+    windows = {
+        srn: [i for i in range(14) if nw._is_due("biweekly", srn, today + _dt.timedelta(days=i))]
+        for srn in ["P1504", "AHLA", "AHLB", "AHLC", "AHLD", "AHLE"]
+    }
+    assert len({tuple(w) for w in windows.values()}) > 1  # not all identical
+
+
+def test_is_due_survives_a_missed_run_within_the_window():
+    """A quarterly site's window is 3 consecutive days specifically so a
+    single failed/missed run (a GH runner-acquisition miss, same failure
+    class rop-watch hit) still gets caught the next day or two — not pushed
+    out a full quarter."""
+    today = _dt.date(2026, 1, 1)
+    due_days = [i for i in range(90) if nw._is_due("quarterly", "ADL1", today + _dt.timedelta(days=i))]
+    assert len(due_days) >= 2  # missing exactly one of these still leaves another chance
+
+
+# ==============================================================================
 # Full run() flows through a fake Sheets service
 # ==============================================================================
 
-FACILITIES = [
-    {"srn": "N2688", "name": "Arbor Hills Landfill", "id": "8094300008956198244"},
-    {"srn": "WRD", "name": "GFL-Arbor Hills Landfill-Washtenaw Co", "id": "306291952280313698"},
+SITES = [
+    {"srn": "N2688", "name": "Arbor Hills Landfill", "id": "8094300008956198244", "poll": "daily"},
+    {"srn": "WRD", "name": "GFL-Arbor Hills Landfill-Washtenaw Co", "id": "306291952280313698", "poll": "daily"},
 ]
 
 SUB_CFG = {
-    "nsite_submissions": {"enabled": True},
-    "facilities": FACILITIES,
+    "nsite_submissions": {"enabled": True, "sites": SITES},
     "alert_recipients": ["a@example.com"],
 }
 
 
 def _wire(monkeypatch, cfg, fetch_by_srn):
     """fetch_by_srn: dict of srn -> (list[dict] | Exception) OR a callable
-    srn -> list[dict], for tests that need per-call variation."""
+    srn -> list[dict], for tests that need per-call variation. Looks srn up
+    against whatever `nsite_submissions.sites` list is IN THE PASSED cfg (not
+    the module-level SITES), so tests that override `sites` still resolve
+    correctly."""
     fake = FakeSheets()
     sent = []
+    sites = cfg["nsite_submissions"]["sites"]
     monkeypatch.setenv("GSHEET_ID", "SID")
     monkeypatch.setattr(nw, "load_config", lambda: copy.deepcopy(cfg))
     monkeypatch.setattr(nw.dc, "sheets_service", lambda: fake)
@@ -239,7 +290,7 @@ def _wire(monkeypatch, cfg, fetch_by_srn):
                         lambda subj, body, c, recipients=None: sent.append((subj, body, recipients)))
 
     def _fetch(session, nsite_id):
-        srn = next(f["srn"] for f in FACILITIES if f["id"] == nsite_id)
+        srn = next(s["srn"] for s in sites if s["id"] == nsite_id)
         result = fetch_by_srn(srn) if callable(fetch_by_srn) else fetch_by_srn[srn]
         if isinstance(result, Exception):
             raise result
@@ -257,6 +308,24 @@ def test_disabled_run_is_noop_touches_nothing(monkeypatch):
     boom = lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run"))
     monkeypatch.setattr(nw.dc, "sheets_service", boom)
     assert nw.run() == 0
+
+
+def test_run_skips_a_site_that_is_not_due_today_no_fetch_no_row(monkeypatch):
+    """A not-due site must be a true no-op: no fetch (the fake would raise if
+    called), no Sheet row, no alert — not just "fetched but discarded"."""
+    sites = [
+        {"srn": "N2688", "name": "Arbor Hills Landfill", "id": "8094300008956198244", "poll": "daily"},
+        {"srn": "COMP", "name": "Arbor Hills Composting Faciltiy", "id": "-2164784335333909072", "poll": "quarterly"},
+    ]
+    cfg = {"nsite_submissions": {"enabled": True, "sites": sites}, "alert_recipients": ["a@example.com"]}
+    fake, sent = _wire(monkeypatch, cfg, {
+        "N2688": [_row("A")],
+        "COMP": AssertionError("a not-due site must never be fetched"),
+    })
+    monkeypatch.setattr(nw, "_is_due", lambda cadence, srn, today: srn != "COMP")
+    assert nw.run() == 0
+    assert {r[1] for r in _rows(fake)} == {"subm:N2688"}
+    assert sent == []
 
 
 def test_first_run_baselines_every_facility_silently(monkeypatch):
