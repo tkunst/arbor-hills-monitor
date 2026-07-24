@@ -1,12 +1,13 @@
 """
-nsite_submissions_watcher.py — daily watch on EGLE's nSITE Submissions profile
-(application/service-request intake) for every site in config.yml's
+nsite_submissions_watcher.py — runs daily, watching EGLE's nSITE Submissions
+profile (application/service-request intake) for every site in config.yml's
 `nsite_submissions.sites` list — a DIFFERENT, larger list than the Documents
 `facilities:` list (ADR 021), covering all 19 of Trisha's MiEnviro email
-subscriptions. Standalone + self-terminating, the same shape as
-rop_watcher.py / mmd_watcher.py / ride_watcher.py. See
-docs/decisions/020-nsite-submissions-watch.md and
-docs/decisions/021-tiered-submissions-polling.md.
+subscriptions. Each site is actually fetched+diffed at its own `poll` cadence
+(daily/biweekly/quarterly — see TIERED CADENCE below), not every run.
+Standalone + self-terminating, the same shape as rop_watcher.py /
+mmd_watcher.py / ride_watcher.py. See docs/decisions/020-nsite-submissions-watch.md
+and docs/decisions/021-tiered-submissions-polling.md.
 
 WHY: on 2026-07-24 a JPA (EGLE/USACE Joint Permit Application — wetlands /
 floodplain / inland lakes & streams / dams) for Arbor Hills reached Trisha only
@@ -221,9 +222,8 @@ def format_change_body(label: str, note: str, body: str) -> str:
         "What changed:\n\n"
         f"{shown}\n\n"
         "This is an automated watch on EGLE's nSITE Submissions profile "
-        "(application / service-request intake — the SAME facilities this "
-        "monitor already tracks, a DIFFERENT profile than filed Documents) — "
-        "trip-wiring a brand-new filing the moment EGLE records it, or an "
+        "(application / service-request intake) — trip-wiring a brand-new "
+        "filing the moment EGLE records it under this nSITE site, or an "
         "existing filing's status advancing. Review MiEnviro directly for "
         "full context.\n"
     )
