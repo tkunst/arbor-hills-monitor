@@ -166,6 +166,14 @@ TAB_ROP = "ROP Watch"
 # watched wdsid's layer-0 record set — "baseline" (first sighting, silent) or
 # "changed" (fires an alert). See mmd_watcher.py.
 TAB_MMD = "MMD Watch"
+# EGLE RIDE / Part 201 + UST status watch (Stream J, ADR 019) — same on-demand
+# policy: no tab appears until ride_watcher actually runs. Append-only, keyed
+# by Item (e.g. "ride:81000033") in col B for dedup/state — the PFAS/Meeting/
+# ROP/MMD Watch idiom (Sheet-derived ⇒ race-free, NOT _meta). One row per
+# observed state of a watched Part 201 site's or Part 211 UST's record —
+# "baseline" (first sighting, silent) or "changed" (fires an alert). See
+# ride_watcher.py.
+TAB_RIDE = "RIDE Watch"
 # Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
 # TAB_NEW/TAB_HISTORICAL. "Change" is new/changed (live) or historical (dump).
 WDS_HEADERS = [
@@ -251,6 +259,15 @@ ROP_WATCH_HEADERS = [
 # ROP_WATCH_HEADERS: the last column's canonical snapshot JSON is what next run
 # diffs against AND a durable dated record of what the state's registry said.
 MMD_WATCH_HEADERS = [
+    "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
+    "Snapshot JSON",
+]
+
+# EGLE RIDE / Part 201 + UST status watch (Stream J, ADR 019). Same row shape
+# and rationale as MMD_WATCH_HEADERS/ROP_WATCH_HEADERS: the last column's
+# canonical snapshot JSON is what next run diffs against AND a durable dated
+# record of what RRDOpenData said.
+RIDE_WATCH_HEADERS = [
     "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
     "Snapshot JSON",
 ]
@@ -1226,6 +1243,71 @@ def append_mmd_watch_row(
     (durable record first, alert best-effort second — same crash-safe ordering
     as append_rop_watch_row)."""
     append_rows(service, sheet_id, TAB_MMD, [[
+        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
+    ]])
+
+
+# ---------------------------------------------------------------------------
+# RIDE / Part 201 + UST status watch (Stream J, ADR 019) — the tab is the
+# state (append-only ⇒ race-free), exactly like the PFAS / Meeting / ROP / MMD
+# Watch tabs above.
+# ---------------------------------------------------------------------------
+
+
+def ensure_ride_tabs(service, sheet_id: str) -> None:
+    """Create the RIDE Watch tab if missing and reconcile its header row on
+    every run (same self-healing policy as ensure_mmd_tabs()). Called only
+    from ride_watcher.py, so the tab doesn't appear until the watch actually
+    runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_RIDE not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_RIDE}}}]},
+        ).execute()
+    _set_header(service, sheet_id, TAB_RIDE, RIDE_WATCH_HEADERS)
+
+
+def last_ride_snapshot(service, sheet_id: str, item_key: str) -> tuple[str, str] | None:
+    """Return (snapshot_hash, snapshot_json) from the most recent row for this
+    item_key (e.g. "ride:81000033"), or None if the item has never been
+    snapshotted. None means 'baseline this item'; a hash mismatch means
+    'changed'. Reading the last matching row (not a _meta cell) is what makes
+    the watch race-free — the tab is append-only, so no concurrent job can
+    clobber it (same idiom as last_mmd_snapshot)."""
+    return last_ride_snapshots(service, sheet_id, [item_key])[item_key]
+
+
+def last_ride_snapshots(
+    service, sheet_id: str, item_keys: list[str],
+) -> dict[str, tuple[str, str] | None]:
+    """Batched form of last_ride_snapshot: ONE tab read for however many keys
+    are asked for (the all-baselined check on a fetch failure), instead of one
+    full-tab read per key. Same race-free append-only read as the singular
+    form — the last_mmd_snapshots idiom."""
+    latest_by_key: dict[str, list] = {}
+    for r in _tab_rows(service, sheet_id, TAB_RIDE, "A2:H"):
+        if len(r) > 1:
+            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
+    result: dict[str, tuple[str, str] | None] = {}
+    for key in item_keys:
+        r = latest_by_key.get(key)
+        if r is None:
+            result[key] = None
+        else:
+            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
+    return result
+
+
+def append_ride_watch_row(
+    service, sheet_id: str, date: str, item_key: str, label: str, change: str,
+    snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
+) -> None:
+    """Append one RIDE Watch row. Written BEFORE the change email is sent
+    (durable record first, alert best-effort second — same crash-safe ordering
+    as append_mmd_watch_row)."""
+    append_rows(service, sheet_id, TAB_RIDE, [[
         date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
     ]])
 
