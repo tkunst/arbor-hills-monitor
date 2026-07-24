@@ -82,12 +82,25 @@ otherwise blank a quarterly site out for a full 90 days with no recovery
 until the next window. A 3-day window means one missed run still leaves
 another chance within days, not months.
 
-### 4. `facilities:` addition (`AHLI`) does not stampede alerts
+### 4. `facilities:` addition (`AHLI`) does not stampede alerts and does not collide doc_ids
 
-Same check as ADR 020 Decision 4, re-verified: `AHLI` has 4 Documents, far
-under `watcher.max_new_docs_per_run` (25) even combined with any other
-pending backlog, and `backfill.py` never calls `is_urgent` regardless. No
-urgency-email risk from this addition.
+Same checks as ADR 020 Decision 4, re-verified for `AHLI` specifically —
+not assumed just because WRD passed them:
+
+- **Stampede:** `AHLI` has 4 Documents, far under `watcher.max_new_docs_per_run`
+  (25) even combined with any other pending backlog, and `backfill.py` never
+  calls `is_urgent` regardless. No urgency-email risk from this addition.
+- **doc_id overlap:** `AHLI` is a duplicate nSITE registration for the SAME
+  physical landfill N2688 already tracks — exactly the case most likely to
+  share doc_ids, since ADR 008's shared-Sheet/no-composite-key design rests
+  entirely on doc_ids being globally unique across facilities. Live-checked
+  before merging: `AHLI`'s 4 doc_ids against all 5 already-tracked
+  facilities' doc_ids (RA 741, WRD 69, N1504 53, P1488 25, N2688 774) —
+  **zero overlap**. `AHLI`'s 4 docs are an Asbestos Notification of Intent to
+  Renovate/Demolish (2024-12-16) and 3 Form-Submission attachments tied to a
+  2025-12-08 filing — routine notification paperwork, the same document
+  class the 5 Asbestos-duplicate registrations in the biweekly tier already
+  file regularly, not a violation/exceedance type.
 
 ### 5. This supersedes ADR 008's exclusion of the no-SRN Emerald RNG sibling
 
@@ -156,9 +169,14 @@ Activation).
 No new `enabled` flag — `nsite_submissions.enabled: true` already ships from
 ADR 020; this build only widens `sites` from 5 to 19 and adds per-site
 cadence. No new secrets, no workflow file changes (same daily cron; gating
-happens inside the script). Verify post-merge via a real `workflow_dispatch`
-run: expect the 5 daily sites + `AHLI`'s Documents backfill to process as
-usual, all newly-added Submissions-only sites due that day to baseline
-silently (zero alerts — first sighting never alerts), and sites outside
-their due window to log a skip with no Sheet write. See the PR / session log
-for the actual run and its counts.
+happens inside the script). `_is_due` is date-dependent, so the exact due
+set differs by dispatch day — computed for 2026-07-24 (the day this shipped):
+**8 due** (6 daily + `AHLD` + `AHLE`, both biweekly) and **11 skipped** (the
+other 4 biweekly sites + all 7 quarterly sites, none of them in-window yet).
+Verify post-merge via a real `workflow_dispatch` run against THAT day's
+actual due set (recompute `_is_due` for the actual dispatch date, don't
+assume all 14 new sites baseline at once) — expect the 5 original daily
+sites + `AHLI`'s Documents backfill to process as usual, the due
+Submissions-only sites to baseline silently (zero alerts — first sighting
+never alerts), and the rest to log a skip with no Sheet write. See the PR /
+session log for the actual run and its counts.
