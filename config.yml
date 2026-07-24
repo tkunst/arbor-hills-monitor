@@ -507,6 +507,38 @@ mmd:
   recipients:
     - arbor-hills@trishakunst.com
 
+# --- EGLE RIDE / Part 201 + UST status watch (Stream J, ADR 019) ---
+# Daily snapshot-diff on EGLE's KEYLESS RRDOpenData ArcGIS registry
+# (gisagoegle.state.mi.us .../EGLE/RRDOpenData/MapServer) — Layer 0 (Part 201
+# contaminated-site remediation status) for the 5 Arbor Hills-area sites, and
+# Layer 1 (Part 211 underground storage tanks) for the GFL UST. RIDE's own web
+# app is auth-walled with no anonymous document API; this is the underlying
+# public status data. A RiskCondition flip, a Contaminants change, or a new
+# Open_Release is early, citable R5 (water quality) signal. Statuses change
+# rarely — near-silent in steady state. The FIRST sighting of each watched
+# item baselines silently. See ride_client.py / ride_watcher.py.
+#
+# NEW SOURCE — ships DISABLED per overnight-coder's new-source gate (built
+# 2026-07-23/24, unattended overnight; the live feasibility re-check confirmed
+# all 6 records still return). ACTIVATION is a separate, later, human step:
+# review the watched fields below, then flip enabled: true (keyless — nothing
+# to provision, no new secret).
+ride:
+  enabled: false
+  site_ids:                          # Layer 0 (Part 201) — key field SiteID
+    - "81000033"   # Salem Landfill
+    - "81000004"   # Arbor Hills - East
+    - "81000835"   # 7667 Chubb Rd
+    - "81000840"   # 7941 Salem Rd
+    - "82008712"   # MITC Corridor
+  facility_ids:                      # Layer 1 (Part 211 UST) — key field FacilityID
+    - "00040223"   # GFL Environmental USA, LLC, 7811 Chubb Rd
+  # Recipient override: Trisha only to start (Meeting Watch/MMD precedent for
+  # a brand-new stream). Delete/comment this block to send to the full
+  # alert_recipients list once the alert copy has been seen in the wild.
+  recipients:
+    - arbor-hills@trishakunst.com
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 alert_recipients:

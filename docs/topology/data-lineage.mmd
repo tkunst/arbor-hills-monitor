@@ -8,6 +8,7 @@ graph LR
   ds_pfas[("EGLE PFAS Investigation Pages (michigan.gov)")]
   ds_gfl_air[("GFL Perimeter Air ArcGIS FeatureServer (Barr, public)")]
   ds_ridgewood[("Ridge Wood Elementary H2S Report Page (Barr, public)")]
+  ds_ride[("EGLE RIDE RRDOpenData ArcGIS Service (Part 201 + UST, public)")]
   ds_smtp[("Email Recipients (SMTP)")]
   ds_anthropic[("Anthropic Claude API")]
   ds_config[("config.yml (risk register + settings)")]
@@ -41,6 +42,8 @@ graph LR
   ridgewood_client -. read .-> ds_ridgewood
   ridgewood_archiver["ridgewood_archiver"]
   ridgewood_archiver ==>|write| ds_drive_archive
+  ride_client["ride_client"]
+  ride_client -. read .-> ds_ride
   style ds_conservancy_sheet fill:#f59e0b,color:#000,stroke:#b45309
   style ds_drive_archive fill:#f59e0b,color:#000,stroke:#b45309
   style ds_nsite fill:#f59e0b,color:#000,stroke:#b45309
@@ -49,6 +52,7 @@ graph LR
   style ds_pfas fill:#f59e0b,color:#000,stroke:#b45309
   style ds_gfl_air fill:#f59e0b,color:#000,stroke:#b45309
   style ds_ridgewood fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_ride fill:#f59e0b,color:#000,stroke:#b45309
   style ds_smtp fill:#f59e0b,color:#000,stroke:#b45309
   style ds_anthropic fill:#f59e0b,color:#000,stroke:#b45309
   style ds_config fill:#f59e0b,color:#000,stroke:#b45309

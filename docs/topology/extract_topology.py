@@ -61,12 +61,14 @@ DOMAIN = {
     "gfl_air_watcher": "orchestration",# daily GFL perimeter-air poll — Stream E (ADR 014)
     "civicclerk_watcher": "orchestration", # twice-daily meeting-change watch — Stream F (ADR 015)
     "ridgewood_archiver": "orchestration", # daily Ridge Wood H2S mirror+extract — Stream G (ADR 016)
-    # Ingestion — one client per external source (nSITE, WDS, MMPC, PFAS, GFL air, Ridge Wood)
+    "ride_watcher": "orchestration",   # daily RIDE / Part 201 + UST status watch — Stream J (ADR 019)
+    # Ingestion — one client per external source (nSITE, WDS, MMPC, PFAS, GFL air, Ridge Wood, RIDE)
     "nsite_client": "ingestion", "mmpc_client": "ingestion",
     "wds_watcher": "ingestion", "wds_client": "ingestion",
     "pfas_client": "ingestion",        # PFAS page fetch + content-hash normalize (ADR 012)
     "gfl_air_client": "ingestion",     # GFL ArcGIS FeatureServer fetch + ADR-004 mapping (ADR 014)
     "ridgewood_client": "ingestion",   # Ridge Wood H2S report scrape + fail-safe extract (ADR 016)
+    "ride_client": "ingestion",        # RIDE RRDOpenData ArcGIS fetch + canonicalize (ADR 019)
     # Document processing & risk
     "egle_doc_parser": "processing", "risk_register": "processing",
     "retry_policy": "processing", "woi_table_parser": "processing",
@@ -107,6 +109,7 @@ DATASTORES = [
     ("ds:pfas", "EGLE PFAS Investigation Pages (michigan.gov)"),
     ("ds:gfl-air", "GFL Perimeter Air ArcGIS FeatureServer (Barr, public)"),
     ("ds:ridgewood", "Ridge Wood Elementary H2S Report Page (Barr, public)"),
+    ("ds:ride", "EGLE RIDE RRDOpenData ArcGIS Service (Part 201 + UST, public)"),
     ("ds:smtp", "Email Recipients (SMTP)"),
     ("ds:anthropic", "Anthropic Claude API"),
     ("ds:config", "config.yml (risk register + settings)"),
@@ -130,6 +133,7 @@ DATA_EDGES = [
     ("mmpc_archiver", "ds:drive-archive", "write"),# uploads MMPC PDFs (Mirror D, ADR 010)
     ("ridgewood_client", "ds:ridgewood", "read"),  # scrape the monthly report list + PDFs (Stream G)
     ("ridgewood_archiver", "ds:drive-archive", "write"), # mirrors Ridge Wood PDFs (optional, ADR 016)
+    ("ride_client", "ds:ride", "read"),            # query RRDOpenData Layer 0/1 (Stream J, ADR 019)
 ]
 # DISPATCH edges — call targets resolved against config, not a static symbol.
 # Represented as `dispatch` (and the equivalent plain import edge is suppressed,

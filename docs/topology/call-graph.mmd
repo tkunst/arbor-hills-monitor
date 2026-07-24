@@ -16,5 +16,8 @@ graph TD
   dom_orchestration --> dom_ingestion
   dom_orchestration --> dom_persistence
   dom_orchestration --> dom_processing
-  style dom_orchestration fill:#2563eb,color:#fff,stroke:#1e40af
+  dom_processing --> dom_config
+  dom_processing --> dom_persistence
   style dom_ops fill:#2563eb,color:#fff,stroke:#1e40af
+  style dom_orchestration fill:#2563eb,color:#fff,stroke:#1e40af
+  style dom_processing fill:#2563eb,color:#fff,stroke:#1e40af
