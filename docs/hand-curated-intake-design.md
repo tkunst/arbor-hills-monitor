@@ -3,7 +3,7 @@
 **Status:** design locked 2026-07-18. Two of the three pieces below are built
 (the Drive folder and Sheet tab, created manually 2026-07-23); the intake
 *script* itself is not yet written. See
-`docs/session-2026-07-23-hand-curated-intake-manual-precedent.md` for exactly
+`docs/sessions/session-2026-07-23-hand-curated-intake-manual-precedent.md` for exactly
 what exists today and what a manual publish looked like without the script.
 
 ## The gap

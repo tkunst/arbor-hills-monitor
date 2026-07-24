@@ -67,3 +67,61 @@ than today's `cp`-to-mount fallback), the local `.env`'s `GOAUTH_CLIENT_ID` /
 `GOAUTH_CLIENT_SECRET` / `GOAUTH_REFRESH_TOKEN` / `GOAUTH_HANDCURATED_FOLDER_ID`
 need real values — as of this session they were still the `.env.example`
 placeholders, not live credentials.
+
+## 2026-07-24 addendum — three more entries, same manual precedent, folder ID recorded
+
+Trisha asked (from the Lotext session, not this repo) to publish three
+enforcement-instrument PDFs cited in `arbor-hills-violations-enforcement-summary.md`'s
+"four enforcement threads" framing, following this spec. Same manual fallback
+as 2026-07-23 (`.env`'s `GOAUTH_*` vars are still placeholders): `cp` into the
+CloudStorage-mounted folder, resolve each Drive file ID via the API once
+synced (`Hand-Curated Public Records` folder id
+`1Zk-tq08E0iUWBLSVg9U7Axw8Ox1Lt7pR`, confirmed inherits public-reader sharing),
+append rows via `sheet_writer.append_rows()` against the existing tab (service
+account, same as every other archiver tab — no code changes needed, the
+generic `append_rows` helper already covers this).
+
+Three new rows (see the Sheet for full `note` text):
+
+1. **Federal Consent Decree** (`Case 4:21-cv-12098-SDD-EAS`, *US & EGLE v.
+   Arbor Hills Energy LLC*, N1504) — not an EGLE nSITE document (federal
+   court/DOJ filing), so never eligible for the nSITE mirror. **Went through
+   two versions the same day.** First pull: DOJ's own public Consent Decree
+   library (`justice.gov/enrd/consent-decree/file/1431506/download`) — this
+   turned out to be the *as-lodged* copy (filed 9/9/21, ECF No. 2-1), whose
+   own docket stamp reads "Case 5:21-cv-12098" throughout, different from the
+   public doc's existing (correct) citation. That led to briefly "correcting"
+   the public doc's citation to 5:21, which was wrong. Trisha then pointed the
+   session back at the Lotext workbench (`documents/arbor-hills/`, not
+   searched carefully enough the first time), which turned out to hold
+   `source-docs/egle-documents/N2688_CD_20211215.pdf` — the actually-*entered*
+   decree (filed/entered 12/15/21, ECF No. 9), docket-stamped "Case
+   4:21-cv-12098-SDD-EAS" throughout, matching the public doc's original
+   citation. Same substantive terms in both versions ($375,000+$375,000).
+   Published the entered version, removed the lodged one from the public
+   folder, reverted the case-number "fix" in the Lotext doc, and updated the
+   Sheet row in place (same `curated_filename`, new Drive link/note).
+   **Lesson:** check the local workbench thoroughly before reaching for an
+   external source, even a primary one — DOJ's own library isn't wrong, it
+   just isn't necessarily the *same* filing as what a downstream doc already
+   cites.
+2. **2023 MMD Consent Order No. 115-05-2023** (N2688) — already held in the
+   Lotext workbench (harvested 2026-07-15 from EGLE's Air facility-info page,
+   not nSITE); searched the nSITE mirror first per the check-before-pulling
+   rule and it wasn't there, so this is a first public upload, not a
+   re-mirror.
+3. **YCUA Administrative Consent Order, Jan 5 2026** (Industrial User Permit
+   AD 6-27, arsenic/PFOA/PFOS Pollutant Reduction Work Plan) — YCUA-issued,
+   not EGLE, so also never nSITE-eligible. Located in Trisha's own case-file
+   Drive workbench (`AHL-GFL_010526_SignedACO.pdf`) after both an nSITE-mirror
+   search and a Gmail search came up empty. Pages 2-15 (the signed Order
+   itself) are scanned images with no OCR text layer — not re-OCR'd this
+   session, content verified only against the cover letter (case ID, permit
+   number, effective-on-signature language).
+
+**Mechanism note for whoever builds the real script:** all three files went
+through `cp`-to-mount (same as 2026-07-23), then the Drive file ID was
+resolved per file via a live API search rather than a local folder-list call
+(the assisting session had API access but not a mounted-Drive `find`-by-name
+helper handy) — same net effect, still a resolve-after-sync, not a
+synchronous ID. The upload-first-row-second ordering was preserved.

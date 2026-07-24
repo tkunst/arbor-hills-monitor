@@ -7,7 +7,7 @@ queue ordering for the coder-runs-before-worker reality, and renamed
 `docs/handoffs/` to `docs/overnight-coder-handoffs/`.
 
 Base at session start: `5ecd4ce`. Follow-on to the same-day WOI extraction session
-(`docs/session-2026-07-13-woi-live-extraction-and-measurements-quality.md`).
+(`docs/sessions/session-2026-07-13-woi-live-extraction-and-measurements-quality.md`).
 
 ## 1. Candidate sweep (overnight-coder vs overnight-worker)
 
