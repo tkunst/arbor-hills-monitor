@@ -117,21 +117,38 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
     reorganizes it, the fetch fails loudly rather than silently going quiet. New
     source, ships disabled — see `docs/decisions/019-ride-part201-watch.md` for
     activation.
-13. **nSITE Submissions watch (Stream K)** (daily — `nsite_submissions.enabled:
-    true`): watches every facility already tracked in `facilities:` for a
-    SIBLING nSITE profile to Documents — Submissions (application/service-
-    request intake, carrying a stable Submission Reference Number, form name,
-    program area, and status). Built after a JPA (EGLE/USACE wetlands/
-    floodplain permit application) reached Trisha only via her personal
-    MiEnviro email subscription — it never appeared in Documents at all, only
-    Submissions. Also added a 5th tracked facility, the WRD Land & Water
-    Interface site (`GFL-Arbor Hills Landfill-Washtenaw Co`) the JPA itself
-    is filed under. Alerts distinguish a **brand-new filing** (a Submission
-    Reference Number never seen before) from an **existing filing's status
-    advancing** — keyed on the reference number, not a generic row diff.
-    Snapshot-diff into the `Submissions Watch` tab; alerts (Trisha-only to
-    start) on any change; first sighting baselines silently. See
+13. **nSITE Submissions watch (Stream K)** (`nsite_submissions.enabled:
+    true`): watches a DIFFERENT, wider list than `facilities:` — all 19 of
+    Trisha's MiEnviro email subscriptions, resolved to their real nSITE site
+    IDs — for a SIBLING nSITE profile to Documents — Submissions
+    (application/service-request intake, carrying a stable Submission
+    Reference Number, form name, program area, and status). Built after a JPA
+    (EGLE/USACE wetlands/floodplain permit application) reached Trisha only
+    via her personal MiEnviro email subscription — it never appeared in
+    Documents at all, only Submissions. Also added a 5th tracked facility,
+    the WRD Land & Water Interface site (`GFL-Arbor Hills Landfill-Washtenaw
+    Co`) the JPA itself is filed under, and a 6th, `AHLI` (a bare duplicate
+    "Arbor Hills Landfill, Inc." registration with genuine recent activity).
+    Alerts distinguish a **brand-new filing** (a Submission Reference Number
+    never seen before) from an **existing filing's status advancing** —
+    keyed on the reference number, not a generic row diff. Snapshot-diff into
+    the `Submissions Watch` tab; alerts (Trisha-only to start) on any change;
+    first sighting baselines silently. See
     `docs/decisions/020-nsite-submissions-watch.md`.
+14. **Tiered Submissions polling across all 19 subscriptions**: the 14 sites
+    beyond the original 5 are duplicate/historical nSITE registrations for
+    the same Arbor Hills entities, most with sparse-to-zero activity — polled
+    at a **daily/biweekly/quarterly** cadence per site (`poll` field on each
+    entry in `nsite_submissions.sites`) rather than daily for all 19, so a
+    dormant duplicate registration still gets checked periodically (typo/
+    misfiled-submission insurance) without polling it as if it were active.
+    Cadence is a pure, stateless, hash-staggered function
+    (`nsite_submissions_watcher._is_due`) firing across a 3-day window per
+    period — no stored "last polled" state, and one missed/failed daily run
+    doesn't blank a quarterly site out for a full quarter. The Documents
+    `facilities:` list (backfill/watcher) is untouched by this — only the
+    Submissions watch reads the per-site cadence. See
+    `docs/decisions/021-tiered-submissions-polling.md`.
 
 > **A note on the document links (expected behavior).** Every case-file row's
 > **Link** column points to EGLE's nSITE portal
