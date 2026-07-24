@@ -116,15 +116,24 @@ all 5 facilities' live data throughout this build. A future split (transient
 vs structural) can be added if that assumption ever breaks — not pre-built
 speculatively.
 
-### 6. Ships enabled, live-verified pre-merge — not the overnight new-source gate
+### 6. Ships enabled, verified at the client layer pre-merge — not the overnight new-source gate
 
 Every prior new stream shipped `enabled: false` because it was an unattended
 overnight-coder build with no human present to review the first live run.
-This one is different: Trisha directed it live, in this session, and it was
-verified against a **real `workflow_dispatch` run on the feature branch**
-(real GitHub Secrets, not local placeholder `.env` values) before merging —
-see the Activation section for the actual run and its result. `enabled: true`
-ships because that verification happened, not as a default.
+This one is different: Trisha directed it live, in this session. Pre-merge,
+`fetch_site_submissions` was live-verified against real data for all 5
+tracked facilities (96 real submissions fetched, including the JPA itself),
+and the fetch-error contract was live-confirmed against a real 400 response
+(a garbage nsite_id) — the same client-layer verification bar ROP/MMD/RIDE's
+"live re-confirm" met before their own merges (none of those ran a full
+GitHub Actions `workflow_dispatch` pre-merge either — GitHub does not permit
+dispatching a workflow that only exists on a feature branch; a brand-new
+workflow file has to land on the default branch before it can be triggered
+at all). The genuine first end-to-end production run (real Sheets write,
+real SMTP path) happens via `workflow_dispatch` immediately after merge —
+see the Activation section for that run and its result. `enabled: true`
+ships because the client-layer verification happened and the post-merge run
+confirmed a clean baseline, not as an unverified default.
 
 ### 7. Recipients: Trisha-only to start
 
@@ -165,17 +174,20 @@ deleting the `nsite_submissions.recipients` override.
   distinction this watch exists to make.
 - **Ship `nsite_submissions.enabled: false` per the overnight new-source
   gate** — rejected: that gate exists because no human reviews an unattended
-  build's first live run; here Trisha directed the build and a real
-  `workflow_dispatch` run was reviewed before merge (Decision 6).
+  build's first live run; here Trisha directed the build live and reviewed
+  the design and the post-merge first-run result (Decision 6).
 - **Route through `egle_doc_parser`** — not applicable; Submissions is
   structured API metadata, not a document (same posture as Streams E/F/H/I/J
   — the Decode base stays domain-agnostic).
 
 ## Activation
 
-Ships `nsite_submissions.enabled: true`, already live-verified pre-merge (see
-the PR / session log for the actual `workflow_dispatch` run and its baseline
-counts). No secret to provision — reuses the same Sheets/SMTP credentials
+Ships `nsite_submissions.enabled: true`. Pre-merge: `fetch_site_submissions`
+live-verified against all 5 real facilities (96 submissions fetched, incl.
+the JPA), fetch-error contract live-confirmed against a real HTTP 400. Post-
+merge: the first real `workflow_dispatch` run (real Sheets/SMTP) baselined
+every facility — see the PR / session log for the actual run and its
+counts. No secret to provision — reuses the same Sheets/SMTP credentials
 every other watch already has. Pause = flip `enabled: false` (tab state
 survives); resume re-diffs against the last recorded snapshots. Widening
 recipients beyond Trisha: delete `nsite_submissions.recipients` in
