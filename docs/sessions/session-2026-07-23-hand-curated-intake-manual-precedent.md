@@ -125,3 +125,40 @@ resolved per file via a live API search rather than a local folder-list call
 (the assisting session had API access but not a mounted-Drive `find`-by-name
 helper handy) — same net effect, still a resolve-after-sync, not a
 synchronous ID. The upload-first-row-second ordering was preserved.
+
+## 2026-07-24 addendum #2 — three more entries (Wetland 1 JPA), `GDRIVE_SA_KEY` confirmed live, not a placeholder
+
+Trisha-directed: publish the 3-document core set explaining the newly-filed
+Wetland 1 JPA (Submission Ref `HQK-4R25-67T36`, filed 2026-07-23 — the PFOS/
+AFFF remediation-and-fill story; see the memory `wetland1-pfas-jpa-2026` for
+the substance). Same manual `cp`-to-mount mechanism as both prior entries.
+
+**Correction to "OAuth-upload path can't run yet":** that's still true for
+the OAuth-as-user path specifically (`GOAUTH_CLIENT_ID`/`SECRET`/
+`REFRESH_TOKEN` are still `.env.example` placeholders, unverified this
+session too), but **`GDRIVE_SA_KEY` is NOT a placeholder** — it's a *path*
+variable whose example value (`./gdrive-sa-key.json`) doubles as the correct
+real value once the key file exists at that path in the repo root, which it
+does (gitignored, present locally). Tested live: `sheets_service()` opened
+the actual case-file Sheet and read/wrote the `Hand-Curated Files` tab
+directly. A future session shouldn't re-flag this as blocked without
+checking whether the file itself exists first.
+
+**Drive-side mechanism note:** resolved each file's ID via the
+`mcp__claude_ai_Google_Drive` connector (`search_files`, authenticated as
+the personal Google account that owns the public case-file Drive tree)
+rather than the Drive v3 API — this session had
+that MCP connector loaded already for an unrelated reason, and it can also
+write directly (`create_file` with `parentId`), which would skip the
+`cp`-to-mount step entirely for small files. Not used for upload here only
+because the largest of the three files (2.7MB PDF) would have meant inlining
+a ~3.6M-character base64 blob through the conversation — `cp`-to-mount has
+no such limit since the bytes never pass through the model. Confirmed each
+uploaded file inherited the folder's public `reader`/`anyone` permission
+(spot-checked one via `get_file_permissions`) before writing the Sheet rows.
+
+Three rows appended (`Hand-Curated Files`, now 9 data rows total):
+`2026-07-20-arbor-hills-wetland1-jpa-additional-information.pdf`,
+`2026-07-23-arbor-hills-wetland1-jpa-application-HQK-4R25-67T36.pdf`,
+`2026-07-23-arbor-hills-wetland1-jpa-conceptual-mitigation-plan.pdf` — full
+provenance in each row's `note` column, not repeated here.
