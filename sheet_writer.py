@@ -174,6 +174,15 @@ TAB_MMD = "MMD Watch"
 # "baseline" (first sighting, silent) or "changed" (fires an alert). See
 # ride_watcher.py.
 TAB_RIDE = "RIDE Watch"
+# nSITE Submissions watch (Stream K, ADR 020) — same on-demand policy: no tab
+# appears until nsite_submissions_watcher actually runs. Append-only, keyed by
+# Item (e.g. "subm:N2688") in col B for dedup/state — the PFAS/Meeting/ROP/MMD/
+# RIDE Watch idiom (Sheet-derived ⇒ race-free, NOT _meta). One row per observed
+# state of a watched facility's Submissions (application/service-request
+# intake) list — "baseline" (first sighting, silent) or "changed" (fires an
+# alert distinguishing a brand-new filing from an existing one's status
+# advancing). See nsite_submissions_watcher.py.
+TAB_SUBMISSIONS = "Submissions Watch"
 # Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
 # TAB_NEW/TAB_HISTORICAL. "Change" is new/changed (live) or historical (dump).
 WDS_HEADERS = [
@@ -268,6 +277,15 @@ MMD_WATCH_HEADERS = [
 # canonical snapshot JSON is what next run diffs against AND a durable dated
 # record of what RRDOpenData said.
 RIDE_WATCH_HEADERS = [
+    "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
+    "Snapshot JSON",
+]
+
+# nSITE Submissions watch (Stream K, ADR 020). Same row shape and rationale as
+# RIDE_WATCH_HEADERS/ROP_WATCH_HEADERS: the last column's canonical snapshot
+# JSON is what next run diffs against AND a durable dated record of what
+# nSITE's Submissions profile said.
+SUBMISSIONS_WATCH_HEADERS = [
     "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
     "Snapshot JSON",
 ]
@@ -1308,6 +1326,71 @@ def append_ride_watch_row(
     (durable record first, alert best-effort second — same crash-safe ordering
     as append_mmd_watch_row)."""
     append_rows(service, sheet_id, TAB_RIDE, [[
+        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
+    ]])
+
+
+# ---------------------------------------------------------------------------
+# nSITE Submissions watch (Stream K, ADR 020) — the tab is the state (append-
+# only ⇒ race-free), exactly like the PFAS / Meeting / ROP / MMD / RIDE Watch
+# tabs above.
+# ---------------------------------------------------------------------------
+
+
+def ensure_submissions_tabs(service, sheet_id: str) -> None:
+    """Create the Submissions Watch tab if missing and reconcile its header
+    row on every run (same self-healing policy as ensure_ride_tabs()). Called
+    only from nsite_submissions_watcher.py, so the tab doesn't appear until
+    the watch actually runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_SUBMISSIONS not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_SUBMISSIONS}}}]},
+        ).execute()
+    _set_header(service, sheet_id, TAB_SUBMISSIONS, SUBMISSIONS_WATCH_HEADERS)
+
+
+def last_submissions_snapshot(service, sheet_id: str, item_key: str) -> tuple[str, str] | None:
+    """Return (snapshot_hash, snapshot_json) from the most recent row for this
+    item_key (e.g. "subm:N2688"), or None if the item has never been
+    snapshotted. None means 'baseline this item'; a hash mismatch means
+    'changed'. Reading the last matching row (not a _meta cell) is what makes
+    the watch race-free — the tab is append-only, so no concurrent job can
+    clobber it (same idiom as last_ride_snapshot)."""
+    return last_submissions_snapshots(service, sheet_id, [item_key])[item_key]
+
+
+def last_submissions_snapshots(
+    service, sheet_id: str, item_keys: list[str],
+) -> dict[str, tuple[str, str] | None]:
+    """Batched form of last_submissions_snapshot: ONE tab read for however
+    many keys are asked for (the all-baselined check on a fetch failure),
+    instead of one full-tab read per key. Same race-free append-only read as
+    the singular form — the last_ride_snapshots idiom."""
+    latest_by_key: dict[str, list] = {}
+    for r in _tab_rows(service, sheet_id, TAB_SUBMISSIONS, "A2:H"):
+        if len(r) > 1:
+            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
+    result: dict[str, tuple[str, str] | None] = {}
+    for key in item_keys:
+        r = latest_by_key.get(key)
+        if r is None:
+            result[key] = None
+        else:
+            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
+    return result
+
+
+def append_submissions_watch_row(
+    service, sheet_id: str, date: str, item_key: str, label: str, change: str,
+    snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
+) -> None:
+    """Append one Submissions Watch row. Written BEFORE the change email is
+    sent (durable record first, alert best-effort second — same crash-safe
+    ordering as append_ride_watch_row)."""
+    append_rows(service, sheet_id, TAB_SUBMISSIONS, [[
         date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
     ]])
 

@@ -16,6 +16,7 @@
 # and archiver are order-independent.
 facilities:
   - {srn: "RA",    name: "Arbor Hills Remediation Area",  id: "-714792003991405124"}   # Water/RRD — R5/PFAS, process FIRST (740 docs)
+  - {srn: "WRD",   name: "GFL-Arbor Hills Landfill-Washtenaw Co", id: "306291952280313698"}   # WRD Land & Water Interface (JPA/wetlands/floodplain/inland lakes) — R1/R5; found 2026-07-24 tracing a missed JPA (ADR 020); 69 never-seen docs, clears safely behind the anti-stampede guard (watcher.max_new_docs_per_run defers to backfill, which never alerts)
   - {srn: "N1504", name: "Arbor Hills Energy",            id: "-4937599654678851055"}   # SO2 turbine power plant (54 docs)
   - {srn: "P1488", name: "Emerald RNG",                   id: "-5064275074930604158"}   # OPAL/GFL RNG plant (16 docs)
   - {srn: "N2688", name: "Arbor Hills Landfill",         id: "8094300008956198244"}    # the landfill — ~704 remaining, finish AFTER
@@ -536,6 +537,29 @@ ride:
   # Recipient override: Trisha only to start (Meeting Watch/MMD precedent for
   # a brand-new stream). Delete/comment this block to send to the full
   # alert_recipients list once the alert copy has been seen in the wild.
+  recipients:
+    - arbor-hills@trishakunst.com
+
+# --- nSITE Submissions watch (Stream K, ADR 020) ---
+# Daily watch on the SAME nSITE facilities tracked above (`facilities:`), but a
+# DIFFERENT profile than Documents — the "Submissions" list (application /
+# service-request intake: a stable Submission Reference Number, form name,
+# program area, status). Built 2026-07-24 after a JPA (EGLE/USACE Joint Permit
+# Application — wetlands/floodplain/inland lakes & streams/dams) for the WRD
+# Land & Water Interface site reached Trisha only via her personal MiEnviro
+# email subscription; it never appeared in the Documents profile the monitor
+# already polled. ONE fetch per facility -> ONE item ("subm:<srn>"); the FIRST
+# sighting of each facility's Submissions list baselines silently. After that,
+# a brand-new Submission Reference Number alerts as "NEW SUBMISSION RECEIVED";
+# an existing one's status/detail changing alerts separately (the ref-number-
+# keyed diff — see nsite_submissions_watcher.py). Trisha directed this build
+# live and it was verified against a real workflow_dispatch run (real GH
+# Secrets) before merging — see the ADR for the verification record.
+nsite_submissions:
+  enabled: true                      # activated 2026-07-24 (Trisha, live-directed build) — see ADR 020
+  # Recipient override: Trisha only to start (Meeting Watch/MMD/RIDE precedent
+  # for a brand-new alert stream). Delete/comment this block to send to the
+  # full alert_recipients list once the alert copy has been seen in the wild.
   recipients:
     - arbor-hills@trishakunst.com
 
