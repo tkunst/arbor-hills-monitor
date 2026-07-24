@@ -13,7 +13,7 @@ Branch: `main` (started on `stream-c-wds`, merged in this session)
    review traced untrusted-input paths (WDS portal HTML → Sheets writes,
    email alerts, Drive uploads, the new GitHub Actions workflow). **No HIGH
    or MEDIUM confidence findings.** Full report:
-   [`security-review-2026-07-10-stream-c-wds.md`](./security-review-2026-07-10-stream-c-wds.md).
+   [`security-review-2026-07-10-stream-c-wds.md`](security-review-2026-07-10-stream-c-wds.md).
 
 2. **Merged `stream-c-wds` → `main`** (fast-forward, `cb9faa8`), pushed to
    `origin/main`. `wds.enabled` stayed `false` through the merge, so nothing

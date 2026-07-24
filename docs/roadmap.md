@@ -108,7 +108,7 @@ extraction side works. But since Claude never sees the pixels, the
 resulting Sheet summary can only report metadata (sender, date, "4 photos
 attached"), not what the photos actually depict. This was investigated as
 a candidate fix for that one doc and found to be a dead end for a targeted
-retry — see `docs/session-2026-07-11-mmpc-nsite-extraction-overnight-worker.md`
+retry — see `docs/sessions/session-2026-07-11-mmpc-nsite-extraction-overnight-worker.md`
 for the full investigation. Reprocessing the doc changes nothing; only
 giving the classifier vision would.
 

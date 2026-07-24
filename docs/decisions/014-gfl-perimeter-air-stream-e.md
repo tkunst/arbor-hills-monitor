@@ -323,7 +323,7 @@ snapshot tab. Severity precedence is `urgent > watch > anomaly > ok`.
   tier dead. When `alert_on_sentinel` is off, a co-located sentinel's detail is filtered
   out of a real exceedance/watch line (a pure-sentinel reading is still dropped entirely).
 - **Reviews:** `/code-review` (high) + `/security-review` (zero med/high, see
-  `docs/security-review-2026-07-17-gfl-air-watch-tier.md`). The four low-severity
+  `docs/security-reviews/security-review-2026-07-17-gfl-air-watch-tier.md`). The four low-severity
   code-review findings (config guard, sentinel-detail leak, hardcoded pollutant keys in
   the levels line, and this ADR addendum) were all corrected in the same change.
 

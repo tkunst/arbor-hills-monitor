@@ -36,7 +36,7 @@ Branch: `main` (work happened across `stream-d-mmpc-archive`,
    fallback assumption, then tab/br-gluing and text-box duplication in the
    docx text extractor). `/security-review` twice — zero HIGH/MEDIUM
    findings both times; written up in
-   `docs/security-review-2026-07-11-nsite-msg-docx-extraction.md`. Merged
+   `docs/security-reviews/security-review-2026-07-11-nsite-msg-docx-extraction.md`. Merged
    to `main` (fast-forward, `6ef223d`, 2026-07-12T02:09:11Z).
 
 3. **`docs/overnight-worker.md` — procedure for unattended overnight coding
