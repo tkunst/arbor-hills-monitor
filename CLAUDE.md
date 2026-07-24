@@ -99,6 +99,23 @@ external users but no sensitive data). Public repo.
   site's / Part 211 UST's record vs. the `RIDE Watch` tab — a `RiskCondition`
   flip, a `Contaminants` change, or a new `Open_Release` alerts (R5, water
   quality). Gated on `ride.enabled` (new source; ships `false`). See ADR 019.
+- `nsite_submissions_watcher.py` — Stream K: daily snapshot-diff of every
+  `facilities:` entry's nSITE **Submissions** profile (application/service-
+  request intake — a sibling profile to Documents, added after a JPA never
+  showed up in Documents at all) vs. the `Submissions Watch` tab. Keyed on
+  Submission Reference Number (globally unique per filing, unlike ROP's task
+  rows): a ref never seen before alerts as a brand-new filing, distinctly
+  from an existing ref's status advancing. `fetch_site_submissions`
+  (`nsite_client.py`) deliberately RAISES on fetch failure rather than
+  swallowing to `[]` like `fetch_site_documents` — this watcher diffs the
+  result, so a silent `[]` would misread a fetch outage as "everything
+  removed." Also added the WRD Land & Water Interface facility (the JPA's own
+  site — EGLE assigns a separate nSITE ID per program area even for the same
+  physical facility, same as the RA/AQD split in ADR 011) to `facilities:`.
+  Gated on `nsite_submissions.enabled` (ships `true` — Trisha directed this
+  build live and it was verified against a real `workflow_dispatch` run
+  before merging, so it skips the overnight-build new-source `false` default).
+  See ADR 020.
 
 ## Forbidden patterns (do not do these)
 

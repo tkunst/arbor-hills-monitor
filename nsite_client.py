@@ -12,6 +12,12 @@ for a daily all-facilities sweep. Backfill needs the full history; the watcher
 filters by checkpoint date itself. We also dropped the pandas / CSV-merge
 machinery. fetch_all_documents() loops the facilities configured in config.yml
 and tags each doc with its facility (the multi-facility design, ADR 008).
+
+Also carries fetch_site_submissions() (Stream K, ADR 020) — a SIBLING nSITE
+profile (application/service-request intake, not filed documents) for the same
+facilities, added 2026-07-24 after a JPA (wetlands/floodplain permit
+application) never showed up in Documents at all. See its own docstring for
+why it has a DIFFERENT error-handling contract than fetch_site_documents.
 """
 from __future__ import annotations
 
@@ -31,6 +37,17 @@ SETTINGS_URL = f"{NSITE_BASE}/nsite/api/settings/getWslSettings"
 DOCS_ENDPOINT = (
     f"{NSITE_BASE}/nsite/ss/api/nsite-explorer/default-mode"
     "/profiles/4-documents/1-documents"
+)
+# Sibling profile to DOCS_ENDPOINT — application/service-request INTAKE (a
+# stable Submission Reference Number, form name, program area, status),
+# distinct from filed Documents. Found 2026-07-24 tracing a JPA that never
+# appeared in Documents: EGLE's own settings manifest lists 7 profiles under
+# "2-environmental-interests"/"1-profile" this monitor has never polled;
+# Submissions is the one carrying "Submission Reference Number", the field
+# named in MiEnviro's own subscription-alert emails.
+SUBMISSIONS_ENDPOINT = (
+    f"{NSITE_BASE}/nsite/ss/api/nsite-explorer/default-mode"
+    "/profiles/2-environmental-interests/2-submissions"
 )
 DOWNLOAD_BASE = f"{NSITE_BASE}/ncore/downloadpdf"
 # In-browser quirk (harmless): opening a downloadpdf/<id> link can render an
@@ -152,6 +169,97 @@ def fetch_all_documents(session: requests.Session, cfg: dict) -> list[dict]:
             d["facility_name"] = f["name"]
             docs.append(d)
     return docs
+
+
+class NsiteFetchError(RuntimeError):
+    """A facility's submissions couldn't be fetched cleanly (network error,
+    non-200, or a response missing the 'queryResults' key) after retries.
+
+    UNLIKE fetch_site_documents (which swallows failures and returns [] because
+    its caller, fetch_all_documents/backfill/watcher, is an append-only doc
+    accumulator for which a transient miss is harmless), fetch_site_submissions
+    NEVER returns [] for a failure — only for a genuinely valid, structurally-
+    sound response that happens to list zero submissions. This distinction
+    matters because nsite_submissions_watcher DIFFS this list against the last
+    snapshot: a silently-swallowed failure returned as [] would be misread as
+    'every submission removed' and fire a false change alert — the same class
+    of silent corruption RopFetchError/MmdFetchError/RideFetchError exist to
+    prevent for their sources."""
+
+
+def _normalize_submission(raw: dict) -> dict:
+    """Convert a raw nSITE submission dict into the fields the Submissions
+    watch tracks. `ref_num` (submSubmRefNum) is the stable, globally-unique
+    key: a ref_num not seen before means a BRAND-NEW filing (the JPA case this
+    watch exists for); an already-seen ref_num with a different `status` (or
+    other field) means an existing filing advanced — see
+    nsite_submissions_watcher.summarize_submissions_change for how the two are
+    told apart."""
+    date_str = raw.get("submRcvdDate", "")
+    parsed_date: Optional[date] = None
+    if date_str:
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+            try:
+                parsed_date = datetime.strptime(date_str[: len(fmt) + 2], fmt).date()
+                break
+            except ValueError:
+                continue
+        if parsed_date is None:
+            m = re.match(r"(\d{4})-(\d{2})-(\d{2})", date_str)
+            if m:
+                parsed_date = date(int(m[1]), int(m[2]), int(m[3]))
+    return {
+        "ref_num": raw.get("submSubmRefNum", ""),
+        "form_name": raw.get("submFormName", ""),
+        "form_type": raw.get("submRefFormTypeDescr", ""),
+        "program_area": raw.get("submRefProgramAreaDescr", ""),
+        "status": raw.get("submStatus", ""),
+        "received_date": parsed_date.isoformat() if parsed_date else "",
+        "descr": raw.get("submDescr") or "",
+    }
+
+
+def fetch_site_submissions(session: requests.Session, nsite_id: str) -> list[dict]:
+    """Return the full list of normalized submissions for one facility.
+
+    Raises NsiteFetchError after 3 attempts on ANY network/HTTP/structural
+    failure — see NsiteFetchError for why this deliberately does NOT mirror
+    fetch_site_documents' swallow-and-return-[] contract."""
+    query_params = urllib.parse.quote('{"filter":[{"id":"' + str(nsite_id) + '"}]}')
+    url = (
+        f"{SUBMISSIONS_ENDPOINT}"
+        f"?responseContentType=application/json"
+        f"&includeMetadataInResponse=true"
+        f"&loadChildren=true"
+        f"&queryParams={query_params}"
+        f"&filterString="
+    )
+    referer = f"{NSITE_BASE}/nsite/DEFAULT/map/results/detail/{nsite_id}/Documents"
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            r = session.get(
+                url,
+                headers={"Referer": referer, "Accept": "application/json"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            data = r.json()
+            if "queryResults" not in data:
+                raise NsiteFetchError(
+                    f"submissions response for facility {nsite_id} is missing "
+                    f"'queryResults' — nSITE may have changed its response shape"
+                )
+            raw_subs = data["queryResults"]
+            return [_normalize_submission(s) for s in raw_subs if s.get("submSubmRefNum")]
+        except Exception as e:  # noqa: BLE001 — network/HTTP/structural: retry, then raise loud
+            last_exc = e
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+    raise NsiteFetchError(
+        f"GET submissions for facility {nsite_id} failed after 3 attempts: {last_exc}"
+    ) from last_exc
 
 
 def _looks_like_pdf(body: bytes) -> bool:

@@ -117,6 +117,21 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
     reorganizes it, the fetch fails loudly rather than silently going quiet. New
     source, ships disabled — see `docs/decisions/019-ride-part201-watch.md` for
     activation.
+13. **nSITE Submissions watch (Stream K)** (daily — `nsite_submissions.enabled:
+    true`): watches every facility already tracked in `facilities:` for a
+    SIBLING nSITE profile to Documents — Submissions (application/service-
+    request intake, carrying a stable Submission Reference Number, form name,
+    program area, and status). Built after a JPA (EGLE/USACE wetlands/
+    floodplain permit application) reached Trisha only via her personal
+    MiEnviro email subscription — it never appeared in Documents at all, only
+    Submissions. Also added a 5th tracked facility, the WRD Land & Water
+    Interface site (`GFL-Arbor Hills Landfill-Washtenaw Co`) the JPA itself
+    is filed under. Alerts distinguish a **brand-new filing** (a Submission
+    Reference Number never seen before) from an **existing filing's status
+    advancing** — keyed on the reference number, not a generic row diff.
+    Snapshot-diff into the `Submissions Watch` tab; alerts (Trisha-only to
+    start) on any change; first sighting baselines silently. See
+    `docs/decisions/020-nsite-submissions-watch.md`.
 
 > **A note on the document links (expected behavior).** Every case-file row's
 > **Link** column points to EGLE's nSITE portal
