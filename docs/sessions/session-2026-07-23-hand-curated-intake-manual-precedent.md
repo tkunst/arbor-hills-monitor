@@ -162,3 +162,37 @@ Three rows appended (`Hand-Curated Files`, now 9 data rows total):
 `2026-07-23-arbor-hills-wetland1-jpa-application-HQK-4R25-67T36.pdf`,
 `2026-07-23-arbor-hills-wetland1-jpa-conceptual-mitigation-plan.pdf` — full
 provenance in each row's `note` column, not repeated here.
+
+## 2026-07-24 addendum #3 — three E613161 HOV-waiver FOIA docs, same manual precedent
+
+Trisha-directed (from the Lotext session): hand-curate the three files returned by
+**EGLE FOIA E613161-071626** — the two HOV (higher-operating-value) temperature-waiver
+letters that were missing from the nSITE N2688 record, plus a WDS-link notation that rode
+along. Source files were in the Lotext workbench under
+`source-docs/foia-obtained-2026-07-15/` (foia-prefixed). Same manual `cp`-to-mount
+mechanism as the prior addenda (`GOAUTH_*` OAuth-as-user vars still placeholders;
+`GDRIVE_SA_KEY` live). All three were read and verified before upload, and all three are
+public EGLE regulatory records (AQD decision letters + an MMD WDS reference), appropriate
+for the public folder. All UPLOAD mode (genuinely absent from nSITE — the reason they were
+FOIA'd), no ANNOTATION dedup needed.
+
+Three rows appended (`Hand-Curated Files`, now 15 data rows total):
+
+1. `2024-07-10-arbor-hills-HOV-temperature-waiver-four-replacement-wells.pdf`
+   (Drive id `1mT6yur9GjkmwMf5AHlei0UBqTDyL07-C`) — AQD **approved** HOV temperatures for
+   four newly-installed replacement WOI wells (AHW259R5/285R3/311R2/312R2); signed Diane
+   Kavanaugh Vetort. R8/ETLF evidence.
+2. `2025-02-19-arbor-hills-HOV-temperature-waiver-AHW272R4-180F.pdf`
+   (Drive id `16qC55hdB8s0SYSm1VJtCl-cYYuqqP5Z_`) — AQD **approved 180 deg F** for AHW272R4,
+   explicitly noting it lets AHL operate above the 145 deg F MACT Subpart AAAA limit.
+   AHW272R4 is the hottest WOI / ETLF-signature well; key R8 evidence.
+3. `arbor-hills-N2688-wds-link-notation-foia-E613161.pdf`
+   (Drive id `1t8mPafiagJQ48Dz7B8X1Nu3Lj3MnZRxG`) — a 4-page MMD "Notation - WDS Link"
+   reference; low-substance pointer record, published for FOIA-return completeness.
+
+Mechanism: `cp` into the mounted `Hand-Curated Public Records` folder; resolved each Drive
+ID via the `mcp__claude_ai_Google_Drive` connector (`search_files` by parentId + title);
+spot-checked public `anyone:reader` sharing on one; appended rows via
+`sheet_writer.append_rows()` (service account), upload-first-row-second. File sizes verified
+against the originals (228728 / 113165 / 1469755 bytes). A dedup guard on `curated_filename`
+kept the run idempotent (0 of 3 pre-existing).
