@@ -196,3 +196,14 @@ spot-checked public `anyone:reader` sharing on one; appended rows via
 `sheet_writer.append_rows()` (service account), upload-first-row-second. File sizes verified
 against the originals (228728 / 113165 / 1469755 bytes). A dedup guard on `curated_filename`
 kept the run idempotent (0 of 3 pre-existing).
+
+**Correction (2026-07-24, same day):** doc 2 (the 2/19/2025 AHW272R4 180F grant) turned
+out to be a **duplicate of a copy already public** in the `Arbor Hills Landfill EGLE
+Documents` mirror (`N2688 Arbor Hills Request for Higher Operating Value Temp Waiver.pdf`,
+id `1ymkY07bajEfuoZ_EKYTW5C-JUIerAkfv`). Trisha-directed reconcile: removed the
+hand-curated upload (`rm` from the mount) and converted its `Hand-Curated Files` row to
+**ANNOTATION mode** (the row's `drive_link` now points at the existing public copy). **Lesson
+for the real script:** the dedup / check-before-pulling step must cover the manually-curated
+public mirror (`Arbor Hills Landfill EGLE Documents`), not only "is it in nSITE" — this doc
+was missing from nSITE yet already public in that folder. docs 1 and 3 are genuinely new and
+remain UPLOAD.
