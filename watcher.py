@@ -214,12 +214,29 @@ def run() -> int:
         try:
             import wds_watcher as ww
             sw.ensure_wds_tabs(sheets, sheet_id)
+            # Recovery (ADR 024): the live diff cursor is _meta.wds_seen, but if
+            # it was cleared/corrupted, restore it from the append-only _wds_seen
+            # backup log so a _meta wipe doesn't re-fire every WDS record as "new"
+            # (Gap G1-C-1). No-op on a genuine first run (both empty).
+            if not state.get("wds_seen"):
+                recovered = sw.read_wds_seen_log_latest(sheets, sheet_id)
+                if recovered:
+                    state["wds_seen"] = recovered
+                    print(f"[watcher] WDS: _meta.wds_seen empty — recovered "
+                          f"{len(recovered)} collection(s) from _wds_seen log")
             ww.check_wds(
                 state, cfg, ea.send_email,
                 on_row=lambda ev: sw.write_wds_event(
                     sheets, sheet_id, ev, RISK_NAMES, feed_tab=sw.TAB_WDS_NEW),
             )
             sw.write_meta(sheets, sheet_id, state)  # persist wds_seen + digest adds
+            # Append-only backup of the (now-updated) cursor — recoverable if
+            # _meta is ever cleared. Best-effort; seeds the log on the first run.
+            try:
+                sw.append_wds_seen_log(
+                    sheets, sheet_id, state.get("wds_seen") or {}, _now())
+            except Exception as le:  # noqa: BLE001 — backup log is best-effort
+                print(f"[watcher] WDS: _wds_seen backup append skipped: {le}")
         except Exception as e:  # noqa: BLE001 — Stream C must never break the watcher
             print(f"[watcher] WDS (Stream C) step skipped: {e}")
 

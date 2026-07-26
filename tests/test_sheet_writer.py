@@ -452,3 +452,68 @@ def test_purge_doc_rows_skips_absent_tabs():
     svc = _purge_fixture()
     counts = sw.purge_doc_rows(svc, "SID", _DID_A)
     assert sw.TAB_WOI_SUMMARY not in counts and sw.TAB_EVIDENCE not in counts
+
+
+# ---------------------------------------------------------------------------
+# _wds_seen append-only backup + recovery log (ADR 024, Gap G1-C-1).
+# The live diff cursor stays in _meta.wds_seen (unchanged); this log makes it
+# recoverable, so a _meta wipe no longer re-fires every WDS record as "new".
+# ---------------------------------------------------------------------------
+
+def _seen(**collections):
+    """A _meta.wds_seen-shaped dict: {collection: {records, last_count}}."""
+    return {name: {"records": recs, "last_count": len(recs)}
+            for name, recs in collections.items()}
+
+
+def test_wds_seen_hash_stable_and_change_sensitive():
+    a = {"records": {"x": "h1"}, "last_count": 1}
+    assert sw._wds_seen_hash(a) == sw._wds_seen_hash(
+        {"records": {"x": "h1"}, "last_count": 1})
+    assert sw._wds_seen_hash(a) != sw._wds_seen_hash(
+        {"records": {"x": "h2"}, "last_count": 1})
+
+
+def test_read_wds_seen_log_latest_empty_when_absent():
+    assert sw.read_wds_seen_log_latest(FakeSheets(), "SID") == {}
+
+
+def test_append_wds_seen_log_seed_round_trips_exactly():
+    # The migration crux: the first append seeds the log from the current
+    # _meta.wds_seen; reading it back must reproduce the cursor EXACTLY, so the
+    # transition run diffs against the same state and re-fires nothing.
+    svc = FakeSheets({sw.TAB_WDS_SEEN: [sw.WDS_SEEN_HEADERS]})
+    seen = _seen(qmr={"q1": "ha"}, annual={"a1": "hb", "a2": "hc"})
+    sw.append_wds_seen_log(svc, "SID", seen, "2026-07-26T00:00:00")
+    assert sw.read_wds_seen_log_latest(svc, "SID") == seen
+
+
+def test_append_wds_seen_log_is_append_on_change():
+    svc = FakeSheets({sw.TAB_WDS_SEEN: [sw.WDS_SEEN_HEADERS]})
+    seen = _seen(qmr={"q1": "ha"}, annual={"a1": "hb"})
+    sw.append_wds_seen_log(svc, "SID", seen, "t1")
+    n = len(svc._values._tabs[sw.TAB_WDS_SEEN])          # header + 2 collections
+    # An identical snapshot appends nothing (append-on-change dedup).
+    sw.append_wds_seen_log(svc, "SID", seen, "t2")
+    assert len(svc._values._tabs[sw.TAB_WDS_SEEN]) == n
+    # Changing ONE collection appends exactly one row; the unchanged one is skipped.
+    seen2 = _seen(qmr={"q1": "ha", "q2": "hd"}, annual={"a1": "hb"})
+    sw.append_wds_seen_log(svc, "SID", seen2, "t3")
+    assert len(svc._values._tabs[sw.TAB_WDS_SEEN]) == n + 1
+    assert sw.read_wds_seen_log_latest(svc, "SID") == seen2
+
+
+def test_read_wds_seen_log_latest_takes_newest_row_and_history_is_preserved():
+    svc = FakeSheets({sw.TAB_WDS_SEEN: [sw.WDS_SEEN_HEADERS]})
+    sw.append_wds_seen_log(svc, "SID", _seen(qmr={"q1": "old"}), "t1")
+    sw.append_wds_seen_log(svc, "SID", _seen(qmr={"q1": "old", "q2": "new"}), "t2")
+    got = sw.read_wds_seen_log_latest(svc, "SID")
+    assert got["qmr"] == {"records": {"q1": "old", "q2": "new"}, "last_count": 2}
+    # Both rows remain on disk (append-only — the old snapshot is never overwritten).
+    assert len(svc._values._tabs[sw.TAB_WDS_SEEN]) == 3   # header + 2 rows
+
+
+def test_append_wds_seen_log_noop_on_empty_seen():
+    svc = FakeSheets({sw.TAB_WDS_SEEN: [sw.WDS_SEEN_HEADERS]})
+    sw.append_wds_seen_log(svc, "SID", {}, "t1")
+    assert len(svc._values._tabs[sw.TAB_WDS_SEEN]) == 1   # header only
