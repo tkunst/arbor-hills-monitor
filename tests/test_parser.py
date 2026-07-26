@@ -90,3 +90,25 @@ def test_parse_document_filters_unknown_risks(monkeypatch, text_pdf):
     )
     parsed = p.parse_document(text_pdf, {}, RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
     assert parsed.risks == ["R1", "R4"]
+
+
+def test_parse_document_threads_deadlines(monkeypatch, text_pdf):
+    # ADR 025: the generic `deadlines` field flows from the classifier into ParsedDoc.
+    dl = [{"item_description": "Submit corrective action plan",
+           "due_date": "2025-03-15", "extension_due_date": None,
+           "actual_completion_date": None, "compelled_by": "VN-011821 (2024-10-10)",
+           "compliance_doc_effective_date": "2024-10-10"}]
+    monkeypatch.setattr(
+        p, "_classify_with_claude",
+        lambda *a, **k: _fake_classification(deadlines=dl),
+    )
+    parsed = p.parse_document(text_pdf, {}, RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
+    assert parsed.deadlines == dl
+
+
+def test_parse_document_defaults_deadlines_empty(monkeypatch, text_pdf):
+    # A classification with no `deadlines` key (older shape) yields [] — never None.
+    monkeypatch.setattr(
+        p, "_classify_with_claude", lambda *a, **k: _fake_classification())
+    parsed = p.parse_document(text_pdf, {}, RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
+    assert parsed.deadlines == []

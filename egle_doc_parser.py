@@ -62,6 +62,19 @@ class ParsedDoc:
     # readings make per-well time series derivable downstream (by aggregation)
     # WITHOUT reprocessing the source documents.
     measurements: list[dict] = field(default_factory=list)
+    # Structured compliance deadlines / dated obligations the document imposes or
+    # reports (ADR 025). Each is a dict with keys:
+    #   item_description               : what must be done (required — the anchor)
+    #   due_date                       : ISO date the obligation is due, if stated
+    #   extension_due_date             : revised due date, if the doc grants one
+    #   actual_completion_date         : when it was actually met, if stated
+    #   compelled_by                   : the order/permit/document imposing it
+    #   compliance_doc_effective_date  : effective date of that compelling document
+    # Generic across regulatory documents (not landfill-specific), same design as
+    # `measurements`: the model extracts them, the caller decides what to do with
+    # them (here: the Compliance Deadlines tab). Empty list when the doc imposes
+    # no dated obligation.
+    deadlines: list[dict] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +259,15 @@ def _build_system_prompt(risk_register: list[dict]) -> str:
         "empty). Use ONLY IDs from this register:\n"
         f"{risk_lines}\n"
         f"- severity: one of routine/notable/urgent. {_SEVERITY_HELP}\n"
-        f"- measurements: {_MEASUREMENTS_HELP}\n\n"
+        f"- measurements: {_MEASUREMENTS_HELP}\n"
+        "- deadlines: any compliance deadlines or dated obligations the document "
+        "imposes or reports on (a corrective-action due date, a public-comment or "
+        "response deadline, a permit-condition deadline, etc.). For each, give "
+        "item_description (what must be done) and, ONLY where the document states "
+        "them, due_date, extension_due_date, actual_completion_date, compelled_by "
+        "(the order/permit/notice imposing it), and compliance_doc_effective_date. "
+        "Use ISO dates (YYYY-MM-DD). Return an empty list if the document imposes "
+        "no dated obligation. Do not invent dates that aren't stated.\n\n"
         "Be precise and conservative: only tag a risk the document actually "
         "addresses, and only mark urgent if an urgent trigger is genuinely "
         "present."
@@ -276,6 +297,14 @@ def _classify_with_claude(
         as_of_date: Optional[str] = None
         note: Optional[str] = None
 
+    class Deadline(BaseModel):
+        item_description: str
+        due_date: Optional[str] = None
+        extension_due_date: Optional[str] = None
+        actual_completion_date: Optional[str] = None
+        compelled_by: Optional[str] = None
+        compliance_doc_effective_date: Optional[str] = None
+
     class Classification(BaseModel):
         summary: str
         key_data_point: str
@@ -285,6 +314,7 @@ def _classify_with_claude(
         risks: list[str]
         severity: Literal["routine", "notable", "urgent"]
         measurements: list[Measurement] = []
+        deadlines: list[Deadline] = []
 
     if client is None:
         client = anthropic.Anthropic()
@@ -380,4 +410,5 @@ def parse_document(
         ocr_applied=ocr_applied,
         page_count=page_count,
         measurements=fields.get("measurements", []) or [],
+        deadlines=fields.get("deadlines", []) or [],
     )

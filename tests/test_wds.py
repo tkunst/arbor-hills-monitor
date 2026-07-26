@@ -421,3 +421,31 @@ def test_urgent_send_failure_reverts_seen_state_so_it_re_alerts():
     assert len(sent) == 1
     assert "Construction Permit" in sent[0]
     assert ww._idkey(spec, new_cp) in state["wds_seen"]["applications"]["records"]
+
+
+# ---------------------------------------------------------------------------
+# ADR 025: compliance_actions maps its structured fields onto the six-field
+# deadline schema; no other collection defines a deadline extractor.
+# ---------------------------------------------------------------------------
+
+def test_compliance_action_event_maps_deadline_fields():
+    r = {"Compliance Action Type": "Violation Notice",
+         "Compliance Action Date": "10/10/2023",
+         "Corrective Action Component": "Submit response",
+         "Company Response Due Date": "11/9/2023",
+         "Company Response Date": "11/3/2023",
+         "Lead Program": "Solid Waste", "Determined By": "EGLE"}
+    ev = ww._event_from_row("compliance_actions", r, "new", {})
+    dl = ev["deadline"]
+    assert dl["item_description"] == "Submit response"
+    assert dl["due_date"] == "2023-11-09"
+    assert dl["actual_completion_date"] == "2023-11-03"
+    assert dl["compliance_doc_effective_date"] == "2023-10-10"
+    assert "Violation Notice" in dl["compelled_by"]
+    assert dl["extension_due_date"] == ""          # WDS has no extension field
+
+
+def test_only_compliance_actions_defines_a_deadline_extractor():
+    assert "deadline" in ww.COLLECTIONS["compliance_actions"]
+    for name in ("qmr", "applications", "annual", "evaluations"):
+        assert "deadline" not in ww.COLLECTIONS[name]

@@ -79,6 +79,19 @@ ARCHIVE_HEADERS = [
     "Doc ID", "Document Name", "Date Filed", "Risks",
     "Source (nSITE) Link", "Archive Link", "Archived At",
 ]
+# Structured compliance deadlines (ADR 025). One append-only row per obligation
+# extracted from a document/record — the deadline text that used to live only in
+# a mutable feed cell (nSITE) or inside the raw HTML (WDS) now has a durable,
+# machine-joinable home. Fed by BOTH the nSITE Documents path (from the
+# classifier's generic `deadlines` field) and WDS `compliance_actions` (mapped
+# from its already-structured fields). Append-only: a later observation that
+# fills in a completion/extension date appends a new row (latest wins on read),
+# never overwrites. The six leading columns are Trisha's required schema.
+COMPLIANCE_DEADLINE_HEADERS = [
+    "Due Date", "Extension Due Date", "Actual Completion Date",
+    "Item Description", "Compelled By (document)", "Compliance Doc Effective Date",
+    "Source Stream", "Facility / Site", "Source Doc / URL", "Extracted At",
+]
 
 TAB_NEW = "New Documents"
 TAB_HISTORICAL = "Historical Documents"
@@ -86,6 +99,7 @@ TAB_EVIDENCE = "Evidence by Risk"
 TAB_REGISTER = "Risk Register"
 TAB_MEASUREMENTS = "Measurements"
 TAB_ARCHIVE = "Archived PDFs"
+TAB_COMPLIANCE_DEADLINES = "Compliance Deadlines"
 TAB_STATE = "_state"
 TAB_META = "_meta"
 # Stream C (WDS solid-waste) case-file tabs — structurally parallel to the
@@ -335,6 +349,7 @@ _TAB_HEADERS = {
     TAB_REGISTER: REGISTER_HEADERS,
     TAB_MEASUREMENTS: MEASUREMENTS_HEADERS,
     TAB_ARCHIVE: ARCHIVE_HEADERS,
+    TAB_COMPLIANCE_DEADLINES: COMPLIANCE_DEADLINE_HEADERS,
     TAB_STATE: STATE_HEADERS,
     TAB_META: META_HEADERS,
 }
@@ -606,6 +621,46 @@ def write_document(
     append_rows(service, sheet_id, feed_tab, [feed_row(parsed, metadata, link)])
     append_rows(service, sheet_id, TAB_EVIDENCE, evidence_rows(parsed, metadata, link, risk_names))
     append_rows(service, sheet_id, TAB_MEASUREMENTS, measurement_rows(parsed, metadata, link))
+
+
+def compliance_deadline_row(d: dict, source_stream: str, facility: str,
+                            source_ref: str, extracted_at: str) -> list:
+    """One Compliance Deadlines row (ADR 025) from a deadline dict — the six-field
+    schema (due_date / extension_due_date / actual_completion_date /
+    item_description / compelled_by / compliance_doc_effective_date) plus
+    provenance columns. Pure/unit-testable."""
+    d = d or {}
+    return [
+        d.get("due_date") or "",
+        d.get("extension_due_date") or "",
+        d.get("actual_completion_date") or "",
+        d.get("item_description") or "",
+        d.get("compelled_by") or "",
+        d.get("compliance_doc_effective_date") or "",
+        source_stream, facility, source_ref, extracted_at,
+    ]
+
+
+def compliance_deadline_rows(deadlines, source_stream: str, facility: str,
+                             source_ref: str, extracted_at: str) -> list[list]:
+    """Rows for a list of deadline dicts, skipping any with no item_description
+    (a degenerate extraction shouldn't leave a blank row). Pure."""
+    return [
+        compliance_deadline_row(d, source_stream, facility, source_ref, extracted_at)
+        for d in (deadlines or [])
+        if (d or {}).get("item_description")
+    ]
+
+
+def write_compliance_deadlines(service, sheet_id: str, deadlines, source_stream: str,
+                               facility: str, source_ref: str, extracted_at: str) -> None:
+    """Append structured compliance deadlines to the append-only Compliance
+    Deadlines tab (ADR 025). No-op when there are none. Best-effort by contract:
+    the caller wraps it, so a deadline-tab write can never block marking a doc
+    processed or sending an alert (same rule as the WOI summary tab)."""
+    append_rows(service, sheet_id, TAB_COMPLIANCE_DEADLINES,
+                compliance_deadline_rows(deadlines, source_stream, facility,
+                                         source_ref, extracted_at))
 
 
 def rebuild_risk_register_tab(service, sheet_id: str, risk_register: list[dict]) -> None:
