@@ -23,7 +23,7 @@ facilities:
   - {srn: "AHLI",  name: "Arbor Hills Landfill, Inc.",   id: "643581439310101662"}     # bare duplicate nSITE record surfaced 2026-07-24 resolving all 19 MiEnviro subscriptions (ADR 021); genuine Dec-2025 activity (4 docs) — deliberate, standalone addition, not a side effect of the submissions-cadence build below
   # NOT TRACKED (Documents pipeline) — the other 13 sites resolved in ADR 021
   # are polled for Submissions ONLY, at their tier's cadence — see
-  # `nsite_submissions.sites` below. They are near-zero/zero-Documents-history
+  # `nsite_sites` + `nsite_submissions.tiers` below (ADR 022). They are near-zero/zero-Documents-history
   # duplicate or dormant nSITE registrations; adding them here would poll their
   # (empty) Documents profile daily for no benefit. This supersedes the old
   # ADR-008 exclusion of the no-SRN "EMERALD RNG, LLC" sibling below — it's
@@ -541,7 +541,40 @@ ride:
   recipients:
     - arbor-hills@trishakunst.com
 
-# --- nSITE Submissions watch (Stream K, ADR 020; tiered cadence added ADR 021) ---
+# --- nSITE site registry (ADR 022) ---
+# Canonical identity (srn/name/id) for every nSITE site this monitor knows
+# about, shared across every profile-specific watch (Submissions today; more
+# as they're added — Violations is queued next). A site's poll cadence is set
+# PER PROFILE below (see `nsite_submissions.tiers`), NOT here — cadence can
+# legitimately differ per profile for the same site (e.g. daily Submissions
+# checks, quarterly Violations checks). Extracted from the single
+# `nsite_submissions.sites` list (ADR 021) so a site's name/id correction has
+# ONE place to land instead of drifting across up to 7 profile-specific
+# copies — see ADR 022. Names/ids copied verbatim from the pre-refactor list,
+# including the pre-existing "Faciltiy" typo in COMP's name (not fixed here —
+# a separate, tiny follow-up if Trisha wants it, kept out of this refactor).
+nsite_sites:
+  - {srn: "RA",    name: "Arbor Hills Remediation Area",              id: "-714792003991405124"}
+  - {srn: "WRD",   name: "GFL-Arbor Hills Landfill-Washtenaw Co",     id: "306291952280313698"}
+  - {srn: "N1504", name: "Arbor Hills Energy, LLC (N1504)",           id: "-4937599654678851055"}
+  - {srn: "P1488", name: "Emerald RNG LLC (P1488)",                  id: "-5064275074930604158"}
+  - {srn: "N2688", name: "Arbor Hills Landfill, Inc. (N2688)",        id: "8094300008956198244"}
+  - {srn: "AHLI",  name: "Arbor Hills Landfill, Inc. (bare)",         id: "643581439310101662"}
+  - {srn: "P1504", name: "Arbor Hills Energy, LLC (P1504)",           id: "-189751169049766339"}
+  - {srn: "AHLA",  name: "Arbor Hills Landfill (10599 5 Mile Rd) A",  id: "-8649894797035557016"}
+  - {srn: "AHLB",  name: "Arbor Hills Landfill (10690 6 Mile Rd) A",  id: "-4437686497401150490"}
+  - {srn: "AHLC",  name: "Arbor Hills Landfill (10599 5 Mile Rd) B",  id: "882682962933343359"}
+  - {srn: "AHLD",  name: "Arbor Hills Landfill (10690 6 Mile Rd) B",  id: "3926915927263042825"}
+  - {srn: "AHLE",  name: "Arbor Hills Landfill (10599 5 Mile Rd) C",  id: "4474714129365509615"}
+  - {srn: "ADL1",  name: "Advanced Disposal Arbor Hills Landfill",    id: "-7558219346279661807"}
+  - {srn: "ADL2",  name: "Advanced Disposal Arbor Hills  Landfill",   id: "-232745168935916313"}
+  - {srn: "COMP",  name: "Arbor Hills Composting Faciltiy",           id: "-2164784335333909072"}
+  - {srn: "AHE1",  name: "Arbor Hills Energy (bare)",                 id: "1621668814013657459"}
+  - {srn: "AHE2",  name: "Arbor Hills Energy, LLC (bare)",            id: "6005499155163438362"}
+  - {srn: "SANL",  name: "Arbor Hills Sanitary Landfill-Northville",  id: "-3993454880491964634"}
+  - {srn: "ERNGX", name: "EMERALD RNG, LLC (no-SRN sibling)",         id: "-1194242252385100852"}   # supersedes the old ADR-008 Documents-side exclusion above — still no Documents tracking, now covered here
+
+# --- nSITE Submissions watch (Stream K, ADR 020; tiered cadence ADR 021; site identity moved to nsite_sites above, ADR 022) ---
 # Watch on the "Submissions" profile (application / service-request intake: a
 # stable Submission Reference Number, form name, program area, status) — a
 # DIFFERENT profile than Documents (`facilities:` above). Built 2026-07-24
@@ -554,13 +587,15 @@ ride:
 # SUBMISSION RECEIVED"; an existing one's status/detail changing alerts
 # separately (the ref-number-keyed diff — see nsite_submissions_watcher.py).
 #
-# `sites` is its OWN list, deliberately separate from `facilities:` above
-# (ADR 021) — it covers all 19 of Trisha's MiEnviro email subscriptions, most
-# of which have no meaningful Documents history and were never added to
-# `facilities:`. Each entry's `poll` tier controls how often
-# nsite_submissions_watcher.py actually fetches+diffs it (`_is_due`, hash-
-# staggered per site, fires across a 3-day window per period so one missed/
-# failed run doesn't blank a quarterly site out for a full quarter):
+# `tiers` maps srn -> poll cadence for THIS profile only; every key MUST be a
+# srn present in `nsite_sites` above — a typo'd/unknown srn here is a config
+# error and raises loudly (see ADR 022), rather than silently going unwatched.
+# It covers all 19 of Trisha's MiEnviro email subscriptions, most of which
+# have no meaningful Documents history and were never added to `facilities:`.
+# Each site's tier controls how often nsite_submissions_watcher.py actually
+# fetches+diffs it (`_is_due`, hash-staggered per site, fires across a 3-day
+# window per period so one missed/failed run doesn't blank a quarterly site
+# out for a full quarter):
 #   daily     — genuinely active sites (the 5 original `facilities:` + AHLI).
 #   biweekly  — real but sparse 2021-2024 filing history.
 #   quarterly — zero or one-ancient-record sites; insurance against an EGLE
@@ -573,29 +608,29 @@ nsite_submissions:
   # full alert_recipients list once the alert copy has been seen in the wild.
   recipients:
     - arbor-hills@trishakunst.com
-  sites:
+  tiers:
     # --- daily (6) ---
-    - {srn: "RA",    name: "Arbor Hills Remediation Area",              id: "-714792003991405124",   poll: daily}
-    - {srn: "WRD",   name: "GFL-Arbor Hills Landfill-Washtenaw Co",     id: "306291952280313698",    poll: daily}
-    - {srn: "N1504", name: "Arbor Hills Energy, LLC (N1504)",           id: "-4937599654678851055",  poll: daily}
-    - {srn: "P1488", name: "Emerald RNG LLC (P1488)",                  id: "-5064275074930604158",  poll: daily}
-    - {srn: "N2688", name: "Arbor Hills Landfill, Inc. (N2688)",        id: "8094300008956198244",   poll: daily}
-    - {srn: "AHLI",  name: "Arbor Hills Landfill, Inc. (bare)",         id: "643581439310101662",    poll: daily}
+    RA: daily
+    WRD: daily
+    N1504: daily
+    P1488: daily
+    N2688: daily
+    AHLI: daily
     # --- biweekly (6) — sparse 2021-2024 filing history ---
-    - {srn: "P1504", name: "Arbor Hills Energy, LLC (P1504)",           id: "-189751169049766339",   poll: biweekly}
-    - {srn: "AHLA",  name: "Arbor Hills Landfill (10599 5 Mile Rd) A",  id: "-8649894797035557016",  poll: biweekly}
-    - {srn: "AHLB",  name: "Arbor Hills Landfill (10690 6 Mile Rd) A",  id: "-4437686497401150490",  poll: biweekly}
-    - {srn: "AHLC",  name: "Arbor Hills Landfill (10599 5 Mile Rd) B",  id: "882682962933343359",    poll: biweekly}
-    - {srn: "AHLD",  name: "Arbor Hills Landfill (10690 6 Mile Rd) B",  id: "3926915927263042825",   poll: biweekly}
-    - {srn: "AHLE",  name: "Arbor Hills Landfill (10599 5 Mile Rd) C",  id: "4474714129365509615",   poll: biweekly}
+    P1504: biweekly
+    AHLA: biweekly
+    AHLB: biweekly
+    AHLC: biweekly
+    AHLD: biweekly
+    AHLE: biweekly
     # --- quarterly (7) — zero or one-ancient-record; typo/duplicate-filing insurance ---
-    - {srn: "ADL1",  name: "Advanced Disposal Arbor Hills Landfill",    id: "-7558219346279661807",  poll: quarterly}
-    - {srn: "ADL2",  name: "Advanced Disposal Arbor Hills  Landfill",   id: "-232745168935916313",   poll: quarterly}
-    - {srn: "COMP",  name: "Arbor Hills Composting Faciltiy",           id: "-2164784335333909072",  poll: quarterly}
-    - {srn: "AHE1",  name: "Arbor Hills Energy (bare)",                 id: "1621668814013657459",   poll: quarterly}
-    - {srn: "AHE2",  name: "Arbor Hills Energy, LLC (bare)",            id: "6005499155163438362",   poll: quarterly}
-    - {srn: "SANL",  name: "Arbor Hills Sanitary Landfill-Northville",  id: "-3993454880491964634",  poll: quarterly}
-    - {srn: "ERNGX", name: "EMERALD RNG, LLC (no-SRN sibling)",         id: "-1194242252385100852",  poll: quarterly}   # supersedes the old ADR-008 Documents-side exclusion above — still no Documents tracking, now covered here
+    ADL1: quarterly
+    ADL2: quarterly
+    COMP: quarterly
+    AHE1: quarterly
+    AHE2: quarterly
+    SANL: quarterly
+    ERNGX: quarterly
 
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
