@@ -517,3 +517,46 @@ def test_append_wds_seen_log_noop_on_empty_seen():
     svc = FakeSheets({sw.TAB_WDS_SEEN: [sw.WDS_SEEN_HEADERS]})
     sw.append_wds_seen_log(svc, "SID", {}, "t1")
     assert len(svc._values._tabs[sw.TAB_WDS_SEEN]) == 1   # header only
+
+
+# ---------------------------------------------------------------------------
+# Compliance Deadlines tab (ADR 025) — structured deadline capture from both
+# the nSITE classifier and WDS compliance_actions.
+# ---------------------------------------------------------------------------
+
+def test_compliance_deadline_row_maps_six_fields_and_provenance():
+    d = {"due_date": "2025-03-15", "extension_due_date": "2025-04-15",
+         "actual_completion_date": "2025-04-10", "item_description": "Submit CAP",
+         "compelled_by": "VN-011821", "compliance_doc_effective_date": "2024-10-10"}
+    row = sw.compliance_deadline_row(d, "nSITE", "Arbor Hills Landfill", "http://x", "2026-07-26")
+    assert len(row) == len(sw.COMPLIANCE_DEADLINE_HEADERS)
+    assert row[0] == "2025-03-15"          # Due Date
+    assert row[1] == "2025-04-15"          # Extension Due Date
+    assert row[2] == "2025-04-10"          # Actual Completion Date
+    assert row[3] == "Submit CAP"          # Item Description
+    assert row[4] == "VN-011821"           # Compelled By
+    assert row[5] == "2024-10-10"          # Compliance Doc Effective Date
+    assert row[6] == "nSITE"               # Source Stream
+    assert row[-1] == "2026-07-26"         # Extracted At
+
+
+def test_compliance_deadline_row_blanks_missing_fields():
+    row = sw.compliance_deadline_row({"item_description": "Do X"}, "WDS", "", "", "t")
+    assert row[0] == "" and row[1] == "" and row[2] == "" and row[4] == "" and row[5] == ""
+    assert row[3] == "Do X"
+
+
+def test_compliance_deadline_rows_skips_entries_without_item_description():
+    ds = [{"item_description": "Keep"}, {"due_date": "2025-01-01"}, {}]
+    rows = sw.compliance_deadline_rows(ds, "nSITE", "F", "ref", "t")
+    assert len(rows) == 1 and rows[0][3] == "Keep"
+
+
+def test_write_compliance_deadlines_appends_and_noops_when_empty():
+    svc = FakeSheets({sw.TAB_COMPLIANCE_DEADLINES: [sw.COMPLIANCE_DEADLINE_HEADERS]})
+    sw.write_compliance_deadlines(
+        svc, "SID", [{"item_description": "A"}, {"item_description": "B"}],
+        "nSITE", "F", "ref", "t")
+    assert len(svc._values._tabs[sw.TAB_COMPLIANCE_DEADLINES]) == 3   # header + 2
+    sw.write_compliance_deadlines(svc, "SID", [], "nSITE", "F", "ref", "t")
+    assert len(svc._values._tabs[sw.TAB_COMPLIANCE_DEADLINES]) == 3   # unchanged

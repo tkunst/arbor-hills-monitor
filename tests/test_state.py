@@ -86,6 +86,20 @@ def test_processed_event_round_trips():
     assert state["errors"] == {}
 
 
+def test_processed_payload_carries_key_data_point_and_summary():
+    # ADR 025 (Gap G1-A-1): the expanded _state payload durably preserves the
+    # extracted claim + summary, so a Feed-tab clear can't lose the deadline text.
+    svc = FakeSheets()
+    payload = {"document_name": "Enforcement Notice", "date_filed": "2025-02-05",
+               "doc_type": "procedural", "severity": "urgent", "risks": ["R2"],
+               "key_data_point": "Corrective action plan due 2025-03-15.",
+               "summary": "EGLE violation notice; response required."}
+    sw.mark_processed(svc, "SID", "doc-x", payload, "2026-07-26T00:00:00")
+    got = sw.read_state(svc, "SID")["processed"]["doc-x"]
+    assert got["key_data_point"] == "Corrective action plan due 2025-03-15."
+    assert got["summary"] == "EGLE violation notice; response required."
+
+
 def test_errors_counted_then_cleared_by_processed():
     svc = FakeSheets()
     # Append-only, chronological: two failures then a success for the same doc.
