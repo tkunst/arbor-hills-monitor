@@ -1059,7 +1059,7 @@ def test_watch_recipients_configured_sends_scoped_email_and_marks_episode(monkey
     subj, body, recipients = sent[0]
     assert "GFL air watch" in subj and "URGENT" not in subj
     assert recipients == _WATCH_RECIPIENTS               # scoped, not the full list
-    assert "MS-3" in body and "not a health standard" in body.lower()
+    assert "MS-3" in body and "consent judgment" in body.lower() and "ET (" in body
     assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3"}
 
 

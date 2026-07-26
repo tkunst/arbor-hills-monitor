@@ -313,18 +313,41 @@ def watch_alert_stations(readings: list[dict], thresholds: dict, sentinels: dict
     return out
 
 
+def _reading_when_et(iso: str) -> str:
+    """Render a reading_iso() UTC stamp ('YYYY-MM-DDTHH:MMZ') as human Eastern
+    time, e.g. '2026-07-26 12:00 AM ET (04:00 UTC)'. Falls back to the raw string
+    on any parse miss — a display nicety must never abort or blank a watch line."""
+    if not iso:
+        return iso
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        et = dt.astimezone(ZoneInfo("America/Detroit"))
+        ampm = "AM" if et.hour < 12 else "PM"
+        h12 = et.hour % 12 or 12
+        return (f"{et.strftime('%Y-%m-%d')} {h12}:{et.minute:02d} {ampm} ET "
+                f"({dt.strftime('%H:%M')} UTC)")
+    except Exception:
+        return iso
+
+
 def format_watch_body(stations: dict[str, tuple], watch_thresholds: dict,
                       thresholds: dict, link: str) -> str:
     """The dedicated CH4 WATCH-tier email body — deliberately NOT format_alert_body,
     so a reader can never mistake this lower-urgency, Trisha-scoped notice for the
     full-list [URGENT] exceedance alert."""
     body = [
-        "GFL Arbor Hills perimeter air monitoring — CH4 EARLY-WARNING WATCH "
+        "GFL Arbor Hills perimeter air monitoring: CH4 EARLY-WARNING WATCH "
         "(lower urgency).\n",
-        "This is GFL's OWN perimeter early-warning alarm level, NOT a health "
-        "standard and NOT the NESHAP corrective-action tier (which alerts "
-        "separately, at [URGENT], to the full list). It flags a rising landfill-"
-        "gas trend below the action level.\n",
+        "40 ppm is the Perimeter Methane Action Level defined in Consent "
+        "Judgment 2020-0593-CE (a 15-minute rolling average). At that level GFL "
+        "must run a root-cause analysis, correct the exceedance within 48 hours, "
+        "and report it to EGLE in its semi-annual report (paragraphs 5.5 and "
+        "6.3). This WATCH fires on a single hourly perimeter reading at or above "
+        "40 ppm: an early signal at the consent-judgment number, below the 500 "
+        "ppm NESHAP corrective-action tier (which alerts separately, at "
+        "[URGENT], to the full list).\n",
     ]
     for levels_line in (_levels_line("Early-warning WATCH level", watch_thresholds),
                         _levels_line("Action level (for comparison)", thresholds)):
@@ -332,10 +355,11 @@ def format_watch_body(stations: dict[str, tuple], watch_thresholds: dict,
             body.append(levels_line)
     for st in sorted(stations):
         val, when = stations[st]
-        body.append(f"  watch       {st} {when}: CH4={val:g} ppm >= watch level")
+        body.append(f"  watch       {st} {_reading_when_et(when)}: "
+                    f"CH4={val:g} ppm >= watch level")
     body.append(
         "\n(You will not get another WATCH alert for a station already in this "
-        "episode — it re-arms once that station's CH4 drops back below the watch "
+        "episode; it re-arms once that station's CH4 drops back below the watch "
         "level.)")
     body.append(f"\nLive dashboard:\n  {link}\n")
     return "\n".join(body)
