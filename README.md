@@ -138,8 +138,8 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
 14. **Tiered Submissions polling across all 19 subscriptions**: the 14 sites
     beyond the original 5 are duplicate/historical nSITE registrations for
     the same Arbor Hills entities, most with sparse-to-zero activity — polled
-    at a **daily/biweekly/quarterly** cadence per site (`poll` field on each
-    entry in `nsite_submissions.sites`) rather than daily for all 19, so a
+    at a **daily/biweekly/quarterly** cadence per site (each srn's entry in
+    `nsite_submissions.tiers`) rather than daily for all 19, so a
     dormant duplicate registration still gets checked periodically (typo/
     misfiled-submission insurance) without polling it as if it were active.
     Cadence is a pure, stateless, hash-staggered function
@@ -149,6 +149,15 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
     `facilities:` list (backfill/watcher) is untouched by this — only the
     Submissions watch reads the per-site cadence. See
     `docs/decisions/021-tiered-submissions-polling.md`.
+15. **Shared nSITE site registry**: `config.yml`'s top-level `nsite_sites`
+    holds the canonical srn/name/id identity for every nSITE site the
+    monitor knows about, extracted out of `nsite_submissions.sites` so a
+    second profile-specific watch (Violations, queued next) can reference
+    sites by srn instead of duplicating the 19-tuple list a second time. Each
+    profile watch keeps only its own cadence (`nsite_submissions.tiers`
+    today); site identity corrections now have one place to land. Pure
+    refactor — the resolved 19-site set is unchanged. See
+    `docs/decisions/022-nsite-site-registry.md`.
 
 > **A note on the document links (expected behavior).** Every case-file row's
 > **Link** column points to EGLE's nSITE portal

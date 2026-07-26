@@ -263,12 +263,13 @@ def test_is_due_survives_a_missed_run_within_the_window():
 # ==============================================================================
 
 SITES = [
-    {"srn": "N2688", "name": "Arbor Hills Landfill", "id": "8094300008956198244", "poll": "daily"},
-    {"srn": "WRD", "name": "GFL-Arbor Hills Landfill-Washtenaw Co", "id": "306291952280313698", "poll": "daily"},
+    {"srn": "N2688", "name": "Arbor Hills Landfill", "id": "8094300008956198244"},
+    {"srn": "WRD", "name": "GFL-Arbor Hills Landfill-Washtenaw Co", "id": "306291952280313698"},
 ]
 
 SUB_CFG = {
-    "nsite_submissions": {"enabled": True, "sites": SITES},
+    "nsite_sites": SITES,
+    "nsite_submissions": {"enabled": True, "tiers": {"N2688": "daily", "WRD": "daily"}},
     "alert_recipients": ["a@example.com"],
 }
 
@@ -276,12 +277,12 @@ SUB_CFG = {
 def _wire(monkeypatch, cfg, fetch_by_srn):
     """fetch_by_srn: dict of srn -> (list[dict] | Exception) OR a callable
     srn -> list[dict], for tests that need per-call variation. Looks srn up
-    against whatever `nsite_submissions.sites` list is IN THE PASSED cfg (not
-    the module-level SITES), so tests that override `sites` still resolve
+    against whatever `nsite_sites` list is IN THE PASSED cfg (not the
+    module-level SITES), so tests that override `nsite_sites` still resolve
     correctly."""
     fake = FakeSheets()
     sent = []
-    sites = cfg["nsite_submissions"]["sites"]
+    sites = cfg["nsite_sites"]
     monkeypatch.setenv("GSHEET_ID", "SID")
     monkeypatch.setattr(nw, "load_config", lambda: copy.deepcopy(cfg))
     monkeypatch.setattr(nw.dc, "sheets_service", lambda: fake)
@@ -314,10 +315,14 @@ def test_run_skips_a_site_that_is_not_due_today_no_fetch_no_row(monkeypatch):
     """A not-due site must be a true no-op: no fetch (the fake would raise if
     called), no Sheet row, no alert — not just "fetched but discarded"."""
     sites = [
-        {"srn": "N2688", "name": "Arbor Hills Landfill", "id": "8094300008956198244", "poll": "daily"},
-        {"srn": "COMP", "name": "Arbor Hills Composting Faciltiy", "id": "-2164784335333909072", "poll": "quarterly"},
+        {"srn": "N2688", "name": "Arbor Hills Landfill", "id": "8094300008956198244"},
+        {"srn": "COMP", "name": "Arbor Hills Composting Faciltiy", "id": "-2164784335333909072"},
     ]
-    cfg = {"nsite_submissions": {"enabled": True, "sites": sites}, "alert_recipients": ["a@example.com"]}
+    cfg = {
+        "nsite_sites": sites,
+        "nsite_submissions": {"enabled": True, "tiers": {"N2688": "daily", "COMP": "quarterly"}},
+        "alert_recipients": ["a@example.com"],
+    }
     fake, sent = _wire(monkeypatch, cfg, {
         "N2688": [_row("A")],
         "COMP": AssertionError("a not-due site must never be fetched"),
