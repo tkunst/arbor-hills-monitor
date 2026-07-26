@@ -278,9 +278,11 @@ gfl_air:
   # snapshot tab and, if watch_alert_recipients (below) is configured, sends a
   # dedicated once-per-episode email. OPTIONAL + partial — only pollutants listed
   # here get a watch tier; omit the block entirely for single-tier.
-  #   ch4_ppm 40 — GFL's OWN perimeter early-warning alarm level (overnight-worker #75
-  #     air-thresholds research). Not a health standard (~0.08% of the methane LEL); it
-  #     flags a rising landfill-gas trend well below the 500 ppm NESHAP action level.
+  #   ch4_ppm 40 — the Perimeter Methane Action Level in Consent Judgment 2020-0593-CE
+  #     (defined there as a 15-min rolling average; we apply it to instantaneous hourly
+  #     readings as an early warning). At 40 ppm GFL must run a root-cause analysis + correct
+  #     within 48 hrs (CJ 5.5) and report it to EGLE in its semi-annual report (CJ 6.3).
+  #     Not a health standard (~0.08% of the methane LEL); sits below 500 ppm NESHAP.
   #     H2S has NO watch tier here on purpose — its odor-nuisance level (~5-8 ppb) fired
   #     ~2874x in 4 yrs and would flood (see the h2s_ppb note above).
   watch_thresholds:
