@@ -107,9 +107,9 @@ direct equivalence proof rather than a real-specimen poll:
    `yaml.safe_load` with no schema/allow-list, so there was no risk of the
    new top-level `nsite_sites` key being silently dropped, but proving it
    through the actual loader closes that question rather than assuming it.
-4. `pytest -q`: 532 passed, the same count as before this change (no test
-   added or removed — pure refactor). The `_is_due`-specific tests
-   (`test_is_due_*`) needed **zero** changes — confirming this refactor
+4. `pytest -q`: 533 passed (532 pre-existing + 1 new regression test proving
+   the missing-srn `KeyError` behavior in Decision 1). The `_is_due`-specific
+   tests (`test_is_due_*`) needed **zero** changes — confirming this refactor
    touched only the config-loading path, not the cadence logic itself, per
    the handoff's explicit check.
 

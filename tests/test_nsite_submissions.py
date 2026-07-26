@@ -311,6 +311,19 @@ def test_disabled_run_is_noop_touches_nothing(monkeypatch):
     assert nw.run() == 0
 
 
+def test_tiers_srn_missing_from_registry_raises_keyerror(monkeypatch):
+    """A `tiers` srn absent from `nsite_sites` is a config error and must
+    raise loudly (ADR 022) — not silently produce an unwatched site. No
+    defensive handling in run(), so this is a plain KeyError."""
+    cfg = {
+        "nsite_sites": [{"srn": "N2688", "name": "Arbor Hills Landfill", "id": "8094300008956198244"}],
+        "nsite_submissions": {"enabled": True, "tiers": {"TYPO_SRN": "daily"}},
+    }
+    monkeypatch.setattr(nw, "load_config", lambda: cfg)
+    with pytest.raises(KeyError):
+        nw.run()
+
+
 def test_run_skips_a_site_that_is_not_due_today_no_fetch_no_row(monkeypatch):
     """A not-due site must be a true no-op: no fetch (the fake would raise if
     called), no Sheet row, no alert — not just "fetched but discarded"."""
