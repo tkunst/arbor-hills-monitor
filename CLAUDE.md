@@ -100,8 +100,9 @@ external users but no sensitive data). Public repo.
   flip, a `Contaminants` change, or a new `Open_Release` alerts (R5, water
   quality). Gated on `ride.enabled` (new source; ships `false`). See ADR 019.
 - `nsite_submissions_watcher.py` — Stream K: snapshot-diff of every site in
-  `nsite_submissions.sites` (a SEPARATE, wider 19-entry list than the
-  Documents `facilities:` list — ADR 021) against its nSITE **Submissions**
+  the `nsite_sites` registry that has a `nsite_submissions.tiers` entry (a
+  SEPARATE, wider 19-entry set than the Documents `facilities:` list — ADR
+  021) against its nSITE **Submissions**
   profile (application/service-request intake — a sibling profile to
   Documents, added after a JPA never showed up in Documents at all) vs. the
   `Submissions Watch` tab. Keyed on Submission Reference Number (globally
@@ -118,15 +119,26 @@ external users but no sensitive data). Public repo.
   directed this build live and it was verified against a real
   `workflow_dispatch` run before merging, so it skips the overnight-build
   new-source `false` default). See ADR 020.
-- **Tiered polling (ADR 021):** each `nsite_submissions.sites` entry carries
-  a `poll: daily|biweekly|quarterly` field — resolving all 19 of Trisha's
+- **Tiered polling (ADR 021):** each srn in `nsite_submissions.tiers` maps to
+  a `daily|biweekly|quarterly` poll cadence — resolving all 19 of Trisha's
   MiEnviro subscriptions to real nSITE IDs surfaced 14 more sites beyond the
   original 5, mostly dormant duplicate/historical registrations. Cadence is
   `_is_due(cadence, srn, today)`, a pure, stateless function that hash-
   staggers sites within a tier and fires across a 3-day window per period
   (not one exact day), so a single missed/failed daily run doesn't blank a
   quarterly site out for a full quarter. The Documents `facilities:` list is
-  deliberately untouched by this — only the Submissions watch reads `poll`.
+  deliberately untouched by this — only the Submissions watch reads `tiers`.
+- **Shared nSITE site registry (ADR 022):** `config.yml`'s top-level
+  `nsite_sites` holds the canonical srn/name/id identity for every nSITE site
+  this monitor knows about — extracted out of `nsite_submissions.sites`
+  before a second profile watcher (`coder:nsite-violations-watch`, queued
+  next) could duplicate the same 19 tuples a second time. Each profile-
+  specific watch (Submissions today) references it by srn and adds only its
+  own `poll` cadence (`nsite_submissions.tiers`); a `tiers` srn missing from
+  `nsite_sites` raises loudly (`KeyError`) rather than silently going
+  unwatched. Pure refactor — verified behavior-preserving (the resolved
+  19-site set is byte-identical pre/post) before merging, since
+  `nsite_submissions.enabled: true` is already live.
 
 ## Forbidden patterns (do not do these)
 

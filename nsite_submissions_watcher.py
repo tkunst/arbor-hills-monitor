@@ -1,13 +1,16 @@
 """
 nsite_submissions_watcher.py — runs daily, watching EGLE's nSITE Submissions
 profile (application/service-request intake) for every site in config.yml's
-`nsite_submissions.sites` list — a DIFFERENT, larger list than the Documents
-`facilities:` list (ADR 021), covering all 19 of Trisha's MiEnviro email
-subscriptions. Each site is actually fetched+diffed at its own `poll` cadence
-(daily/biweekly/quarterly — see TIERED CADENCE below), not every run.
-Standalone + self-terminating, the same shape as rop_watcher.py /
-mmd_watcher.py / ride_watcher.py. See docs/decisions/020-nsite-submissions-watch.md
-and docs/decisions/021-tiered-submissions-polling.md.
+`nsite_sites` registry that has a `nsite_submissions.tiers` entry — a
+DIFFERENT, larger set than the Documents `facilities:` list (ADR 021),
+covering all 19 of Trisha's MiEnviro email subscriptions. Each site is
+actually fetched+diffed at its own `poll` cadence (daily/biweekly/quarterly —
+see TIERED CADENCE below), not every run. Standalone + self-terminating, the
+same shape as rop_watcher.py / mmd_watcher.py / ride_watcher.py. See
+docs/decisions/020-nsite-submissions-watch.md,
+docs/decisions/021-tiered-submissions-polling.md, and
+docs/decisions/022-nsite-site-registry.md (`nsite_sites` extraction — this
+watcher was the first consumer, `nsite_submissions.sites` is gone).
 
 WHY: on 2026-07-24 a JPA (EGLE/USACE Joint Permit Application — wetlands /
 floodplain / inland lakes & streams / dams) for Arbor Hills reached Trisha only
@@ -50,8 +53,9 @@ was verified end-to-end via a real workflow_dispatch run before merging — see
 the ADR — so it ships enabled, not disabled-by-default like an unattended
 overnight new-source build).
 
-TIERED CADENCE (ADR 021): each site in `nsite_submissions.sites` carries a
-`poll: daily|biweekly|quarterly` field. `_is_due` is a pure, deterministic
+TIERED CADENCE (ADR 021): each srn in `nsite_submissions.tiers` maps to a
+`daily|biweekly|quarterly` poll cadence (site identity itself lives in the
+shared `nsite_sites` registry, ADR 022). `_is_due` is a pure, deterministic
 gate — no stored "last polled" state needed — that hash-staggers sites within
 a tier across the period so they don't all land on the same day, and fires
 across a 3-day WINDOW per period rather than one exact day, so a single
@@ -287,7 +291,16 @@ def run() -> int:
 
     scfg = cfg.get("nsite_submissions") or {}
     recipients = scfg.get("recipients") or None  # None -> full alert_recipients list
-    sites = scfg.get("sites") or []
+    # Resolve the working site list by joining the shared identity registry
+    # (nsite_sites, ADR 022) with this profile's own cadence map. A `tiers`
+    # srn absent from the registry is a config error — KeyError raises
+    # naturally, on purpose (see ADR 022): a loud failure on a config typo is
+    # correct, a silently-unwatched site is not.
+    registry = {s["srn"]: s for s in cfg.get("nsite_sites") or []}
+    sites = [
+        {**registry[srn], "poll": poll}
+        for srn, poll in (scfg.get("tiers") or {}).items()
+    ]
 
     sheet_id = os.environ["GSHEET_ID"]
     sheets = dc.sheets_service()
