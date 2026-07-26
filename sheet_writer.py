@@ -41,6 +41,7 @@ without touching the Sheets API. Tab creation is idempotent (create-if-absent).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from types import SimpleNamespace
 from typing import Iterable
@@ -97,6 +98,14 @@ TAB_WDS_NEW = "WDS New Documents"
 TAB_WDS_HISTORICAL = "WDS Historical Documents"
 TAB_WDS_EVIDENCE = "WDS Evidence by Risk"
 TAB_WDS_SNAPSHOTS = "WDS Page Snapshots"
+# _wds_seen (ADR 024) — append-only backup + recovery log for Stream C's diff
+# cursor. The live diff still reads/writes `_meta.wds_seen` (unchanged, so zero
+# risk to proven live alerting); this log makes that cursor recoverable. One row
+# per collection each time its seen-set changes; NEVER overwritten. If `_meta` is
+# ever cleared/corrupted, read_wds_seen_log_latest() restores the cursor so a
+# wipe no longer re-fires every WDS record as "new" (Gap G1-C-1). Underscore-
+# prefixed = internal, like _meta/_state; created by ensure_wds_tabs().
+TAB_WDS_SEEN = "_wds_seen"
 # Mirror D (ADR 010) — same "created on demand, not by ensure_tabs()" treatment
 # as the WDS tabs above, so the Sheet gains no empty tab until mmpc_archive is
 # actually enabled/run.
@@ -209,6 +218,12 @@ ALL_EVIDENCE_HEADERS = [
 # below), not written every night regardless of whether the page changed.
 WDS_SNAPSHOT_HEADERS = [
     "Date", "Collection", "Page", "Content Hash", "Drive Link", "Fetched At",
+]
+# _wds_seen backup/recovery log (ADR 024). One row per collection each time its
+# seen-set changes. "Records JSON" carries the same {idkey: hash} map the live
+# `_meta.wds_seen` holds, so read_wds_seen_log_latest() can rebuild the cursor.
+WDS_SEEN_HEADERS = [
+    "Checked At", "Collection", "Last Count", "Snapshot Hash", "Records JSON",
 ]
 # Mirror D (ADR 010) — MMPC agenda/minutes/other PDFs auto-pulled from
 # CivicClerk. One row per archived file, keyed by File ID for dedup (same
@@ -849,8 +864,78 @@ _WDS_TAB_HEADERS = {
     TAB_WDS_HISTORICAL: WDS_HEADERS,
     TAB_WDS_EVIDENCE: WDS_EVIDENCE_HEADERS,
     TAB_WDS_SNAPSHOTS: WDS_SNAPSHOT_HEADERS,
+    TAB_WDS_SEEN: WDS_SEEN_HEADERS,
     TAB_ALL_EVIDENCE: ALL_EVIDENCE_HEADERS,
 }
+
+
+def _wds_seen_hash(entry: dict) -> str:
+    """Stable short hash of one collection's seen entry (records + last_count),
+    for append-on-change dedup in the _wds_seen log."""
+    entry = entry or {}
+    payload = json.dumps(
+        {"records": entry.get("records") or {},
+         "last_count": entry.get("last_count") or 0},
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def read_wds_seen_log_latest(service, sheet_id: str) -> dict:
+    """Reconstruct Stream C's seen-set from the append-only `_wds_seen` backup
+    log: the LATEST row per collection (rows are appended in run order and never
+    overwritten, so the last row for a collection is its current snapshot).
+    Returns the same shape as `_meta.wds_seen` — {collection: {"records": {...},
+    "last_count": N}} — or {} if the log is empty/absent.
+
+    Used ONLY for recovery (see watcher.py's WDS block): the live diff cursor is
+    still `_meta.wds_seen`. This is what makes a `_meta` wipe non-catastrophic
+    (Gap G1-C-1, ADR 024)."""
+    latest: dict = {}
+    for r in _tab_rows(service, sheet_id, TAB_WDS_SEEN, "A2:E"):
+        # row = [checked_at, collection, last_count, snapshot_hash, records_json]
+        if len(r) < 5 or not r[1]:
+            continue
+        collection = r[1]
+        records = _load_json(r[4], {})
+        if not isinstance(records, dict):
+            records = {}
+        try:
+            last_count = int(r[2])
+        except (ValueError, TypeError):
+            last_count = len(records)
+        latest[collection] = {"records": records, "last_count": last_count}
+    return latest
+
+
+def append_wds_seen_log(service, sheet_id: str, seen: dict, checked_at: str) -> None:
+    """Append the current Stream C seen-set to the append-only `_wds_seen` backup
+    log — one row per collection whose snapshot changed since its last logged row
+    (append-on-change, matching the ROP/MMD watch-tab idiom; WDS changes rarely,
+    so the log stays lean). NEVER overwrites an existing row.
+
+    Best-effort by contract: the live cursor is `_meta.wds_seen`, so the caller
+    wraps this and a failure here must not break the run. The FIRST call after
+    this feature ships seeds the log from the then-current `_meta.wds_seen`,
+    preserving continuity so no record re-fires (ADR 024)."""
+    if not seen:
+        return
+    prior = read_wds_seen_log_latest(service, sheet_id)
+    rows = []
+    for collection, entry in sorted(seen.items()):
+        entry = entry or {}
+        h = _wds_seen_hash(entry)
+        prev = prior.get(collection)
+        if prev is not None and _wds_seen_hash(prev) == h:
+            continue  # unchanged since its last logged row — append-on-change skip
+        rows.append([
+            checked_at,
+            collection,
+            str(entry.get("last_count") or len(entry.get("records") or {})),
+            h,
+            json.dumps(entry.get("records") or {}, sort_keys=True),
+        ])
+    append_rows(service, sheet_id, TAB_WDS_SEEN, rows)
 
 
 def ensure_wds_tabs(service, sheet_id: str) -> None:
