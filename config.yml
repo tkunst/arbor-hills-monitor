@@ -298,7 +298,8 @@ gfl_air:
   # line still shows on the snapshot tab and, unchanged from before this change,
   # still rides along in the full-list combined email — just no dedicated send.
   watch_alert_recipients:
-    - arbor-hills@trishakunst.com          # Trisha only (Ridge Wood review_recipients precedent)
+    - arbor-hills@trishakunst.com          # Trisha
+    - ddrinan10@gmail.com                  # David Drinan, The Conservancy Initiative VP (added 2026-07-26)
   # Sentinel / no-data values in the feed (ambiguous no-data vs off-scale-high).
   # Excluded from the measured series; surfaced as anomalies. ADR 014 RECOMMENDS
   # treating them as alert-worthy (fail-safe — don't infer 'benign' when the
