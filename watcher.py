@@ -154,6 +154,19 @@ def run() -> int:
             # unconfigured; here we also swallow a configured-but-failing send.
             sw.write_document(sheets, sheet_id, parsed, d, link, RISK_NAMES, feed_tab=sw.TAB_NEW)
 
+            # Structured compliance deadlines (ADR 025) — durable, machine-joinable
+            # home for the dated obligations the classifier extracted, instead of
+            # leaving them only in the mutable feed cell. Best-effort: must not
+            # block marking the doc processed or alerting.
+            deadlines = getattr(parsed, "deadlines", None)
+            if deadlines:
+                try:
+                    sw.write_compliance_deadlines(
+                        sheets, sheet_id, deadlines, "nSITE",
+                        d.get("facility_name", ""), link, _now())
+                except Exception as de:  # noqa: BLE001 — deadline tab is best-effort
+                    print(f"  compliance-deadline write skipped (doc still recorded): {de}")
+
             if routed is not None:
                 try:
                     sw.ensure_woi_tabs(sheets, sheet_id)
@@ -178,6 +191,12 @@ def run() -> int:
                 "doc_type": parsed.doc_type,
                 "severity": parsed.severity,
                 "risks": parsed.risks,
+                # ADR 025 (Gap G1-A-1): carry the extracted claim + summary in the
+                # append-only _state payload so it survives a Feed-tab clear — the
+                # key_data_point (incl. enforcement-deadline text) is no longer
+                # mutable-feed-only.
+                "key_data_point": parsed.key_data_point,
+                "summary": parsed.summary,
             }
             state["processed"][did] = payload
             sw.mark_processed(sheets, sheet_id, did, payload, _now())
@@ -224,11 +243,22 @@ def run() -> int:
                     state["wds_seen"] = recovered
                     print(f"[watcher] WDS: _meta.wds_seen empty — recovered "
                           f"{len(recovered)} collection(s) from _wds_seen log")
-            ww.check_wds(
-                state, cfg, ea.send_email,
-                on_row=lambda ev: sw.write_wds_event(
-                    sheets, sheet_id, ev, RISK_NAMES, feed_tab=sw.TAB_WDS_NEW),
-            )
+            def _wds_on_row(ev):
+                sw.write_wds_event(
+                    sheets, sheet_id, ev, RISK_NAMES, feed_tab=sw.TAB_WDS_NEW)
+                # ADR 025: compliance_actions events carry a structured deadline
+                # mapped from their WDS fields; land it in the Compliance Deadlines
+                # tab. Best-effort — never block the feed/alert write.
+                if ev.get("deadline"):
+                    try:
+                        sw.write_compliance_deadlines(
+                            sheets, sheet_id, [ev["deadline"]],
+                            "WDS compliance_actions", "Arbor Hills Landfill, Inc.",
+                            ev.get("link", ""), _now())
+                    except Exception as de:  # noqa: BLE001 — deadline tab best-effort
+                        print(f"[wds] compliance-deadline write skipped: {de}")
+
+            ww.check_wds(state, cfg, ea.send_email, on_row=_wds_on_row)
             sw.write_meta(sheets, sheet_id, state)  # persist wds_seen + digest adds
             # Append-only backup of the (now-updated) cursor — recoverable if
             # _meta is ever cleared. Best-effort; seeds the log on the first run.

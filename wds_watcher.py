@@ -200,6 +200,21 @@ COLLECTIONS = {
         "label": lambda r: f"Compliance action — {_g(r, 'Compliance Action Type') or '?'} ({_g(r, 'Compliance Action Date') or '?'})",
         "detail": lambda r: f"Lead program {_g(r, 'Lead Program')}; determined by {_g(r, 'Determined By')}".strip("; "),
         "classify": _classify_compliance_action,
+        # ADR 025: map this record's already-structured fields onto the six-field
+        # compliance-deadline schema (Compliance Deadlines tab). WDS carries no
+        # separate extension field, so extension_due_date stays blank. Only this
+        # collection defines a "deadline" extractor; the others have no dated
+        # obligation to capture.
+        "deadline": lambda r: {
+            "item_description": _g(r, "Corrective Action Component")
+            or _g(r, "Compliance Action Type"),
+            "due_date": _iso_date(_g(r, "Company Response Due Date")),
+            "extension_due_date": "",
+            "actual_completion_date": _iso_date(_g(r, "Company Response Date")),
+            "compelled_by": f"{_g(r, 'Compliance Action Type') or 'Compliance action'}"
+            f" ({_g(r, 'Compliance Action Date') or '?'})",
+            "compliance_doc_effective_date": _iso_date(_g(r, "Compliance Action Date")),
+        },
     },
 }
 
@@ -228,6 +243,8 @@ def _event_from_row(name: str, r: dict, kind: str, cfg_wds: dict, prev_hash=None
         "risks": risks, "label": spec["label"](r), "detail": spec["detail"](r),
         "date": spec["date"](r), "idkey": _idkey(spec, r), "prev_hash": prev_hash,
         "hash": _content_hash(spec, r),
+        # ADR 025: only compliance_actions defines a deadline extractor; None else.
+        "deadline": spec["deadline"](r) if "deadline" in spec else None,
     }
 
 
