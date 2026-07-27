@@ -163,6 +163,12 @@ external users but no sensitive data). Public repo.
   re-writes the row, never drops it).
 - Sheet tabs are created idempotently (`ensure_tabs`).
 - Workflows use a `concurrency` group so two runs never race the state file.
+- **Two Sheets, two visibility rules.** `GSHEET_ID` is the case-file Sheet and is
+  **operator-visible** (shared with the Conservancy/GFL) — never put anything on
+  it you wouldn't hand the operator. `GSHEET_ID_PRIVATE` (optional; the Sunday
+  digest's "Upcoming" tab, read by `upcoming.py`) is a **separate Sheet shared
+  ONLY with the service account and Trisha** — never share it with the operator.
+  Keep strategy-flavored key dates on the private Sheet, never the public one.
 
 ## Tests
 

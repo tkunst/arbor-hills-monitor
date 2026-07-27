@@ -201,7 +201,10 @@ pytest -q               # hermetic: synthetic PDFs, all APIs mocked, no secrets
 3. **GitHub Secrets**: `ANTHROPIC_API_KEY`, `GDRIVE_SA_KEY` (the key JSON
    contents), `GSHEET_ID`, and (for email) `SMTP_HOST`, `SMTP_PORT`,
    `SMTP_USER`, `SMTP_PASSWORD`. `GDRIVE_FOLDER_ID` is no longer used and can be
-   left unset.
+   left unset. `GSHEET_ID_PRIVATE` is **optional** — a separate, private Sheet
+   (shared only with the service account, never the operator) for the Sunday
+   digest's "Upcoming Activities" section; if unset, that section is simply
+   omitted (see `upcoming.py` + `docs/decisions/027`).
 4. **MMPC document archive (Mirror D)** — **done, active since 2026-07-11**: the
    `GOAUTH_MMPC_FOLDER_ID` secret is set and `mmpc_archive.enabled: true` is on
    `main`, so Mirror D auto-downloads every MMPC Agenda/Minutes PDF from

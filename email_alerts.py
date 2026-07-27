@@ -100,8 +100,16 @@ def format_urgent_body(parsed, metadata: dict, link: str) -> str:
     )
 
 
-def format_digest_body(items: list[dict]) -> str:
-    """items: [{parsed, metadata, link}]. Procedural action items first."""
+def format_digest_body(items: list[dict], upcoming_block: str = "") -> str:
+    """items: [{parsed, metadata, link}]. Procedural action items first.
+    `upcoming_block` (from upcoming.render_upcoming) is prepended when non-empty —
+    including the zero-new-documents-but-upcoming-present case, where the calendar
+    section still shows above a 'no new documents' line (ADR: upcoming-activities)."""
+    body = _digest_items_body(items)
+    return f"{upcoming_block}\n{body}" if upcoming_block else body
+
+
+def _digest_items_body(items: list[dict]) -> str:
     if not items:
         return "No new Arbor Hills (N2688) documents this period."
     procedural = [it for it in items if it["parsed"].doc_type == "procedural"]
@@ -197,6 +205,6 @@ def send_urgent_alert(parsed, metadata: dict, link: str, cfg: dict) -> None:
     send_email(subject, format_urgent_body(parsed, metadata, link), cfg)
 
 
-def send_digest(items: list[dict], cfg: dict) -> None:
+def send_digest(items: list[dict], cfg: dict, upcoming_block: str = "") -> None:
     subject = f"Arbor Hills N2688 digest — {len(items)} new document(s)"
-    send_email(subject, format_digest_body(items), cfg)
+    send_email(subject, format_digest_body(items, upcoming_block), cfg)
