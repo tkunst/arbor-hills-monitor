@@ -38,8 +38,10 @@ Trisha confirms when she enables the stream (ADR 014).
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 
 try:
@@ -48,6 +50,7 @@ try:
 except Exception:  # pragma: no cover
     _ET = None
 
+import archive_client as ac
 import drive_client as dc
 import sheet_writer as sw
 import gfl_air_client as gc
@@ -513,6 +516,112 @@ def _check_liveness(sheets, sheet_id: str, cfg: dict, link: str,
         print(f"[gfl-air]   liveness check errored (ignored — poll unaffected): {e}")
 
 
+# ---------------------------------------------------------------------------
+# Durable air-readings exhibit (ADR 026, Gap G1-E-1/G3-E-1) — an immutable Drive
+# capture of the selected readings. Ships GATED OFF (capture.enabled +
+# GOAUTH_GFL_AIR_FOLDER_ID), so it cannot affect the live stream until Trisha
+# provisions the folder/secret and flips the flag. The WATCH email + episode
+# logic + wind/dir/temp snapshot already exist; this only adds the durable store.
+# ---------------------------------------------------------------------------
+
+_CAPTURE_FOLDER_ENV = "GOAUTH_GFL_AIR_FOLDER_ID"
+
+
+def _reading_epoch_s(r: dict):
+    """Reading time in epoch SECONDS (ArcGIS `Date` is epoch millis), or None if
+    absent/unparseable. Used only for baseline-downsample spacing."""
+    try:
+        return int(r.get("Date")) / 1000.0
+    except (TypeError, ValueError):
+        return None
+
+
+def _capture_row(r: dict) -> dict:
+    """One durable capture record from a raw reading (ADR 026): Monitor ID,
+    Timestamp, H2S, CH4, Wind Direction, Wind Speed (Trisha's fields) plus Temp
+    (Q3). Raw values kept verbatim (incl. any sentinel) — a faithful record;
+    interpretation stays downstream. OBJECTID rides along as an ordering key."""
+    return {
+        "monitor_id": gc.station_of(r),
+        "timestamp": gc.reading_iso(r),
+        "h2s_ppb": r.get("H2S"),
+        "ch4_ppm": r.get("CH4"),
+        "wind_direction": r.get("Direction"),
+        "wind_speed": r.get("Speed"),
+        "temp": r.get("Temp"),
+        "oid": gc.oid_of(r),
+    }
+
+
+def select_capture_rows(readings: list[dict], thresholds: dict, sentinels: dict | None,
+                        watch_thresholds: dict | None, baseline_hours: float,
+                        station_prefix: str) -> list[dict]:
+    """Pick the readings to durably capture this poll (Trisha's spec, ADR 026):
+    keep EVERY reading whose own classification is exceedance OR watch (Tier-1 CH4
+    >= 40) — the full hourly series through any elevated period — and, for
+    non-elevated readings, keep at least one per `baseline_hours` window per
+    station. `readings` are OBJECTID-ASC (oldest first), so the spacing walks
+    forward correctly. Pure/unit-tested."""
+    baseline_secs = float(baseline_hours) * 3600.0
+    kept: list[dict] = []
+    last_kept_s: dict[str, float] = {}
+    for r in readings:
+        st = gc.station_of(r)
+        if not st or (station_prefix and not st.startswith(station_prefix)):
+            continue
+        c = gc.classify_reading(r, thresholds, sentinels, watch_thresholds)
+        elevated = (c["h2s"][1] in ("exceedance", "watch")
+                    or c["ch4"][1] in ("exceedance", "watch"))
+        if elevated:
+            kept.append(_capture_row(r))
+            continue
+        ts = _reading_epoch_s(r)
+        prev = last_kept_s.get(st)
+        if prev is None or ts is None or (ts - prev) >= baseline_secs:
+            kept.append(_capture_row(r))
+            if ts is not None:
+                last_kept_s[st] = ts
+    return kept
+
+
+def _capture_filename(rows: list[dict], when_utc: str) -> str:
+    """Immutable per-poll name: run date + max OBJECTID in the batch, so a re-run
+    of the same batch dedups (upload_file reuses by name) and files sort by date."""
+    max_oid = max((r.get("oid") or 0) for r in rows) if rows else 0
+    return f"gfl-air-capture-{when_utc[:10]}-oid{max_oid}.json"
+
+
+def _write_capture(cfg_gfl: dict, rows: list[dict], when_utc: str) -> int:
+    """Upload the selected rows as an immutable JSON to the app-only GFL air Drive
+    folder (ADR 026). Returns rows written, or 0 for a no-op. GATED: silently does
+    nothing unless capture.enabled AND the OAuth Drive creds + the folder secret
+    are configured — so it ships safe with the flag off and no secret. Best-effort
+    by contract (caller wraps it)."""
+    if not (cfg_gfl.get("capture") or {}).get("enabled"):
+        return 0
+    if not ac.is_configured(_CAPTURE_FOLDER_ENV):
+        print(f"[gfl-air]   capture enabled but Drive folder/creds not set "
+              f"({_CAPTURE_FOLDER_ENV}) — skipping durable capture")
+        return 0
+    if not rows:
+        return 0
+    payload = json.dumps(
+        {"captured_at": when_utc, "count": len(rows), "readings": rows},
+        indent=2, sort_keys=True)
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+            fh.write(payload)
+            tmp = fh.name
+        drive = ac.oauth_drive_service()
+        ac.upload_file(drive, tmp, _capture_filename(rows, when_utc),
+                       "application/json", ac.folder_id(_CAPTURE_FOLDER_ENV))
+    finally:
+        if tmp and os.path.exists(tmp):
+            os.remove(tmp)
+    return len(rows)
+
+
 def run() -> int:
     cfg = load_config()
     should_run, reason = _should_run(cfg)
@@ -620,6 +729,21 @@ def run() -> int:
     print(f"[gfl-air] {len(readings)} new reading(s) across {len(snapshot)} "
           f"station(s); {n_rows} measurement row(s) ({mode}); cursor {cursor} -> "
           f"{new_cursor}.")
+
+    # Durable air-readings exhibit (ADR 026) — immutable Drive capture of the
+    # selected readings (every elevated hour + baseline downsample). Best-effort
+    # and gated OFF until the folder/secret exist, so it can't affect the live
+    # stream; it never touches measurements, the cursor, or the alert path.
+    try:
+        captured_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cap_rows = select_capture_rows(
+            readings, thresholds, sentinels, watch_thresholds,
+            float((cfg_gfl.get("capture") or {}).get("baseline_hours", 8)), prefix)
+        n_cap = _write_capture(cfg_gfl, cap_rows, captured_at)
+        if n_cap:
+            print(f"[gfl-air]   durable capture: {n_cap} reading(s) -> Drive.")
+    except Exception as ce:  # noqa: BLE001 — durable capture is best-effort
+        print(f"[gfl-air]   durable capture skipped: {ce}")
 
     lines, has_exceedance, has_watch = alert_lines(
         readings, thresholds, sentinels, alert_on_sentinel, watch_thresholds,

@@ -1154,3 +1154,52 @@ def test_watch_and_exceedance_on_different_stations_both_notify_independently(mo
     assert len(sent) == 2
     urgent = [s for s in sent if "URGENT" in s[0]]
     assert len(urgent) == 1 and urgent[0][2] is None     # exceedance -> default full list
+
+
+# --- durable air-readings exhibit (ADR 026): select_capture_rows + gating -------
+
+def test_select_capture_keeps_every_elevated_reading():
+    # A watch (CH4>=40) and an H2S exceedance are BOTH kept, even inside one
+    # baseline window — the full elevated series is captured.
+    rows = [
+        _reading(1, "MS-1", 3.0, 20.0, DAY0),                 # ok  -> baseline (first, kept)
+        _reading(2, "MS-1", 3.0, 100.0, DAY0 + 60_000),       # CH4 100 -> watch -> kept
+        _reading(3, "MS-1", 80.0, 5.0, DAY0 + 120_000),       # H2S 80 -> exceedance -> kept
+    ]
+    kept = gw.select_capture_rows(rows, THRESH, SENT, WATCH, 8, "MS-")
+    assert [k["oid"] for k in kept] == [1, 2, 3]
+    assert kept[1]["ch4_ppm"] == 100.0 and kept[2]["h2s_ppb"] == 80.0
+
+
+def test_select_capture_baseline_downsamples_calm_readings():
+    # Three calm readings 1h apart -> only the first survives the 8h baseline window.
+    rows = [_reading(i, "MS-1", 3.0, 20.0, DAY0 + i * 3_600_000) for i in range(3)]
+    kept = gw.select_capture_rows(rows, THRESH, SENT, WATCH, 8, "MS-")
+    assert len(kept) == 1 and kept[0]["oid"] == 0
+
+
+def test_select_capture_baseline_keeps_after_window_elapses():
+    rows = [_reading(1, "MS-1", 3.0, 20.0, DAY0),
+            _reading(2, "MS-1", 3.0, 20.0, DAY0 + 9 * 3_600_000)]  # >8h later
+    kept = gw.select_capture_rows(rows, THRESH, SENT, WATCH, 8, "MS-")
+    assert len(kept) == 2
+
+
+def test_select_capture_filters_non_perimeter_and_maps_fields():
+    rows = [_reading(1, "10-Meter MET Tower", 3.0, 20.0, DAY0),   # non-MS- -> dropped
+            _reading(2, "MS-2", 5.0, 30.0, DAY0, temp=61.0, speed=2.5, direction=310)]
+    kept = gw.select_capture_rows(rows, THRESH, SENT, WATCH, 8, "MS-")
+    assert len(kept) == 1
+    row = kept[0]
+    assert set(row) >= {"monitor_id", "timestamp", "h2s_ppb", "ch4_ppm",
+                        "wind_direction", "wind_speed", "temp", "oid"}
+    assert row["monitor_id"] == "MS-2" and row["temp"] == 61.0
+    assert row["wind_speed"] == 2.5 and row["wind_direction"] == 310
+
+
+def test_write_capture_is_a_safe_noop_when_disabled_or_unconfigured(monkeypatch):
+    # Disabled -> no-op regardless of creds (the shipped default).
+    assert gw._write_capture({"capture": {"enabled": False}}, [{"oid": 1}], "2026-07-26T00:00:00Z") == 0
+    # Enabled but Drive not configured -> still a safe no-op (ships-safe guarantee).
+    monkeypatch.setattr(gw.ac, "is_configured", lambda env: False)
+    assert gw._write_capture({"capture": {"enabled": True}}, [{"oid": 1}], "2026-07-26T00:00:00Z") == 0
