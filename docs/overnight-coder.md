@@ -159,44 +159,51 @@ confirm, don't just take the merge on faith.
   established shape: Summary (bullets), Test plan (checked boxes), and a
   "Before merging" section if there's anything a human should know before
   the merge (e.g. new secrets needed, a manual activation step).
-- Wait for CI to finish (`gh pr checks <n> --watch`). The check set now
-  includes the armed **`bandit`** SAST gate (fails the PR on any medium+
-  finding) and the independent **`claude-review`** job (an advisory review that
-  posts inline comments; a red `claude-review` means the review itself failed,
-  not that it found problems, and green means it ran *or* was skipped — see the
-  Step 5 workflow-skip fallback). Both must finish before Step 5, so the review
-  it posts exists to consume. If
-  a check fails for a reason unrelated to the feature (e.g. markdownlint on a
-  doc — this repo's CI is picky about blank lines around lists/fences and
-  restarts ordered-list numbering at 1 for every list block, not just the
-  first), fix it and push again before proceeding. Don't merge on red CI.
+- Wait for CI to finish (`gh pr checks <n> --watch`). The check set includes the
+  armed **`bandit`** SAST gate (fails the PR on any medium+ finding), plus
+  `gitleaks`, `pytest`, `lint`, `lychee`, `CodeQL`, and `block-data-files`.
+  **Ignore the `claude-review` job.** It is auth-infra-broken — it fails
+  near-instantly (installation-token step, 0-byte response) with **no review
+  actually performed**, confirmed across multiple PRs on multiple days
+  (2026-07-26: #31/#32/#33 all failed it identically). It is no longer the code
+  review; the **Step 5 subagent review replaces it**. A red `claude-review` alone
+  does NOT block merge — it produced no findings, and `main` has no required
+  status checks. If any OTHER check fails for a reason unrelated to the feature
+  (e.g. markdownlint on a doc — this repo's CI is picky about blank lines around
+  lists/fences and restarts ordered-list numbering at 1 for every list block),
+  fix it and push again before proceeding. Don't merge on red CI (the
+  `claude-review` infra-failure is the one documented exception).
 
-### 5. Resolve the code review (CI `claude-review` is authoritative)
+### 5. Resolve the code review (a separate subagent, run locally)
 
-- The authoritative code review is the independent **`claude-review` CI job** —
-  a cold, diff-only read with none of this session's context, which makes it
-  more independent than an in-session pass. Read its posted findings with
-  `gh pr view <pr-number> --comments` (fall back to `gh api
-  repos/{owner}/{repo}/pulls/<pr-number>/reviews` if the summary lands as a
-  formal review rather than a comment).
-- A light in-session `/code-review` is now only a **pre-push preflight** — run
-  it in Step 4 before pushing to catch the obvious, but it is not the system of
-  record; the CI job is.
-- **Fallback — if `claude-review` skipped:** the action deliberately skips (and
-  still reports the `review` check GREEN) on any PR that modifies a workflow
-  file, as a security guard. When that happens there is no CI review, so the
-  in-session `/code-review` is NOT merely a preflight for this PR — it *is* the
-  review, and its findings must be resolved before merging. Confirm by checking
-  the `review` job's log for "Action skipped due to workflow validation". Never
-  merge a workflow-touching PR on a green-but-skipped `review` alone.
+The GitHub `claude-review` Action is unreliable (auth-infra-broken — see Step 4)
+and is no longer the review of record. Run the code review as a **separate
+subagent inside this session** instead — it works, and a fresh subagent given
+only the diff is as independent as the CI job was meant to be.
+
+- **Spawn a fresh subagent** with the Agent/Task tool — a `code-reviewer` agent
+  if one is registered, otherwise `general-purpose`. Give it ONLY the PR diff
+  (`gh pr diff <pr-number>`, or `git diff main...HEAD`) and the review task —
+  **not** this build session's reasoning or intent. That no-context, diff-only
+  read is exactly what makes it independent (the property the CI job was supposed
+  to provide). Ask it to return findings as a structured list — file:line,
+  severity, what's wrong, why it matters, most-severe first — and to state
+  explicitly when it finds nothing.
+- A light in-session `/code-review` before pushing (Step 4) is still a useful
+  preflight to catch the obvious, but the **subagent review is the system of
+  record** for this step.
 - Fix every finding directly in the same PR, **except**: if a finding is
   high-severity *and* substantial enough that folding it in would meaningfully
   bloat this PR's scope, open a **second, separate PR** for that fix instead
   (still autonomous, still gets fixed — a scope-discipline split, not an
   escalation). Note the split in both PRs' descriptions so the history reads
   clearly later.
-- Push fixes; the `claude-review` job re-runs automatically on the new commit.
-  Re-read its comments in the Step 7 loop until no findings remain open.
+- Push fixes, then **re-run the subagent review on the updated diff** in the
+  Step 7 loop until no findings remain open.
+- **Record the outcome on the PR** — a comment summarizing what the subagent
+  reviewed and its findings/verdict — so the review is legible in the PR history
+  the way the CI job's comments used to be. (Workflow-touching PRs get the same
+  subagent review as everything else; there is no skip case any more.)
 
 ### 6. `/security-review` the PR
 
@@ -210,7 +217,7 @@ confirm, don't just take the merge on faith.
   Trisha's call, always, regardless of how confident the fix looks. See
   "Standing authorization" above.
 - This escalation isn't gated on which skill surfaced the finding. If the code
-  review (Step 5's CI `claude-review` job or the in-session `/code-review`)
+  review (the Step 5 subagent review, or the in-session `/code-review` preflight)
   turns up something security-relevant (not just `/security-review`), it gets
   the same treatment — stop and escalate, not the autonomous-fix-or-second-PR
   path Step 5 otherwise allows. Severity, not which command found it, is what
@@ -228,10 +235,8 @@ confirm, don't just take the merge on faith.
 
 Steps 5 and 6 can surface new findings after a fix (a fix can introduce its
 own issue — this happened twice in this repo's own history, see ADR 011).
-So: after applying fixes and pushing, re-read the `claude-review` CI job's
-comments on the new commit (`gh pr view <pr-number> --comments` — the job
-re-runs automatically on each push) and re-run `/security-review` before
-declaring done. Loop:
+So: after applying fixes and pushing, **re-run the Step 5 subagent code review**
+on the updated diff and re-run `/security-review` before declaring done. Loop:
 
 - Re-check → nothing open, no security findings → done, go to Step 8.
 - Re-check → new *non-security* findings → fix, loop again.
@@ -247,7 +252,9 @@ declaring done. Loop:
 ### 8. Merge and document (only reached with zero open items)
 
 - Confirm CI is green on the latest commit — including the armed `bandit` gate
-  and the `claude-review` job.
+  (the `claude-review` job's infra-failure is expected and does not count; see
+  Step 4). Confirm the **Step 5 subagent code review** and the Step 6
+  `/security-review` both came back clean (or their findings were resolved).
 - Merge to `main` with `gh pr merge <pr-number> --rebase --delete-branch`
   (this replaces the old local `git merge --ff-only` + `git push origin main`).
   Going through `gh pr merge` respects branch protection once Phase C requires
