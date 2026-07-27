@@ -1,5 +1,13 @@
 # Overnight-coder handoff — Stream E CH4 two-tier alerting (40 ppm watch tier)
 
+> ⛔ **RETIRED / SUPERSEDED 2026-07-26 — DO NOT BUILD.** The deliverable (the
+> once-per-episode 40 ppm CH4 WATCH email) is **already live on `main`**:
+> `watch_alert_stations` / `watch_episode_stations` / `watch_alert_recipients` in
+> `gfl_air_watcher.py`, shipped via PR #25 + Trisha's direct commits `1982194` /
+> `0732599`. Confirmed while building the data-lifecycle PR3 (gfl-air durable
+> exhibit, #33). There is nothing left to build — this file is kept for history
+> only; do not hand it to overnight-coder.
+
 *Staged 2026-07-18 on Trisha's explicit ruling (she chose the two-tier CH4 scheme from
 `DRAFT-arbor-hills-air-thresholds-research-2026-07-16.md`, Lotext). Read
 `docs/overnight-coder.md` first. NOT a new source — it refines the already-merged,
