@@ -82,7 +82,7 @@ backfill_batch_size: 50          # docs per nightly run
 # GOAUTH_ARCHIVE_FOLDER_ID secret.
 archive:
   batch_size: 100
-  folder_name: "Arbor Hills EGLE Document Mirror"
+  folder_name: "Arbor Hills Case File Mirror"
 
 # --- Watcher (daily) ---
 # The daily watcher handles INCREMENTAL new filings only (normal volume is 0-5).

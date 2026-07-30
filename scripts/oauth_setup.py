@@ -45,7 +45,7 @@ def main() -> int:
 
     cfg = load_config()
     folder_name = (cfg.get("archive") or {}).get(
-        "folder_name", "Arbor Hills EGLE Document Mirror")
+        "folder_name", "Arbor Hills Case File Mirror")
 
     flow = InstalledAppFlow.from_client_secrets_file(client_json, ac.OAUTH_SCOPES)
     # run_local_server (not the deprecated console/OOB flow): spins a localhost
