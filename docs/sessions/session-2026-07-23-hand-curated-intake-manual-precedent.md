@@ -207,3 +207,86 @@ for the real script:** the dedup / check-before-pulling step must cover the manu
 public mirror (`Arbor Hills Landfill EGLE Documents`), not only "is it in nSITE" — this doc
 was missing from nSITE yet already public in that folder. docs 1 and 3 are genuinely new and
 remain UPLOAD.
+
+## 2026-07-29 addendum #4 — Nov 2024 expansion Advisory Analysis exchange (2 rows)
+
+Trisha-directed: hand-curate the two documents from the Nov 2024 GFL Advisory Analysis
+pre-application exchange (from the Lotext workbench,
+`source-docs/2024-11-advisory-analysis-proposed-expansion/`). Same manual cp-to-mount
+mechanism as the prior addenda (`GOAUTH_*` OAuth vars still placeholder; `GDRIVE_SA_KEY` live).
+
+1. **GFL-2024-11-06-request-for-advisory-analysis-with-conceptual-expansion-plan.pdf**
+   (Drive id `1GC_4kad-eup1-h5Oq4pEwRCFeV4aqKqV`) — UPLOAD mode (not in nSITE mirror;
+   sent via UPS, not electronic filing). GFL's Nov 6 2024 formal Advisory Analysis
+   request to EGLE MMD (Dave Seegert to Gary Schwerin), with Tetra Tech conceptual
+   expansion plan (Project 4241201, Oct 2024 survey) as Page 2. R1 evidence.
+2. **EGLE-2024-11-19-advisory-analysis-response.pdf** — ANNOTATION mode (already in
+   the automated nSITE mirror as Doc ID `3664986507789835729`, Drive link
+   `1uSiwPI4c-lIC3bx3V3ljtISgtwkdXXgF`). EGLE MMD's Nov 19 2024 response confirming
+   MMP consistency as the prerequisite before any construction permit application.
+
+Both rows include `folded_into_public = public/arbor-hills-violations-enforcement-summary.md`
+— content was added to that doc's R1 section (new bullet in "Permit, capacity & expansion
+status") in the same session. Rows appended via `sheet_writer.append_rows()` (service
+account) using a standalone script, same pattern as prior addenda.
+
+## 2026-07-30 addendum #5 — Kovalchick well-head data, closes the Q1 2024 gap (5 rows)
+
+Trisha-directed: hand-curate `documents/arbor-hills/source-docs/kovalchick-2026-07-30-well-heads/`
+(Lotext workbench) — six files EGLE AQD Senior Environmental Engineer Mike Kovalchick emailed David
+Drinan "per our recent phone call," forwarded to Trisha same day. Same manual `cp`-to-mount mechanism
+as every prior addendum (`GOAUTH_*` OAuth-as-user vars still `.env.example` placeholders;
+`GDRIVE_SA_KEY` live). Hit a new `dotenv.load_dotenv()` snag running from a `python3 <<'PYEOF'` heredoc
+— its frame-based auto-discovery (`find_dotenv()`) throws `AssertionError` when the call stack has no
+caller frame (stdin/heredoc execution); fixed by passing `dotenv_path` explicitly rather than relying
+on auto-discovery. Worth a note for whoever eventually writes the real script if it ever runs via a
+similar non-file entry point.
+
+**Excluded, not curated:** `image001.jpg` (17K) — confirmed by content to be Kovalchick's email-signature
+graphic (MiEnviro Portal logo), not a standalone record. `Gmail - Fwd_ Well Head Data.pdf` (the cover
+email itself) — Trisha-directed exclusion; its provenance chain (Kovalchick → Drinan → Trisha, 2026-07-30)
+is instead carried in each row's `source` field rather than publishing the email itself. Read in full
+before excluding either — the email body is clean, official EGLE correspondence with no other content,
+excluded on relevance grounds (a cover note, not a record), not a content-risk finding.
+
+**Content review before publish (per this spec's own severe-residual-risk gate):** all 3 `.xlsx` files
+opened and inspected sheet-by-sheet — no hidden sheets, no cell comments, standard tabular
+well-ID/gas-reading/coordinate data throughout, no personal information. The big PDF's first several
+pages read directly (standard GFL-to-EGLE regulatory cover-letter format, matching every other WOI
+status report already public in this project). Cross-checked the local nSITE mirror
+(`source-docs/egle-documents/Documents.csv`) before publishing: the Q1 2024 WOI report is *listed*
+there under two separate `doc_id`s (both "Air Site Documents," dated 2/5/2026) but neither ever
+produced a locally-mirrored file — confirms this is the same "corrupt, unrecoverable" report this
+project's own docs (`source-docs/hov-etlf/README.md`, the temperature-trend v2 draft) have flagged
+repeatedly as a data gap, now genuinely closed by a fresh copy obtained directly from EGLE rather than
+through nSITE's rendering pipeline.
+
+Five rows appended (`Hand-Curated Files`, now 26 data rows total), all UPLOAD mode (none had an
+existing public copy):
+
+1. `2024-04-15-arbor-hills-woi-status-report-q1-2024.pdf` (Drive id `1tMWQs52b__5gOWzTDmFyztgqVLvTDZbS`)
+   — the Q1 2024 WOI Quarterly Status Report itself. **The headline item** — directly closes the gap
+   referenced in `draft/DRAFT-arbor-hills-temperature-trend-2021-2025-full-dataset-2026-07-30.md`
+   (the doc that's failed three refutation-gate passes) and `source-docs/hov-etlf/README.md`.
+2. `arbor-hills-gas-extraction-exceedance-detailed-2024-04.xlsx` (id `1GBxDW385mF08QFTT1oBRtXiZCKT3KO28`)
+   — richer companion to the already-public `WOI-gas-extraction-exceedance-2024-04.pdf`: adds monthly
+   CO and H2/N2 attachment sheets plus a 12-month trend sheet the existing PDF doesn't have.
+3. `arbor-hills-gas-extraction-exceedance-general-2026-04.xlsx` (id `1GcE-iz7S6UyCq11Hqx79IPW7uMToSjQx`)
+   — new reporting period, no prior public copy.
+4. `arbor-hills-gas-extraction-exceedance-general-2026-05.xlsx` (id `18pyXOpY9ieJ8wIE_RbmZlfo3rIC-B1RP`)
+   — most recent reporting period on file, no prior public copy.
+5. `arbor-hills-well-master-list-with-coordinates-2026-07-30.xlsx` (id `1L83Cufub4IUZc1LHeUulEL55O39xo6M2`)
+   — well ID/type/lat-long master list (520 rows), sent by Kovalchick specifically for KML/map-building.
+
+Spot-checked sharing on the largest upload (`anyone:reader` confirmed, inherited from the folder) before
+writing rows. File sizes verified identical to the Lotext-workbench originals via the Drive search
+response (`fileSize` field matched all 5). Mechanism: `cp` to the CloudStorage-mounted folder, resolved
+each Drive file id via `mcp__claude_ai_Google_Drive` `search_files` (`parentId` + `title`), appended rows
+via `sheet_writer.append_rows()` (service account) from a standalone script. `sheet_writer.py` does not
+actually have a `handcurated_filenames()` dedup helper yet (that's still design-doc-only, per "Code to
+add" — confirmed by `hasattr` check); dedup for this batch was done by eye against a full read of the
+existing 24-row tab, which is how every addendum before the real script existed has done it.
+
+**Flagging for whoever picks this up next:** the Q1 2024 report closing that data gap is directly
+relevant to the temperature-trend v2 draft, currently blocked pending a clean refutation-gate pass —
+that connection was raised in the same Lotext session this addendum's data came from, not yet acted on.
