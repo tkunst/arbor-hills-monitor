@@ -18,6 +18,11 @@ profile (application/service-request intake, not filed documents) for the same
 facilities, added 2026-07-24 after a JPA (wetlands/floodplain permit
 application) never showed up in Documents at all. See its own docstring for
 why it has a DIFFERENT error-handling contract than fetch_site_documents.
+
+And fetch_site_violations() (Stream L, ADR 023) — a THIRD sibling profile,
+EGLE's own enforcement record (formal violation findings). Same raise-don't-
+swallow contract as fetch_site_submissions, but with no unique-key field and
+therefore no record filter; see its docstring.
 """
 from __future__ import annotations
 
@@ -48,6 +53,16 @@ DOCS_ENDPOINT = (
 SUBMISSIONS_ENDPOINT = (
     f"{NSITE_BASE}/nsite/ss/api/nsite-explorer/default-mode"
     "/profiles/2-environmental-interests/2-submissions"
+)
+# Another sibling profile — EGLE's own ENFORCEMENT record (a formal violation
+# finding, not a filing or a permit status). Same query shape as the two above;
+# anonymous, no auth. Confirmed live 2026-07-24 and re-confirmed across all 19
+# `nsite_sites` on 2026-08-04 (Stream L, ADR 023): 360 records total, all
+# carrying exactly the eight VIOLATION_FIELDS below, with real history only at
+# N2688 (58), RA (299) and N1504 (3).
+VIOLATIONS_ENDPOINT = (
+    f"{NSITE_BASE}/nsite/ss/api/nsite-explorer/default-mode"
+    "/profiles/3-compliance/2-violations"
 )
 DOWNLOAD_BASE = f"{NSITE_BASE}/ncore/downloadpdf"
 # In-browser quirk (harmless): opening a downloadpdf/<id> link can render an
@@ -259,6 +274,127 @@ def fetch_site_submissions(session: requests.Session, nsite_id: str) -> list[dic
                 time.sleep(2 ** attempt)
     raise NsiteFetchError(
         f"GET submissions for facility {nsite_id} failed after 3 attempts: {last_exc}"
+    ) from last_exc
+
+
+# The eight fields EGLE's Violations profile serves, renamed to the short
+# readable names the watch diffs on. Confirmed 2026-08-04 to be present on ALL
+# 360 records across every site that has any (RA/N2688/N1504) — one distinct
+# field-set per site, no optional fields, no nesting. Ordered as EGLE serves
+# them. See docs/decisions/023-nsite-violations-watch.md.
+VIOLATION_FIELDS = (
+    "category", "viol_type", "status", "start_date", "comments", "program",
+    "eval_num", "eval_type",
+)
+
+_VIOLATION_RAW_KEYS = {
+    "category": "violRefViolCatgDescr",      # "Rule 1001: Performance tests by owner"
+    "viol_type": "violRefViolTypeDescr",     # "Testing/Sampling", "2nd VN Notice"
+    "status": "violRefViolStatDescr",        # "Active - Addressed not Resolved"
+    "start_date": "violNonCmplStartDate",    # ISO datetime w/ UTC offset
+    "comments": "violViolNotifCmnts",        # free text: permit + condition cites
+    "program": "violDescr",                  # "AQD - Air", "WRD - NPDES"
+    "eval_num": "evalEvalNum",               # the parent evaluation's number
+    "eval_type": "evalRefEvalTypeDescr",     # "On-Site Inspection"
+}
+
+
+def _normalize_violation(raw: dict) -> dict:
+    """Convert a raw nSITE violation dict into the fields the Violations watch
+    diffs on.
+
+    There is deliberately NO unique-key field here, unlike Submissions'
+    `submSubmRefNum` — verified 2026-08-04 across all 360 live records: not one
+    of the eight fields is unique within a site's record set, and neither is any
+    composite of them (a 5-field composite still leaves 191 collisions on RA's
+    299 records). EGLE genuinely files repeated identical rows. That is why
+    nsite_violations_watcher diffs a full-record Counter MULTISET rather than
+    keying by id — see its module docstring.
+
+    Two deliberate canonicalizations, both of which exist to stop a
+    representation change from firing a false "changed" alert:
+      - `start_date` -> a bare ISO date. The raw value carries a UTC offset
+        ("...-04:00" in EDT, "...-05:00" in EST); the calendar date is the
+        signal and the offset is not.
+      - `comments` -> CRLF/CR collapsed to LF and stripped. Real values contain
+        "\\r\\n"; a server-side line-ending change is not an enforcement event.
+
+    Every other field is passed through with `or ""` (NOT `.get(f, "")`):
+    `program` is genuinely null on 17 of RA's 299 records, so a present-but-null
+    key must normalize to the same "" that an absent key would, or the day EGLE
+    serves "" instead of null the hash flips for no real reason."""
+    date_str = raw.get(_VIOLATION_RAW_KEYS["start_date"]) or ""
+    parsed_date: Optional[date] = None
+    if date_str:
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+            try:
+                parsed_date = datetime.strptime(date_str[: len(fmt) + 2], fmt).date()
+                break
+            except ValueError:
+                continue
+        if parsed_date is None:
+            m = re.match(r"(\d{4})-(\d{2})-(\d{2})", date_str)
+            if m:
+                parsed_date = date(int(m[1]), int(m[2]), int(m[3]))
+    comments = (raw.get(_VIOLATION_RAW_KEYS["comments"]) or "")
+    out = {f: (raw.get(_VIOLATION_RAW_KEYS[f]) or "") for f in VIOLATION_FIELDS}
+    out["start_date"] = parsed_date.isoformat() if parsed_date else ""
+    out["comments"] = comments.replace("\r\n", "\n").replace("\r", "\n").strip()
+    return out
+
+
+def fetch_site_violations(session: requests.Session, nsite_id: str) -> list[dict]:
+    """Return the full list of normalized violations for one nSITE site.
+
+    Raises NsiteFetchError after 3 attempts on ANY network/HTTP/structural
+    failure — the same contract as fetch_site_submissions and for the same
+    reason (nsite_violations_watcher DIFFS this list, so a swallowed failure
+    returned as [] would read as "every violation resolved at once"), NOT
+    fetch_site_documents' swallow-and-return-[].
+
+    UNLIKE fetch_site_submissions, this keeps EVERY element of `queryResults`
+    unconditionally. Submissions can filter on `submSubmRefNum` because that
+    field is its guaranteed unique key; Violations has no such field, so any
+    filter here would silently drop real enforcement records. If nSITE ever
+    serves a non-dict element, the AttributeError propagates into the retry
+    loop and surfaces as a loud NsiteFetchError — the correct outcome for a
+    structural break, not a quiet partial list.
+
+    An empty list is a VALID result (16 of the 19 watched sites have zero
+    violations); only a fetch/structural failure raises."""
+    query_params = urllib.parse.quote('{"filter":[{"id":"' + str(nsite_id) + '"}]}')
+    url = (
+        f"{VIOLATIONS_ENDPOINT}"
+        f"?responseContentType=application/json"
+        f"&includeMetadataInResponse=true"
+        f"&loadChildren=true"
+        f"&queryParams={query_params}"
+        f"&filterString="
+    )
+    referer = f"{NSITE_BASE}/nsite/DEFAULT/map/results/detail/{nsite_id}/Documents"
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            r = session.get(
+                url,
+                headers={"Referer": referer, "Accept": "application/json"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            data = r.json()
+            if "queryResults" not in data:
+                raise NsiteFetchError(
+                    f"violations response for site {nsite_id} is missing "
+                    f"'queryResults' — nSITE may have changed its response shape"
+                )
+            return [_normalize_violation(v) for v in data["queryResults"]]
+        except Exception as e:  # noqa: BLE001 — network/HTTP/structural: retry, then raise loud
+            last_exc = e
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+    raise NsiteFetchError(
+        f"GET violations for site {nsite_id} failed after 3 attempts: {last_exc}"
     ) from last_exc
 
 
