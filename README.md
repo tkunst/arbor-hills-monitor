@@ -158,6 +158,36 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
     today); site identity corrections now have one place to land. Pure
     refactor — the resolved 19-site set is unchanged. See
     `docs/decisions/022-nsite-site-registry.md`.
+16. **nSITE Violations watch (Stream L)** (daily, optional —
+    `nsite_violations.enabled: true`): watches a THIRD nSITE profile for the
+    same 19 sites — **Violations**, which is EGLE's own *enforcement record*
+    (a formal finding that the facility was out of compliance, not a filing
+    or a permit status). Real depth: RA carries 299 violations back to 2004,
+    N2688 58 (most recent 2026-07-08), N1504 3 still unresolved. Unlike
+    Submissions, this profile has **no unique-ID field** — verified live
+    across all 360 records, where not even a five-field composite is unique —
+    so the diff is a full-record **multiset** (`collections.Counter`), the
+    ROP/MMD/RIDE idiom. The multiset matters: RA's 299 records collapse to
+    only 108 distinct tuples because EGLE genuinely files repeated identical
+    rows, and deduplicating would destroy 191 real records. The snapshot is
+    stored run-length **counted** rather than one object per record, because
+    the plain form is 130,188 characters against a Google Sheets cell's
+    50,000-character cap. Alerts on **any** change — a new violation, a
+    status advancing, a record withdrawn — and makes **no judgment about
+    which status is good or bad** (EGLE's vocabulary is a multi-state
+    lifecycle, so this is a trip-wire and a human reads it); a site going
+    from zero violations to some gets its own headline. Own per-site
+    daily/biweekly/quarterly tiers in `nsite_violations.tiers`, assigned from
+    observed violation counts *and* recency — deliberately **not** a copy of
+    `nsite_submissions.tiers` (3/3/13 here vs 6/6/7 there). Snapshot-diff
+    into the `Violations Watch` tab; first sighting baselines silently. New
+    source, ships disabled — see
+    `docs/decisions/023-nsite-violations-watch.md` for activation, which has
+    **two** steps here rather than the usual one: this stream's workflow file
+    is parked at `docs/pending-workflows/nsite-violations-watch.yml` and must
+    be moved into `.github/workflows/` before `enabled` is flipped, or the
+    watch is never scheduled. (The build session's credentials lacked the
+    `workflow` OAuth scope — see `docs/pending-workflows/README.md`.)
 
 > **A note on the document links (expected behavior).** Every case-file row's
 > **Link** column points to EGLE's nSITE portal

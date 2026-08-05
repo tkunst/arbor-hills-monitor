@@ -139,6 +139,32 @@ external users but no sensitive data). Public repo.
   unwatched. Pure refactor — verified behavior-preserving (the resolved
   19-site set is byte-identical pre/post) before merging, since
   `nsite_submissions.enabled: true` is already live.
+- `nsite_violations_watcher.py` — Stream L: daily snapshot-diff of EGLE's
+  nSITE **Violations** profile (the state's own *enforcement* record — a
+  formal out-of-compliance finding, not a filing or a permit status) for
+  every srn in `nsite_violations.tiers`, against the `Violations Watch` tab.
+  `fetch_site_violations` (`nsite_client.py`) RAISES on fetch failure like
+  `fetch_site_submissions` — a swallowed `[]` would read as "every violation
+  resolved at once". Item key `viol:<srn>`; `_is_due` is IMPORTED from
+  `nsite_submissions_watcher` (never copied — there's an identity test), but
+  the TIERS are this profile's own (3/3/13, assigned from observed violation
+  counts and recency; Submissions' are 6/6/7). Two findings from the live
+  feasibility gate shape the design and should not be "simplified" away:
+  (1) the profile has **no unique-ID field** — not one of the eight fields,
+  nor any composite, is unique within a site's record set — so the diff is a
+  full-record `Counter` **multiset**, and the multiset (not a set) is
+  load-bearing because RA's 299 records hold only 108 distinct tuples;
+  (2) a Sheets cell caps at 50,000 chars and the Submissions-style
+  one-object-per-record snapshot is 130,188 for RA, so the snapshot is
+  persisted **run-length counted** (24,884), with `_cell_payload` degrading
+  to a digest multiset above `snapshot_char_budget`. `snapshot_hash` is
+  always taken over the FULL snapshot, never the truncated payload. Makes no
+  severity judgment about which EGLE status is good or bad. Gated on
+  `nsite_violations.enabled` (new source; ships `false`). ⚠️ Its workflow file
+  is parked at `docs/pending-workflows/nsite-violations-watch.yml`, NOT under
+  `.github/workflows/` — the build session's credentials lacked the `workflow`
+  OAuth scope. Move it before flipping `enabled`, or the watch never runs.
+  See ADR 023.
 
 ## Forbidden patterns (do not do these)
 
