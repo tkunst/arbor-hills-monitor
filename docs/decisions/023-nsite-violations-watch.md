@@ -290,8 +290,21 @@ Three departures from the Submissions watcher, each deliberate:
    a shared helper and wrong here, because it makes the *most likely* cause of
    non-delivery (a missing, renamed, or rotated GitHub secret) the one that
    stays silent. `alerting_is_configured()` therefore checks the same condition
-   once, up front, and a change recorded while it is false is reported as an
-   undelivered alert. The shared helper is left untouched.
+   once, up front. The shared helper is left untouched.
+
+   A third round then pushed this further, and correctly. Recording the change
+   and merely *reporting* the lost alert was still wrong when non-delivery is
+   known **before** the first write: writing the row advances the stored hash,
+   so the next run compares equal, reports `unchanged`, and never retries — the
+   notification is gone permanently even after the secret is fixed. That is the
+   exact harm decision 4 below rejects for the tab read ("deferring a change by
+   a run is fine, CONSUMING one is not"), and the argument is *stronger* here
+   because the failure is known in advance. So `run()` now **aborts before any
+   fetch or write** when alerting is already impossible. Nothing is lost by
+   stopping: the violations are still in nSITE, so the next healthy run records
+   and alerts on them. Only a send failure discovered *mid*-run — after the row
+   is already durable — takes the report-and-exit-non-zero path, which is
+   unavoidable at that point.
 
 6. **The response's paging signal is checked, not just its shape.** The
    envelope carries `hasResultsRemaining`/`totalCount`, both null today (every
@@ -299,8 +312,23 @@ Three departures from the Submissions watcher, each deliberate:
    partial page would be indistinguishable from a shrunken record set to a
    count-based multiset diff: the first 100 of RA's 299 records would be
    reported as "199 violation records removed" and emailed as fact. A truthy
-   `hasResultsRemaining` raises `NsiteFetchError` instead — a paged response
-   needs real pagination support, not a silent truncation.
+   `hasResultsRemaining` raises instead — a paged response needs real
+   pagination support, not a silent truncation.
+
+   Raising alone turned out to be insufficient, which the third review round
+   caught. `run()` classifies `NsiteFetchError` as **transient** (skip-and-warn,
+   exit 0) once a baseline exists — correct for a network blip, badly wrong for
+   a shape change, which would fail identically every single day behind a green
+   build while every real violation change at all 19 sites went unnoticed. So
+   this raises `NsiteStructuralError`, a **subclass** (every existing
+   `except NsiteFetchError`, including the live Submissions watcher's, keeps
+   working unchanged) that `run()` checks first and always treats as loud. It
+   also has to bypass the retry loop: the loop's broad `except` would otherwise
+   swallow it and re-raise a generic `NsiteFetchError` after three attempts,
+   silently undoing the distinction — and retrying a shape change is pointless
+   anyway. The `queryResults`-missing check deliberately stays a plain
+   `NsiteFetchError`: a JSON error page from a WAF genuinely can be transient,
+   so only the paging signal is provably structural.
 
 ### 5. `_is_due` is imported, not reimplemented
 
