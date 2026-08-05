@@ -149,7 +149,9 @@ def test_fetch_raises_rather_than_diffing_a_partial_page():
     RA's 299 records as '199 violation records removed' and email that as
     fact."""
     session = _Session(_Resp({"queryResults": [_RAW_VIOLATION], "hasResultsRemaining": True}))
-    with pytest.raises(nc.NsiteFetchError, match="paging"):
+    # NsiteStructuralError specifically, so run() can tell it from a transient
+    # blip and refuse to go quiet — see the run()-level test below.
+    with pytest.raises(nc.NsiteStructuralError, match="paging"):
         nc.fetch_site_violations(session, "X")
 
 
@@ -432,6 +434,51 @@ def test_snapshot_hash_ignores_the_cell_budget_entirely():
     assert vw.snapshot_hash(snap) == vw.snapshot_hash(copy.deepcopy(snap))
 
 
+def test_changing_the_budget_does_not_re_baseline_every_site(monkeypatch):
+    """The run()-level guard for the above: a tautological hash-equals-itself
+    assertion would still pass if _diff_and_record regressed to hashing the
+    truncated PAYLOAD. Drive two real runs at wildly different budgets — the
+    second must see 'unchanged', not a change alert for every site."""
+    rows = [_v(category=f"Cat {i}", comments=f"citation {i}") for i in range(400)]
+    cfg = copy.deepcopy(VIOL_CFG)
+    cfg["nsite_violations"]["snapshot_char_budget"] = 45000
+    fake, sent = _wire(monkeypatch, cfg, {"N2688": rows, "WRD": []})
+    assert vw.run() == 0
+    baseline_rows = len(_rows(fake))
+
+    cfg2 = copy.deepcopy(VIOL_CFG)
+    cfg2["nsite_violations"]["snapshot_char_budget"] = 2000   # forces truncation
+    monkeypatch.setattr(vw, "load_config", lambda: copy.deepcopy(cfg2))
+    assert vw.run() == 0
+    assert len(_rows(fake)) == baseline_rows   # no new rows -> nothing re-baselined
+    assert sent == []
+
+
+def test_a_truncated_snapshot_survives_the_store_then_diff_cycle(monkeypatch):
+    """End-to-end for the truncated path: store an over-budget snapshot on one
+    run, then diff against it on the next. Unit tests cover each half; this
+    pins that they actually compose."""
+    rows = [_v(category=f"Cat {i}", comments=f"citation {i}") for i in range(400)]
+    cfg = copy.deepcopy(VIOL_CFG)
+    # Big enough to keep the digests, small enough to reject the full form —
+    # so the stored payload is the interesting middle case, not the final clamp.
+    cfg["nsite_violations"]["snapshot_char_budget"] = 20000
+    fake, sent = _wire(monkeypatch, cfg, {"N2688": rows, "WRD": []})
+    assert vw.run() == 0
+    stored = json.loads([r for r in _rows(fake) if r[1] == "viol:N2688"][0][7])
+    assert stored["truncated"] is True and not stored.get("digests_dropped")
+
+    monkeypatch.setattr(vw.nc, "fetch_site_violations",
+                        lambda session, nsite_id: (
+                            rows + [_v(category="Rule 201: brand new")]
+                            if nsite_id == _N2688_ID else []))
+    assert vw.run() == 0
+    matches = [s for s in sent if "Arbor Hills Landfill" in s[0]]
+    assert len(matches) == 1
+    assert "400 -> 401" in matches[0][1]
+    assert "1 row(s) appeared, 0 row(s) disappeared" in matches[0][1]
+
+
 def test_truncated_snapshot_diff_reports_counts_and_admits_it_cannot_detail():
     old = json.loads(vw._cell_payload(
         vw.violations_snapshot([_v(category=f"C{i}") for i in range(300)], FIELDS), budget=100))
@@ -498,23 +545,56 @@ def test_alerting_is_configured_detects_each_way_delivery_can_be_impossible(monk
     assert ok is False and "recipients" in reason
 
 
-def test_an_undeliverable_alert_exits_loud_even_though_send_email_never_raises(monkeypatch):
-    """The whole failure chain in one test: SMTP unset -> send_email no-ops ->
-    the row still lands and advances the hash -> the next run says 'unchanged'
-    and never retries. That must not be a green build."""
+def test_known_undeliverable_alerting_defers_the_change_instead_of_consuming_it(monkeypatch):
+    """send_email PRINTS AND RETURNS when SMTP is unconfigured, so nothing
+    raises. If the run proceeded anyway it would write the row, ADVANCE the
+    stored hash, and the next run would compare equal, say 'unchanged', and
+    never retry — the notification gone permanently even after the secret was
+    fixed. Deferring costs nothing: the violations are still in nSITE, so the
+    next healthy run records AND alerts. Same principle as the tab-read abort."""
     fake, sent = _wire(monkeypatch, VIOL_CFG, {"N2688": [_v()], "WRD": []})
+    vw.run()                                          # healthy baseline first
+    before = [list(r) for r in _rows(fake)]
     # AFTER _wire, which sets a deliverable environment by default.
-    for var in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"):
-        monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr(vw.ea, "send_email", ea_noop := (lambda *a, **k: None))
-    assert vw.run() == 0          # baseline run: nothing to deliver, so not loud
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
     monkeypatch.setattr(vw.nc, "fetch_site_violations",
                         lambda session, nsite_id: (
                             [_v(), _v(category="Rule 201")] if nsite_id == _N2688_ID else []))
-    assert vw.run() == 1          # change recorded, provably not delivered
-    n2688 = [r for r in _rows(fake) if r[1] == "viol:N2688"]
-    assert len(n2688) == 2 and n2688[1][3] == "changed"   # durable row survived
-    assert ea_noop is not None
+    assert vw.run() == 1                              # loud
+    assert [list(r) for r in _rows(fake)] == before    # nothing consumed
+    assert sent == []
+
+    # ...and once the secret is restored, the change is still there to find.
+    monkeypatch.setenv("SMTP_PASSWORD", "test-value")
+    assert vw.run() == 0
+    assert len([s for s in sent if "Arbor Hills Landfill" in s[0]]) == 1
+
+
+def test_a_structural_break_fails_loudly_instead_of_going_quiet(monkeypatch):
+    """A transient fetch failure after baseline is correctly skip-and-warn — it
+    will work tomorrow. A STRUCTURAL break (nSITE starting to page this
+    profile) provably will not, and taking the transient path would fail
+    identically every day behind a green build while every real violation
+    change at every site went unnoticed."""
+    fake, sent = _wire(monkeypatch, VIOL_CFG, {"N2688": [_v()], "WRD": []})
+    vw.run()                                          # baseline both
+    monkeypatch.setattr(vw.nc, "fetch_site_violations",
+                        lambda session, nsite_id: (_ for _ in ()).throw(
+                            nc.NsiteStructuralError("hasResultsRemaining")))
+    assert vw.run() == 1
+    assert sent == []
+    # And the plain transient case, on the same baselined state, stays quiet:
+    monkeypatch.setattr(vw.nc, "fetch_site_violations",
+                        lambda session, nsite_id: (_ for _ in ()).throw(
+                            nc.NsiteFetchError("connection reset")))
+    assert vw.run() == 0
+
+
+def test_structural_error_is_a_subclass_so_existing_handlers_still_catch_it():
+    """It must be a subclass, not a parallel class — every existing
+    `except NsiteFetchError` (including the live Submissions watcher's) has to
+    keep working unchanged."""
+    assert issubclass(nc.NsiteStructuralError, nc.NsiteFetchError)
 
 
 def test_snapshot_char_budget_is_clamped_below_the_hard_sheets_cap(monkeypatch):
@@ -673,7 +753,10 @@ def test_tiers_srn_missing_from_registry_raises_keyerror(monkeypatch):
         "nsite_violations": {"enabled": True, "tiers": {"TYPO_SRN": "daily"}},
     }
     monkeypatch.setattr(vw, "load_config", lambda: cfg)
-    with pytest.raises(KeyError):
+    # match= the actual srn: without it, softening the registry lookup to
+    # .get() would let os.environ["GSHEET_ID"] two lines later raise its own
+    # KeyError and this test would still pass with the invariant gone.
+    with pytest.raises(KeyError, match="TYPO_SRN"):
         vw.run()
 
 

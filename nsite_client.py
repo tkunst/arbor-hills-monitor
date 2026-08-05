@@ -299,6 +299,18 @@ _VIOLATION_RAW_KEYS = {
 }
 
 
+class NsiteStructuralError(NsiteFetchError):
+    """A response that came back cleanly but whose SHAPE this client cannot
+    safely interpret — as opposed to a network/HTTP blip.
+
+    A subclass, not a parallel class, so every existing `except NsiteFetchError`
+    still catches it and no caller's behavior changes silently. It exists so a
+    caller that WANTS to can tell the two apart: a transient fetch failure is
+    correctly skip-and-warn (it'll work tomorrow), while a structural break is
+    provably NOT transient and would otherwise go quiet forever behind a green
+    build."""
+
+
 def _normalize_violation(raw: dict) -> dict:
     """Convert a raw nSITE violation dict into the fields the Violations watch
     diffs on.
@@ -324,6 +336,14 @@ def _normalize_violation(raw: dict) -> dict:
     key must normalize to the same "" that an absent key would, or the day EGLE
     serves "" instead of null the hash flips for no real reason."""
     date_str = raw.get(_VIOLATION_RAW_KEYS["start_date"]) or ""
+    if not isinstance(date_str, str):
+        # EGLE serves ISO strings here today, but a sibling EGLE ArcGIS feed
+        # (see mmd_client) serves epoch-ms integers for its dates. A non-str
+        # would raise TypeError out of the slicing/regex below — NOT the
+        # ValueError the parse paths catch — escape into fetch_site_violations'
+        # broad retry loop, and surface as a permanent NsiteFetchError that
+        # blinds the whole site. Coerce so it simply fails soft to "".
+        date_str = str(date_str)
     parsed_date: Optional[date] = None
     if date_str:
         for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%m/%d/%Y"):
@@ -342,7 +362,7 @@ def _normalize_violation(raw: dict) -> dict:
                 # above is fail-soft; this one must be too.
                 try:
                     parsed_date = date(int(m[1]), int(m[2]), int(m[3]))
-                except ValueError:
+                except (ValueError, TypeError):
                     parsed_date = None
     comments = (raw.get(_VIOLATION_RAW_KEYS["comments"]) or "")
     out = {f: (raw.get(_VIOLATION_RAW_KEYS[f]) or "") for f in VIOLATION_FIELDS}
@@ -406,14 +426,23 @@ def fetch_site_violations(session: requests.Session, nsite_id: str) -> list[dict
                 # "199 violation records removed" and email that as fact. Fail
                 # loudly instead — a paged response needs real pagination
                 # support, not a silent truncation.
-                raise NsiteFetchError(
+                raise NsiteStructuralError(
                     f"violations response for site {nsite_id} reports "
                     f"hasResultsRemaining — nSITE has started paging this "
                     f"profile and this client would otherwise diff a PARTIAL "
                     f"page as mass deletions. Pagination support is needed."
                 )
             return [_normalize_violation(v) for v in data["queryResults"]]
-        except Exception as e:  # noqa: BLE001 — network/HTTP/structural: retry, then raise loud
+        except NsiteStructuralError:
+            # Re-raise IMMEDIATELY, before the retry loop can swallow it and
+            # re-raise it as a generic NsiteFetchError. Two reasons: retrying a
+            # shape change is pointless (it will fail identically), and the
+            # caller distinguishes the two types deliberately — a generic
+            # NsiteFetchError is treated as transient (skip-and-warn, exit 0),
+            # which is exactly the silent-forever outcome this class exists to
+            # avoid.
+            raise
+        except Exception as e:  # noqa: BLE001 — network/HTTP: retry, then raise loud
             last_exc = e
             if attempt < 2:
                 time.sleep(2 ** attempt)
