@@ -89,31 +89,46 @@ cap.** The write would simply have been rejected in production, on the largest
 and most important site, and (given where the Submissions watcher places its
 `append_*_row` call) would have aborted the whole run.
 
-Encodings measured against the real data:
+Encodings measured against RA's real 299 records **during the spike, on the
+raw field values** (i.e. before `_normalize_violation` existed) — these are the
+numbers that drove the decision:
 
 | encoding | RA (299 records) | fits? |
 |---|---:|---|
 | one JSON object per record (the Submissions idiom) | 130,188 | ✗ |
 | same, minus the free-text comments | 111,822 | ✗ |
 | positional arrays | 79,540 | ✗ |
-| **run-length counted positional (chosen)** | **24,884** | ✓ |
+| **run-length counted positional (chosen)** | **27,431** | ✓ |
 | digest multiset only (the fallback) | 2,285 | ✓ |
+
+Re-measured against the **shipped** code — normalization shortens the dates and
+strips the comments, so both forms get smaller, but the conclusion is
+unchanged: dict-per-record is **101,484** (still 2× past the cap), the counted
+form that ships is **24,884**, a 4.1× reduction with **45% headroom** against
+the 45,000 budget. 24,884 is the figure quoted everywhere else in the repo.
 
 **Decision: persist the Counter itself** — a `fields` header plus
 `[count, *values]` rows, sorted by the value tuple. This is exact and lossless
 (no field is dropped), self-describing, still human-readable in the tab, and
-5.2× smaller than the dict form, because it stops repeating eight key names
+4.1× smaller than the dict form, because it stops repeating eight key names
 299 times and folds the 191 duplicate rows into counts. The snapshot structure
 *is* the diff structure, so nothing is reconstructed twice.
 
 `_cell_payload` guards the residual headroom: above
 `nsite_violations.snapshot_char_budget` (45,000) it degrades to a digest
 multiset with an explicit `"truncated": true` marker. This never fires today
-(RA is at 24,884, ~45% headroom) — it exists so a bulk EGLE re-import degrades
-gracefully instead of failing a write. There is exactly **one** fallback form,
-not a cascade, and `summarize_violations_change` detects it and reports a
-count-level change while stating plainly that no field-level diff is available,
-rather than inventing one it cannot support.
+(RA is at 24,884, 45% headroom) — it exists so a bulk EGLE re-import degrades
+gracefully instead of failing a write. `summarize_violations_change` detects
+that marker and reports a count-level change while stating plainly that no
+field-level diff is available, rather than inventing one it cannot support.
+
+The digest form is itself ~140 characters per *distinct* row, so it too would
+outgrow the budget somewhere past roughly 2,000 distinct rows — which is the
+same bulk-re-import scenario the guard exists for. A final clamp therefore
+drops the digests entirely (keeping `fields`, `n`, `truncated` and a
+`digests_dropped` marker), so the payload is bounded by a constant no matter
+how large the record set gets. The hash still detects any change and `n` still
+counts it, which is all the truncated path promises anyway.
 
 Critically, `snapshot_hash` is always computed over the **full** snapshot,
 never the possibly-truncated payload — otherwise editing the budget would
@@ -240,10 +255,33 @@ Three departures from the Submissions watcher, each deliberate:
    `_diff_and_record`'s inner try blocks — so a rejected write aborts the run
    and silently drops every site queued after it. Given Finding 2 made an
    oversized write a concrete rather than theoretical possibility, that hole is
-   not mirrored: any per-site exception is caught, logged, counted, and sets a
-   non-zero exit code while the run continues. The durable-first ordering is
-   preserved — a site whose row failed to land never sends an alert describing
-   it.
+   not mirrored: any per-site exception inside the loop is caught, logged,
+   counted, and sets a non-zero exit code while the run continues. The
+   durable-first ordering is preserved — a site whose row failed to land never
+   sends an alert describing it. Setup *before* the loop still aborts, on
+   purpose: there is no per-site work to salvage there.
+
+4. **The tab read is batched and RAISES; a read failure aborts before any
+   write.** This is the subtlest of the four and was caught in review rather
+   than in design. `sheet_writer._tab_rows` swallows every read exception and
+   returns `[]`, which is correct for its append-only-accumulator callers and
+   silently destructive for a watch that *diffs*: a throttled read would make
+   every site look never-seen, the watcher would write a fresh `baseline` row,
+   and because the tab is append-only with last-write-wins that spurious
+   baseline **becomes the state** — permanently erasing a real, un-alerted
+   change rather than deferring it by one run. `last_violations_snapshots`
+   therefore does its own read and lets failures propagate, and `run()` aborts
+   before touching anything. Reading every key in ONE call rather than one per
+   site also cuts a 19-site run from ~19 reads to 1, which is the exposure that
+   made throttling plausible to begin with.
+
+5. **A change that was recorded but not emailed exits non-zero.** The sibling
+   treats alerting as purely best-effort and returns 0. For a stream whose
+   entire deliverable *is* the alert that is wrong: the row has already
+   advanced the stored hash, so the next run reports `unchanged` and never
+   retries — a green check over a silently-undelivered violation notice. The
+   row is still written first and still survives; the failure is just no longer
+   invisible.
 
 ### 5. `_is_due` is imported, not reimplemented
 
