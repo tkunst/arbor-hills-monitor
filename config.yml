@@ -648,6 +648,76 @@ nsite_submissions:
     SANL: quarterly
     ERNGX: quarterly
 
+# --- nSITE Violations watch (Stream L, ADR 023) ---
+# Watch on the "Violations" profile — EGLE's OWN ENFORCEMENT RECORD (a formal
+# violation finding, not a filing or a permit status), a third sibling profile
+# to Documents (`facilities:`) and Submissions above. ONE fetch per site -> ONE
+# item ("viol:<srn>"); the FIRST sighting of each site's violation list
+# baselines silently. After that, ANY change to the list alerts — a new
+# violation appearing, an existing one's status advancing, or a record being
+# withdrawn. The watch makes NO judgment about which status is good or bad:
+# EGLE's vocabulary is a multi-state lifecycle ("Active - Addressed not
+# Resolved", "Active – Reviewed/Evaluated", "Inactive - Resolved"), so this is
+# a trip-wire and a human reads what the change means.
+#
+# `tiers` maps srn -> poll cadence for THIS profile only; every key MUST be a
+# srn present in `nsite_sites` above — a typo'd/unknown srn is a config error
+# and raises loudly (ADR 022). The tiers below are DELIBERATELY NOT a copy of
+# `nsite_submissions.tiers`: violation activity does not track submission
+# activity, and all 19 sites were live-fetched on 2026-08-04 to assign these
+# from real observed counts AND recency (see ADR 023 for the full table).
+nsite_violations:
+  # Ships OFF: a brand-new poller against a live external system, built
+  # unattended (overnight-coder Step 3). Flipping this to true is a separate
+  # human step. The first enabled run baselines every due site silently — no
+  # alert flood, even at RA's 299 records.
+  enabled: false
+  # Recipient override: Trisha only to start (the Meeting Watch / MMD / RIDE /
+  # Submissions precedent for a brand-new alert stream). Delete/comment this
+  # block to send to the full alert_recipients list once the alert copy has
+  # been seen in the wild.
+  recipients:
+    - arbor-hills@trishakunst.com
+  # ROLLBACK LEVER for one named residual (ADR 023): `comments`
+  # (violViolNotifCmnts) is free text carrying the permit/condition citation.
+  # It ships INCLUDED in the diff because it holds the violation's substance,
+  # but it is not knowable from one build whether EGLE edits its wording
+  # without a substantive change. If activation shows comment-only churn,
+  # uncomment the line below — no code change needed. Changing this list
+  # changes the hash basis, so it fires exactly ONE re-baseline row per site,
+  # labelled as a configuration change rather than an EGLE change.
+  # exclude_fields:
+  #   - comments
+  # Max characters written to the Snapshot JSON cell before the watch degrades
+  # to a digest-only payload. A Sheets cell hard-caps at 50,000; RA (the
+  # largest, 299 records) currently serializes to 27,431 in the run-length
+  # counted form the watch uses, so this never fires today — it exists so a
+  # bulk EGLE re-import degrades gracefully instead of failing the write.
+  snapshot_char_budget: 45000
+  tiers:
+    # --- daily (3) — sites with real violation history AND recent activity ---
+    N2688: daily      # 58 violations, 2014-12-15..2026-07-08 — active, air (AQD)
+    RA: daily         # 299 violations, 2004-03-31..2025-08-21 — water (WRD-NPDES)
+    N1504: daily      # 3 violations, all 2025-03/04, status "Addressed not Resolved"
+    # --- biweekly (3) — REAL, operating facilities with zero violations today ---
+    WRD: biweekly     # Land & Water Interface site: 0 here, but an open JPA + PFOS VN
+    P1488: biweekly   # Emerald RNG: 0 here, but a live ROP renewal in public comment
+    AHLI: biweekly    # bare duplicate registration for the SAME landfill as N2688
+    # --- quarterly (13) — zero violations ever; typo/mis-filing insurance only ---
+    P1504: quarterly
+    AHLA: quarterly
+    AHLB: quarterly
+    AHLC: quarterly
+    AHLD: quarterly
+    AHLE: quarterly
+    ADL1: quarterly
+    ADL2: quarterly
+    COMP: quarterly
+    AHE1: quarterly
+    AHE2: quarterly
+    SANL: quarterly
+    ERNGX: quarterly
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 alert_recipients:
