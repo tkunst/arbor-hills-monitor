@@ -214,7 +214,7 @@ TAB_SUBMISSIONS = "Submissions Watch"
 # record) — "baseline" (first sighting, silent) or "changed" (fires an alert).
 # The snapshot JSON here is a run-length COUNTED form, not one object per
 # record: RA's 299 violations serialize to 130,188 chars as plain dicts, 2.6x
-# past a Google Sheets cell's 50,000-character cap, but only 27,431 counted.
+# past a Google Sheets cell's 50,000-character cap, but only 24,884 counted.
 # See nsite_violations_watcher.violations_snapshot.
 TAB_VIOLATIONS = "Violations Watch"
 # Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
@@ -1574,26 +1574,43 @@ def ensure_violations_tabs(service, sheet_id: str) -> None:
     _set_header(service, sheet_id, TAB_VIOLATIONS, VIOLATIONS_WATCH_HEADERS)
 
 
-def last_violations_snapshot(service, sheet_id: str, item_key: str) -> tuple[str, str] | None:
-    """Return (snapshot_hash, snapshot_json) from the most recent row for this
-    item_key (e.g. "viol:N2688"), or None if the item has never been
-    snapshotted. None means 'baseline this item'; a hash mismatch means
-    'changed'. Reading the last matching row (not a _meta cell) is what makes
-    the watch race-free — the tab is append-only, so no concurrent job can
-    clobber it (same idiom as last_submissions_snapshot)."""
-    return last_violations_snapshots(service, sheet_id, [item_key])[item_key]
-
-
 def last_violations_snapshots(
     service, sheet_id: str, item_keys: list[str],
 ) -> dict[str, tuple[str, str] | None]:
-    """Batched form of last_violations_snapshot: ONE tab read for however many
-    keys are asked for, instead of one full-tab read per key. Same race-free
-    append-only read as the singular form — the last_submissions_snapshots
-    idiom."""
+    """Return {item_key: (snapshot_hash, snapshot_json) or None} for each key
+    (e.g. "viol:N2688"), reading the whole tab ONCE however many keys are
+    asked for. None means 'baseline this item'; a hash mismatch means
+    'changed'. Reading the last matching row (not a _meta cell) is what makes
+    the watch race-free — the tab is append-only, so no concurrent job can
+    clobber it.
+
+    There is deliberately no singular convenience wrapper (unlike
+    last_ride_snapshot / last_submissions_snapshot): the watcher reads every
+    key it needs in ONE call at the top of the run, and a per-site variant
+    would reintroduce the ~19-reads-per-run throttling exposure this exists to
+    remove.
+
+    DELIBERATELY does NOT go through _tab_rows, which swallows every read
+    exception and returns [] (fine for its append-only-accumulator callers,
+    wrong here). For a watch that DIFFS, an indistinguishable [] is a silent
+    data-loss bug: a throttled read would make every key look never-seen, the
+    watcher would write a fresh "baseline" row, and because the tab is
+    append-only with last-write-wins that spurious baseline BECOMES the state
+    — erasing a real, un-alerted change permanently rather than deferring it.
+    So a read failure raises and the caller fails loudly instead.
+
+    The tab's own absence is not a case here: nsite_violations_watcher calls
+    ensure_violations_tabs() before any read, so the tab always exists by the
+    time this runs."""
+    resp = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_VIOLATIONS}'!A2:H")
+        .execute()
+    )
     latest_by_key: dict[str, list] = {}
-    for r in _tab_rows(service, sheet_id, TAB_VIOLATIONS, "A2:H"):
-        if len(r) > 1:
+    for r in resp.get("values", []):
+        if r and len(r) > 1:
             latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
     result: dict[str, tuple[str, str] | None] = {}
     for key in item_keys:

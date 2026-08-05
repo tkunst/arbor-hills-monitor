@@ -690,7 +690,7 @@ nsite_violations:
   #   - comments
   # Max characters written to the Snapshot JSON cell before the watch degrades
   # to a digest-only payload. A Sheets cell hard-caps at 50,000; RA (the
-  # largest, 299 records) currently serializes to 27,431 in the run-length
+  # largest, 299 records) currently serializes to 24,884 in the run-length
   # counted form the watch uses, so this never fires today — it exists so a
   # bulk EGLE re-import degrades gracefully instead of failing the write.
   snapshot_char_budget: 45000

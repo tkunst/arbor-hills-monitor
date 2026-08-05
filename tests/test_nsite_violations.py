@@ -120,6 +120,28 @@ def test_fetch_normalizes_null_program_to_empty_string():
     assert all(v is not None for v in rows[0].values())
 
 
+def test_fetch_survives_an_out_of_range_date_instead_of_blinding_the_site():
+    """A single "2026-02-30" would otherwise raise ValueError out of date(),
+    escape into the retry loop, and surface as a permanent NsiteFetchError —
+    blinding the ENTIRE site (skip-and-warn, exit 0, green build) over one bad
+    record. Every other parse path is fail-soft; this one must be too."""
+    raw = dict(_RAW_VIOLATION, violNonCmplStartDate="2026-02-30T00:00:00.0000000-04:00")
+    session = _Session(_Resp({"queryResults": [raw]}))
+    rows = nc.fetch_site_violations(session, "X")
+    assert rows[0]["start_date"] == ""
+    assert rows[0]["category"] == "Rule 1001: Performance tests by owner"
+    assert session.calls == 1          # not retried — it was never an error
+
+
+def test_fetch_accepts_the_us_style_date_format_too():
+    """Parity with _normalize's three accepted formats. Without it, an EGLE
+    switch to MM/DD/YYYY would collapse every start_date to "" and merge
+    distinct records into one multiset entry."""
+    raw = dict(_RAW_VIOLATION, violNonCmplStartDate="07/08/2026")
+    session = _Session(_Resp({"queryResults": [raw]}))
+    assert nc.fetch_site_violations(session, "X")[0]["start_date"] == "2026-07-08"
+
+
 def test_fetch_empty_queryresults_is_a_valid_zero_result():
     """16 of the 19 watched sites have zero violations. A structurally-sound
     response listing none is NOT an error — it is the baseline."""
@@ -268,6 +290,17 @@ def test_diff_reports_count_changes_among_identical_records():
     assert body.count("+ ADDED") == 1
 
 
+def test_the_headline_field_follows_the_configured_field_set():
+    """_detail must not hardcode the headline field: with `category` excluded
+    via config, every line's headline would degrade to a bare em-dash."""
+    fields = tuple(f for f in FIELDS if f != "category")
+    old = vw.violations_snapshot([], fields)
+    new = vw.violations_snapshot([_v(viol_type="Testing/Sampling")], fields)
+    _, body = vw.summarize_violations_change(old, new)
+    assert "+ ADDED    Testing/Sampling" in body
+    assert "+ ADDED    —" not in body
+
+
 def test_field_set_change_is_labelled_configuration_not_an_egle_change():
     """Flipping nsite_violations.exclude_fields changes the hash basis. Without
     this branch the diff would render every record as REMOVED + re-ADDED and
@@ -315,13 +348,17 @@ def test_cell_payload_passes_through_under_budget():
 def test_cell_payload_degrades_to_digests_over_budget():
     snap = vw.violations_snapshot([_v(category=f"Cat {i}") for i in range(400)], FIELDS)
     full = json.dumps(snap, sort_keys=True, ensure_ascii=False)
-    payload = vw._cell_payload(snap, budget=2000)
-    assert len(full) > 2000                      # the fixture really is oversized
-    assert len(payload) < len(full)
+    # A budget between the digest form and the full form: the full one must be
+    # rejected, the digest one kept intact (the clamp beyond it is its own test).
+    budget = 20000
+    assert len(full) > budget                    # the fixture really is oversized
+    payload = vw._cell_payload(snap, budget=budget)
+    assert len(payload) <= budget
     body = json.loads(payload)
     assert body["truncated"] is True
     assert body["n"] == 400
     assert len(body["digests"]) == 400
+    assert not body.get("digests_dropped")
 
 
 def test_a_realistic_ra_sized_snapshot_fits_a_sheets_cell():
@@ -334,6 +371,39 @@ def test_a_realistic_ra_sized_snapshot_fits_a_sheets_cell():
     payload = vw._cell_payload(vw.violations_snapshot(rows, FIELDS))
     assert len(payload) < 50000
     assert "truncated" not in payload
+
+
+def test_the_truncated_fallback_is_itself_bounded():
+    """The digest form is ~140 chars per DISTINCT row, so past ~2,000 distinct
+    rows it outgrows the very budget it exists to respect — and an over-cap
+    write is rejected outright, which is exactly the bulk-re-import failure the
+    guard is for. A final clamp drops the digests so the payload is bounded by
+    a constant."""
+    huge = vw.violations_snapshot(
+        [_v(category=f"Category number {i}", comments=f"citation {i}") for i in range(4000)],
+        FIELDS)
+    payload = vw._cell_payload(huge, budget=vw.DEFAULT_SNAPSHOT_CHAR_BUDGET)
+    assert len(payload) <= vw.DEFAULT_SNAPSHOT_CHAR_BUDGET
+    assert len(payload) < 50000                       # the hard Sheets cell cap
+    body = json.loads(payload)
+    assert body["truncated"] is True and body["digests_dropped"] is True
+    assert body["n"] == 4000                          # the count still survives
+
+
+def test_a_digest_dropped_snapshot_still_diffs_at_the_count_level():
+    huge = vw.violations_snapshot([_v(category=f"C{i}") for i in range(4000)], FIELDS)
+    old = json.loads(vw._cell_payload(huge, budget=vw.DEFAULT_SNAPSHOT_CHAR_BUDGET))
+    new = vw.violations_snapshot([_v(category=f"C{i}") for i in range(4001)], FIELDS)
+    note, _ = vw.summarize_violations_change(old, new)
+    assert "4000 -> 4001" in note
+    assert "no field-level diff available" in note
+
+
+def test_a_structurally_invalid_stored_snapshot_is_reported_not_crashed():
+    bad = {"fields": list(FIELDS), "n": 2, "counted_rows": [["not-an-int", "a"]]}
+    note, body = vw.summarize_violations_change(bad, vw.violations_snapshot([_v()], FIELDS))
+    assert "structurally invalid" in note
+    assert "re-baselines" in note
 
 
 def test_snapshot_hash_ignores_the_cell_budget_entirely():
@@ -396,8 +466,12 @@ def test_shipped_config_is_disabled_and_covers_every_registry_site():
     """Guards two things at once: the new-source gate really ships off, and the
     tiers map stays in sync with nsite_sites (a srn in one and not the other is
     either an unwatched site or a loud KeyError at runtime)."""
+    import pathlib
+
     import yaml
-    with open("config.yml") as f:
+    # Resolved from this file, not the cwd — every other test in the suite is
+    # location-independent and this one should be too.
+    with open(pathlib.Path(__file__).resolve().parent.parent / "config.yml") as f:
         cfg = yaml.safe_load(f)
     assert cfg["nsite_violations"]["enabled"] is False
     tiers = cfg["nsite_violations"]["tiers"]
@@ -615,7 +689,12 @@ def test_recipients_override_narrows_audience(monkeypatch):
     assert matches[0][2] == ["trisha@example.com"]
 
 
-def test_alert_email_failure_does_not_lose_the_durable_row(monkeypatch):
+def test_alert_email_failure_keeps_the_durable_row_AND_exits_loud(monkeypatch):
+    """Two things at once. The row must survive an SMTP failure (durable-first
+    ordering), AND the run must exit non-zero — for a stream whose entire
+    deliverable is the alert, a green check over a silently-undelivered
+    violation notice is the worst possible outcome, and the advanced hash means
+    the next run reports "unchanged" and never retries."""
     fake, sent = _wire(monkeypatch, VIOL_CFG, {"N2688": [_v()], "WRD": []})
     vw.run()   # baseline
     monkeypatch.setattr(vw.ea, "send_email",
@@ -623,9 +702,76 @@ def test_alert_email_failure_does_not_lose_the_durable_row(monkeypatch):
     monkeypatch.setattr(vw.nc, "fetch_site_violations",
                         lambda session, nsite_id: (
                             [_v(), _v(category="X")] if nsite_id == _N2688_ID else []))
-    assert vw.run() == 0   # best-effort alert failure never fails the run
+    assert vw.run() == 1
     n2688_rows = [r for r in _rows(fake) if r[1] == "viol:N2688"]
     assert len(n2688_rows) == 2 and n2688_rows[1][3] == "changed"
+
+
+def test_a_transient_tab_read_failure_aborts_before_any_write(monkeypatch):
+    """The silent-data-loss bug this design's batched, RAISING read exists to
+    prevent. If a throttled read were swallowed to "no rows", every site would
+    look never-seen, a fresh `baseline` row would be written, and because the
+    tab is append-only with last-write-wins that spurious baseline BECOMES the
+    state — permanently erasing a real, un-alerted change instead of deferring
+    it. So: abort, write nothing, exit 1, leave last run's state intact."""
+    fake, sent = _wire(monkeypatch, VIOL_CFG, {"N2688": [_v()], "WRD": []})
+    vw.run()                                   # baseline both sites
+    before = [list(r) for r in _rows(fake)]
+
+    def _boom(service, sheet_id, item_keys):
+        raise RuntimeError("HTTP 429 rate limited")
+    monkeypatch.setattr(vw.sw, "last_violations_snapshots", _boom)
+    monkeypatch.setattr(vw.nc, "fetch_site_violations",
+                        lambda session, nsite_id: (
+                            [_v(), _v(category="Rule 201: a REAL new violation")]
+                            if nsite_id == _N2688_ID else []))
+
+    assert vw.run() == 1
+    assert [list(r) for r in _rows(fake)] == before   # nothing written at all
+    assert sent == []
+
+    # ...and once the read recovers, the change is still detected, not lost.
+    monkeypatch.undo()
+    fake2, sent2 = _wire(monkeypatch, VIOL_CFG, {
+        "N2688": [_v(), _v(category="Rule 201: a REAL new violation")], "WRD": []})
+    fake2._values._tabs = fake._values._tabs
+    assert vw.run() == 0
+    assert len([s for s in sent2 if "Arbor Hills Landfill" in s[0]]) == 1
+
+
+def test_a_cleared_snapshot_cell_does_not_masquerade_as_a_clean_site(monkeypatch):
+    """The snapshot lives in a cell on the OPERATOR-VISIBLE case-file Sheet,
+    where a 25 KB JSON blob is exactly what a human tidies away. If an empty or
+    unreadable cell diffed as an empty multiset, a site with hundreds of
+    existing violations would alert 'FIRST VIOLATION(S) RECORDED' — the
+    loudest, most wrong message the stream can send."""
+    fake, sent = _wire(monkeypatch, VIOL_CFG, {"N2688": [_v(), _v(category="B")], "WRD": []})
+    vw.run()   # baseline
+    for r in fake._values._tabs[sw.TAB_VIOLATIONS]:
+        if len(r) > 7 and r[1] == "viol:N2688":
+            r[7] = ""            # a human clears the big JSON cell
+    monkeypatch.setattr(vw.nc, "fetch_site_violations",
+                        lambda session, nsite_id: (
+                            [_v(), _v(category="B"), _v(category="C")]
+                            if nsite_id == _N2688_ID else []))
+    assert vw.run() == 0
+    matches = [s for s in sent if "Arbor Hills Landfill" in s[0]]
+    assert len(matches) == 1
+    assert "FIRST VIOLATION" not in matches[0][1]
+    assert "missing or unreadable" in matches[0][1]
+    assert "does NOT mean the site was previously clean" in matches[0][1]
+
+
+def test_an_unrecognized_cadence_polls_rather_than_silently_skipping(monkeypatch):
+    """Fail-safe, and deliberately different from ADR 022's loud KeyError for
+    an unknown srn: a bad srn means we don't know WHAT to poll, but a bad
+    cadence only means we don't know HOW OFTEN — and polling every run is the
+    complete answer. A typo must never blind a site, nor abort the run."""
+    cfg = copy.deepcopy(VIOL_CFG)
+    cfg["nsite_violations"]["tiers"] = {"N2688": "dayly", "WRD": "daily"}
+    fake, sent = _wire(monkeypatch, cfg, {"N2688": [_v()], "WRD": []})
+    assert vw.run() == 0
+    assert {r[1] for r in _rows(fake)} == {"viol:N2688", "viol:WRD"}
 
 
 def test_exclude_fields_lever_changes_the_diffed_set_end_to_end(monkeypatch):
@@ -675,7 +821,40 @@ def test_last_violations_snapshots_batches_into_one_tab_read(monkeypatch):
     assert len(calls) == 1   # one values() call for all three keys, not three
 
 
-def test_violations_tab_is_separate_state_from_submissions(monkeypatch):
+def test_last_violations_snapshots_raises_rather_than_swallowing_a_read_error():
+    """It must NOT go through sheet_writer._tab_rows, which returns [] for any
+    read failure. For a watch that diffs, an indistinguishable [] is silent
+    data loss, not a graceful degradation."""
+    class _Exploding:
+        def spreadsheets(self):
+            return self
+
+        def values(self):
+            return self
+
+        def get(self, spreadsheetId, range):
+            raise RuntimeError("HTTP 503")
+    with pytest.raises(RuntimeError):
+        sw.last_violations_snapshots(_Exploding(), "SID", ["viol:A"])
+
+
+def test_run_issues_exactly_one_tab_read_for_all_sites(monkeypatch):
+    """~19 reads/run is what makes a throttled response likely in the first
+    place; the batched read is the mitigation, so pin it."""
+    reads = []
+    real = sw.last_violations_snapshots
+
+    def _counting(service, sheet_id, item_keys):
+        reads.append(list(item_keys))
+        return real(service, sheet_id, item_keys)
+    monkeypatch.setattr(vw.sw, "last_violations_snapshots", _counting)
+    _wire(monkeypatch, VIOL_CFG, {"N2688": [_v()], "WRD": []})
+    assert vw.run() == 0
+    assert len(reads) == 1
+    assert sorted(reads[0]) == ["viol:N2688", "viol:WRD"]
+
+
+def test_violations_tab_is_separate_state_from_submissions():
     """Two watches, two tabs, two item-key namespaces — a viol:* row must never
     be read as a subm:* row or vice versa."""
     assert sw.TAB_VIOLATIONS != sw.TAB_SUBMISSIONS
@@ -685,4 +864,5 @@ def test_violations_tab_is_separate_state_from_submissions(monkeypatch):
     sw.append_violations_watch_row(fake, "SID", "2026-08-04", "viol:N2688", "L", "baseline",
                                    "vhash", "n", "now", "{}")
     assert sw.last_submissions_snapshot(fake, "SID", "viol:N2688") is None
-    assert sw.last_violations_snapshot(fake, "SID", "viol:N2688") == ("vhash", "{}")
+    assert sw.last_violations_snapshots(
+        fake, "SID", ["viol:N2688"])["viol:N2688"] == ("vhash", "{}")

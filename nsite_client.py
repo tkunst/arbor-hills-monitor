@@ -326,7 +326,7 @@ def _normalize_violation(raw: dict) -> dict:
     date_str = raw.get(_VIOLATION_RAW_KEYS["start_date"]) or ""
     parsed_date: Optional[date] = None
     if date_str:
-        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%m/%d/%Y"):
             try:
                 parsed_date = datetime.strptime(date_str[: len(fmt) + 2], fmt).date()
                 break
@@ -335,7 +335,15 @@ def _normalize_violation(raw: dict) -> dict:
         if parsed_date is None:
             m = re.match(r"(\d{4})-(\d{2})-(\d{2})", date_str)
             if m:
-                parsed_date = date(int(m[1]), int(m[2]), int(m[3]))
+                # date() rejects an out-of-range day (a real "2026-02-30" would
+                # otherwise raise here, escape into fetch_site_violations' retry
+                # loop, and blind the WHOLE site behind a permanent
+                # NsiteFetchError over one bad record). Every other parse path
+                # above is fail-soft; this one must be too.
+                try:
+                    parsed_date = date(int(m[1]), int(m[2]), int(m[3]))
+                except ValueError:
+                    parsed_date = None
     comments = (raw.get(_VIOLATION_RAW_KEYS["comments"]) or "")
     out = {f: (raw.get(_VIOLATION_RAW_KEYS[f]) or "") for f in VIOLATION_FIELDS}
     out["start_date"] = parsed_date.isoformat() if parsed_date else ""
