@@ -283,6 +283,25 @@ Three departures from the Submissions watcher, each deliberate:
    row is still written first and still survives; the failure is just no longer
    invisible.
 
+   Catching exceptions is not enough on its own, which a second review round
+   caught: `email_alerts.send_email` deliberately **prints and returns** —
+   never raises — when the SMTP env vars are missing or the recipient list
+   resolves empty, so that a dry or local run doesn't crash. That is right for
+   a shared helper and wrong here, because it makes the *most likely* cause of
+   non-delivery (a missing, renamed, or rotated GitHub secret) the one that
+   stays silent. `alerting_is_configured()` therefore checks the same condition
+   once, up front, and a change recorded while it is false is reported as an
+   undelivered alert. The shared helper is left untouched.
+
+6. **The response's paging signal is checked, not just its shape.** The
+   envelope carries `hasResultsRemaining`/`totalCount`, both null today (every
+   site returns its full set in one response). If nSITE ever enables paging, a
+   partial page would be indistinguishable from a shrunken record set to a
+   count-based multiset diff: the first 100 of RA's 299 records would be
+   reported as "199 violation records removed" and emailed as fact. A truthy
+   `hasResultsRemaining` raises `NsiteFetchError` instead — a paged response
+   needs real pagination support, not a silent truncation.
+
 ### 5. `_is_due` is imported, not reimplemented
 
 `nsite_submissions_watcher._is_due` is already a pure function of
@@ -364,6 +383,15 @@ To go live, **two** steps, in this order:
    the file gives a watch that is never scheduled and fails silently**, which
    is exactly the class of failure the rest of this design works to avoid.
    See `docs/pending-workflows/README.md`.
+
+   **A test enforces this ordering** rather than relying on anyone reading
+   this section: `test_the_parked_workflow_must_be_in_place_before_the_stream_
+   is_enabled` asserts `enabled is False OR the workflow is in
+   .github/workflows/`. It was written that way deliberately — an
+   `enabled is False` assertion alone would be the first line deleted at
+   activation, taking the only guard with it, whereas this invariant survives
+   activation and fails the suite if the flag is flipped while the file is
+   still parked.
 
 2. **Set `nsite_violations.enabled: true`** and commit.
 

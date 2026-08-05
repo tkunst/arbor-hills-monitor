@@ -142,6 +142,23 @@ def test_fetch_accepts_the_us_style_date_format_too():
     assert nc.fetch_site_violations(session, "X")[0]["start_date"] == "2026-07-08"
 
 
+def test_fetch_raises_rather_than_diffing_a_partial_page():
+    """`hasResultsRemaining` is null on every site today, but if nSITE ever
+    starts paging this profile a partial page is INDISTINGUISHABLE from a
+    shrunken record set: the caller's multiset diff would read the first 100 of
+    RA's 299 records as '199 violation records removed' and email that as
+    fact."""
+    session = _Session(_Resp({"queryResults": [_RAW_VIOLATION], "hasResultsRemaining": True}))
+    with pytest.raises(nc.NsiteFetchError, match="paging"):
+        nc.fetch_site_violations(session, "X")
+
+
+def test_fetch_accepts_the_null_hasresultsremaining_the_api_actually_sends():
+    session = _Session(_Resp({"queryResults": [_RAW_VIOLATION],
+                              "hasResultsRemaining": None, "totalCount": None}))
+    assert len(nc.fetch_site_violations(session, "X")) == 1
+
+
 def test_fetch_empty_queryresults_is_a_valid_zero_result():
     """16 of the 19 watched sites have zero violations. A structurally-sound
     response listing none is NOT an error — it is the baseline."""
@@ -462,6 +479,111 @@ def test_diff_fields_honors_the_exclude_lever():
     assert len(fields) == len(nc.VIOLATION_FIELDS) - 1
 
 
+def test_alerting_is_configured_detects_each_way_delivery_can_be_impossible(monkeypatch):
+    """send_email PRINTS AND RETURNS (no exception) when SMTP is unconfigured
+    or recipients resolve empty, so catching exceptions alone would let a
+    missing/rotated GitHub secret silently swallow a violation alert."""
+    for var in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"):
+        monkeypatch.setenv(var, "x")
+    ok, reason = vw.alerting_is_configured({}, ["a@example.com"])
+    assert ok is True and reason == ""
+
+    monkeypatch.delenv("SMTP_PASSWORD")
+    ok, reason = vw.alerting_is_configured({}, ["a@example.com"])
+    assert ok is False and "SMTP_PASSWORD" in reason
+
+    monkeypatch.setenv("SMTP_PASSWORD", "x")
+    monkeypatch.setattr(vw.ea, "resolve_recipients", lambda cfg: [])
+    ok, reason = vw.alerting_is_configured({}, None)
+    assert ok is False and "recipients" in reason
+
+
+def test_an_undeliverable_alert_exits_loud_even_though_send_email_never_raises(monkeypatch):
+    """The whole failure chain in one test: SMTP unset -> send_email no-ops ->
+    the row still lands and advances the hash -> the next run says 'unchanged'
+    and never retries. That must not be a green build."""
+    fake, sent = _wire(monkeypatch, VIOL_CFG, {"N2688": [_v()], "WRD": []})
+    # AFTER _wire, which sets a deliverable environment by default.
+    for var in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(vw.ea, "send_email", ea_noop := (lambda *a, **k: None))
+    assert vw.run() == 0          # baseline run: nothing to deliver, so not loud
+    monkeypatch.setattr(vw.nc, "fetch_site_violations",
+                        lambda session, nsite_id: (
+                            [_v(), _v(category="Rule 201")] if nsite_id == _N2688_ID else []))
+    assert vw.run() == 1          # change recorded, provably not delivered
+    n2688 = [r for r in _rows(fake) if r[1] == "viol:N2688"]
+    assert len(n2688) == 2 and n2688[1][3] == "changed"   # durable row survived
+    assert ea_noop is not None
+
+
+def test_snapshot_char_budget_is_clamped_below_the_hard_sheets_cap(monkeypatch):
+    """`snapshot_char_budget` sits in config.yml right under a comment naming
+    the 50,000 cap, so "raise it a bit" is a plausible edit — and any value at
+    or above the cap would disable the guard and hand the site a permanently
+    rejected write."""
+    seen = {}
+    real = vw._diff_and_record
+
+    def _capture(*a, **kw):
+        seen["budget"] = a[9] if len(a) > 9 else kw.get("budget")
+        return real(*a, **kw)
+    cfg = copy.deepcopy(VIOL_CFG)
+    cfg["nsite_violations"]["snapshot_char_budget"] = 60000
+    _wire(monkeypatch, cfg, {"N2688": [_v()], "WRD": []})
+    monkeypatch.setattr(vw, "_diff_and_record", _capture)
+    assert vw.run() == 0
+    assert seen["budget"] < vw.HARD_SHEETS_CELL_LIMIT
+
+
+def test_a_json_scalar_in_the_snapshot_cell_does_not_wedge_the_site():
+    """`0`, `null` and `true` all parse as valid JSON but are not mappings —
+    `"fields" not in 0` raises TypeError, which would leave the site with no
+    row and no alert on every run, defeating the unreadable-snapshot branch."""
+    for raw in ("0", "null", "true", "42", '"hello"', "[]", "not json at all"):
+        assert vw._load_json(raw, {}) == {} or isinstance(vw._load_json(raw, {}), dict)
+    note, _ = vw.summarize_violations_change(
+        vw._load_json("0", {}), vw.violations_snapshot([_v()], FIELDS))
+    assert "missing or unreadable" in note
+
+
+def test_truncated_diff_uses_digests_to_report_row_level_magnitude():
+    """Without this, 300 records wholly replaced by 300 different ones reports
+    the entire change as "300 -> 300" — describing nothing."""
+    old_rows = [_v(category=f"C{i}") for i in range(300)]
+    new_rows = [_v(category=f"D{i}") for i in range(300)]
+    # A budget the digest form fits but the full form doesn't — past the final
+    # clamp the digests are gone and no row-level magnitude is recoverable.
+    old = json.loads(vw._cell_payload(vw.violations_snapshot(old_rows, FIELDS), budget=20000))
+    new = vw.violations_snapshot(new_rows, FIELDS)
+    note, _ = vw.summarize_violations_change(old, new)
+    assert "300 -> 300" in note
+    assert "300 row(s) appeared, 300 row(s) disappeared" in note
+
+
+def test_the_parked_workflow_must_be_in_place_before_the_stream_is_enabled():
+    """The durable form of the parked-workflow hazard. Nothing in code or CI
+    fails if `enabled: true` ships while the .yml is still parked outside
+    .github/workflows/ — the watch would simply never run, with zero signal.
+    Asserting `enabled is False` alone is not enough: that assertion is the
+    first line a human deletes at activation, taking the only guard with it.
+    This invariant survives activation instead."""
+    import pathlib
+
+    import yaml
+    root = pathlib.Path(__file__).resolve().parent.parent
+    with open(root / "config.yml") as f:
+        cfg = yaml.safe_load(f)
+    scheduled = (root / ".github" / "workflows" / "nsite-violations-watch.yml").exists()
+    parked = (root / "docs" / "pending-workflows" / "nsite-violations-watch.yml").exists()
+    assert scheduled or parked, "the workflow file has gone missing entirely"
+    assert cfg["nsite_violations"]["enabled"] is False or scheduled, (
+        "nsite_violations.enabled is true but the workflow is still parked at "
+        "docs/pending-workflows/ — the watch would never be scheduled. "
+        "git mv docs/pending-workflows/nsite-violations-watch.yml .github/workflows/"
+    )
+
+
 def test_shipped_config_is_disabled_and_covers_every_registry_site():
     """Guards two things at once: the new-source gate really ships off, and the
     tiers map stays in sync with nsite_sites (a srn in one and not the other is
@@ -508,6 +630,12 @@ def _wire(monkeypatch, cfg, fetch_by_srn):
     sent = []
     sites = cfg["nsite_sites"]
     monkeypatch.setenv("GSHEET_ID", "SID")
+    # A DELIVERABLE environment is the baseline these tests model: send_email is
+    # captured below, but run()'s up-front alerting check reads the real env, and
+    # an unconfigured one is (correctly) a non-zero exit. The tests that assert
+    # the undeliverable path unset these deliberately.
+    for _var in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"):
+        monkeypatch.setenv(_var, "test-value")
     monkeypatch.setattr(vw, "load_config", lambda: copy.deepcopy(cfg))
     monkeypatch.setattr(vw.dc, "sheets_service", lambda: fake)
     monkeypatch.setattr(vw.nc, "make_session", lambda: object())

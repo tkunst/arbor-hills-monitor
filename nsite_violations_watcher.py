@@ -126,9 +126,10 @@ from config_loader import load_config
 # would edit a live `enabled: true` stream's file for a new stream's benefit.
 from nsite_submissions_watcher import _is_due
 
-# A Google Sheets cell holds at most 50,000 characters. Stay under it with
-# real margin — the snapshot JSON is the whole point of the durable row, and a
-# rejected write would take the row down with it.
+# A Google Sheets cell holds at most 50,000 characters — a hard API limit, not
+# a tunable. Stay under it with real margin: the snapshot JSON is the whole
+# point of the durable row, and a rejected write would take the row down too.
+HARD_SHEETS_CELL_LIMIT = 50000
 DEFAULT_SNAPSHOT_CHAR_BUDGET = 45000
 
 # How many ADDED/REMOVED lines an alert email prints before summarizing the
@@ -147,10 +148,38 @@ def _today_date() -> date:
 
 
 def _load_json(raw: str, fallback):
+    """Parse a stored snapshot cell, falling back for anything that isn't a
+    JSON OBJECT — not merely for anything unparseable. A bare scalar (`0`,
+    `null`, `true`) parses fine but is not a mapping, and every downstream
+    reader does `"fields" not in old` / `old.get(...)`, which raises TypeError
+    on an int. That would wedge the site permanently — no row, no alert, the
+    same failure every run — which is exactly what the unreadable-snapshot
+    branch exists to prevent."""
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
     except Exception:  # noqa: BLE001
         return fallback
+    return parsed if isinstance(parsed, dict) else fallback
+
+
+def alerting_is_configured(cfg: dict, recipients: list | None) -> tuple[bool, str]:
+    """Whether a change alert could actually be delivered right now. Pure apart
+    from reading os.environ, so it is directly unit-testable.
+
+    email_alerts.send_email deliberately NO-OPS (prints and returns, no
+    exception) when SMTP env vars are missing or the recipient list resolves
+    empty, so a dry/local run doesn't crash. That is right for it and wrong for
+    us: catching only exceptions would let the single most likely cause of
+    non-delivery — a missing, renamed, or rotated GitHub secret — record a
+    change, advance the stored hash so the next run says "unchanged", and exit
+    0. Checking the same condition up front is what makes that case loud."""
+    missing = [k for k in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD")
+               if not os.environ.get(k)]
+    if missing:
+        return False, f"SMTP not configured (missing {', '.join(missing)})"
+    if not (list(recipients) if recipients else ea.resolve_recipients(cfg)):
+        return False, "no alert recipients resolved"
+    return True, ""
 
 
 def _should_run(cfg: dict) -> tuple[bool, str]:
@@ -261,6 +290,23 @@ def _cell_payload(snap: dict, budget: int = DEFAULT_SNAPSHOT_CHAR_BUDGET) -> str
     )
 
 
+def _digest_counter(snap: dict) -> Counter | None:
+    """The per-row digest multiset for a snapshot, whichever form it is in:
+    read from `digests` for a truncated payload, computed from `counted_rows`
+    for a full one. None when neither is available (a truncated payload past
+    the final clamp, where the digests were dropped), so callers can tell
+    "nothing changed at row level" from "we cannot tell"."""
+    try:
+        if snap.get("truncated"):
+            if snap.get("digests_dropped"):
+                return None
+            return Counter({d: n for d, n in snap.get("digests", [])})
+        return Counter({_row_digest(list(vals)): n
+                        for n, *vals in snap.get("counted_rows", [])})
+    except Exception:  # noqa: BLE001 — malformed payload: "cannot tell"
+        return None
+
+
 def _counter_of(snap: dict) -> Counter:
     """Rebuild the multiset from a snapshot's counted_rows. Raises on a
     structurally invalid payload — summarize_violations_change catches that and
@@ -348,12 +394,23 @@ def summarize_violations_change(old: dict, new: dict) -> tuple[str, str]:
 
     old_n, new_n = old.get("n", 0), new.get("n", 0)
     if old.get("truncated") or new.get("truncated"):
+        # A count-only note would describe NOTHING when 300 records are wholly
+        # replaced by 300 different ones ("300 -> 300"). The truncated form
+        # keeps a per-row digest multiset precisely so the row-level magnitude
+        # of the change survives even when its content can't — use it when both
+        # sides have one.
+        rows_note = ""
+        old_d, new_d = _digest_counter(old), _digest_counter(new)
+        if old_d is not None and new_d is not None:
+            gone, arrived = sum((old_d - new_d).values()), sum((new_d - old_d).values())
+            if gone or arrived:
+                rows_note = f"; {arrived} row(s) appeared, {gone} row(s) disappeared"
         return (
-            f"changed — {old_n} -> {new_n} violation record(s) "
+            f"changed — {old_n} -> {new_n} violation record(s){rows_note} "
             "(snapshot too large to store in full; no field-level diff available)",
             "This site's violation list is too large to persist in full in one "
             "Sheet cell, so only per-record digests were stored. The record "
-            "count changed as shown above; review MiEnviro directly for detail.",
+            "counts changed as shown above; review MiEnviro directly for detail.",
         )
 
     fields = tuple(new_fields or old_fields or nc.VIOLATION_FIELDS)
@@ -425,7 +482,8 @@ def format_change_body(label: str, note: str, body: str) -> str:
 
 
 def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients,
-                     last, budget=DEFAULT_SNAPSHOT_CHAR_BUDGET) -> tuple[str, str | None]:
+                     last, budget=DEFAULT_SNAPSHOT_CHAR_BUDGET,
+                     alerting_error="") -> tuple[str, str | None]:
     """Baseline/compare/record/alert for one site. Returns
     (result, alert_error) where result is "baseline"/"changed"/"unchanged" and
     alert_error is None unless a change was recorded but its email could not be
@@ -484,6 +542,16 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients,
               f"FAILED (the change IS durable in the Violations Watch tab — this "
               f"run exits non-zero so the lost notification is visible): {e}")
         return "changed", f"send failed: {e}"
+    # send_email raises nothing when SMTP is unconfigured or the recipient list
+    # resolves empty — it prints and returns. That is deliberate in a shared
+    # helper (a dry/local run shouldn't crash) and unacceptable here, so the
+    # up-front check is what turns it into a visible failure.
+    if alerting_error:
+        print(f"[nsite-violations-watch] {label}: change recorded but NOT emailed "
+              f"— {alerting_error}. The change IS durable in the Violations Watch "
+              f"tab, and the stored hash has advanced, so the next run will report "
+              f"'unchanged' and will NOT retry this alert.")
+        return "changed", alerting_error
     return "changed", None
 
 
@@ -496,7 +564,12 @@ def run() -> int:
 
     vcfg = cfg.get("nsite_violations") or {}
     recipients = vcfg.get("recipients") or None  # None -> full alert_recipients list
-    budget = int(vcfg.get("snapshot_char_budget") or DEFAULT_SNAPSHOT_CHAR_BUDGET)
+    # Clamped, because `snapshot_char_budget` sits in config.yml directly under
+    # a comment naming the 50,000 cap — so "raise it a bit" is a plausible edit,
+    # and any value at or above the cap would disable the truncation guard
+    # entirely and hand the site a permanently rejected write.
+    budget = min(int(vcfg.get("snapshot_char_budget") or DEFAULT_SNAPSHOT_CHAR_BUDGET),
+                 HARD_SHEETS_CELL_LIMIT - 1000)
     fields = diff_fields(cfg)
     # Resolve the working site list by joining the shared identity registry
     # (nsite_sites, ADR 022) with THIS profile's own cadence map. A `tiers` srn
@@ -508,6 +581,12 @@ def run() -> int:
         {**registry[srn], "poll": poll}
         for srn, poll in (vcfg.get("tiers") or {}).items()
     ]
+
+    alerting_ok, alerting_error = alerting_is_configured(cfg, recipients)
+    if not alerting_ok:
+        print(f"[nsite-violations-watch] WARNING: {alerting_error} — any change "
+              f"found this run will be recorded durably but NOT emailed, and the "
+              f"run will exit non-zero to say so.")
 
     sheet_id = os.environ["GSHEET_ID"]
     sheets = dc.sheets_service()
@@ -588,7 +667,8 @@ def run() -> int:
 
             snap = violations_snapshot(viols, fields)
             result, alert_error = _diff_and_record(
-                sheets, sheet_id, today, key, label, snap, cfg, recipients, last, budget)
+                sheets, sheet_id, today, key, label, snap, cfg, recipients, last,
+                budget, alerting_error)
             counts[result] += 1
             if alert_error:
                 counts["alert_failed"] += 1
