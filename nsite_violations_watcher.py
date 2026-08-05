@@ -43,7 +43,7 @@ per record — 2.6x over the cap, i.e. the naive mirror of the Submissions
 design would simply fail to write. Encoding the Counter directly (a `fields`
 header plus `[count, *values]` rows, positional instead of repeating eight key
 names 299 times) is exact, lossless, still human-readable in the tab, and
-27,431 chars. `_cell_payload` additionally guards the residual headroom: over
+24,884 chars. `_cell_payload` additionally guards the residual headroom: over
 `snapshot_char_budget` it persists a digest multiset with a "truncated" marker
 rather than letting an oversized write abort the run.
 
@@ -53,11 +53,31 @@ Resolved", ...), not a good/bad binary. This watch is a TRIP-WIRE on change,
 exactly like Submissions: it alerts that something moved and lets a human read
 what it means. It never decides which status is bad.
 
-FETCH FAILURE (nsite_client.NsiteFetchError) is TRANSIENT per site: skip-and-
-warn if that site's item already has a baseline; LOUD exit 1 if it doesn't yet
-(an activation-time block must surface, not silently no-op forever). Any OTHER
-per-site exception — notably a Sheets write failure — is caught per site too,
-so one bad site can never abort the run and silently drop every site after it.
+FAILURE HANDLING, in three layers:
+
+  - FETCH FAILURE (nsite_client.NsiteFetchError) is TRANSIENT per site: skip-
+    and-warn if that site's item already has a baseline; LOUD exit 1 if it
+    doesn't yet (an activation-time block must surface, not silently no-op
+    forever).
+  - Any OTHER per-site exception inside the loop — a rejected Sheets write, a
+    malformed stored snapshot, a bad registry entry — is caught per site, so
+    one bad site can never abort the run and drop every site after it. (Setup
+    BEFORE the loop — config load, ensure_violations_tabs, the batched tab
+    read — deliberately still aborts: there is no per-site work to salvage and
+    proceeding would write against unknown state.)
+  - A TAB READ FAILURE aborts the whole run BEFORE any write. This is the one
+    non-obvious call, and it is the reason the read is batched and raising: if
+    a throttled read were swallowed to "no rows" (which sheet_writer._tab_rows
+    does, correctly, for its own append-only-accumulator callers), every site
+    would look never-seen, a fresh "baseline" row would be written, and because
+    the tab is append-only with last-write-wins that spurious baseline BECOMES
+    the state — permanently ERASING a real un-alerted change instead of
+    deferring it by one run.
+  - A CHANGE THAT WAS RECORDED BUT NOT EMAILED sets a non-zero exit too. The
+    durable row surviving is not success for a stream whose entire deliverable
+    is the alert, and since the row already advanced the stored hash, the next
+    run reports "unchanged" and never retries — so a green check over a
+    silently-undelivered violation notice would be the worst outcome here.
 
 GATED on nsite_violations.enabled, which ships FALSE: this is a brand-new
 poller against a live external system built unattended, so flipping it on is
@@ -172,7 +192,7 @@ def violations_snapshot(rows: list[dict], fields: tuple[str, ...]) -> dict:
     in `fields` so the snapshot is self-describing.
 
     This IS the Counter the diff needs, so nothing is reconstructed twice, and
-    it is 4.7x smaller than one JSON object per record (see the module
+    it is 4.1x smaller than one JSON object per record (see the module
     docstring's cell-cap note). An EMPTY record set is a valid snapshot — for
     16 of the 19 watched sites, "no violations on file" IS the baseline and the
     first violation appearing is the change."""
@@ -205,7 +225,7 @@ def _cell_payload(snap: dict, budget: int = DEFAULT_SNAPSHOT_CHAR_BUDGET) -> str
     """Serialize a snapshot for the Sheet's Snapshot JSON cell, degrading to a
     digest multiset if the full form would exceed `budget` characters.
 
-    Today's worst case (RA, 299 records) is 27,431 chars against a 45,000
+    Today's worst case (RA, 299 records) is 24,884 chars against a 45,000
     budget, so this never fires in practice — it exists because the ONLY thing
     standing between a bulk EGLE re-import and a hard 50,000-char write
     rejection would otherwise be that margin. Exactly ONE fallback form, not a
@@ -225,33 +245,97 @@ def _cell_payload(snap: dict, budget: int = DEFAULT_SNAPSHOT_CHAR_BUDGET) -> str
             for n, *vals in snap.get("counted_rows", [])
         ),
     }
-    return json.dumps(truncated, sort_keys=True, ensure_ascii=False)
+    blob = json.dumps(truncated, sort_keys=True, ensure_ascii=False)
+    if len(blob) <= budget:
+        return blob
+    # The digest form is ~140 chars per DISTINCT row, so it too outgrows the
+    # budget somewhere past ~2,000 distinct rows — and an over-cap write is
+    # rejected outright, which is the exact outcome this guard exists to
+    # prevent. Drop the digests as a final clamp: the hash still detects any
+    # change and `n` still counts it, which is all summarize_violations_change
+    # promises for a truncated snapshot anyway.
+    return json.dumps(
+        {"fields": snap.get("fields", []), "n": snap.get("n", 0), "truncated": True,
+         "digests": [], "digests_dropped": True},
+        sort_keys=True, ensure_ascii=False,
+    )
 
 
 def _counter_of(snap: dict) -> Counter:
+    """Rebuild the multiset from a snapshot's counted_rows. Raises on a
+    structurally invalid payload — summarize_violations_change catches that and
+    reports it as an unreadable previous snapshot rather than diffing against
+    garbage."""
     counts: Counter = Counter()
-    for n, *vals in snap.get("counted_rows", []):
+    for row in snap.get("counted_rows", []):
+        n, *vals = row
+        if not isinstance(n, int):
+            raise ValueError(f"counted_rows entry has a non-integer count: {row!r}")
         counts[tuple(vals)] += n
     return counts
+
+
+def _headline_field(fields: tuple[str, ...] | list) -> str | None:
+    """The field an ADDED/REMOVED line leads with — normally `category` (the
+    rule or regulation cited, the most identifying thing about a violation),
+    but read from the snapshot's OWN field list rather than hardcoded so that
+    excluding it via `exclude_fields` degrades to the next field instead of
+    printing a bare em-dash on every line."""
+    if not len(fields):
+        return None
+    return "category" if "category" in fields else fields[0]
 
 
 def _detail(rec: dict, fields: tuple[str, ...] | list) -> str:
     """Every diffed field except the one already used as the line's headline —
     an unprinted field renders two identical-looking ADDED/REMOVED lines
     (rop_watcher's documented lesson), so nothing is elided here."""
-    return ", ".join(f"{f}={rec.get(f) or '—'}" for f in fields if f != "category")
+    headline = _headline_field(fields)
+    return ", ".join(f"{f}={rec.get(f) or '—'}" for f in fields if f != headline)
 
 
 def summarize_violations_change(old: dict, new: dict) -> tuple[str, str]:
     """(note, body) describing what changed between two violation snapshots.
     Pure — unit-tested.
 
-    Handles, in order, three cases a bare multiset diff would misreport:
-      1. the diffed FIELD SET changed (a config edit, not an EGLE event),
-      2. either side was TRUNCATED (no field-level diff is possible),
-      3. zero -> some / some -> zero, which for the 16 zero-violation sites is
+    Handles, in order, four cases a bare multiset diff would misreport:
+      1. the previous snapshot is MISSING or UNREADABLE — which must never be
+         confused with "the site had zero violations", see below,
+      2. the diffed FIELD SET changed (a config edit, not an EGLE event),
+      3. either side was TRUNCATED (no field-level diff is possible),
+      4. zero -> some / some -> zero, which for the 16 zero-violation sites is
          the single highest-value alert this stream can produce and must not
          read as a bland "1 record added"."""
+    # A genuine snapshot ALWAYS carries "fields", even when it holds zero
+    # records — so its absence means the stored cell was empty, cleared, or
+    # unparseable, not that the site was clean. Without this branch an
+    # unreadable cell diffs as {} and fires the loudest alert in the stream
+    # ("FIRST VIOLATION(S) RECORDED") at a site that may have had hundreds of
+    # violations all along. That is a live risk, not a theoretical one: the
+    # snapshot lives in a cell on the OPERATOR-VISIBLE case-file Sheet, where a
+    # 25 KB JSON blob is exactly the sort of thing a human tidies away.
+    if "fields" not in old:
+        return (
+            "changed — the previous snapshot was missing or unreadable, so no "
+            "diff could be computed (this row re-baselines the site; it does "
+            "NOT mean the site was previously clean)",
+            "The last stored snapshot for this site could not be read — the "
+            "Snapshot JSON cell was empty, cleared, or malformed. This row "
+            "restores a good baseline. Check the Violations Watch tab's "
+            "history, and review MiEnviro directly for anything that changed "
+            "in the meantime.",
+        )
+    try:
+        old_counts = _counter_of(old)
+    except Exception:  # noqa: BLE001 — structurally invalid stored payload
+        return (
+            "changed — the previous snapshot was structurally invalid, so no "
+            "diff could be computed (this row re-baselines the site)",
+            "The last stored snapshot for this site parsed as JSON but was not "
+            "a valid snapshot. This row restores a good baseline; review "
+            "MiEnviro directly for anything that changed in the meantime.",
+        )
+
     old_fields, new_fields = old.get("fields"), new.get("fields")
     if old_fields is not None and new_fields is not None and old_fields != new_fields:
         return (
@@ -273,17 +357,18 @@ def summarize_violations_change(old: dict, new: dict) -> tuple[str, str]:
         )
 
     fields = tuple(new_fields or old_fields or nc.VIOLATION_FIELDS)
-    old_counts, new_counts = _counter_of(old), _counter_of(new)
+    new_counts = _counter_of(new)
     added = new_counts - old_counts
     removed = old_counts - new_counts
 
+    headline = _headline_field(fields)
     lines: list[str] = []
     for t, n in sorted(added.items()):
         r = dict(zip(fields, t))
-        lines.extend([f"+ ADDED    {r.get('category') or '—'} ({_detail(r, fields)})"] * n)
+        lines.extend([f"+ ADDED    {r.get(headline) or '—'} ({_detail(r, fields)})"] * n)
     for t, n in sorted(removed.items()):
         r = dict(zip(fields, t))
-        lines.extend([f"- REMOVED  {r.get('category') or '—'} ({_detail(r, fields)})"] * n)
+        lines.extend([f"- REMOVED  {r.get(headline) or '—'} ({_detail(r, fields)})"] * n)
 
     dropped = 0
     if len(lines) > MAX_ALERT_LINES:
@@ -340,16 +425,27 @@ def format_change_body(label: str, note: str, body: str) -> str:
 
 
 def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients,
-                     budget=DEFAULT_SNAPSHOT_CHAR_BUDGET) -> str:
-    """Baseline/compare/record/alert for one site. Returns "baseline" /
-    "changed" / "unchanged". Durable row FIRST, alert email SECOND (best-
-    effort) — a crash between them loses the alert, never the record, and never
-    re-fires next run since the row already advanced the stored hash. If the
-    row write itself raises, it propagates BEFORE any email is sent, so an
-    alert can never describe a row that failed to land."""
+                     last, budget=DEFAULT_SNAPSHOT_CHAR_BUDGET) -> tuple[str, str | None]:
+    """Baseline/compare/record/alert for one site. Returns
+    (result, alert_error) where result is "baseline"/"changed"/"unchanged" and
+    alert_error is None unless a change was recorded but its email could not be
+    sent.
+
+    `last` is passed IN (the run's single batched tab read) rather than looked
+    up here — see run(): a per-site read that could fail is what would let a
+    throttled Sheets response masquerade as "never seen" and write a spurious
+    baseline over an un-alerted change.
+
+    Durable row FIRST, alert email SECOND — a crash between them loses the
+    alert, never the record, and never re-fires next run since the row already
+    advanced the stored hash. If the row write itself raises, it propagates
+    BEFORE any email is sent, so an alert can never describe a row that failed
+    to land. A LOST ALERT IS STILL REPORTED as a non-zero exit by run(): the
+    row surviving is not success for a stream whose entire deliverable is the
+    alert, and a green check on a silently-undelivered violation notice is the
+    worst outcome this module has."""
     new_hash = snapshot_hash(snap)
     snap_json = _cell_payload(snap, budget)
-    last = sw.last_violations_snapshot(sheets, sheet_id, key)
 
     if last is None:
         sw.append_violations_watch_row(sheets, sheet_id, today, key, label, "baseline",
@@ -357,36 +453,38 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients,
                                        snap_json)
         print(f"[nsite-violations-watch] {label}: baseline recorded "
               f"({new_hash}, {snap.get('n', 0)} record(s)).")
-        return "baseline"
+        return "baseline", None
 
     last_hash, last_snap_json = last
     if new_hash == last_hash:
         print(f"[nsite-violations-watch] {label}: unchanged ({new_hash}).")
-        return "unchanged"
+        return "unchanged", None
 
     old_snap = _load_json(last_snap_json, {})
     note, body = summarize_violations_change(old_snap, snap)
     sw.append_violations_watch_row(sheets, sheet_id, today, key, label, "changed",
                                    new_hash, note, _now(), snap_json)
     print(f"[nsite-violations-watch] {label}: CHANGED ({last_hash} -> {new_hash}; {note}).")
-    # The row above is already durable — everything from here down is best-
-    # effort alerting for THIS site only, so a bug in either step can never
-    # escape _diff_and_record and abort run()'s processing of other sites.
+    # The row above is already durable — everything from here down is
+    # alerting for THIS site only, so a failure in either step is reported
+    # rather than raised, and can never abort run()'s other sites.
     try:
         email_body = format_change_body(label, note, body)
-    except Exception as e:  # noqa: BLE001 — formatting is best-effort; row is recorded
+    except Exception as e:  # noqa: BLE001 — row is recorded; surface the lost alert
         print(f"[nsite-violations-watch] {label}: change recorded but alert body "
               f"FORMATTING failed: {e}")
-        return "changed"
+        return "changed", f"body formatting failed: {e}"
     try:
         # Subject carries ONLY the maintainer-authored label from nsite_sites —
         # no EGLE-derived text ever reaches an email header.
         ea.send_email(f"[Violations watch] {label} changed", email_body, cfg,
                       recipients=recipients)
-    except Exception as e:  # noqa: BLE001 — alert is best-effort; row is recorded
+    except Exception as e:  # noqa: BLE001 — row is recorded; surface the lost alert
         print(f"[nsite-violations-watch] {label}: change recorded but alert email "
-              f"FAILED: {e}")
-    return "changed"
+              f"FAILED (the change IS durable in the Violations Watch tab — this "
+              f"run exits non-zero so the lost notification is visible): {e}")
+        return "changed", f"send failed: {e}"
+    return "changed", None
 
 
 def run() -> int:
@@ -418,32 +516,68 @@ def run() -> int:
     session = nc.make_session()
     today_date = _today_date()
     today = today_date.isoformat()
-    counts = {"baseline": 0, "changed": 0, "unchanged": 0, "skipped": 0, "failed": 0}
+    counts = {"baseline": 0, "changed": 0, "unchanged": 0, "skipped": 0,
+              "fetch_failed": 0, "failed": 0, "alert_failed": 0}
     exit_code = 0
 
+    # Cadence gate first, so the batched read below asks only about sites this
+    # run will actually touch. An UNRECOGNIZED cadence is treated as due rather
+    # than raising: unlike a `tiers` srn missing from the registry (which means
+    # we don't know WHAT to poll, so ADR 022 fails loudly), an unknown cadence
+    # only means we don't know HOW OFTEN — and polling every run is the
+    # complete, fail-safe answer. A typo must never blind a site.
+    due_sites = []
     for site in sites:
-        srn, name, nsite_id = site["srn"], site["name"], site["id"]
         cadence = site.get("poll", "daily")
-        key = f"viol:{srn}"
-        label = f"nSITE Violations — {name} ({srn})"
-
-        if not _is_due(cadence, srn, today_date):
-            print(f"[nsite-violations-watch] {label}: not due today "
+        srn = site["srn"]
+        try:
+            due = _is_due(cadence, srn, today_date)
+        except Exception as e:  # noqa: BLE001 — unknown cadence -> poll, don't skip
+            print(f"[nsite-violations-watch] {srn}: unrecognized poll cadence "
+                  f"{cadence!r} ({e}) — treating as due (fail-safe).")
+            due = True
+        if due:
+            due_sites.append(site)
+        else:
+            print(f"[nsite-violations-watch] {srn}: not due today "
                   f"({cadence} cadence) — skipping.")
             counts["skipped"] += 1
-            continue
 
+    # ONE tab read for every due site, not one per site. Two reasons, both
+    # load-bearing: it cuts ~19 reads/run to 1 (less throttling exposure), and
+    # last_violations_snapshots RAISES on a read failure instead of returning
+    # a per-key None. A swallowed read error here would make every site look
+    # never-seen, write fresh "baseline" rows, and — because the tab is
+    # append-only with last-write-wins — PERMANENTLY erase an un-alerted
+    # change rather than deferring it. So a read failure aborts before any
+    # write, leaving last run's state intact and correct.
+    try:
+        last_by_key = sw.last_violations_snapshots(
+            sheets, sheet_id, [f"viol:{s['srn']}" for s in due_sites])
+    except Exception as e:  # noqa: BLE001
+        print(f"[nsite-violations-watch] could not read the Violations Watch tab "
+              f"({type(e).__name__}: {e}) — aborting BEFORE any write, so no site "
+              f"can be spuriously re-baselined. Nothing was changed.")
+        return 1
+
+    for site in due_sites:
         # One try per site, so NOTHING (a fetch failure, an oversized or
-        # rejected Sheets write, a malformed stored snapshot) can abort the run
-        # and silently drop every site queued after this one.
+        # rejected Sheets write, a malformed stored snapshot, a malformed
+        # registry entry) can abort the run and silently drop every site
+        # queued after this one.
         try:
+            srn, name, nsite_id = site["srn"], site["name"], site["id"]
+            key = f"viol:{srn}"
+            label = f"nSITE Violations — {name} ({srn})"
+            last = last_by_key.get(key)
+
             try:
                 viols = nc.fetch_site_violations(session, nsite_id)
                 print(f"[nsite-violations-watch] {label}: fetched "
                       f"{len(viols)} violation(s).")
             except nc.NsiteFetchError as e:
-                has_baseline = sw.last_violations_snapshot(sheets, sheet_id, key) is not None
-                if has_baseline:
+                counts["fetch_failed"] += 1
+                if last is not None:
                     print(f"[nsite-violations-watch] {label}: fetch failed, skipping "
                           f"this run (baseline preserved, not diffed): {e}")
                 else:
@@ -453,19 +587,25 @@ def run() -> int:
                 continue
 
             snap = violations_snapshot(viols, fields)
-            result = _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg,
-                                      recipients, budget)
+            result, alert_error = _diff_and_record(
+                sheets, sheet_id, today, key, label, snap, cfg, recipients, last, budget)
             counts[result] += 1
+            if alert_error:
+                counts["alert_failed"] += 1
+                exit_code = 1
         except Exception as e:  # noqa: BLE001 — isolate this site, keep the run going
-            print(f"[nsite-violations-watch] {label}: UNEXPECTED failure, continuing "
-                  f"with the remaining sites: {type(e).__name__}: {e}")
+            print(f"[nsite-violations-watch] {site.get('srn', '?')}: UNEXPECTED "
+                  f"failure, continuing with the remaining sites: "
+                  f"{type(e).__name__}: {e}")
             counts["failed"] += 1
             exit_code = 1
 
     print(f"[nsite-violations-watch] done — {counts['changed']} changed, "
           f"{counts['baseline']} baselined, {counts['unchanged']} unchanged, "
-          f"{counts['skipped']} not-due-today, {counts['failed']} failed "
-          f"(across {len(sites)} site{'' if len(sites) == 1 else 's'}).")
+          f"{counts['skipped']} not-due-today, {counts['fetch_failed']} fetch-failed, "
+          f"{counts['failed']} errored, {counts['alert_failed']} change(s) recorded "
+          f"but NOT emailed (across {len(sites)} site"
+          f"{'' if len(sites) == 1 else 's'}).")
     return exit_code
 
 
