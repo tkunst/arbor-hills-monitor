@@ -396,6 +396,22 @@ def fetch_site_violations(session: requests.Session, nsite_id: str) -> list[dict
                     f"violations response for site {nsite_id} is missing "
                     f"'queryResults' — nSITE may have changed its response shape"
                 )
+            if data.get("hasResultsRemaining"):
+                # The envelope carries `hasResultsRemaining`/`totalCount` but
+                # leaves both null today — every site returns its full set in
+                # one response (verified across all 19 on 2026-08-04). If nSITE
+                # ever enables server-side paging, a partial page would be
+                # INDISTINGUISHABLE from a shrunken record set: the caller's
+                # multiset diff would read the first 100 of RA's 299 records as
+                # "199 violation records removed" and email that as fact. Fail
+                # loudly instead — a paged response needs real pagination
+                # support, not a silent truncation.
+                raise NsiteFetchError(
+                    f"violations response for site {nsite_id} reports "
+                    f"hasResultsRemaining — nSITE has started paging this "
+                    f"profile and this client would otherwise diff a PARTIAL "
+                    f"page as mass deletions. Pagination support is needed."
+                )
             return [_normalize_violation(v) for v in data["queryResults"]]
         except Exception as e:  # noqa: BLE001 — network/HTTP/structural: retry, then raise loud
             last_exc = e
