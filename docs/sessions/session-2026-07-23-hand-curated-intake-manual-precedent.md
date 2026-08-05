@@ -288,5 +288,33 @@ add" — confirmed by `hasattr` check); dedup for this batch was done by eye aga
 existing 24-row tab, which is how every addendum before the real script existed has done it.
 
 **Flagging for whoever picks this up next:** the Q1 2024 report closing that data gap is directly
-relevant to the temperature-trend v2 draft, currently blocked pending a clean refutation-gate pass —
+relevant to the temperature-trend v2 draft, currently blocked pending a clean refutation-gate pass --
 that connection was raised in the same Lotext session this addendum's data came from, not yet acted on.
+
+## 2026-08-05 addendum #6 -- blog-sweep-obtained-2026-08-05 (6 rows, rows 40-45)
+
+Trisha-directed (interactive session): hand-curate the six documents obtained by overnight-worker Item
+117 (blog-sweep acquisition, 2026-08-05). Same manual cp-to-mount mechanism as prior addenda
+(`GOAUTH_*` OAuth-as-user vars still `.env.example` placeholders; `GDRIVE_SA_KEY` live).
+
+**Mirror dedup check performed:** grepped the N2688-Documents.csv, N2688-Documents 2.csv, and
+N2688-Documents 3.csv files against all document dates and names. Results:
+- `N2688_VN_20231025.pdf` -- IN Mirror as N2688_Violation Notice_10-25-2023 (doc_id -1516052274233321969); Drive `1Qy3Ko-kdgUJEMEwf0sS7PnEqkJBKzcZu` -- ANNOTATION mode
+- `N2688_RVN_20231025.pdf` -- IN Mirror as N2688_Violation Notice Response_10-25-2023 (doc_id -1905948147172766549); Drive `1EWyclas-wavlPOaz3haCTkWZj5t_1ias` -- ANNOTATION mode
+- `N2688_VN_20211110.pdf` -- IN Mirror as N2688_Violation Notice_11-10-2021 (doc_id -4806871774930027183); Drive `1GxZFI2sFGOtbywOGsdOxzoaGCHOHwyJQ` -- ANNOTATION mode
+- `N2688_RVN_20211110.pdf` -- NOT in Mirror (no Feb 2022 or 02-12-2022 entry in any N2688 CSV); public EGLE server URL exists -- UPLOAD mode
+- `gfl-incident-report-leachate-spill-aug2022.pdf` -- NOT in Mirror (WRD document; Mirror covers AQD only) -- UPLOAD mode
+- `egle-inspection-report-leachate-spill-aug2022.pdf` -- NOT in Mirror (WRD document; Mirror covers AQD only) -- UPLOAD mode
+
+**Files uploaded (UPLOAD mode):**
+- `N2688_RVN_20211110.pdf` (244744 bytes) -- Drive id `1Pbg2WhFS5EBBlnjqG_g-rMgk931TmxPA`
+- `gfl-incident-report-leachate-spill-aug2022.pdf` (5637794 bytes) -- Drive id `1UdjGjbAXedZSGYvUUa5hMBDQYMRBsTp8`
+- `egle-inspection-report-leachate-spill-aug2022.pdf` (18715607 bytes) -- Drive id `1VOLNS5kMji5DIJfO-F7KHsN_TYv8kGBS`
+
+**Mechanism:** cp to the CloudStorage-mounted Hand-Curated Public Records folder; Drive file IDs
+resolved via `mcp__b833bde3-8936-4a44-934e-01df1aade79e__search_files` by parentId
+(`1Zk-tq08E0iUWBLSVg9U7Axw8Ox1Lt7pR`) + title; file sizes verified against originals.
+For ANNOTATION-mode rows, Drive IDs resolved via title search in the Case File Mirror parent
+folder (`1QY44JGfOiHmhmD7qnz5OzGMvLX4HbAFI`). Six rows appended via `sheet_writer.append_rows()`
+(service account, `.venv/bin/python3`, `GDRIVE_SA_KEY` set via `os.environ` -- dotenv not available
+in system Python 3.14.5, used `.venv` Python instead). Sheet now has 45 data rows total.
