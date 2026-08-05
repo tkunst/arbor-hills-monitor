@@ -45,3 +45,7 @@ part of the PR that added them here.
 | file | stream | blocks |
 |---|---|---|
 | `nsite-violations-watch.yml` | Stream L — nSITE Violations watch (ADR 023) | Nothing today: `nsite_violations.enabled` ships `false`, so the stream is a no-op either way. **It must be moved before `enabled` is flipped to `true`**, or the watch will never be scheduled and will fail silently. |
+
+**When you move a file out, delete its row above** — and when the table empties,
+delete this whole directory. It is a holding pen, not a permanent fixture, and a
+stale "currently pending" list on `main` is worse than no list at all.
