@@ -482,8 +482,7 @@ def format_change_body(label: str, note: str, body: str) -> str:
 
 
 def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients,
-                     last, budget=DEFAULT_SNAPSHOT_CHAR_BUDGET,
-                     alerting_error="") -> tuple[str, str | None]:
+                     last, budget=DEFAULT_SNAPSHOT_CHAR_BUDGET) -> tuple[str, str | None]:
     """Baseline/compare/record/alert for one site. Returns
     (result, alert_error) where result is "baseline"/"changed"/"unchanged" and
     alert_error is None unless a change was recorded but its email could not be
@@ -542,16 +541,14 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients,
               f"FAILED (the change IS durable in the Violations Watch tab — this "
               f"run exits non-zero so the lost notification is visible): {e}")
         return "changed", f"send failed: {e}"
-    # send_email raises nothing when SMTP is unconfigured or the recipient list
-    # resolves empty — it prints and returns. That is deliberate in a shared
-    # helper (a dry/local run shouldn't crash) and unacceptable here, so the
-    # up-front check is what turns it into a visible failure.
-    if alerting_error:
-        print(f"[nsite-violations-watch] {label}: change recorded but NOT emailed "
-              f"— {alerting_error}. The change IS durable in the Violations Watch "
-              f"tab, and the stored hash has advanced, so the next run will report "
-              f"'unchanged' and will NOT retry this alert.")
-        return "changed", alerting_error
+    # NOTE: send_email raises nothing when SMTP is unconfigured or the recipient
+    # list resolves empty — it prints and returns. That silent no-op cannot be
+    # reached from here, because run() checks the identical condition via
+    # alerting_is_configured() and ABORTS before any fetch or write rather than
+    # consuming a change it could never deliver. Only a genuine mid-send
+    # failure (connection dropped, auth rejected) reaches the handler above,
+    # and by then the row is already durable, so exiting non-zero is the most
+    # that can be done.
     return "changed", None
 
 
@@ -582,11 +579,24 @@ def run() -> int:
         for srn, poll in (vcfg.get("tiers") or {}).items()
     ]
 
+    # If alerting is ALREADY known to be impossible, stop before touching
+    # anything. This is the same principle the batched tab read rests on:
+    # deferring a change by a run is fine, CONSUMING one is not. Writing the
+    # row here would advance the stored hash, so tomorrow's run would compare
+    # equal, report "unchanged", and never retry — the notification would be
+    # gone permanently even after the secret was fixed. Nothing is actually
+    # lost by stopping: the violations are still in nSITE, so the next healthy
+    # run records AND alerts on them. (A send failure discovered mid-run, after
+    # the row is already durable, is unavoidable and handled separately in
+    # _diff_and_record.)
     alerting_ok, alerting_error = alerting_is_configured(cfg, recipients)
     if not alerting_ok:
-        print(f"[nsite-violations-watch] WARNING: {alerting_error} — any change "
-              f"found this run will be recorded durably but NOT emailed, and the "
-              f"run will exit non-zero to say so.")
+        print(f"[nsite-violations-watch] {alerting_error} — aborting BEFORE any "
+              f"fetch or write. A change found now could not be emailed, and "
+              f"recording it would advance the stored hash so the next run would "
+              f"report 'unchanged' and never retry. Nothing is lost: fix the "
+              f"configuration and the next run records and alerts normally.")
+        return 1
 
     sheet_id = os.environ["GSHEET_ID"]
     sheets = dc.sheets_service()
@@ -635,8 +645,10 @@ def run() -> int:
             sheets, sheet_id, [f"viol:{s['srn']}" for s in due_sites])
     except Exception as e:  # noqa: BLE001
         print(f"[nsite-violations-watch] could not read the Violations Watch tab "
-              f"({type(e).__name__}: {e}) — aborting BEFORE any write, so no site "
-              f"can be spuriously re-baselined. Nothing was changed.")
+              f"({type(e).__name__}: {e}) — aborting before any DATA row is "
+              f"written, so no site can be spuriously re-baselined. (The tab's "
+              f"header may have been reconciled by ensure_violations_tabs above; "
+              f"that is idempotent and touches no data row.)")
         return 1
 
     for site in due_sites:
@@ -654,6 +666,18 @@ def run() -> int:
                 viols = nc.fetch_site_violations(session, nsite_id)
                 print(f"[nsite-violations-watch] {label}: fetched "
                       f"{len(viols)} violation(s).")
+            except nc.NsiteStructuralError as e:
+                # NOT transient, so it must NOT take the skip-and-warn path
+                # below: nSITE having changed the response shape (e.g. started
+                # paging) would otherwise fail identically every single day
+                # behind a green build, while every real violation change at
+                # every site went unnoticed. Checked before the base class.
+                counts["fetch_failed"] += 1
+                exit_code = 1
+                print(f"[nsite-violations-watch] {label}: STRUCTURAL break in "
+                      f"nSITE's response — this will NOT fix itself and needs "
+                      f"code changes; failing loudly rather than going quiet: {e}")
+                continue
             except nc.NsiteFetchError as e:
                 counts["fetch_failed"] += 1
                 if last is not None:
@@ -667,8 +691,7 @@ def run() -> int:
 
             snap = violations_snapshot(viols, fields)
             result, alert_error = _diff_and_record(
-                sheets, sheet_id, today, key, label, snap, cfg, recipients, last,
-                budget, alerting_error)
+                sheets, sheet_id, today, key, label, snap, cfg, recipients, last, budget)
             counts[result] += 1
             if alert_error:
                 counts["alert_failed"] += 1
