@@ -671,7 +671,7 @@ nsite_violations:
   # unattended (overnight-coder Step 3). Flipping this to true is a separate
   # human step. The first enabled run baselines every due site silently — no
   # alert flood, even at RA's 299 records.
-  enabled: false
+  enabled: true
   # Recipient override: Trisha only to start (the Meeting Watch / MMD / RIDE /
   # Submissions precedent for a brand-new alert stream). Delete/comment this
   # block to send to the full alert_recipients list once the alert copy has
