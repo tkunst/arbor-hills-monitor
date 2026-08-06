@@ -162,31 +162,25 @@ confirm, don't just take the merge on faith.
 - Wait for CI to finish (`gh pr checks <n> --watch`). The check set includes the
   armed **`bandit`** SAST gate (fails the PR on any medium+ finding), plus
   `gitleaks`, `pytest`, `lint`, `lychee`, `CodeQL`, and `block-data-files`.
-  **Ignore the `claude-review` job.** It is auth-infra-broken — it fails
-  near-instantly (installation-token step, 0-byte response) with **no review
-  actually performed**, confirmed across multiple PRs on multiple days
-  (2026-07-26: #31/#32/#33 all failed it identically). It is no longer the code
-  review; the **Step 5 subagent review replaces it**. A red `claude-review` alone
-  does NOT block merge — it produced no findings, and `main` has no required
-  status checks. If any OTHER check fails for a reason unrelated to the feature
-  (e.g. markdownlint on a doc — this repo's CI is picky about blank lines around
-  lists/fences and restarts ordered-list numbering at 1 for every list block),
-  fix it and push again before proceeding. Don't merge on red CI (the
-  `claude-review` infra-failure is the one documented exception).
+  There is **no GitHub code-review Action** — the code review of record is the
+  **Step 5 subagent review**, run locally in this session. If any check fails
+  for a reason unrelated to the feature (e.g. markdownlint on a doc — this repo's
+  CI is picky about blank lines around lists/fences and restarts ordered-list
+  numbering at 1 for every list block), fix it and push again before proceeding.
+  **Don't merge on red CI.**
 
 ### 5. Resolve the code review (a separate subagent, run locally)
 
-The GitHub `claude-review` Action is unreliable (auth-infra-broken — see Step 4)
-and is no longer the review of record. Run the code review as a **separate
-subagent inside this session** instead — it works, and a fresh subagent given
-only the diff is as independent as the CI job was meant to be.
+The code review is run as a **separate subagent inside this session** — a fresh
+subagent given only the diff is as independent as an automated review job would
+be, and it actually runs (there is no GitHub code-review Action).
 
 - **Spawn a fresh subagent** with the Agent/Task tool — a `code-reviewer` agent
   if one is registered, otherwise `general-purpose`. Give it ONLY the PR diff
   (`gh pr diff <pr-number>`, or `git diff main...HEAD`) and the review task —
   **not** this build session's reasoning or intent. That no-context, diff-only
-  read is exactly what makes it independent (the property the CI job was supposed
-  to provide). Ask it to return findings as a structured list — file:line,
+  read is exactly what makes it independent (the property an automated review
+  job is meant to provide). Ask it to return findings as a structured list — file:line,
   severity, what's wrong, why it matters, most-severe first — and to state
   explicitly when it finds nothing.
 - A light in-session `/code-review` before pushing (Step 4) is still a useful
@@ -201,9 +195,9 @@ only the diff is as independent as the CI job was meant to be.
 - Push fixes, then **re-run the subagent review on the updated diff** in the
   Step 7 loop until no findings remain open.
 - **Record the outcome on the PR** — a comment summarizing what the subagent
-  reviewed and its findings/verdict — so the review is legible in the PR history
-  the way the CI job's comments used to be. (Workflow-touching PRs get the same
-  subagent review as everything else; there is no skip case any more.)
+  reviewed and its findings/verdict — so the review is legible in the PR history.
+  (Workflow-touching PRs get the same subagent review as everything else; there
+  is no skip case any more.)
 
 ### 6. `/security-review` the PR
 
@@ -251,10 +245,9 @@ on the updated diff and re-run `/security-review` before declaring done. Loop:
 
 ### 8. Merge and document (only reached with zero open items)
 
-- Confirm CI is green on the latest commit — including the armed `bandit` gate
-  (the `claude-review` job's infra-failure is expected and does not count; see
-  Step 4). Confirm the **Step 5 subagent code review** and the Step 6
-  `/security-review` both came back clean (or their findings were resolved).
+- Confirm CI is green on the latest commit — including the armed `bandit` gate.
+  Confirm the **Step 5 subagent code review** and the Step 6 `/security-review`
+  both came back clean (or their findings were resolved).
 - Merge to `main` with `gh pr merge <pr-number> --rebase --delete-branch`
   (this replaces the old local `git merge --ff-only` + `git push origin main`).
   Going through `gh pr merge` respects branch protection once Phase C requires
