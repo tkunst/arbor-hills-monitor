@@ -272,12 +272,24 @@ def run() -> int:
 
     # --- Sunday digest ---
     if today.weekday() == 6:
-        # "Upcoming Activities (next 14 days)" from the PRIVATE Sheet
+        # (1) Document digest — the coalition email to the full alert_recipients
+        # list, unchanged. Sent only when there are new documents (no empty digest
+        # on a quiet week).
+        if state["pending_digest"]:
+            items = [_record_to_item(r) for r in state["pending_digest"]]
+            ea.send_digest(items, cfg)
+            state["pending_digest"] = []
+            sw.write_meta(sheets, sheet_id, state)
+            print(f"[watcher] sent Sunday digest ({len(items)} item(s)).")
+
+        # (2) "Upcoming Activities (next 14 days)" from the PRIVATE Sheet
         # (GSHEET_ID_PRIVATE — service-account-only, never operator-visible, so it
         # may carry strategy-flavored key dates the public case-file Sheet must
-        # not). Best-effort: a missing secret or unreachable Sheet degrades to no
-        # section, never a crash. Fetched only on the Sunday run.
-        upcoming_block = ""
+        # not). Sent as its OWN email, scoped to `upcoming.recipients` (Trisha only
+        # to start; NEVER the operator) — deliberately NOT folded into the coalition
+        # digest above, so the private dates can't reach the wider list. Best-effort:
+        # a missing secret / unreachable Sheet / send failure degrades to no section,
+        # never a crash. Sunday only.
         try:
             priv_id = os.environ.get("GSHEET_ID_PRIVATE")
             if priv_id:
@@ -285,20 +297,11 @@ def run() -> int:
                 priv = dc.sheets_service()
                 up.ensure_upcoming_tab(priv, priv_id)
                 upcoming_block = up.render_upcoming(up.fetch_upcoming(priv, priv_id), today)
+                if upcoming_block:
+                    ea.send_upcoming(upcoming_block, cfg)
+                    print("[watcher] sent upcoming-activities section (scoped).")
         except Exception as e:  # noqa: BLE001 — the digest must never break on this
             print(f"[watcher] upcoming-activities section skipped: {e}")
-            upcoming_block = ""
-
-        # Send on ANY new documents OR any upcoming date — so the calendar surfaces
-        # even on an otherwise-quiet week (a deliberate change from the old "no
-        # email on a no-docs week"; see the PR).
-        if state["pending_digest"] or upcoming_block:
-            items = [_record_to_item(r) for r in state["pending_digest"]]
-            ea.send_digest(items, cfg, upcoming_block=upcoming_block)
-            state["pending_digest"] = []
-            sw.write_meta(sheets, sheet_id, state)
-            print(f"[watcher] sent Sunday digest ({len(items)} item(s); "
-                  f"upcoming={'yes' if upcoming_block else 'no'}).")
 
     try:
         sw.rebuild_risk_register_tab(sheets, sheet_id, RISK_REGISTER)

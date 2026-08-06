@@ -657,6 +657,22 @@ alert_recipients:
   - leslievans@comcast.net               # Leslie Evans — Conservancy board member; downwind resident
   - hwangr@umich.edu                     # Roland Hwang — voting MMPC member (adjacent-community seat), Northville
 
+# --- Weekly digest "Upcoming Activities" section (ADR 027) ---
+# The Sunday digest's calendar section is sourced from a SEPARATE, PRIVATE Sheet
+# (GSHEET_ID_PRIVATE) that may carry strategy-flavored key dates the public
+# case-file Sheet must not. Because that content is confidential it is sent as its
+# OWN email to `recipients` below — NEVER folded into the coalition document digest
+# (which still goes to the full alert_recipients list above). Scoped to Trisha ONLY
+# to start, so the section can be tested before it is widened; add the Conservancy
+# addresses here when ready. NEVER add the operator (GFL) — that would defeat the
+# private Sheet's entire purpose. FAIL-SAFE: if this list is empty or removed the
+# upcoming email is simply NOT sent (the private content is never broadcast to the
+# full list by default). The whole section is also a no-op unless GSHEET_ID_PRIVATE
+# is set. See upcoming.py + docs/decisions/027.
+upcoming:
+  recipients:
+    - arbor-hills@trishakunst.com        # Trisha only while testing (widen here later)
+
 # Urgent triggers -> same-day email. Procedural items -> weekly digest as action
 # items. Everything else -> weekly Sunday digest.
 urgent:

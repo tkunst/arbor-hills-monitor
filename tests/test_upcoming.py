@@ -96,10 +96,49 @@ def test_fetch_returns_empty_on_missing_tab_or_error():
     assert up.fetch_upcoming(_FakeSheets(raise_on_get=True), "PRIVID") == []
 
 
-# --- email_alerts wiring: upcoming_block prepends, incl. the zero-docs case ----
+# --- email_alerts wiring: the upcoming section is a SEPARATE, scoped email -----
 
-def test_digest_body_prepends_upcoming_block_with_no_items():
+def test_send_upcoming_scopes_to_configured_recipients(monkeypatch):
     import email_alerts as ea
-    body = ea.format_digest_body([], upcoming_block="UPCOMING ACTIVITIES (next 14 days):\n  - x\n")
-    assert body.startswith("UPCOMING ACTIVITIES")
-    assert "No new Arbor Hills (N2688) documents this period." in body
+    captured = {}
+
+    def _fake_send_email(subject, body, cfg, recipients=None):
+        captured.update(subject=subject, body=body, recipients=recipients)
+
+    monkeypatch.setattr(ea, "send_email", _fake_send_email)
+    cfg = {"upcoming": {"recipients": ["trisha@example.com"]},
+           "alert_recipients": ["coalition@example.com", "member@example.com"]}
+    ea.send_upcoming("UPCOMING ACTIVITIES (next 14 days):\n  - x\n", cfg)
+    # Sent to the scoped list VERBATIM — never the full alert_recipients list.
+    assert captured["recipients"] == ["trisha@example.com"]
+    assert "coalition@example.com" not in (captured["recipients"] or [])
+    assert captured["body"].startswith("UPCOMING ACTIVITIES")
+
+
+def test_send_upcoming_not_sent_when_recipients_unset(monkeypatch):
+    """Fail-safe: an unset/empty upcoming.recipients must NOT broadcast the private
+    section to the full list — it sends nothing at all."""
+    import email_alerts as ea
+    calls = []
+    monkeypatch.setattr(ea, "send_email", lambda *a, **k: calls.append((a, k)))
+    ea.send_upcoming("UPCOMING ACTIVITIES:\n  - x\n", {"alert_recipients": ["coalition@example.com"]})
+    ea.send_upcoming("UPCOMING ACTIVITIES:\n  - x\n", {"upcoming": {"recipients": []}})
+    assert calls == []
+
+
+def test_send_upcoming_noop_on_empty_block(monkeypatch):
+    import email_alerts as ea
+    calls = []
+    monkeypatch.setattr(ea, "send_email", lambda *a, **k: calls.append(1))
+    ea.send_upcoming("", {"upcoming": {"recipients": ["trisha@example.com"]}})
+    assert calls == []
+
+
+def test_document_digest_is_decoupled_from_upcoming():
+    """The document digest must not carry the private upcoming content — its
+    signature no longer accepts an upcoming block."""
+    import inspect
+
+    import email_alerts as ea
+    assert "upcoming_block" not in inspect.signature(ea.format_digest_body).parameters
+    assert "upcoming_block" not in inspect.signature(ea.send_digest).parameters

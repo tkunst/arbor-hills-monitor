@@ -30,15 +30,23 @@ that Trisha owns and shares only with the service account.
   **authenticated Sheets API** (the service-account path — NOT gviz, which can't
   read a private Sheet) and never raises on a missing tab (returns `[]`).
   `ensure_upcoming_tab` idempotently creates the tab + header.
-- **`email_alerts`.** `format_digest_body(items, upcoming_block="")` /
-  `send_digest(items, cfg, upcoming_block="")` prepend the block, including the
-  zero-new-documents-but-upcoming-present case (calendar shows above "No new
-  documents").
-- **`watcher.py` Sunday block.** Builds the block **best-effort** (a missing
-  `GSHEET_ID_PRIVATE` or unreachable Sheet degrades to no section, never a crash)
-  and **changes the send condition** to fire on new documents **OR** any upcoming
-  date — so the calendar surfaces even on an otherwise-quiet week (a deliberate
-  change from the old "no email on a no-docs week").
+- **`email_alerts`.** `send_upcoming(upcoming_block, cfg)` sends the section as its
+  OWN email, scoped VERBATIM to `upcoming.recipients` (the same `send_email(recipients=…)`
+  override ADR 015 uses for Trisha-only alerts). `send_digest` / `format_digest_body`
+  are left untouched — the document digest never carries the upcoming block.
+- **Recipient scoping — the confidentiality boundary at the SINK, not just the source.**
+  The private Sheet keeps the dates off the operator-visible case-file Sheet; scoping
+  the upcoming email keeps them off the wider *coalition* digest too. `upcoming.recipients`
+  ships **Trisha-only** so the section can be tested before it is widened, and it is
+  **fail-safe**: if the list is unset/empty the section is simply not sent, never
+  broadcast to the full `alert_recipients` list (the opposite of `resolve_recipients`'s
+  default). The operator (GFL) must never be added to it.
+- **`watcher.py` Sunday block.** Two independent sends: (1) the document digest to the
+  full list, **only when there are new documents** (no empty digest on a quiet week);
+  (2) the upcoming section, best-effort (a missing `GSHEET_ID_PRIVATE` / unreachable
+  Sheet / send failure degrades to no section, never a crash), to its scoped list. A
+  quiet week with upcoming dates therefore sends the calendar to Trisha alone, not an
+  empty digest to the coalition.
 - **`GSHEET_ID_PRIVATE`** wired into `daily.yml`'s watcher env; documented in
   `.env.example`, `README`, and `CLAUDE.md` (a hard invariant: that Sheet is never
   shared with the operator, unlike the operator-visible `GSHEET_ID`).
@@ -48,14 +56,17 @@ that Trisha owns and shares only with the service account.
 - The section is additive and self-protecting: with no secret set (the shipped
   default) it is a silent no-op, so this merges without changing behavior until
   activated.
-- The Sunday digest now also fires on a zero-new-documents week when upcoming
-  dates exist — intended (surface the calendar even on quiet weeks).
+- On a zero-new-documents week with upcoming dates, the coalition digest is not
+  sent (no empty email); the upcoming section still goes out, but only to
+  `upcoming.recipients` (Trisha to start).
 - **Activation (Trisha-only):** create the private Sheet, share it with the
   service account (Editor), add `GSHEET_ID_PRIVATE` as a GitHub secret, and
   populate the "Upcoming" tab (`date`, optional `end_date`, `title`) from
   key-dates Section A. The prerequisite Sheet + secret were reported done
   (`9e9adb9`); the tab-populate step remains Trisha's (the monitor repo does not
-  read the Lotext master).
+  read the Lotext master). `upcoming.recipients` starts Trisha-only; widen it (add
+  the Conservancy addresses) once the section has been seen in the wild — a
+  config-only edit, never a code change.
 
 ## Alternatives considered
 
