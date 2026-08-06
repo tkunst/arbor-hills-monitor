@@ -160,11 +160,12 @@ external users but no sensitive data). Public repo.
   to a digest multiset above `snapshot_char_budget`. `snapshot_hash` is
   always taken over the FULL snapshot, never the truncated payload. Makes no
   severity judgment about which EGLE status is good or bad. Gated on
-  `nsite_violations.enabled` (new source; ships `false`). ⚠️ Its workflow file
-  is parked at `docs/pending-workflows/nsite-violations-watch.yml`, NOT under
-  `.github/workflows/` — the build session's credentials lacked the `workflow`
-  OAuth scope. Move it before flipping `enabled`, or the watch never runs.
-  See ADR 023.
+  `nsite_violations.enabled` (new source; ships `false`). Its workflow lives
+  at `.github/workflows/nsite-violations-watch.yml` — moved out of
+  `docs/pending-workflows/` when PR #36 merged (the build session's token
+  lacked the `workflow` OAuth scope, so the file was parked until a
+  scope-bearing SSH push could land it). The 2pm-ET cron runs as a no-op
+  until `enabled` is flipped. See ADR 023.
 
 ## Forbidden patterns (do not do these)
 
