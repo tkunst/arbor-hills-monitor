@@ -200,3 +200,25 @@ def send_urgent_alert(parsed, metadata: dict, link: str, cfg: dict) -> None:
 def send_digest(items: list[dict], cfg: dict) -> None:
     subject = f"Arbor Hills N2688 digest — {len(items)} new document(s)"
     send_email(subject, format_digest_body(items), cfg)
+
+
+def send_upcoming(upcoming_block: str, cfg: dict) -> None:
+    """Send the digest's "Upcoming Activities" section as its OWN email, scoped
+    VERBATIM to `upcoming.recipients` in config (the same `send_email(recipients=…)`
+    override the CivicClerk meeting-watch uses, ADR 015). Kept SEPARATE from
+    send_digest on purpose: the section is sourced from the PRIVATE Sheet
+    (strategy-flavored key dates), so it must never ride in the coalition document
+    digest that goes to the full `alert_recipients` list. FAIL-SAFE on the
+    confidential direction — if `upcoming.recipients` is unset/empty the section is
+    NOT sent at all, rather than falling back to the whole list the way
+    `resolve_recipients` would. No-op on an empty block."""
+    if not upcoming_block:
+        return
+    recipients = (cfg.get("upcoming") or {}).get("recipients")
+    if not recipients:
+        print("[email_alerts] upcoming section not sent: no upcoming.recipients configured")
+        return
+    send_email(
+        "Arbor Hills — Upcoming Activities (next 14 days)", upcoming_block, cfg,
+        recipients=recipients,
+    )
