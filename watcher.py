@@ -271,12 +271,37 @@ def run() -> int:
             print(f"[watcher] WDS (Stream C) step skipped: {e}")
 
     # --- Sunday digest ---
-    if today.weekday() == 6 and state["pending_digest"]:
-        items = [_record_to_item(r) for r in state["pending_digest"]]
-        ea.send_digest(items, cfg)
-        state["pending_digest"] = []
-        sw.write_meta(sheets, sheet_id, state)
-        print(f"[watcher] sent Sunday digest ({len(items)} item(s)).")
+    if today.weekday() == 6:
+        # (1) Document digest — the coalition email to the full alert_recipients
+        # list, unchanged. Sent only when there are new documents (no empty digest
+        # on a quiet week).
+        if state["pending_digest"]:
+            items = [_record_to_item(r) for r in state["pending_digest"]]
+            ea.send_digest(items, cfg)
+            state["pending_digest"] = []
+            sw.write_meta(sheets, sheet_id, state)
+            print(f"[watcher] sent Sunday digest ({len(items)} item(s)).")
+
+        # (2) "Upcoming Activities (next 14 days)" from the PRIVATE Sheet
+        # (GSHEET_ID_PRIVATE — service-account-only, never operator-visible, so it
+        # may carry strategy-flavored key dates the public case-file Sheet must
+        # not). Sent as its OWN email, scoped to `upcoming.recipients` (Trisha only
+        # to start; NEVER the operator) — deliberately NOT folded into the coalition
+        # digest above, so the private dates can't reach the wider list. Best-effort:
+        # a missing secret / unreachable Sheet / send failure degrades to no section,
+        # never a crash. Sunday only.
+        try:
+            priv_id = os.environ.get("GSHEET_ID_PRIVATE")
+            if priv_id:
+                import upcoming as up
+                priv = dc.sheets_service()
+                up.ensure_upcoming_tab(priv, priv_id)
+                upcoming_block = up.render_upcoming(up.fetch_upcoming(priv, priv_id), today)
+                if upcoming_block:
+                    ea.send_upcoming(upcoming_block, cfg)
+                    print("[watcher] sent upcoming-activities section (scoped).")
+        except Exception as e:  # noqa: BLE001 — the digest must never break on this
+            print(f"[watcher] upcoming-activities section skipped: {e}")
 
     try:
         sw.rebuild_risk_register_tab(sheets, sheet_id, RISK_REGISTER)
