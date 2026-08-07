@@ -664,10 +664,12 @@ def test_the_parked_workflow_must_be_in_place_before_the_stream_is_enabled():
     )
 
 
-def test_shipped_config_is_disabled_and_covers_every_registry_site():
-    """Guards two things at once: the new-source gate really ships off, and the
-    tiers map stays in sync with nsite_sites (a srn in one and not the other is
-    either an unwatched site or a loud KeyError at runtime)."""
+def test_shipped_config_tiers_cover_every_registry_site():
+    """Guards that the `nsite_violations` tiers map stays in sync with nsite_sites
+    (a srn in one and not the other is either an unwatched site or a loud KeyError
+    at runtime). It used to also assert `enabled: false` (the new-source gate), but
+    the stream was later activated (config.yml `enabled: true`, a deliberate
+    operational choice), so the flag's value is no longer asserted here."""
     import pathlib
 
     import yaml
@@ -675,7 +677,6 @@ def test_shipped_config_is_disabled_and_covers_every_registry_site():
     # location-independent and this one should be too.
     with open(pathlib.Path(__file__).resolve().parent.parent / "config.yml") as f:
         cfg = yaml.safe_load(f)
-    assert cfg["nsite_violations"]["enabled"] is False
     tiers = cfg["nsite_violations"]["tiers"]
     registry = {s["srn"] for s in cfg["nsite_sites"]}
     assert set(tiers) == registry
