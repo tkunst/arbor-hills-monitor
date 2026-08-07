@@ -299,6 +299,7 @@ Trisha-directed (interactive session): hand-curate the six documents obtained by
 
 **Mirror dedup check performed:** grepped the N2688-Documents.csv, N2688-Documents 2.csv, and
 N2688-Documents 3.csv files against all document dates and names. Results:
+
 - `N2688_VN_20231025.pdf` -- IN Mirror as N2688_Violation Notice_10-25-2023 (doc_id -1516052274233321969); Drive `1Qy3Ko-kdgUJEMEwf0sS7PnEqkJBKzcZu` -- ANNOTATION mode
 - `N2688_RVN_20231025.pdf` -- IN Mirror as N2688_Violation Notice Response_10-25-2023 (doc_id -1905948147172766549); Drive `1EWyclas-wavlPOaz3haCTkWZj5t_1ias` -- ANNOTATION mode
 - `N2688_VN_20211110.pdf` -- IN Mirror as N2688_Violation Notice_11-10-2021 (doc_id -4806871774930027183); Drive `1GxZFI2sFGOtbywOGsdOxzoaGCHOHwyJQ` -- ANNOTATION mode
@@ -307,6 +308,7 @@ N2688-Documents 3.csv files against all document dates and names. Results:
 - `egle-inspection-report-leachate-spill-aug2022.pdf` -- NOT in Mirror (WRD document; Mirror covers AQD only) -- UPLOAD mode
 
 **Files uploaded (UPLOAD mode):**
+
 - `N2688_RVN_20211110.pdf` (244744 bytes) -- Drive id `1Pbg2WhFS5EBBlnjqG_g-rMgk931TmxPA`
 - `gfl-incident-report-leachate-spill-aug2022.pdf` (5637794 bytes) -- Drive id `1UdjGjbAXedZSGYvUUa5hMBDQYMRBsTp8`
 - `egle-inspection-report-leachate-spill-aug2022.pdf` (18715607 bytes) -- Drive id `1VOLNS5kMji5DIJfO-F7KHsN_TYv8kGBS`
