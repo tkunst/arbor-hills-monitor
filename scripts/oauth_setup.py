@@ -22,6 +22,16 @@ A browser opens; sign in as Trisha and approve. The script prints the refresh
 token + folder ID and the exact `gh secret set` commands. Finally, share the new
 mirror folder in Drive as "Anyone with the link -> Viewer" so the Conservancy
 can open Archive Links (these are already-public EGLE filings).
+
+To add ANOTHER app-only mirror folder later (e.g. the GFL air exhibit, ADR 026),
+reuse this flow with an explicit name + secret:
+    python scripts/oauth_setup.py <client.json> --folder-name "Arbor Hills GFL Air Exhibit" --secret-name GOAUTH_GFL_AIR_FOLDER_ID
+Only the printed folder-ID secret is new; CLIENT_ID/SECRET/REFRESH_TOKEN are
+already set from the first run. The exhibit is already-public GFL fenceline data,
+so share the folder the same way (Anyone with the link -> Viewer). The folder is
+created at your Drive root (the drive.file scope can't place it inside a hand-made
+parent) — move it under your public-records parent afterward; the app tracks it
+by its stable ID.
 """
 import os
 import sys
@@ -33,10 +43,26 @@ from config_loader import load_config
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
-        print("Usage: python scripts/oauth_setup.py <path-to-oauth-client.json>")
-        return 2
-    client_json = os.path.expanduser(sys.argv[1])
+    import argparse
+    ap = argparse.ArgumentParser(
+        description=(
+            "One-time OAuth setup: consent as Trisha, create an app-only Drive "
+            "folder, and print the GitHub secrets to store. Reuse it to add a NEW "
+            "mirror folder for another stream (e.g. the GFL air exhibit) via "
+            "--folder-name + --secret-name — only the folder-ID secret is new; the "
+            "CLIENT_ID/SECRET/REFRESH_TOKEN it prints are already set from the "
+            "first run and can be left as-is."))
+    ap.add_argument("client_json", help="path to the OAuth client JSON (Desktop app)")
+    ap.add_argument(
+        "--folder-name", default=None,
+        help="name of the folder to create (default: config archive.folder_name)")
+    ap.add_argument(
+        "--secret-name", default="GOAUTH_ARCHIVE_FOLDER_ID",
+        help="the folder-ID GitHub secret to print in the `gh secret set` line "
+             "(e.g. GOAUTH_GFL_AIR_FOLDER_ID for the GFL air exhibit)")
+    args = ap.parse_args()
+
+    client_json = os.path.expanduser(args.client_json)
     if not os.path.exists(client_json):
         print(f"OAuth client JSON not found: {client_json}")
         return 2
@@ -44,7 +70,7 @@ def main() -> int:
     from google_auth_oauthlib.flow import InstalledAppFlow
 
     cfg = load_config()
-    folder_name = (cfg.get("archive") or {}).get(
+    folder_name = args.folder_name or (cfg.get("archive") or {}).get(
         "folder_name", "Arbor Hills Case File Mirror")
 
     flow = InstalledAppFlow.from_client_secrets_file(client_json, ac.OAUTH_SCOPES)
@@ -87,7 +113,7 @@ def main() -> int:
     print(f"      -> {client_secret}")
     print("  gh secret set GOAUTH_REFRESH_TOKEN")
     print(f"      -> {creds.refresh_token}")
-    print("  gh secret set GOAUTH_ARCHIVE_FOLDER_ID")
+    print(f"  gh secret set {args.secret_name}")
     print(f"      -> {fid}")
     print("\nThese values are SENSITIVE. After copying them into the secrets, "
           "clear your terminal scrollback.")
