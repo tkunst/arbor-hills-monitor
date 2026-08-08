@@ -325,18 +325,19 @@ gfl_air:
   # 36,446 hourly stamps) is 17h and it has NEVER gone quiet >24h, so 72h is a ~4.2×
   # margin that cannot false-fire on normal cadence (verified live, 2026-07-15).
   max_stale_days: 3
-  # Durable air-readings exhibit (ADR 026, Gap G1-E-1/G3-E-1). SHIPS DISABLED:
-  # writing needs a NEW app-only Drive folder + a GOAUTH_GFL_AIR_FOLDER_ID secret
-  # (Trisha-only, created once like GOAUTH_MMPC_FOLDER_ID / GOAUTH_RIDGEWOOD_FOLDER_ID).
-  # ACTIVATION is a separate, later human step: create the folder, add the secret,
-  # then set enabled: true here. Until then _write_capture() is a silent no-op, so
-  # this ships safe. When enabled, each poll uploads an IMMUTABLE JSON of the
-  # selected readings {monitor_id, timestamp, H2S, CH4, wind dir/speed, temp}:
-  # >= 1 row per `baseline_hours` per station, PLUS every reading for a station
-  # during an exceedance/watch (Tier-1 CH4 >= 40) period. The monthly summary PDF
-  # is rendered from these files only when an exhibit is actually needed (deferred).
+  # Durable air-readings exhibit (ADR 026, Gap G1-E-1/G3-E-1). ACTIVATED 2026-08-08:
+  # the app-only Drive folder "Arbor Hills GFL Air Exhibit" was created (via the
+  # create-oauth-folder workflow, from the stored GOAUTH creds) and its id set as
+  # the GOAUTH_GFL_AIR_FOLDER_ID secret (Trisha-only, like GOAUTH_MMPC_FOLDER_ID /
+  # GOAUTH_RIDGEWOOD_FOLDER_ID). With enabled: true below, each poll uploads an
+  # IMMUTABLE JSON of the selected readings {monitor_id, timestamp, H2S, CH4, wind
+  # dir/speed, temp}: >= 1 row per `baseline_hours` per station, PLUS every reading
+  # for a station during an exceedance/watch (Tier-1 CH4 >= 40) period. The monthly
+  # summary PDF is rendered from these files only when an exhibit is actually needed
+  # (deferred). Rollback lever: set enabled: false to return _write_capture() to a
+  # silent no-op (the folder + secret can stay).
   capture:
-    enabled: false
+    enabled: true
     baseline_hours: 8
 
 # --- CivicClerk meeting-change watch (Stream F, ADR 015, added 2026-07-14) ---
