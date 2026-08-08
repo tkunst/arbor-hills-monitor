@@ -24,7 +24,12 @@ Two things made it hard to see, and both are what these tests encode:
 Scope note: these tests deliberately check *any* workflow, not `claude-review.yml`
 by name. Asserting "that one file is gone" would be the first thing deleted by
 whoever reintroduces it under a new name, taking the guard with it. This form
-survives the file it was written for.
+survives the file it was written for. For the same reason the search covers
+`.yaml` as well as `.yml`, and `docs/pending-workflows/` as well as
+`.github/workflows/` — this repo parks workflow files there before activating them
+with a `git mv` (that is how nsite-violations-watch.yml lived before PR #36), so a
+reviewer reintroduced in the parking lot would otherwise pass here and go live
+later without ever tripping the guard.
 """
 
 import pathlib
@@ -32,7 +37,19 @@ import pathlib
 import pytest
 import yaml
 
-WORKFLOWS = sorted((pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows").glob("*.yml"))
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+_WORKFLOW_DIRS = (_ROOT / ".github" / "workflows", _ROOT / "docs" / "pending-workflows")
+WORKFLOWS = sorted(
+    p for d in _WORKFLOW_DIRS for ext in ("*.yml", "*.yaml") for p in d.glob(ext)
+)
+
+
+def test_the_guard_actually_has_workflows_to_scan():
+    """An empty parametrize list collects zero tests and reports green — the same
+    silent pass this whole module exists to prevent. If the workflow directories
+    move or the globs stop matching, fail here rather than quietly guard nothing.
+    """
+    assert WORKFLOWS, f"no workflow files found under {[str(d) for d in _WORKFLOW_DIRS]}"
 
 
 def _claude_action_steps(workflow_path):
