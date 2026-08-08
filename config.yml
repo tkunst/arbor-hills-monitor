@@ -536,13 +536,13 @@ mmd:
 # rarely — near-silent in steady state. The FIRST sighting of each watched
 # item baselines silently. See ride_client.py / ride_watcher.py.
 #
-# NEW SOURCE — ships DISABLED per overnight-coder's new-source gate (built
-# 2026-07-23/24, unattended overnight; the live feasibility re-check confirmed
-# all 6 records still return). ACTIVATION is a separate, later, human step:
-# review the watched fields below, then flip enabled: true (keyless — nothing
-# to provision, no new secret).
+# Built 2026-07-23/24 (unattended overnight) and shipped disabled per the
+# new-source gate; the live feasibility re-check confirmed all 6 records return.
+# ACTIVATED 2026-08-07 (Trisha-directed) — keyless, nothing to provision. The
+# first run baselines every watched item silently; alerts go to `recipients`
+# below (Trisha only to start).
 ride:
-  enabled: false
+  enabled: true
   site_ids:                          # Layer 0 (Part 201) — key field SiteID
     - "81000033"   # Salem Landfill
     - "81000004"   # Arbor Hills - East
