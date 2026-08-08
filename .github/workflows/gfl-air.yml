@@ -48,7 +48,11 @@ jobs:
       - name: Poll GFL perimeter air feed
         env:
           # Sheets I/O uses the service account; exceedance alerts use SMTP.
-          # No Anthropic (nothing to classify) and no OAuth (no Drive mirror).
+          # No Anthropic (nothing to classify). The durable air-readings exhibit
+          # (ADR 026) uploads an immutable capture JSON to an app-only Drive
+          # folder via OAuth, so the GOAUTH_* creds + the folder-ID secret are
+          # passed too — a quiet no-op unless gfl_air.capture.enabled AND all
+          # four are set (ac.is_configured), so this stays harmless when unset.
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -56,4 +60,8 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}
+          GOAUTH_GFL_AIR_FOLDER_ID: ${{ secrets.GOAUTH_GFL_AIR_FOLDER_ID }}
         run: python gfl_air_watcher.py
