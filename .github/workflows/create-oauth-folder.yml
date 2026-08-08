@@ -1,0 +1,41 @@
+name: create-oauth-folder
+
+# One-off helper (manual only): create a NEW app-only Drive folder using the
+# EXISTING GOAUTH creds, so an additional mirror (e.g. the GFL air exhibit, ADR
+# 026) can be provisioned when the original OAuth client JSON isn't on hand —
+# scripts/oauth_setup.py needs that JSON + a browser; this doesn't. It only mints
+# a Drive service from the stored refresh token, creates ONE empty folder, and
+# prints its ID in the run log. You then store the ID as the folder-ID secret and
+# flip the stream's capture flag. Reads/modifies no monitoring data.
+on:
+  workflow_dispatch:
+    inputs:
+      folder_name:
+        description: "Name of the Drive folder to create"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  create-folder:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Create the folder
+        env:
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}
+          FOLDER_NAME: ${{ inputs.folder_name }}
+        run: python scripts/create_oauth_folder.py
