@@ -44,7 +44,11 @@ part of the PR that added them here.
 
 | file | stream | blocks |
 |---|---|---|
-| `nsite-violations-watch.yml` | Stream L — nSITE Violations watch (ADR 023) | Nothing today: `nsite_violations.enabled` ships `false`, so the stream is a no-op either way. **It must be moved before `enabled` is flipped to `true`**, or the watch will never be scheduled and will fail silently. |
+| `nsite-compliance-actions-watch.yml` | Stream M — nSITE Compliance Actions watch (ADR 028) | Nothing today: `nsite_compliance_actions.enabled` ships `false`, so the stream is a no-op either way. **It must be moved before `enabled` is flipped to `true`**, or the watch will never be scheduled and will fail silently. |
+
+<!-- Stream L (nSITE Violations, ADR 023) was parked here too; it was moved into
+`.github/workflows/nsite-violations-watch.yml` when PR #36 merged, so its row is
+gone from this table. -->
 
 **When you move a file out, delete its row above** — and when the table empties,
 delete this whole directory. It is a holding pen, not a permanent fixture, and a
