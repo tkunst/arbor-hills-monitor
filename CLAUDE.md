@@ -166,6 +166,27 @@ external users but no sensitive data). Public repo.
   lacked the `workflow` OAuth scope, so the file was parked until a
   scope-bearing SSH push could land it). The 2pm-ET cron runs as a no-op
   until `enabled` is flipped. See ADR 023.
+- `nsite_compliance_actions_watcher.py` — Stream M: daily snapshot-diff of
+  EGLE's nSITE **Compliance Actions** profile (the formal actions the regulator
+  takes in *response* to a violation — Violation Notices, Consent Orders,
+  Consent Judgments; the documented other half of the enforcement story
+  Stream L watches) for every srn in `nsite_compliance_actions.tiers`, against
+  the `Compliance Actions Watch` tab. Item key `ca:<srn>`; a near-verbatim copy
+  of the Violations watch (`NsiteStructuralError`, batched RAISING tab read,
+  per-site try covering the write, `alerting_is_configured()` gate, imported
+  `_is_due`, run-length counted snapshot). The feasibility gate (live, all 5
+  non-dormant sites) found the candidate key `cmplActnCmplActnNum` **non-unique**
+  (N2688 files one federal case number on two records) → full-record `Counter`
+  MULTISET diff, same as Violations — but the ADDED/REMOVED lines lead with the
+  action **`num`**, not `category` (which is a bare "Administrative"/"Civil"),
+  so a status advance (Issued→Closed) on a known action is legible. Makes no
+  severity judgment. Tiers are this profile's own (**2 daily / 4 biweekly / 13
+  quarterly**), NOT a copy of Violations' 3/3/13 — N1504 drops to biweekly
+  because its two actions are both *Closed*. Gated on
+  `nsite_compliance_actions.enabled` (new source; ships `false`). Its workflow
+  is parked at `docs/pending-workflows/nsite-compliance-actions-watch.yml` (the
+  build token lacked the `workflow` OAuth scope) and must be `git mv`'d into
+  `.github/workflows/` before the flag is flipped. See ADR 028.
 
 ## Forbidden patterns (do not do these)
 
