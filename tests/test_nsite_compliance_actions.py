@@ -200,6 +200,42 @@ def test_fetch_retries_then_succeeds():
     assert session.calls == 2
 
 
+def test_fetch_hits_the_compliance_actions_endpoint_with_the_site_filter():
+    """The endpoint path / filter param / Referer are otherwise only verifiable
+    against the live API (the _Session fake ignores the URL). A copy-paste of
+    the wrong profile path — e.g. reusing the Violations endpoint — is a
+    plausible bug that would 404 in production, and the safe failure mode
+    (loud NsiteFetchError at activation) means it would not surface until then.
+    Pin the URL construction so a wrong constant fails the suite instead."""
+    captured = {}
+
+    class _CapturingSession:
+        def get(self, url, headers=None, timeout=None):
+            captured["url"] = url
+            captured["headers"] = headers or {}
+            return _Resp({"queryResults": [_RAW_CA]})
+
+    nc.fetch_site_compliance_actions(_CapturingSession(), "8094300008956198244")
+    assert "/profiles/3-compliance/3-compliance-actions" in captured["url"]
+    assert "/profiles/3-compliance/2-violations" not in captured["url"]   # not the sibling
+    assert "responseContentType=application" in captured["url"]
+    assert "8094300008956198244" in captured["url"]                       # site id in queryParams
+    assert "detail/8094300008956198244" in captured["headers"].get("Referer", "")
+
+
+def test_fetch_coerces_a_non_string_date_to_empty_instead_of_crashing():
+    """A sibling EGLE ArcGIS feed serves epoch-ms INTEGERS for dates. A non-str
+    here would raise TypeError out of the slicing/regex (not the ValueError the
+    parse paths catch), escape into the retry loop, and blind the whole site
+    behind a permanent NsiteFetchError. It must fail soft to ""."""
+    raw = dict(_RAW_CA, cmplActnActnDate=1723075200000)   # epoch ms as an int
+    session = _Session(_Resp({"queryResults": [raw]}))
+    rows = nc.fetch_site_compliance_actions(session, "X")
+    assert rows[0]["action_date"] == ""
+    assert rows[0]["num"] == "VN-019436"
+    assert session.calls == 1   # not retried — it was never an error
+
+
 # ==============================================================================
 # Pure snapshot / diff helpers
 # ==============================================================================

@@ -195,7 +195,7 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
     formal actions EGLE takes in *response* to a violation (Violation Notices,
     Consent Orders, Consent Judgments) — the documented other half of the
     enforcement story the Violations watch (Stream L) covers. Live-fetched
-    2026-08-09: N2688 39 actions (a Violation Notice **issued last month**,
+    2026-08-08: N2688 39 actions (a Violation Notice **issued last month**,
     still open, plus a federal Consent Order), RA 10 (incl. the open PFOS
     VN-011821), N1504 2 (both closed). Its candidate key `cmplActnCmplActnNum`
     proved **non-unique** — N2688 files one federal case number on two records
