@@ -23,7 +23,7 @@ RA 10), which is why it was chosen next.
 ## The feasibility gate (and what it decided)
 
 A genuine gate, not a formality — the 5 non-dormant sites were live-fetched on
-2026-08-09 and the result **chose the diff design**.
+2026-08-08 and the result **chose the diff design**.
 
 ### Endpoint and shape
 
