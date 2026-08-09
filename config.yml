@@ -740,12 +740,14 @@ nsite_violations:
 # Violations (its violations are open/unresolved) but BIWEEKLY here, because its
 # two compliance actions are both CLOSED. See ADR 028 for the full table.
 nsite_compliance_actions:
-  # Ships OFF: a brand-new poller against a live external system, built
-  # unattended (overnight-coder Step 3). Flipping this to true is a separate
-  # human step, and REQUIRES first moving the parked workflow file into place —
-  # see docs/pending-workflows/nsite-compliance-actions-watch.yml + the ADR. The
-  # first enabled run baselines every due site silently — no alert flood.
-  enabled: false
+  # ACTIVATED 2026-08-09 (Trisha-directed): the parked workflow was moved into
+  # .github/workflows/nsite-compliance-actions-watch.yml and this flag flipped on
+  # in the same change — via an SSH push, because the `workflow` OAuth scope is
+  # deliberately not kept on the build machine (the same path PR #36 used to arm
+  # Stream L). The first enabled run baselines every due site silently — no alert
+  # flood, even at N2688's 39 records — and alerts (Trisha-only to start) begin
+  # only on the next run that finds an actual change. See ADR 028.
+  enabled: true
   # Recipient override: Trisha only to start (the Meeting Watch / MMD / RIDE /
   # Submissions / Violations precedent for a brand-new alert stream). Delete/
   # comment this block to send to the full alert_recipients list once the alert

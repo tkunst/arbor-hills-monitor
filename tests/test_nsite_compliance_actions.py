@@ -582,9 +582,13 @@ def test_the_parked_workflow_must_be_in_place_before_the_stream_is_enabled():
 
 def test_shipped_config_tiers_cover_every_registry_site_and_differ_from_violations():
     """The tiers map must stay in sync with nsite_sites (a srn in one and not the
-    other is either an unwatched site or a loud KeyError at runtime), ship
-    disabled (new source), and — the handoff's explicit instruction — NOT be a
-    copy of the Violations tiers."""
+    other is either an unwatched site or a loud KeyError at runtime) and — the
+    handoff's explicit instruction — NOT be a copy of the Violations tiers. It
+    used to also assert `enabled: false` (the new-source gate), but the stream
+    was activated 2026-08-09 (config.yml `enabled: true`, a Trisha-directed
+    operational choice), so the flag's value is no longer asserted here — same as
+    the Violations test after its own activation. The parked-workflow invariant
+    still guards the ordering (see the enforcing test above)."""
     import pathlib
 
     import yaml
@@ -594,7 +598,6 @@ def test_shipped_config_tiers_cover_every_registry_site_and_differ_from_violatio
     registry = {s["srn"] for s in cfg["nsite_sites"]}
     assert set(tiers) == registry
     assert set(tiers.values()) <= {"daily", "biweekly", "quarterly"}
-    assert cfg["nsite_compliance_actions"]["enabled"] is False   # new-source gate
     assert tiers != cfg["nsite_violations"]["tiers"]
     assert tiers != cfg["nsite_submissions"]["tiers"]
 

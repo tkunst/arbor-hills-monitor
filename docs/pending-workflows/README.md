@@ -42,14 +42,17 @@ part of the PR that added them here.
 
 ## Currently pending
 
-| file | stream | blocks |
-|---|---|---|
-| `nsite-compliance-actions-watch.yml` | Stream M — nSITE Compliance Actions watch (ADR 028) | Nothing today: `nsite_compliance_actions.enabled` ships `false`, so the stream is a no-op either way. **It must be moved before `enabled` is flipped to `true`**, or the watch will never be scheduled and will fail silently. |
+_Nothing is pending right now — every workflow file lives in
+`.github/workflows/`._
 
-<!-- Stream L (nSITE Violations, ADR 023) was parked here too; it was moved into
-`.github/workflows/nsite-violations-watch.yml` when PR #36 merged, so its row is
-gone from this table. -->
+Stream L (nSITE Violations, ADR 023) was parked here and moved into place when
+PR #36 merged; Stream M (nSITE Compliance Actions, ADR 028) likewise, when it
+was activated 2026-08-09 (moved into `.github/workflows/` via an SSH push and
+`nsite_compliance_actions.enabled` flipped `true` in the same change — the
+`workflow` OAuth scope is deliberately not kept on the build machine).
 
-**When you move a file out, delete its row above** — and when the table empties,
-delete this whole directory. It is a holding pen, not a permanent fixture, and a
-stale "currently pending" list on `main` is worse than no list at all.
+**When you move a file out, delete its row above.** This directory is a holding
+pen, not a permanent fixture — a stale "currently pending" list on `main` is
+worse than no list at all. It is kept while empty only because ADR 023 / ADR 028
+and `CLAUDE.md` reference this pattern doc, and the next overnight stream built
+without the `workflow` scope will park its `.yml` here again.
