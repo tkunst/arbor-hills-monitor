@@ -1,0 +1,64 @@
+name: nsite-compliance-actions-watch
+
+# nSITE Compliance Actions watch (Stream M, ADR 028): daily watch on EGLE's
+# nSITE Compliance Actions profile — the formal actions the regulator takes in
+# RESPONSE to a violation (Violation Notices, Consent Orders, Consent Judgments),
+# the documented other half of the enforcement story the Violations watch (Stream
+# L) covers — for every site in config.yml's `nsite_sites` registry that has an
+# `nsite_compliance_actions.tiers` entry. Emails an alert on ANY change to a
+# site's compliance-action list vs the last snapshot in the "Compliance Actions
+# Watch" tab; the first sighting of each site baselines silently.
+#
+# Ships nsite_compliance_actions.enabled: FALSE — a brand-new poller against a
+# live external system, built unattended (overnight-coder Step 3), so this job
+# runs on schedule but is a deliberate no-op until a human flips the flag. No
+# Anthropic (a deterministic extractor, not the Claude classifier) and no
+# Drive/OAuth (the deliverable is the alert + the durable Sheet row, same scope
+# call as rop/mmd/ride/submissions/violations). 3pm ET continues the sequential
+# slotting after pfas(7am)/rop(10am)/mmd(11am)/ride(12pm)/submissions(1pm)/
+# violations(2pm); state is the "Compliance Actions Watch" tab, NOT _meta, so it
+# never races the other jobs.
+on:
+  schedule:
+    - cron: "0 20 * * *"    # 3pm ET (8pm UTC). DST drift of +/-1h is acceptable.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nsite-compliance-actions-watch
+  cancel-in-progress: false
+
+jobs:
+  nsite-compliance-actions-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Watch nSITE Compliance Actions for changes
+        env:
+          # Sheets I/O uses the service account; the change alert uses SMTP.
+          # No Anthropic (nothing to classify) and no OAuth (no Drive mirror).
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
+        run: python nsite_compliance_actions_watcher.py

@@ -23,6 +23,14 @@ And fetch_site_violations() (Stream L, ADR 023) — a THIRD sibling profile,
 EGLE's own enforcement record (formal violation findings). Same raise-don't-
 swallow contract as fetch_site_submissions, but with no unique-key field and
 therefore no record filter; see its docstring.
+
+And fetch_site_compliance_actions() (Stream M, ADR 028) — a FOURTH sibling
+profile, the OTHER half of the enforcement story: the formal actions EGLE takes
+in response to a violation (Violation Notices, Consent Orders, Consent
+Judgments). Same raise-don't-swallow contract and same no-filter/multiset
+posture as fetch_site_violations — its candidate reference number
+(cmplActnCmplActnNum) proved non-unique in the live spike (N2688 files one
+number, a federal case number, on two records), so it too keeps every record.
 """
 from __future__ import annotations
 
@@ -448,6 +456,171 @@ def fetch_site_violations(session: requests.Session, nsite_id: str) -> list[dict
                 time.sleep(2 ** attempt)
     raise NsiteFetchError(
         f"GET violations for site {nsite_id} failed after 3 attempts: {last_exc}"
+    ) from last_exc
+
+
+# Another sibling profile — EGLE's own COMPLIANCE ACTIONS (the formal actions
+# the regulator takes in response to a violation: Violation Notices, Consent
+# Orders, Consent Judgments), the documented other half of the enforcement
+# story fetch_site_violations watches. Same query shape as the three profiles
+# above; anonymous, no auth. Confirmed live 2026-07-24 and re-confirmed across
+# the 5 known sites on 2026-08-08 (Stream M, ADR 028): 51 records total, all
+# carrying exactly the six COMPLIANCE_ACTION_FIELDS below, with real history
+# only at N2688 (39), RA (10) and N1504 (2).
+COMPLIANCE_ACTIONS_ENDPOINT = (
+    f"{NSITE_BASE}/nsite/ss/api/nsite-explorer/default-mode"
+    "/profiles/3-compliance/3-compliance-actions"
+)
+
+# The six fields EGLE's Compliance Actions profile serves, renamed to short
+# readable names. Confirmed 2026-08-08 present on ALL 51 records across every
+# site that has any (N2688/RA/N1504) — one distinct field-set per site, no
+# optional fields, no nesting. `num` leads because it is the closest thing to
+# an identifier (the Violation-Notice / order number), so the multiset diff's
+# ADDED/REMOVED lines lead with it — see nsite_compliance_actions_watcher.
+COMPLIANCE_ACTION_FIELDS = (
+    "num", "type", "status", "action_date", "category", "program",
+)
+
+_COMPLIANCE_ACTION_RAW_KEYS = {
+    "num": "cmplActnCmplActnNum",              # "VN-019436", "5:21-cv-12098-S", "16-2015"
+    "type": "cmplActnRefCmplActnTypeDescr",    # "Violation Notice", "Consent Judgment"
+    "status": "cmplActnRefCmplActnStatDescr",  # "Issued", "Closed", "Entered", "Terminated"
+    "action_date": "cmplActnActnDate",         # ISO datetime w/ UTC offset
+    "category": "cmplActnRefCmplActnCatgDescr",  # "Administrative", "Civil"
+    "program": "cmplActnRefProgramAreaDescr",  # "AQD - Air", "WRD - NPDES"
+}
+
+
+def _normalize_compliance_action(raw: dict) -> dict:
+    """Convert a raw nSITE compliance-action dict into the fields the watch
+    diffs on.
+
+    There is deliberately NO unique-key field, unlike Submissions'
+    `submSubmRefNum`. The candidate — `cmplActnCmplActnNum` — proved non-unique
+    in the 2026-08-08 live spike: N2688 files the federal case number
+    `5:21-cv-12098-S` on TWO records (a Consent Order entered on two dates). So
+    nsite_compliance_actions_watcher diffs a full-record Counter MULTISET rather
+    than keying by it, exactly like the Violations watch — see its module
+    docstring.
+
+    One canonicalization, matching _normalize_violation, exists to stop a
+    representation change from firing a false "changed" alert:
+      - `action_date` -> a bare ISO date. The raw value carries a UTC offset
+        ("...-04:00" in EDT, "...-05:00" in EST); the calendar date is the
+        signal and the offset is not, so the EDT->EST flip each fall must not
+        read as a change.
+
+    There is no free-text field here (all six are controlled vocabularies or a
+    reference number), so no CRLF-collapsing is needed the way `comments`
+    required it.
+
+    Every field is read with `or ""` (NOT `.get(f, "")`) for parity with
+    _normalize_violation: a present-but-null key must normalize to the same ""
+    an absent key would, so the day EGLE serves "" instead of null the hash
+    does not flip for no real reason (no nulls were observed in the spike, but
+    the guard is free)."""
+    date_str = raw.get(_COMPLIANCE_ACTION_RAW_KEYS["action_date"]) or ""
+    if not isinstance(date_str, str):
+        # Same soft-fail as _normalize_violation: a non-str (a sibling EGLE
+        # ArcGIS feed serves epoch-ms ints for dates) would raise TypeError out
+        # of the slicing/regex below — NOT the ValueError the parse paths catch
+        # — escape into fetch_site_compliance_actions' broad retry loop, and
+        # surface as a permanent NsiteFetchError blinding the whole site.
+        date_str = str(date_str)
+    parsed_date: Optional[date] = None
+    if date_str:
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%m/%d/%Y"):
+            try:
+                parsed_date = datetime.strptime(date_str[: len(fmt) + 2], fmt).date()
+                break
+            except ValueError:
+                continue
+        if parsed_date is None:
+            m = re.match(r"(\d{4})-(\d{2})-(\d{2})", date_str)
+            if m:
+                # date() rejects an out-of-range day; a real "2026-02-30" would
+                # otherwise raise here, escape into the retry loop, and blind
+                # the WHOLE site over one bad record. Every other parse path is
+                # fail-soft; this one must be too.
+                try:
+                    parsed_date = date(int(m[1]), int(m[2]), int(m[3]))
+                except (ValueError, TypeError):
+                    parsed_date = None
+    out = {f: (raw.get(_COMPLIANCE_ACTION_RAW_KEYS[f]) or "") for f in COMPLIANCE_ACTION_FIELDS}
+    out["action_date"] = parsed_date.isoformat() if parsed_date else ""
+    return out
+
+
+def fetch_site_compliance_actions(session: requests.Session, nsite_id: str) -> list[dict]:
+    """Return the full list of normalized compliance actions for one nSITE site.
+
+    Raises NsiteFetchError after 3 attempts on ANY network/HTTP/structural
+    failure — the same contract as fetch_site_violations / fetch_site_submissions
+    and for the same reason (nsite_compliance_actions_watcher DIFFS this list,
+    so a swallowed failure returned as [] would read as "every compliance action
+    closed at once"), NOT fetch_site_documents' swallow-and-return-[].
+
+    Like fetch_site_violations, this keeps EVERY element of `queryResults`
+    unconditionally — the CA reference number is not a guaranteed-unique key
+    (see _normalize_compliance_action), so any filter would silently drop real
+    enforcement records. A non-dict element surfaces as a loud NsiteFetchError.
+
+    An empty list is a VALID result (P1488, WRD and the 14 dormant sites have
+    zero compliance actions); only a fetch/structural failure raises."""
+    query_params = urllib.parse.quote('{"filter":[{"id":"' + str(nsite_id) + '"}]}')
+    url = (
+        f"{COMPLIANCE_ACTIONS_ENDPOINT}"
+        f"?responseContentType=application/json"
+        f"&includeMetadataInResponse=true"
+        f"&loadChildren=true"
+        f"&queryParams={query_params}"
+        f"&filterString="
+    )
+    referer = f"{NSITE_BASE}/nsite/DEFAULT/map/results/detail/{nsite_id}/Documents"
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            r = session.get(
+                url,
+                headers={"Referer": referer, "Accept": "application/json"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            data = r.json()
+            if "queryResults" not in data:
+                raise NsiteFetchError(
+                    f"compliance-actions response for site {nsite_id} is missing "
+                    f"'queryResults' — nSITE may have changed its response shape"
+                )
+            if data.get("hasResultsRemaining"):
+                # Null on every site today (verified 2026-08-08). If nSITE ever
+                # enables server-side paging, a partial page would be
+                # INDISTINGUISHABLE from a shrunken record set: the caller's
+                # multiset diff would read a truncated page as mass deletions
+                # and email it as fact. Fail loudly instead — the same guard as
+                # fetch_site_violations.
+                raise NsiteStructuralError(
+                    f"compliance-actions response for site {nsite_id} reports "
+                    f"hasResultsRemaining — nSITE has started paging this "
+                    f"profile and this client would otherwise diff a PARTIAL "
+                    f"page as mass deletions. Pagination support is needed."
+                )
+            return [_normalize_compliance_action(c) for c in data["queryResults"]]
+        except NsiteStructuralError:
+            # Re-raise immediately, before the retry loop can swallow it into a
+            # generic NsiteFetchError: retrying a shape change is pointless, and
+            # the caller distinguishes the two types deliberately (a generic
+            # NsiteFetchError is treated as transient skip-and-warn, the exact
+            # silent-forever outcome this class exists to avoid).
+            raise
+        except Exception as e:  # noqa: BLE001 — network/HTTP: retry, then raise loud
+            last_exc = e
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+    raise NsiteFetchError(
+        f"GET compliance actions for site {nsite_id} failed after 3 attempts: {last_exc}"
     ) from last_exc
 
 

@@ -719,6 +719,77 @@ nsite_violations:
     SANL: quarterly
     ERNGX: quarterly
 
+# --- nSITE Compliance Actions watch (Stream M, ADR 028) ---
+# Watch on the "Compliance Actions" profile — the formal actions EGLE takes in
+# RESPONSE to a violation (Violation Notices, Consent Orders, Consent Judgments),
+# the documented OTHER HALF of the enforcement story the Violations watch (Stream
+# L) covers. A fourth sibling profile to Documents (`facilities:`), Submissions,
+# and Violations above. ONE fetch per site -> ONE item ("ca:<srn>"); the FIRST
+# sighting of each site's compliance-action list baselines silently. After that,
+# ANY change alerts — a new action appearing, or an existing one's status
+# advancing (e.g. a Violation Notice moving Issued -> Closed). NO judgment about
+# which status is good or bad: EGLE's vocabulary ("Issued", "Closed", "Entered",
+# "Terminated") is a multi-state lifecycle, so this is a trip-wire and a human
+# reads what the change means.
+#
+# `tiers` maps srn -> poll cadence for THIS profile only; every key MUST be a srn
+# present in `nsite_sites` above — a typo'd/unknown srn is a config error and
+# raises loudly (ADR 022). The tiers below are DELIBERATELY NOT a copy of
+# `nsite_violations.tiers`: the 5 non-dormant sites were live-fetched on
+# 2026-08-08 and the counts/recency differ. In particular N1504 is DAILY for
+# Violations (its violations are open/unresolved) but BIWEEKLY here, because its
+# two compliance actions are both CLOSED. See ADR 028 for the full table.
+nsite_compliance_actions:
+  # Ships OFF: a brand-new poller against a live external system, built
+  # unattended (overnight-coder Step 3). Flipping this to true is a separate
+  # human step, and REQUIRES first moving the parked workflow file into place —
+  # see docs/pending-workflows/nsite-compliance-actions-watch.yml + the ADR. The
+  # first enabled run baselines every due site silently — no alert flood.
+  enabled: false
+  # Recipient override: Trisha only to start (the Meeting Watch / MMD / RIDE /
+  # Submissions / Violations precedent for a brand-new alert stream). Delete/
+  # comment this block to send to the full alert_recipients list once the alert
+  # copy has been seen in the wild.
+  recipients:
+    - arbor-hills@trishakunst.com
+  # ROLLBACK LEVER, inherited from ADR 023 for parity — but UNLIKE Violations
+  # there is no known volatile field to point it at (all six CA fields are
+  # controlled vocabularies or a reference number, none free text). It ships
+  # excluding nothing; uncomment a field only if activation shows it churning.
+  # Changing this list changes the hash basis, so it fires exactly ONE
+  # re-baseline row per site, labelled a configuration change, not an EGLE change.
+  # exclude_fields:
+  #   - category
+  # Max characters written to the Snapshot JSON cell before the watch degrades
+  # to a digest-only payload. A Sheets cell hard-caps at 50,000; the largest CA
+  # site (N2688, 39 records) serializes to ~4,800 in the run-length counted form,
+  # so this NEVER fires at CA volumes — it is inherited insurance against a bulk
+  # EGLE re-import, not a live concern the way RA's 299 violations were (ADR 028).
+  snapshot_char_budget: 45000
+  tiers:
+    # --- daily (2) — real CA history AND open/recent enforcement ---
+    N2688: daily      # 39 CAs, 2014-12-15..2026-07-15; a VN ISSUED last month (open) + a federal Consent Order — the most active enforcement record
+    RA: daily         # 10 CAs, 2012..2024-11; incl. the OPEN PFOS VN-011821. Same harm-asymmetry override ADR 023 used for RA (water/NPDES, 30-day comment windows)
+    # --- biweekly (4) — real-but-closed history, or a live facility where a first CA is plausible ---
+    N1504: biweekly   # 2 CAs, both 2025 and both CLOSED — real history but no open enforcement (DAILY for Violations, which are unresolved; genuinely different here)
+    WRD: biweekly     # 0 CAs, but an open JPA + PFOS interest at the Land & Water Interface site
+    P1488: biweekly   # 0 CAs, but a live ROP renewal in public comment (Emerald RNG)
+    AHLI: biweekly    # 0 CAs; bare duplicate registration for the SAME landfill as N2688 — most likely to receive a mis-filed action
+    # --- quarterly (13) — zero compliance actions ever; typo/mis-filing insurance only ---
+    P1504: quarterly
+    AHLA: quarterly
+    AHLB: quarterly
+    AHLC: quarterly
+    AHLD: quarterly
+    AHLE: quarterly
+    ADL1: quarterly
+    ADL2: quarterly
+    COMP: quarterly
+    AHE1: quarterly
+    AHE2: quarterly
+    SANL: quarterly
+    ERNGX: quarterly
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 alert_recipients:

@@ -189,6 +189,29 @@ live in the repo — cloud secrets are GitHub Secrets / local `.env`.
     watch is never scheduled. (The build session's credentials lacked the
     `workflow` OAuth scope — see `docs/pending-workflows/README.md`.)
 
+17. **nSITE Compliance Actions watch (Stream M)** (daily, optional —
+    `nsite_compliance_actions.enabled: false`, ships disabled): watches a
+    FOURTH nSITE profile for the same 19 sites — **Compliance Actions**, the
+    formal actions EGLE takes in *response* to a violation (Violation Notices,
+    Consent Orders, Consent Judgments) — the documented other half of the
+    enforcement story the Violations watch (Stream L) covers. Live-fetched
+    2026-08-09: N2688 39 actions (a Violation Notice **issued last month**,
+    still open, plus a federal Consent Order), RA 10 (incl. the open PFOS
+    VN-011821), N1504 2 (both closed). Its candidate key `cmplActnCmplActnNum`
+    proved **non-unique** — N2688 files one federal case number on two records
+    — so, like Violations, the diff is a full-record **multiset**; every
+    ADDED/REMOVED line **leads with the action number** so a status change on a
+    known action (Issued → Closed — the highest-value event) reads legibly.
+    Makes **no judgment** about which status is good or bad. Own per-site
+    tiers (`2/4/13`), deliberately **not** a copy of the Violations tiers:
+    N1504 is *daily* for Violations (unresolved) but *biweekly* here (its
+    actions are closed). Snapshot-diff into the `Compliance Actions Watch`
+    tab; first sighting baselines silently. New source, ships disabled — see
+    `docs/decisions/028-nsite-compliance-actions-watch.md` for activation
+    (**two** steps: its workflow is parked at
+    `docs/pending-workflows/nsite-compliance-actions-watch.yml` and must be
+    moved into `.github/workflows/` before `enabled` is flipped).
+
 > **A note on the document links (expected behavior).** Every case-file row's
 > **Link** column points to EGLE's nSITE portal
 > (`https://mienviro.michigan.gov/ncore/downloadpdf/<id>`). Clicking one
