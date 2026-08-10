@@ -159,6 +159,29 @@ confirm, don't just take the merge on faith.
   established shape: Summary (bullets), Test plan (checked boxes), and a
   "Before merging" section if there's anything a human should know before
   the merge (e.g. new secrets needed, a manual activation step).
+- **Landing a new stream's workflow file (`.github/workflows/<name>.yml`).**
+  Pushing anything under `.github/workflows/` needs the **`workflow` OAuth
+  scope** — but that restriction is on **OAuth-app / HTTPS-token pushes (the
+  `gh` CLI token) and the REST Contents API only; it does NOT apply to SSH key
+  authentication.** This repo's `origin` is SSH (`git@github.com:tkunst/…`), so
+  the scope blocker usually isn't one:
+  - **If the session has a usable SSH key** (loaded in ssh-agent / not
+    passphrase-locked — confirm with `ssh -T git@github.com`, which greets you
+    without a passphrase prompt): just commit the `.yml` into
+    `.github/workflows/` normally; the SSH push lands it, no parking needed.
+    This is **PR #36's exact pattern** (Stream L) and PR #40's (Stream M).
+  - **Only if SSH is unavailable non-interactively** (a headless run with a
+    passphrase-locked key — the documented overnight blocker, where the
+    `gh`/HTTPS token is the only write path and it lacks `workflow` scope):
+    park the file at `docs/pending-workflows/<name>.yml`, add the enforcing
+    test asserting `enabled is False OR the workflow is in .github/workflows/`
+    (see `docs/pending-workflows/README.md`), and note in the PR that a later
+    SSH-capable session must `git mv` it into place before the stream is ever
+    enabled.
+  - Landing the workflow only **schedules** it — a brand-new source still ships
+    `enabled: false` (Step 3) and the job is a no-op until a human flips the
+    flag, so landing the `.yml` early is harmless and just saves the later
+    `git mv`.
 - Wait for CI to finish (`gh pr checks <n> --watch`). The check set includes the
   armed **`bandit`** SAST gate (fails the PR on any medium+ finding), plus
   `gitleaks`, `pytest`, `lint`, `lychee`, `CodeQL`, and `block-data-files`.
