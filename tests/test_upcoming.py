@@ -62,7 +62,7 @@ class _FakeValues:
     def get(self, spreadsheetId, range):
         return self
 
-    def execute(self):
+    def execute(self, num_retries=0):
         if self._raise:
             raise RuntimeError("no such tab")
         return {"values": self._rows}

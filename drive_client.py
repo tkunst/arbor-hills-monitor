@@ -26,6 +26,18 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 
+# Passed to every googleapiclient execute() call on the Sheets/Drive path. It turns
+# on the library's built-in exponential-backoff retry, which fires on TRANSIENT
+# Google-side errors — 5xx (500/502/503/504 "service currently unavailable") and
+# 429/403 rate-limit — plus socket/SSL blips. Without it a SINGLE transient error
+# aborts a whole watcher run: e.g. the Sheets 503 that failed mmd-watch on
+# 2026-08-08 came from ensure_mmd_tabs' first `.get()`, before any diff, and took
+# the run down with exit 1 (it self-recovered the next day). A PERSISTENT error
+# (bad creds, missing/again-unavailable sheet) still raises after the retries, so
+# a real problem still fails loud rather than being masked. 5 attempts back off
+# up to ~31s worst case — comfortably inside every watch job's 15-minute timeout.
+SHEETS_NUM_RETRIES = 5
+
 
 def _credentials():
     from google.oauth2 import service_account
@@ -61,7 +73,7 @@ def list_files(service, folder_id: str) -> list[dict]:
                 supportsAllDrives=True,
                 includeItemsFromAllDrives=True,
             )
-            .execute()
+            .execute(num_retries=SHEETS_NUM_RETRIES)
         )
         out.extend(resp.get("files", []))
         page_token = resp.get("nextPageToken")
@@ -82,7 +94,7 @@ def find_file_by_name(service, folder_id: str, name: str) -> Optional[str]:
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
         )
-        .execute()
+        .execute(num_retries=SHEETS_NUM_RETRIES)
     )
     files = resp.get("files", [])
     return files[0]["id"] if files else None
@@ -117,13 +129,13 @@ def upload_file(
         f = (
             service.files()
             .update(fileId=existing, media_body=media, supportsAllDrives=True)
-            .execute()
+            .execute(num_retries=SHEETS_NUM_RETRIES)
         )
         return f["id"]
     meta = {"name": name, "parents": [folder_id]}
     f = (
         service.files()
         .create(body=meta, media_body=media, fields="id", supportsAllDrives=True)
-        .execute()
+        .execute(num_retries=SHEETS_NUM_RETRIES)
     )
     return f["id"]
