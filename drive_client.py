@@ -35,7 +35,10 @@ SCOPES = [
 # the run down with exit 1 (it self-recovered the next day). A PERSISTENT error
 # (bad creds, missing/again-unavailable sheet) still raises after the retries, so
 # a real problem still fails loud rather than being masked. 5 attempts back off
-# up to ~31s worst case — comfortably inside every watch job's 15-minute timeout.
+# up to ~62s of jittered sleep worst case (2+4+8+16+32s); a timeout-class
+# transient (socket.timeout is retried too) adds per-attempt request time on top
+# — still well inside every watch job's 15-minute timeout, and a killed job just
+# reruns on the next schedule, so there is no correctness risk either way.
 GOOGLE_API_NUM_RETRIES = 5
 
 
