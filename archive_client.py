@@ -24,6 +24,11 @@ from __future__ import annotations
 
 import os
 
+# num_retries for exponential-backoff retry on transient Google Drive 5xx/429
+# errors, so a blip doesn't abort an archiver run — same rationale + value as
+# the Sheets path (this constant covers Drive too). See drive_client.
+from drive_client import GOOGLE_API_NUM_RETRIES
+
 # drive.file: per-file access limited to files created by THIS app. Enough to
 # create the mirror folder, upload into it, and list/skip what's already there.
 OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
@@ -92,7 +97,7 @@ def find_in_folder(service, name: str, folder_id: str) -> str | None:
             fields="files(id, name)",
             pageSize=1,
         )
-        .execute()
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     files = resp.get("files", [])
     return files[0]["id"] if files else None
@@ -109,7 +114,7 @@ def upload_file(service, local_path: str, name: str, mimetype: str, folder_id: s
 
     existing = find_in_folder(service, name, folder_id)
     if existing:
-        got = service.files().get(fileId=existing, fields="webViewLink").execute()
+        got = service.files().get(fileId=existing, fields="webViewLink").execute(num_retries=GOOGLE_API_NUM_RETRIES)
         return got["webViewLink"]
 
     media = MediaFileUpload(local_path, mimetype=mimetype, resumable=True)
@@ -117,7 +122,7 @@ def upload_file(service, local_path: str, name: str, mimetype: str, folder_id: s
     f = (
         service.files()
         .create(body=meta, media_body=media, fields="id, webViewLink")
-        .execute()
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     return f["webViewLink"]
 

@@ -36,7 +36,7 @@ SCOPES = [
 # (bad creds, missing/again-unavailable sheet) still raises after the retries, so
 # a real problem still fails loud rather than being masked. 5 attempts back off
 # up to ~31s worst case — comfortably inside every watch job's 15-minute timeout.
-SHEETS_NUM_RETRIES = 5
+GOOGLE_API_NUM_RETRIES = 5
 
 
 def _credentials():
@@ -73,7 +73,7 @@ def list_files(service, folder_id: str) -> list[dict]:
                 supportsAllDrives=True,
                 includeItemsFromAllDrives=True,
             )
-            .execute(num_retries=SHEETS_NUM_RETRIES)
+            .execute(num_retries=GOOGLE_API_NUM_RETRIES)
         )
         out.extend(resp.get("files", []))
         page_token = resp.get("nextPageToken")
@@ -94,7 +94,7 @@ def find_file_by_name(service, folder_id: str, name: str) -> Optional[str]:
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
         )
-        .execute(num_retries=SHEETS_NUM_RETRIES)
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     files = resp.get("files", [])
     return files[0]["id"] if files else None
@@ -129,13 +129,13 @@ def upload_file(
         f = (
             service.files()
             .update(fileId=existing, media_body=media, supportsAllDrives=True)
-            .execute(num_retries=SHEETS_NUM_RETRIES)
+            .execute(num_retries=GOOGLE_API_NUM_RETRIES)
         )
         return f["id"]
     meta = {"name": name, "parents": [folder_id]}
     f = (
         service.files()
         .create(body=meta, media_body=media, fields="id", supportsAllDrives=True)
-        .execute(num_retries=SHEETS_NUM_RETRIES)
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     return f["id"]

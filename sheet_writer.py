@@ -48,7 +48,7 @@ from typing import Iterable
 
 # Every Sheets execute() call below passes this so a transient Google 5xx/429 is
 # retried with backoff instead of aborting the run — see drive_client.
-from drive_client import SHEETS_NUM_RETRIES
+from drive_client import GOOGLE_API_NUM_RETRIES
 
 FEED_HEADERS = [
     "Date Filed", "Document Name", "Type", "Risks", "Severity",
@@ -609,7 +609,7 @@ def ensure_tabs(service, sheet_id: str) -> None:
     EVERY run. Rewriting row 1 from _TAB_HEADERS is idempotent — it touches only
     the header, never data rows — so a newly-added column (e.g. "Facility")
     appears on already-created tabs and any header drift self-heals. See ADR 008."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     requests = [
         {"addSheet": {"properties": {"title": title}}}
@@ -619,7 +619,7 @@ def ensure_tabs(service, sheet_id: str) -> None:
     if requests:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id, body={"requests": requests}
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     # Reconcile the header row on every tab (created or pre-existing) each run.
     for title, headers in _TAB_HEADERS.items():
         _set_header(service, sheet_id, title, headers)
@@ -631,7 +631,7 @@ def _set_header(service, sheet_id: str, tab: str, headers: list) -> None:
         range=f"'{tab}'!A1",
         valueInputOption="RAW",
         body={"values": [headers]},
-    ).execute(num_retries=SHEETS_NUM_RETRIES)
+    ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
 
 
 def append_rows(service, sheet_id: str, tab: str, rows: Iterable[list]) -> None:
@@ -644,7 +644,7 @@ def append_rows(service, sheet_id: str, tab: str, rows: Iterable[list]) -> None:
         valueInputOption="RAW",
         insertDataOption="INSERT_ROWS",
         body={"values": rows},
-    ).execute(num_retries=SHEETS_NUM_RETRIES)
+    ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
 
 
 def write_document(
@@ -728,7 +728,7 @@ def rebuild_risk_register_tab(service, sheet_id: str, risk_register: list[dict])
         service.spreadsheets()
         .values()
         .get(spreadsheetId=sheet_id, range=f"'{TAB_EVIDENCE}'!A2:G")
-        .execute(num_retries=SHEETS_NUM_RETRIES)
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     _tally(nsite_resp.get("values", []), date_col=2)
 
@@ -751,7 +751,7 @@ def rebuild_risk_register_tab(service, sheet_id: str, risk_register: list[dict])
         range=f"'{TAB_REGISTER}'!A2",
         valueInputOption="RAW",
         body={"values": body_rows},
-    ).execute(num_retries=SHEETS_NUM_RETRIES)
+    ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
 
 
 def rebuild_all_evidence_tab(service, sheet_id: str) -> None:
@@ -765,21 +765,21 @@ def rebuild_all_evidence_tab(service, sheet_id: str) -> None:
         service.spreadsheets()
         .values()
         .get(spreadsheetId=sheet_id, range=f"'{TAB_EVIDENCE}'!A2:H")
-        .execute(num_retries=SHEETS_NUM_RETRIES)
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     wds_rows = _tab_rows(service, sheet_id, TAB_WDS_EVIDENCE, "A2:I")
     body_rows = all_evidence_rows(nsite_resp.get("values", []), wds_rows)
 
     service.spreadsheets().values().clear(
         spreadsheetId=sheet_id, range=f"'{TAB_ALL_EVIDENCE}'!A2:H", body={}
-    ).execute(num_retries=SHEETS_NUM_RETRIES)
+    ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     if body_rows:
         service.spreadsheets().values().update(
             spreadsheetId=sheet_id,
             range=f"'{TAB_ALL_EVIDENCE}'!A2",
             valueInputOption="RAW",
             body={"values": body_rows},
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
 
 
 # ---------------------------------------------------------------------------
@@ -904,7 +904,7 @@ def write_meta(service, sheet_id: str, state: dict) -> None:
         range=f"'{TAB_META}'!A2",
         valueInputOption="RAW",
         body={"values": rows},
-    ).execute(num_retries=SHEETS_NUM_RETRIES)
+    ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
 
 
 def _append_state_row(service, sheet_id: str, row: list) -> None:
@@ -914,7 +914,7 @@ def _append_state_row(service, sheet_id: str, row: list) -> None:
         valueInputOption="RAW",
         insertDataOption="INSERT_ROWS",
         body={"values": [row]},
-    ).execute(num_retries=SHEETS_NUM_RETRIES)
+    ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
 
 
 def _tab_rows(service, sheet_id: str, tab: str, a1: str) -> list[list]:
@@ -925,7 +925,7 @@ def _tab_rows(service, sheet_id: str, tab: str, a1: str) -> list[list]:
             service.spreadsheets()
             .values()
             .get(spreadsheetId=sheet_id, range=f"'{tab}'!{a1}")
-            .execute(num_retries=SHEETS_NUM_RETRIES)
+            .execute(num_retries=GOOGLE_API_NUM_RETRIES)
         )
     except Exception:  # noqa: BLE001 — missing tab / transient API error
         return []
@@ -1042,7 +1042,7 @@ def ensure_wds_tabs(service, sheet_id: str) -> None:
     reaches already-created tabs too, not just ones created after the change.
     Called only from an enabled Stream C run or the one-off dump/archiver
     scripts, so no WDS tab appears until Stream C is actually used."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     requests = [
         {"addSheet": {"properties": {"title": title}}}
@@ -1052,7 +1052,7 @@ def ensure_wds_tabs(service, sheet_id: str) -> None:
     if requests:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id, body={"requests": requests}
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     for title, headers in _WDS_TAB_HEADERS.items():
         _set_header(service, sheet_id, title, headers)
 
@@ -1131,13 +1131,13 @@ def ensure_mmpc_tabs(service, sheet_id: str) -> None:
     row on every run (same self-healing policy as ensure_tabs()/
     ensure_wds_tabs()). Called only from mmpc_archiver.py, so the tab doesn't
     appear until Mirror D actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     if TAB_MMPC_ARCHIVE not in existing:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": TAB_MMPC_ARCHIVE}}}]},
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     _set_header(service, sheet_id, TAB_MMPC_ARCHIVE, MMPC_ARCHIVE_HEADERS)
 
 
@@ -1172,13 +1172,13 @@ def ensure_pfas_tabs(service, sheet_id: str) -> None:
     """Create the PFAS Page Watch tab if missing and reconcile its header row on
     every run (same self-healing policy as ensure_mmpc_tabs()). Called only from
     pfas_watcher.py, so the tab doesn't appear until the watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     if TAB_PFAS not in existing:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": TAB_PFAS}}}]},
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     _set_header(service, sheet_id, TAB_PFAS, PFAS_SNAPSHOT_HEADERS)
 
 
@@ -1226,13 +1226,13 @@ def ensure_meeting_watch_tabs(service, sheet_id: str) -> None:
     every run (same self-healing policy as ensure_pfas_tabs()). Called only from
     civicclerk_watcher.py, so the tab doesn't appear until the watch actually
     runs — same no-empty-tab policy as the WDS/MMPC/PFAS/WOI/GFL tabs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     if TAB_MEETING_WATCH not in existing:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": TAB_MEETING_WATCH}}}]},
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     _set_header(service, sheet_id, TAB_MEETING_WATCH, MEETING_WATCH_HEADERS)
 
 
@@ -1282,13 +1282,13 @@ def ensure_ridgewood_tabs(service, sheet_id: str) -> None:
     """Create the Ridge Wood Reports tab if missing and reconcile its header row on
     every run (same self-healing policy as ensure_mmpc_tabs()). Called only from
     ridgewood_archiver.py, so the tab doesn't appear until the archiver runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     if TAB_RIDGEWOOD not in existing:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": TAB_RIDGEWOOD}}}]},
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     _set_header(service, sheet_id, TAB_RIDGEWOOD, RIDGEWOOD_REPORT_HEADERS)
 
 
@@ -1326,13 +1326,13 @@ def ensure_rop_tabs(service, sheet_id: str) -> None:
     run (same self-healing policy as ensure_pfas_tabs()/ensure_meeting_watch_tabs()).
     Called only from rop_watcher.py, so the tab doesn't appear until the watch
     actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     if TAB_ROP not in existing:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": TAB_ROP}}}]},
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     _set_header(service, sheet_id, TAB_ROP, ROP_WATCH_HEADERS)
 
 
@@ -1392,13 +1392,13 @@ def ensure_mmd_tabs(service, sheet_id: str) -> None:
     """Create the MMD Watch tab if missing and reconcile its header row on every
     run (same self-healing policy as ensure_rop_tabs()). Called only from
     mmd_watcher.py, so the tab doesn't appear until the watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     if TAB_MMD not in existing:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": TAB_MMD}}}]},
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     _set_header(service, sheet_id, TAB_MMD, MMD_WATCH_HEADERS)
 
 
@@ -1457,13 +1457,13 @@ def ensure_ride_tabs(service, sheet_id: str) -> None:
     every run (same self-healing policy as ensure_mmd_tabs()). Called only
     from ride_watcher.py, so the tab doesn't appear until the watch actually
     runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     if TAB_RIDE not in existing:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": TAB_RIDE}}}]},
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     _set_header(service, sheet_id, TAB_RIDE, RIDE_WATCH_HEADERS)
 
 
@@ -1522,13 +1522,13 @@ def ensure_submissions_tabs(service, sheet_id: str) -> None:
     row on every run (same self-healing policy as ensure_ride_tabs()). Called
     only from nsite_submissions_watcher.py, so the tab doesn't appear until
     the watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     if TAB_SUBMISSIONS not in existing:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": TAB_SUBMISSIONS}}}]},
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     _set_header(service, sheet_id, TAB_SUBMISSIONS, SUBMISSIONS_WATCH_HEADERS)
 
 
@@ -1586,13 +1586,13 @@ def ensure_violations_tabs(service, sheet_id: str) -> None:
     on every run (same self-healing policy as ensure_submissions_tabs()).
     Called only from nsite_violations_watcher.py, so the tab doesn't appear
     until the watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     if TAB_VIOLATIONS not in existing:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": TAB_VIOLATIONS}}}]},
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     _set_header(service, sheet_id, TAB_VIOLATIONS, VIOLATIONS_WATCH_HEADERS)
 
 
@@ -1628,7 +1628,7 @@ def last_violations_snapshots(
         service.spreadsheets()
         .values()
         .get(spreadsheetId=sheet_id, range=f"'{TAB_VIOLATIONS}'!A2:H")
-        .execute(num_retries=SHEETS_NUM_RETRIES)
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     latest_by_key: dict[str, list] = {}
     for r in resp.get("values", []):
@@ -1667,13 +1667,13 @@ def ensure_compliance_actions_tabs(service, sheet_id: str) -> None:
     header row on every run (same self-healing policy as ensure_violations_tabs()).
     Called only from nsite_compliance_actions_watcher.py, so the tab doesn't
     appear until the watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     if TAB_COMPLIANCE_ACTIONS not in existing:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": TAB_COMPLIANCE_ACTIONS}}}]},
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     _set_header(service, sheet_id, TAB_COMPLIANCE_ACTIONS, COMPLIANCE_ACTIONS_WATCH_HEADERS)
 
 
@@ -1705,7 +1705,7 @@ def last_compliance_actions_snapshots(
         service.spreadsheets()
         .values()
         .get(spreadsheetId=sheet_id, range=f"'{TAB_COMPLIANCE_ACTIONS}'!A2:H")
-        .execute(num_retries=SHEETS_NUM_RETRIES)
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     latest_by_key: dict[str, list] = {}
     for r in resp.get("values", []):
@@ -1744,13 +1744,13 @@ def ensure_woi_tabs(service, sheet_id: str) -> None:
     Called from the watcher/backfill only when a WOI Status Report is actually
     routed (woi_router), so the tab doesn't appear until then — same no-empty-tab
     policy as the WDS/MMPC/PFAS tabs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     if TAB_WOI_SUMMARY not in existing:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": TAB_WOI_SUMMARY}}}]},
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     _set_header(service, sheet_id, TAB_WOI_SUMMARY, WOI_SUMMARY_HEADERS)
 
 
@@ -1777,13 +1777,13 @@ def ensure_gfl_air_tabs(service, sheet_id: str) -> None:
     (same self-healing policy as ensure_pfas_tabs()/ensure_woi_tabs()). Called only
     from gfl_air_watcher.py, so the tab doesn't appear until the watch actually
     runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     if TAB_GFL_AIR not in existing:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": TAB_GFL_AIR}}}]},
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     _set_header(service, sheet_id, TAB_GFL_AIR, GFL_AIR_SUMMARY_HEADERS)
 
 
@@ -1818,7 +1818,7 @@ def write_gfl_air_summary(service, sheet_id: str, stations: list[dict], link: st
         range=f"'{TAB_GFL_AIR}'!A2",
         valueInputOption="RAW",
         body={"values": rows},
-    ).execute(num_retries=SHEETS_NUM_RETRIES)
+    ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
 
 
 def gfl_air_cursor(service, sheet_id: str):
@@ -1839,7 +1839,7 @@ def gfl_air_cursor(service, sheet_id: str):
         service.spreadsheets()
         .values()
         .get(spreadsheetId=sheet_id, range=f"'{TAB_GFL_AIR}'!A2:L")
-        .execute(num_retries=SHEETS_NUM_RETRIES)
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     best = None
     for r in resp.get("values", []):
@@ -1867,7 +1867,7 @@ def gfl_air_latest_as_of(service, sheet_id: str):
         service.spreadsheets()
         .values()
         .get(spreadsheetId=sheet_id, range=f"'{TAB_GFL_AIR}'!A2:L")
-        .execute(num_retries=SHEETS_NUM_RETRIES)
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     best = None
     for r in resp.get("values", []):
@@ -1897,7 +1897,7 @@ def gfl_air_stale_marker(service, sheet_id: str):
         service.spreadsheets()
         .values()
         .get(spreadsheetId=sheet_id, range=f"'{TAB_GFL_AIR}'!{_GFL_STALE_MARKER_VALUE_CELL}")
-        .execute(num_retries=SHEETS_NUM_RETRIES)
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     vals = resp.get("values", [])
     if vals and vals[0] and str(vals[0][0]).strip():
@@ -1914,7 +1914,7 @@ def set_gfl_air_stale_marker(service, sheet_id: str, as_of: str) -> None:
         range=f"'{TAB_GFL_AIR}'!{_GFL_STALE_MARKER_LABEL_CELL}",
         valueInputOption="RAW",
         body={"values": [["Stale-Warned As-Of (liveness)"], [as_of]]},
-    ).execute(num_retries=SHEETS_NUM_RETRIES)
+    ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
 
 
 # The CH4 watch-episode marker lives in column O — outside the A:L station write
@@ -1939,7 +1939,7 @@ def gfl_air_watch_marker(service, sheet_id: str) -> set:
         service.spreadsheets()
         .values()
         .get(spreadsheetId=sheet_id, range=f"'{TAB_GFL_AIR}'!{_GFL_WATCH_MARKER_VALUE_CELL}")
-        .execute(num_retries=SHEETS_NUM_RETRIES)
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     vals = resp.get("values", [])
     if not vals or not vals[0] or not str(vals[0][0]).strip():
@@ -1962,7 +1962,7 @@ def set_gfl_air_watch_marker(service, sheet_id: str, stations) -> None:
         valueInputOption="RAW",
         body={"values": [["CH4 Watch-Episode Stations (>=40ppm, already alerted)"],
                           [json.dumps(sorted(stations))]]},
-    ).execute(num_retries=SHEETS_NUM_RETRIES)
+    ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
 
 
 # ---------------------------------------------------------------------------
@@ -2018,7 +2018,7 @@ def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False) -
     indices don't shift mid-batch. Safety net: this only ever runs for an explicit
     allowlist, and Google Sheets keeps File → Version history, so a mistaken purge
     is restorable in the UI."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=SHEETS_NUM_RETRIES)
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     gid = {s["properties"]["title"]: s["properties"]["sheetId"]
            for s in meta.get("sheets", [])}
 
@@ -2030,7 +2030,7 @@ def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False) -
         resp = (
             service.spreadsheets().values()
             .get(spreadsheetId=sheet_id, range=f"'{tab}'!A2:Z")
-            .execute(num_retries=SHEETS_NUM_RETRIES)
+            .execute(num_retries=GOOGLE_API_NUM_RETRIES)
         )
         values = resp.get("values", [])
         # values[i] is data row i, i.e. 0-based grid row (i + 1) since row 0 is the
@@ -2051,5 +2051,5 @@ def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False) -
     if requests:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id, body={"requests": requests}
-        ).execute(num_retries=SHEETS_NUM_RETRIES)
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     return counts
