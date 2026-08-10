@@ -2049,7 +2049,15 @@ def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False) -
                 }}})
 
     if requests:
+        # no-retry: this is an index-based deleteDimension batch whose startIndex
+        # values were computed from the PRE-delete row layout. A retry after a
+        # post-commit connection drop would re-apply those stale indices against
+        # the already-shifted layout and delete the WRONG rows — real data loss,
+        # not a benign duplicate. Single-attempt is correct here: purge_doc_rows
+        # runs only on backfill's manual FORCE_REPROCESS_DOC_IDS path (never an
+        # unattended schedule), so a human re-runs on a transient blip, and Sheets
+        # version history makes a mistaken purge restorable anyway. (PR #41 review.)
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id, body={"requests": requests}
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+        ).execute(num_retries=0)  # no-retry: index-based delete, unsafe to replay (see above)
     return counts

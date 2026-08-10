@@ -93,7 +93,11 @@ def test_num_retries_is_a_sane_positive_count():
 # 2. Source-scan invariant: no bare .execute() anywhere in the API modules
 # ---------------------------------------------------------------------------
 
-_BARE_EXECUTE = re.compile(r"\.execute\((?!num_retries=)")
+# A conforming call passes the SHARED CONSTANT — asserting the retry is not just
+# present but EFFECTIVE. `.execute(num_retries=0)` would satisfy a mere
+# presence check while silently disabling retry, so we require the constant name
+# (spacing-tolerant). All current calls are single-line.
+_GOOD_EXECUTE = re.compile(r"\.execute\(\s*num_retries\s*=\s*GOOGLE_API_NUM_RETRIES")
 
 
 # Every module that talks to the Google API on an UNATTENDED scheduled path
@@ -106,19 +110,26 @@ _UNATTENDED_API_MODULES = (
 )
 
 
-def test_no_bare_execute_call_remains_in_the_api_modules():
-    """Every `.execute(` in the unattended-path Google API modules must be
-    `.execute(num_retries=...)`. A bare one reintroduces the single-blip-aborts-
-    the-run bug this hardening fixed — and there are ~60 call sites across these
-    modules, so a new one is easy to add without noticing. (The explanatory
-    comments deliberately write `execute()` without the leading dot so they
-    don't trip this.)"""
+def test_every_execute_uses_the_retry_constant_or_a_marked_optout():
+    """Every `.execute(` in the unattended-path Google API modules must pass
+    `num_retries=GOOGLE_API_NUM_RETRIES` — present AND effective. The one allowed
+    exception is a DELIBERATE opt-out marked `# no-retry:` on the same line
+    (purge_doc_rows' index-based deleteDimension, which is unsafe to replay). This
+    catches both a bare `.execute()` and a silently-disabling `.execute(num_retries=0)`
+    across ~60 call sites, where a new slip is easy to miss. (The explanatory
+    comments write `execute()` without the leading dot so they don't trip this.)"""
     root = pathlib.Path(__file__).resolve().parent.parent
     offenders = {}
     for mod in _UNATTENDED_API_MODULES:
         src = (root / mod).read_text()
-        hits = [i + 1 for i, line in enumerate(src.splitlines())
-                if _BARE_EXECUTE.search(line)]
+        hits = [
+            i + 1 for i, line in enumerate(src.splitlines())
+            if ".execute(" in line
+            and "no-retry:" not in line
+            and not _GOOD_EXECUTE.search(line)
+        ]
         if hits:
             offenders[mod] = hits
-    assert not offenders, f"bare .execute() (no num_retries) found: {offenders}"
+    assert not offenders, (
+        f".execute() without num_retries=GOOGLE_API_NUM_RETRIES (and not a marked "
+        f"# no-retry: opt-out) found: {offenders}")
