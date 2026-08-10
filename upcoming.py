@@ -20,6 +20,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
+# num_retries so a transient Google Sheets 5xx/429 doesn't abort the Sunday
+# digest's read of the private Upcoming tab — see drive_client.
+from drive_client import GOOGLE_API_NUM_RETRIES
+
 UPCOMING_TAB = "Upcoming"
 UPCOMING_HEADERS = ["date", "end_date", "title"]
 
@@ -39,19 +43,19 @@ def ensure_upcoming_tab(service, sheet_id: str) -> None:
     (so a fetch never fails on a missing tab); the ROWS are populated by Trisha
     from key-dates Section A (a human step — the monitor repo does not read the
     Lotext master)."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
     if UPCOMING_TAB not in existing:
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [{"addSheet": {"properties": {"title": UPCOMING_TAB}}}]},
-        ).execute()
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     service.spreadsheets().values().update(
         spreadsheetId=sheet_id,
         range=f"'{UPCOMING_TAB}'!A1",
         valueInputOption="RAW",
         body={"values": [UPCOMING_HEADERS]},
-    ).execute()
+    ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
 
 
 def fetch_upcoming(service, sheet_id: str, tab: str = UPCOMING_TAB) -> list[dict]:
@@ -63,7 +67,7 @@ def fetch_upcoming(service, sheet_id: str, tab: str = UPCOMING_TAB) -> list[dict
     try:
         resp = (
             service.spreadsheets().values()
-            .get(spreadsheetId=sheet_id, range=f"'{tab}'!A2:C").execute()
+            .get(spreadsheetId=sheet_id, range=f"'{tab}'!A2:C").execute(num_retries=GOOGLE_API_NUM_RETRIES)
         )
     except Exception:  # noqa: BLE001 — missing tab / transient API error -> no section
         return []
