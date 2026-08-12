@@ -19,7 +19,7 @@ facilities:
   - {srn: "WRD",   name: "GFL-Arbor Hills Landfill-Washtenaw Co", id: "306291952280313698"}   # WRD Land & Water Interface (JPA/wetlands/floodplain/inland lakes) — R1/R5; found 2026-07-24 tracing a missed JPA (ADR 020); 69 never-seen docs, clears safely behind the anti-stampede guard (watcher.max_new_docs_per_run defers to backfill, which never alerts)
   - {srn: "N1504", name: "Arbor Hills Energy",            id: "-4937599654678851055"}   # SO2 turbine power plant (54 docs)
   - {srn: "P1488", name: "Emerald RNG",                   id: "-5064275074930604158"}   # OPAL/GFL RNG plant (16 docs)
-  - {srn: "N2688", name: "Arbor Hills Landfill",         id: "8094300008956198244"}    # the landfill — ~704 remaining, finish AFTER
+  - {srn: "N2688", name: "Arbor Hills Landfill",         id: "8094300008956198244"}    # the landfill — backfill complete (all processed); new filings now handled by the daily watcher
   - {srn: "AHLI",  name: "Arbor Hills Landfill, Inc.",   id: "643581439310101662"}     # bare duplicate nSITE record surfaced 2026-07-24 resolving all 19 MiEnviro subscriptions (ADR 021); genuine Dec-2025 activity (4 docs) — deliberate, standalone addition, not a side effect of the submissions-cadence build below
   # NOT TRACKED (Documents pipeline) — the other 13 sites resolved in ADR 021
   # are polled for Submissions ONLY, at their tier's cadence — see
