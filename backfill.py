@@ -12,7 +12,9 @@ nSITE download URLs resolve unauthenticated, so the Sheet links straight to the
 source (see ADR 006). State is the Sheet's _state tab, not a Drive file.
 
 Self-terminating: when _state shows every doc processed, it logs "Backfill
-complete" and exits 0 — a no-op. Runs nightly at 2am ET.
+complete" and exits 0 — a no-op. Runs on manual workflow_dispatch only; the
+nightly 2am ET cron was disabled 2026-07-07 because it raced the daily watcher
+and suppressed new-doc emails (see backfill.yml's schedule comment).
 """
 from __future__ import annotations
 
