@@ -13,8 +13,13 @@ on:
   # never see that commit. workflow_run is the standard escape hatch: it
   # fires on any completed run of the named workflow regardless of which
   # token performed the underlying commit. Gated to `success` below so a
-  # failed regeneration (which never committed anything) doesn't waste a
-  # redundant redeploy of unchanged content.
+  # FAILED regeneration (which never committed anything) doesn't trigger a
+  # pointless redeploy. Residual, accepted: a SUCCESSFUL no-op run (nothing
+  # changed, so findings-feed.yml made no commit -- see its own diff-quiet
+  # guard) still fires this and redeploys the unchanged site/ artifact. That
+  # redeploy is harmless and idempotent (same content, new deploy id), just
+  # wasted CI minutes once a day -- not worth a second signal (e.g. a
+  # commit-sha comparison) to suppress.
   workflow_run:
     workflows: ["findings-feed"]
     types: [completed]
