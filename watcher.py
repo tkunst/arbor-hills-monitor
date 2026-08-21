@@ -97,18 +97,28 @@ def _route_urgent_or_digest(parsed, d: dict, link: str, cfg: dict, state: dict,
     recap section; routine -> queued for the next Sunday digest. A failed
     urgent send is dropped from BOTH queues — matches the pre-existing
     behavior of not queuing a failed urgent send to pending_digest either
-    (an alert that never went out has nothing to recap)."""
+    (an alert that never went out has nothing to recap).
+
+    The try/except covers ONLY the send call, matching the pre-existing
+    scope (this branch had no write_meta call at all before this feature) —
+    the append + write_meta run OUTSIDE it, unguarded, same as the routine
+    branch below. That's deliberate: if write_meta itself fails after a
+    successful send, it must propagate to the caller's outer per-doc
+    try/except (transient -> retried next run, same as any other _meta write
+    failure), not get swallowed here and mislabeled as "ALERT FAILED to
+    send" when the email actually went out."""
     if ea.is_urgent(parsed, cfg):
+        sent_at = _now()
         try:
-            sent_at = _now()
             ea.send_urgent_alert(parsed, d, link, cfg)
-            state["pending_urgent_recap"].append(
-                _urgent_recap_record(parsed, d, link, sent_at))
-            sw.write_meta(sheets, sheet_id, state)
-            print(f"  URGENT emailed: {d['document_name'][:50]}")
         except Exception as ae:  # noqa: BLE001 — notification is best-effort
             print(f"  URGENT ALERT FAILED to send (doc still recorded): "
                   f"{d['document_name'][:50]}: {ae}")
+            return
+        state["pending_urgent_recap"].append(
+            _urgent_recap_record(parsed, d, link, sent_at))
+        sw.write_meta(sheets, sheet_id, state)
+        print(f"  URGENT emailed: {d['document_name'][:50]}")
     else:
         state["pending_digest"].append(_digest_record(parsed, d, link))
         sw.write_meta(sheets, sheet_id, state)
