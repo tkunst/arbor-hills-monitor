@@ -652,7 +652,12 @@ def run() -> int:
     # its OWN once-per-episode email, scoped to this list (Trisha, per the Ridge
     # Wood review_recipients precedent) — and is dropped from the combined pass
     # (include_watch below) so it is never emailed via both channels at once.
-    watch_recipients = list(cfg_gfl.get("watch_alert_recipients") or [])
+    # GFL_AIR_WATCH_RECIPIENTS_EXTRA (added 2026-08-21, Trisha's direction) is this
+    # list's own private-supplement env, parallel to email_alerts.resolve_recipients'
+    # ALERT_RECIPIENTS_EXTRA — lets a recipient be added here WITHOUT committing
+    # their address to this PUBLIC repo's config.yml.
+    watch_recipients = ea.merge_extra_recipients(
+        cfg_gfl.get("watch_alert_recipients") or [], "GFL_AIR_WATCH_RECIPIENTS_EXTRA")
     link = cfg_gfl.get("dashboard_url") or cfg_gfl.get("service_url", "")
 
     for _w in gc.watch_config_warnings(thresholds, watch_thresholds):

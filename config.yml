@@ -299,16 +299,12 @@ gfl_air:
   # workflow's run logs). Empty list = DISPLAY-ONLY (the rollback lever): the watch
   # line still shows on the snapshot tab and, unchanged from before this change,
   # still rides along in the full-list combined email — just no dedicated send.
-  # ⚠️ FLAGGED 2026-08-21 (Trisha's neutral-branding pass): this list, like
-  # alert_recipients above, is committed to a PUBLIC repo. Unlike alert_recipients
-  # there is no ALERT_RECIPIENTS_EXTRA-equivalent private path for this stream yet
-  # (gfl_air_watcher.py reads watch_alert_recipients directly from config, not
-  # through email_alerts.resolve_recipients). Trisha's call needed: remove the
-  # second address below, or build a small private-recipient mechanism for this
-  # list to match the main one.
+  # RESOLVED 2026-08-21 (Trisha's neutral-branding pass): like alert_recipients
+  # above, this list is committed to a PUBLIC repo. A second recipient here now
+  # goes via GFL_AIR_WATCH_RECIPIENTS_EXTRA (a private env/secret, merged in by
+  # email_alerts.merge_extra_recipients) instead of being committed here.
   watch_alert_recipients:
     - arbor-hills@trishakunst.com          # Trisha
-    - ddrinan10@gmail.com                  # added 2026-07-26 — see the flag above
   # Sentinel / no-data values in the feed (ambiguous no-data vs off-scale-high).
   # Excluded from the measured series; surfaced as anomalies. ADR 014 RECOMMENDS
   # treating them as alert-worthy (fail-safe — don't infer 'benign' when the

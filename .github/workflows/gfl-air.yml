@@ -60,6 +60,7 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
+          GFL_AIR_WATCH_RECIPIENTS_EXTRA: ${{ secrets.GFL_AIR_WATCH_RECIPIENTS_EXTRA }}
           GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID }}
           GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
           GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}

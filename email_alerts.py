@@ -134,17 +134,28 @@ def format_digest_body(items: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def merge_extra_recipients(base: list, env_var: str) -> list:
+    """Merge `base` with addresses from `env_var` (comma/semicolon-separated),
+    order preserved, de-duplicated. Generalizes the ALERT_RECIPIENTS_EXTRA
+    pattern (a PRIVATE address added WITHOUT committing it to this PUBLIC
+    repo's config.yml) so any recipient list — not just the main
+    `alert_recipients` — can take a private supplement via its own env var.
+    See resolve_recipients() below for the original single-purpose caller, and
+    gfl_air_watcher.py's use with GFL_AIR_WATCH_RECIPIENTS_EXTRA for a second."""
+    out = list(base or [])
+    for addr in (os.environ.get(env_var, "") or "").replace(";", ",").split(","):
+        addr = addr.strip()
+        if addr and addr not in out:
+            out.append(addr)
+    return out
+
+
 def resolve_recipients(cfg: dict) -> list:
     """Recipients = config.yml `alert_recipients` PLUS any in the
     ALERT_RECIPIENTS_EXTRA env (comma/semicolon-separated). The env is how a
     PRIVATE address (e.g. a personal stopgap inbox) gets added WITHOUT committing
     it to this PUBLIC repo's config.yml. Order preserved, de-duplicated."""
-    out = list(cfg.get("alert_recipients", []) or [])
-    for addr in (os.environ.get("ALERT_RECIPIENTS_EXTRA", "") or "").replace(";", ",").split(","):
-        addr = addr.strip()
-        if addr and addr not in out:
-            out.append(addr)
-    return out
+    return merge_extra_recipients(cfg.get("alert_recipients", []) or [], "ALERT_RECIPIENTS_EXTRA")
 
 
 def send_email(subject: str, body: str, cfg: dict, recipients: list | None = None) -> None:

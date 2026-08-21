@@ -80,3 +80,15 @@ def test_resolve_recipients_merges_env_and_dedups(monkeypatch):
 def test_resolve_recipients_blank_env_is_noop(monkeypatch):
     monkeypatch.setenv("ALERT_RECIPIENTS_EXTRA", "  ")
     assert ea.resolve_recipients({"alert_recipients": ["a@x.com"]}) == ["a@x.com"]
+
+
+# --- merge_extra_recipients: the generalized helper (any list, any env var) ---
+
+def test_merge_extra_recipients_is_generic_to_env_var_name(monkeypatch):
+    # Same private-supplement pattern as ALERT_RECIPIENTS_EXTRA, but parameterized
+    # so a second recipient list (e.g. gfl_air's watch_alert_recipients) can use
+    # its own env var without a bespoke parser.
+    monkeypatch.delenv("SOME_OTHER_EXTRA", raising=False)
+    assert ea.merge_extra_recipients(["a@x.com"], "SOME_OTHER_EXTRA") == ["a@x.com"]
+    monkeypatch.setenv("SOME_OTHER_EXTRA", "b@x.com, a@x.com")
+    assert ea.merge_extra_recipients(["a@x.com"], "SOME_OTHER_EXTRA") == ["a@x.com", "b@x.com"]
