@@ -42,6 +42,23 @@ def facility_display(name: str) -> str:
     return FACILITY_DISPLAY.get(name, name)
 
 
+# The feed only ever grows in normal operation (append-only Sheet tabs). A
+# scheduled run that regenerates from a Sheet read gone wrong (an API response
+# truncated to a handful of rows without actually raising — everything else
+# in this pipeline raises loud on a real read failure, see gen_findings_feed's
+# _tab_values) would otherwise auto-commit a collapsed public feed straight to
+# main with no human in the loop. This is the trip-wire scripts/
+# gen_findings_feed.py checks before writing anything.
+SHRINK_GUARD_RATIO = 0.9
+
+
+def is_suspicious_shrink(previous_total: int | None, new_total: int) -> bool:
+    """True when new_total looks like a bad read rather than real data loss —
+    previous_total is None on the very first run (nothing to compare against,
+    never suspicious)."""
+    return previous_total is not None and previous_total > 0 and new_total < previous_total * SHRINK_GUARD_RATIO
+
+
 def parse_feed_rows(raw_rows: list[list]) -> list[dict]:
     """Zip FEED_HEADERS-shaped Sheet rows into dicts. Pads a short row (a
     trailing blank cell is sometimes not written at all) and ignores any
@@ -88,7 +105,14 @@ def render_entry(row: dict) -> str:
     doc_type = _esc(row.get("type"))
     severity = _esc(row.get("severity"))
     facility = _esc(facility_display(row.get("facility") or ""))
-    link = _esc(row.get("link"))
+    # Every producer of `link` in this codebase builds it from a fixed nSITE
+    # base URL + a numeric doc_id (see nsite_client.native_download_url) —
+    # never classifier or free-text output — so this isn't a live injection
+    # path today. Still worth a scheme check as defense in depth: an http(s)
+    # link renders as a clickable href, anything else renders as plain text
+    # instead of ever reaching an <a href="..."> attribute.
+    raw_link = row.get("link") or ""
+    link = _esc(raw_link) if raw_link.startswith(("http://", "https://")) else ""
     risks = _esc(row.get("risks"))
     summary = _esc(row.get("summary"))
     kdp = _esc(row.get("key_data_point"))
