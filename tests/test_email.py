@@ -209,3 +209,56 @@ def test_send_urgent_alert_never_sees_digest_recipients_extra(monkeypatch):
                         lambda subj, body, c, recipients=None: sent.append(recipients))
     ea.send_urgent_alert(_doc(severity="urgent"), {"document_name": "x"}, "http://x", _DIGEST_CFG)
     assert sent == [None]  # send_urgent_alert passes no explicit recipients -> resolve_recipients only
+
+
+# --- send_email / send_urgent_alert: bool return (added 2026-08-21) ---------
+# So _route_urgent_or_digest can tell "silently skipped" (SMTP unconfigured /
+# no recipients) apart from "actually sent" and never durably record a recap
+# for an alert that never went out.
+
+
+def test_send_email_returns_false_when_smtp_unconfigured(monkeypatch):
+    for var in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD"):
+        monkeypatch.delenv(var, raising=False)
+    assert ea.send_email("subj", "body", {}, recipients=["a@x.com"]) is False
+
+
+def test_send_email_returns_false_when_no_recipients(monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_USER", "user")
+    monkeypatch.setenv("SMTP_PASSWORD", "pw")
+    assert ea.send_email("subj", "body", {"alert_recipients": []}, recipients=[]) is False
+
+
+def test_send_email_returns_true_after_a_real_send(monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_USER", "user")
+    monkeypatch.setenv("SMTP_PASSWORD", "pw")
+
+    class _FakeServer:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def starttls(self):
+            pass
+
+        def login(self, user, password):
+            pass
+
+        def send_message(self, msg):
+            pass
+
+    import smtplib
+    monkeypatch.setattr(smtplib, "SMTP", lambda host, port, timeout=30: _FakeServer())
+    assert ea.send_email("subj", "body", {}, recipients=["a@x.com"]) is True
+
+
+def test_send_urgent_alert_propagates_send_email_bool(monkeypatch):
+    monkeypatch.setattr(ea, "send_email", lambda subj, body, c, recipients=None: False)
+    assert ea.send_urgent_alert(_doc(severity="urgent"), {"document_name": "x"}, "http://x", _DIGEST_CFG) is False
+
+    monkeypatch.setattr(ea, "send_email", lambda subj, body, c, recipients=None: True)
+    assert ea.send_urgent_alert(_doc(severity="urgent"), {"document_name": "x"}, "http://x", _DIGEST_CFG) is True

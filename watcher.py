@@ -94,10 +94,11 @@ def _record_to_item(rec: dict) -> dict:
 def _route_urgent_or_digest(parsed, d: dict, link: str, cfg: dict, state: dict,
                              sheets, sheet_id: str) -> None:
     """Urgent -> same-day email, ALSO queued for the next Sunday's labeled
-    recap section; routine -> queued for the next Sunday digest. A failed
-    urgent send is dropped from BOTH queues — matches the pre-existing
-    behavior of not queuing a failed urgent send to pending_digest either
-    (an alert that never went out has nothing to recap).
+    recap section; routine -> queued for the next Sunday digest. A failed OR
+    skipped (SMTP unconfigured / no recipients) urgent send is dropped from
+    BOTH queues — matches the pre-existing behavior of not queuing a failed
+    urgent send to pending_digest either (an alert that never went out has
+    nothing to recap).
 
     The try/except covers ONLY the send call, matching the pre-existing
     scope (this branch had no write_meta call at all before this feature) —
@@ -110,10 +111,17 @@ def _route_urgent_or_digest(parsed, d: dict, link: str, cfg: dict, state: dict,
     if ea.is_urgent(parsed, cfg):
         sent_at = _now()
         try:
-            ea.send_urgent_alert(parsed, d, link, cfg)
+            sent = ea.send_urgent_alert(parsed, d, link, cfg)
         except Exception as ae:  # noqa: BLE001 — notification is best-effort
             print(f"  URGENT ALERT FAILED to send (doc still recorded): "
                   f"{d['document_name'][:50]}: {ae}")
+            return
+        if not sent:
+            # send_email() no-op'd (SMTP not configured / no recipients) --
+            # no exception, but nothing actually went out either, so there is
+            # nothing to recap (see email_alerts.send_email's docstring).
+            print(f"  URGENT ALERT skipped, SMTP not configured (doc still "
+                  f"recorded): {d['document_name'][:50]}")
             return
         state["pending_urgent_recap"].append(
             _urgent_recap_record(parsed, d, link, sent_at))
