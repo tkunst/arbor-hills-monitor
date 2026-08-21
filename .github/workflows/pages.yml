@@ -6,6 +6,18 @@ on:
     paths:
       - 'site/**'
       - '.github/workflows/pages.yml'
+  # findings-feed.yml commits its regenerated site/findings/ straight to
+  # `main` using the default GITHUB_TOKEN — and pushes made with that token
+  # are deliberately excluded from re-triggering `push`-triggered workflows
+  # (GitHub's anti-recursion rule), so the `push` trigger above alone would
+  # never see that commit. workflow_run is the standard escape hatch: it
+  # fires on any completed run of the named workflow regardless of which
+  # token performed the underlying commit. Gated to `success` below so a
+  # failed regeneration (which never committed anything) doesn't waste a
+  # redundant redeploy of unchanged content.
+  workflow_run:
+    workflows: ["findings-feed"]
+    types: [completed]
   workflow_dispatch: {}
 
 permissions:
@@ -19,12 +31,20 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          # workflow_run's default ref/SHA resolution points at the state
+          # findings-feed started from, not the commit it just pushed (that
+          # push already landed on `main` by the time this "completed" event
+          # fires, since it happens inside the same, now-finished run) — so
+          # check out `main` explicitly rather than trust the event's default.
+          ref: ${{ github.event_name == 'workflow_run' && 'main' || github.sha }}
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload site/ as the Pages artifact
