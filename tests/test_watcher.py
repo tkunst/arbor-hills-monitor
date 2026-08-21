@@ -69,3 +69,31 @@ def test_failed_urgent_send_queues_neither(monkeypatch):
     assert state["pending_digest"] == []
     assert state["pending_urgent_recap"] == []
     assert writes == []  # write_meta never reached on the failure path
+
+
+def test_write_meta_failure_after_successful_send_propagates_not_swallowed(monkeypatch):
+    # A write_meta failure AFTER a successful send must NOT be caught by the
+    # same except that guards send_urgent_alert — that would mislabel a real
+    # send as "FAILED to send" and let the doc reach mark_processed with the
+    # recap entry only ever having existed in memory. It must propagate to
+    # the caller's outer per-doc try/except instead, same as the routine
+    # branch's write_meta call already does today.
+    monkeypatch.setattr(w.ea, "is_urgent", lambda parsed, cfg: True)
+    monkeypatch.setattr(w.ea, "send_urgent_alert", lambda parsed, d, link, cfg: None)
+
+    def _write_meta_boom(sheets, sheet_id, state):
+        raise RuntimeError("Sheets API 500")
+    monkeypatch.setattr(w.sw, "write_meta", _write_meta_boom)
+
+    state = _fresh_state()
+    try:
+        w._route_urgent_or_digest(_parsed("urgent"), _doc_meta(), "http://x", {}, state, object(), "SID")
+        raised = False
+    except RuntimeError:
+        raised = True
+
+    assert raised, "write_meta failure after a successful send must propagate, not be swallowed"
+    # The append already happened in memory before write_meta was called —
+    # a later successful write_meta in the same run (e.g. the next doc, or
+    # the unconditional end-of-run write) can still persist it.
+    assert len(state["pending_urgent_recap"]) == 1
