@@ -1,7 +1,7 @@
 """
 risk_register.py — R1-R8 risk definitions + R8 signal keywords.
 
-Single source of truth for the Conservancy's risk register. `egle_doc_parser`
+Single source of truth for the monitor's risk register. `egle_doc_parser`
 takes a risk register as a parameter (it does NOT hardcode this), so the parser
 stays domain-agnostic and reusable by Decode with a different register. This
 module is the Arbor-Hills-specific instance.
@@ -39,8 +39,8 @@ RISK_REGISTER = [
         "id": "R3",
         "name": "Odor nuisance",
         "description": (
-            "Ongoing neighbor odor complaints, documented monthly via the "
-            "Conservancy's web-based odor reporting system."
+            "Ongoing neighbor odor complaints, documented monthly via a "
+            "web-based odor reporting system."
         ),
     },
     {

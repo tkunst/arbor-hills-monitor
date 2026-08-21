@@ -1,18 +1,22 @@
 # Arbor Hills Document Monitor
 
-Automated monitoring of Michigan EGLE regulatory filings for the **Arbor Hills
-complex**, built for the [Conservancy
-Initiative](https://theconservancyinitiative.org). It tracks four co-located,
-EGLE-regulated facilities — the **Landfill (N2688)**, the **Remediation Area**
-(water/PFAS), **Arbor Hills Energy (N1504)** (the SO2 turbine plant), and
-**Emerald RNG (P1488)** — backfilling the existing documents and watching for new
-filings, classifying each against the Conservancy's risk register, maintaining a
-full-text-searchable PDF archive plus a Google Sheet case file, and emailing
-alerts. Each document is tagged with its facility (see
-`docs/decisions/008-multi-facility.md`).
+An independent, automated monitor of Michigan EGLE regulatory filings for the
+**Arbor Hills complex**. It tracks four co-located, EGLE-regulated facilities —
+the **Landfill (N2688)**, the **Remediation Area** (water/PFAS), **Arbor Hills
+Energy (N1504)** (the SO2 turbine plant), and **Emerald RNG (P1488)** —
+backfilling the existing documents and watching for new filings, classifying
+each against a fixed risk register, maintaining a full-text-searchable PDF
+archive plus a Google Sheet case file, and emailing alerts. Each document is
+tagged with its facility (see `docs/decisions/008-multi-facility.md`).
 
 All inputs are **public regulatory data** from EGLE's nSITE portal. No credentials
 live in the repo — cloud secrets are GitHub Secrets / local `.env`.
+
+This project takes source data from anyone, provided it has clear provenance —
+EGLE filings, the operator, township and county records, community groups.
+Every item in the case file is labeled by source so a reader can verify it
+independently; the monitor itself does not speak for, or take direction from,
+any advocacy organization.
 
 ## What it does
 

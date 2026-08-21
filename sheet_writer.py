@@ -11,7 +11,7 @@ Human tabs:
   - "Risk Register"        R1-R8 with auto-counted evidence + most-recent date.
   - "Measurements"         atomic structured readings, one row per (doc, reading).
 
-Internal tabs (prefixed "_", ignored by the Conservancy):
+Internal tabs (prefixed "_", ignored by human readers):
   - "_state"               per-document processing event log (append-only).
   - "_meta"                global singletons (pending digest, MMPC, last run).
 
@@ -108,7 +108,7 @@ TAB_STATE = "_state"
 TAB_META = "_meta"
 # Stream C (WDS solid-waste) case-file tabs — structurally parallel to the
 # nSITE New/Historical/Evidence tabs above. Deliberately NOT in _TAB_HEADERS:
-# ensure_tabs() must not create them, so the Conservancy-visible Sheet gains no
+# ensure_tabs() must not create them, so the public-visible Sheet gains no
 # empty "WDS" tabs until Stream C is actually enabled/dumped. wds_watcher +
 # scripts/dump_wds_historical.py + wds_archiver.py create them on demand via
 # ensure_wds_tabs().
