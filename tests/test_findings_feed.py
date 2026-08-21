@@ -63,6 +63,30 @@ def test_paginate_empty_returns_one_empty_page():
     assert ff.paginate([], page_size=5) == [[]]
 
 
+# --- is_suspicious_shrink (the auto-commit trip-wire) ---------------------
+
+def test_is_suspicious_shrink_flags_a_big_drop():
+    assert ff.is_suspicious_shrink(previous_total=1720, new_total=5) is True
+
+
+def test_is_suspicious_shrink_allows_normal_growth():
+    assert ff.is_suspicious_shrink(previous_total=1720, new_total=1724) is False
+
+
+def test_is_suspicious_shrink_allows_a_small_dip():
+    # A handful of rows purged/re-dumped is real, expected variance, not a
+    # bad-read signal — only a drop past SHRINK_GUARD_RATIO trips it.
+    assert ff.is_suspicious_shrink(previous_total=1720, new_total=1715) is False
+
+
+def test_is_suspicious_shrink_never_fires_on_first_run():
+    assert ff.is_suspicious_shrink(previous_total=None, new_total=0) is False
+
+
+def test_is_suspicious_shrink_never_fires_from_a_zero_baseline():
+    assert ff.is_suspicious_shrink(previous_total=0, new_total=0) is False
+
+
 # --- facility_display ---------------------------------------------------
 
 def test_facility_display_aliases_wrd():
@@ -108,6 +132,13 @@ def test_render_entry_link_passthrough_no_drive_link_introduced():
     out = ff.render_entry(row)
     assert f'href="{nsite_link}"' in out
     assert "drive.google.com" not in out
+
+
+def test_render_entry_rejects_non_http_link_scheme():
+    row = ff.parse_feed_rows([_row(name="Doc", link="javascript:alert(1)")])[0]
+    out = ff.render_entry(row)
+    assert "javascript:" not in out
+    assert "<h3>Doc</h3>" in out  # falls back to a plain (non-linked) title
 
 
 def test_render_entry_handles_untitled_document():
