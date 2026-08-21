@@ -112,6 +112,21 @@ def resolve_display_links(rows: list[dict], archive_links: dict) -> list[dict]:
 # information by stripping.
 _TRAILING_DATE_RE = re.compile(r'\s*\(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\)\s*$')
 
+# document_name is EGLE filing-system free text (nsite_client's
+# docMgmtDocDescr) with no length cap or whitespace normalization upstream --
+# not attacker-controlled in the usual sense, but not trusted either. The
+# regex above has no anchor forcing WHERE it starts scanning, so on a title
+# that's mostly/entirely a long run of whitespace with no real date in it,
+# re.sub retries the \s* backtrack at every candidate start position: O(n^2)
+# on n. Measured in Step 6 security review of PR #46 (2026-08-21): ~16s on
+# ~100k whitespace/tab characters, near Sheets' own 50k-char cell cap. Fixed
+# by bounding the regex to a small fixed-size trailing slice rather than the
+# whole title -- caps the search space to a constant regardless of title
+# length, so the vector is gone, not just slower. A real date suffix
+# ("(12/31/2026)" = 13 chars, generous headroom for leading/trailing
+# whitespace) always fits well inside this window.
+_DATE_SUFFIX_WINDOW = 40
+
 
 def strip_embedded_date(name: str) -> str:
     """Drop a trailing "(MM/DD/YYYY)"-shaped date from a title before display.
@@ -121,7 +136,9 @@ def strip_embedded_date(name: str) -> str:
     restatement of Date Filed. Confirmed against all 1,720 real Document Name
     values in the Sheet: 195 end in a bare date suffix, zero false positives
     on the other ~30 titles that merely contain a parenthetical."""
-    return _TRAILING_DATE_RE.sub("", name or "").strip()
+    name = name or ""
+    head, tail = name[:-_DATE_SUFFIX_WINDOW], name[-_DATE_SUFFIX_WINDOW:]
+    return (head + _TRAILING_DATE_RE.sub("", tail)).strip()
 
 
 # The feed only ever grows in normal operation (append-only Sheet tabs). A
