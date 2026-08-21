@@ -412,6 +412,7 @@ _TAB_HEADERS = {
 # ADR 013) was removed this way — its old row is cleared on the next write.
 _META_DEFAULTS = {
     "pending_digest": [],
+    "pending_urgent_recap": [],
     "wds_seen": {},
     "wds_snapshot_hashes": {},
     "last_run": "",

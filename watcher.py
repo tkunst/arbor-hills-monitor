@@ -6,6 +6,9 @@ watcher.py — daily run: new nSITE filings + alerts (+ WDS Stream C when enable
     -> THEN append the 'processed' state event (crash-safe order). Urgent docs
     trigger a same-day email; everything else accrues into the Sunday digest.
   - Digest: on Sunday, email the accumulated non-urgent items and clear them.
+    An urgent item ALSO gets a labeled recap in that same Sunday email (a
+    reader who only reads the digest would otherwise never see it) — the
+    same-day [URGENT] send itself is unchanged; this is purely additive.
 
 MMPC meeting documents are captured separately by Mirror D (mmpc_archiver.py,
 ADR 010) on its own schedule; the watcher's old in-window "minutes likely posted,
@@ -61,6 +64,19 @@ def _digest_record(parsed, d: dict, link: str) -> dict:
     }
 
 
+def _urgent_recap_record(parsed, d: dict, link: str, sent_at: str) -> dict:
+    return {
+        "date_filed": d["date_filed"],
+        "document_name": d["document_name"],
+        "doc_type": parsed.doc_type,
+        "severity": parsed.severity,
+        "risks": parsed.risks,
+        "key_data_point": parsed.key_data_point,
+        "link": link,
+        "urgent_sent_at": sent_at,
+    }
+
+
 def _record_to_item(rec: dict) -> dict:
     parsed = SimpleNamespace(
         doc_type=rec["doc_type"],
@@ -70,7 +86,32 @@ def _record_to_item(rec: dict) -> dict:
         summary=rec.get("key_data_point", ""),
     )
     meta = {"date_filed": rec["date_filed"], "document_name": rec["document_name"]}
+    if "urgent_sent_at" in rec:
+        meta["urgent_sent_at"] = rec["urgent_sent_at"]
     return {"parsed": parsed, "metadata": meta, "link": rec["link"]}
+
+
+def _route_urgent_or_digest(parsed, d: dict, link: str, cfg: dict, state: dict,
+                             sheets, sheet_id: str) -> None:
+    """Urgent -> same-day email, ALSO queued for the next Sunday's labeled
+    recap section; routine -> queued for the next Sunday digest. A failed
+    urgent send is dropped from BOTH queues — matches the pre-existing
+    behavior of not queuing a failed urgent send to pending_digest either
+    (an alert that never went out has nothing to recap)."""
+    if ea.is_urgent(parsed, cfg):
+        try:
+            sent_at = _now()
+            ea.send_urgent_alert(parsed, d, link, cfg)
+            state["pending_urgent_recap"].append(
+                _urgent_recap_record(parsed, d, link, sent_at))
+            sw.write_meta(sheets, sheet_id, state)
+            print(f"  URGENT emailed: {d['document_name'][:50]}")
+        except Exception as ae:  # noqa: BLE001 — notification is best-effort
+            print(f"  URGENT ALERT FAILED to send (doc still recorded): "
+                  f"{d['document_name'][:50]}: {ae}")
+    else:
+        state["pending_digest"].append(_digest_record(parsed, d, link))
+        sw.write_meta(sheets, sheet_id, state)
 
 
 def run() -> int:
@@ -174,16 +215,7 @@ def run() -> int:
                 except Exception as we:  # noqa: BLE001 — summary tab is best-effort
                     print(f"  WOI summary-tab write skipped (doc still recorded): {we}")
 
-            if ea.is_urgent(parsed, cfg):
-                try:
-                    ea.send_urgent_alert(parsed, d, link, cfg)
-                    print(f"  URGENT emailed: {d['document_name'][:50]}")
-                except Exception as ae:  # noqa: BLE001 — notification is best-effort
-                    print(f"  URGENT ALERT FAILED to send (doc still recorded): "
-                          f"{d['document_name'][:50]}: {ae}")
-            else:
-                state["pending_digest"].append(_digest_record(parsed, d, link))
-                sw.write_meta(sheets, sheet_id, state)
+            _route_urgent_or_digest(parsed, d, link, cfg, state, sheets, sheet_id)
 
             payload = {
                 "document_name": d["document_name"],
@@ -273,14 +305,18 @@ def run() -> int:
     # --- Sunday digest ---
     if today.weekday() == 6:
         # (1) Document digest — the coalition email to the full alert_recipients
-        # list, unchanged. Sent only when there are new documents (no empty digest
-        # on a quiet week).
-        if state["pending_digest"]:
+        # list, unchanged. Sent when there are new documents OR urgent items to
+        # recap (a week with only a recapped urgent item and nothing new is not
+        # an empty digest); still no email at all on a genuinely quiet week.
+        if state["pending_digest"] or state["pending_urgent_recap"]:
             items = [_record_to_item(r) for r in state["pending_digest"]]
-            ea.send_digest(items, cfg)
+            recap_items = [_record_to_item(r) for r in state["pending_urgent_recap"]]
+            ea.send_digest(items, cfg, urgent_recap=recap_items)
             state["pending_digest"] = []
+            state["pending_urgent_recap"] = []
             sw.write_meta(sheets, sheet_id, state)
-            print(f"[watcher] sent Sunday digest ({len(items)} item(s)).")
+            print(f"[watcher] sent Sunday digest ({len(items)} item(s), "
+                  f"{len(recap_items)} urgent recap item(s)).")
 
         # (2) "Upcoming Activities (next 14 days)" from the PRIVATE Sheet
         # (GSHEET_ID_PRIVATE — service-account-only, never operator-visible, so it
