@@ -136,7 +136,12 @@ def strip_embedded_date(name: str) -> str:
     restatement of Date Filed. Confirmed against all 1,720 real Document Name
     values in the Sheet: 195 end in a bare date suffix, zero false positives
     on the other ~30 titles that merely contain a parenthetical."""
-    name = name or ""
+    # .rstrip() first (a plain linear scan, no backtracking -- safe even on
+    # an all-whitespace pathological string) so unbounded trailing whitespace
+    # AFTER a real date can't push the "(...)" itself outside the window
+    # below; only then take the fixed-size trailing slice the regex runs
+    # against.
+    name = (name or "").rstrip()
     head, tail = name[:-_DATE_SUFFIX_WINDOW], name[-_DATE_SUFFIX_WINDOW:]
     return (head + _TRAILING_DATE_RE.sub("", tail)).strip()
 
