@@ -92,3 +92,40 @@ def test_merge_extra_recipients_is_generic_to_env_var_name(monkeypatch):
     assert ea.merge_extra_recipients(["a@x.com"], "SOME_OTHER_EXTRA") == ["a@x.com"]
     monkeypatch.setenv("SOME_OTHER_EXTRA", "b@x.com, a@x.com")
     assert ea.merge_extra_recipients(["a@x.com"], "SOME_OTHER_EXTRA") == ["a@x.com", "b@x.com"]
+
+
+# --- send_digest: DIGEST_RECIPIENTS_EXTRA is digest-only, never urgent -------
+
+_DIGEST_CFG = {"alert_recipients": ["base@x.com"]}
+
+
+def test_send_digest_with_no_extra_uses_resolve_recipients(monkeypatch):
+    monkeypatch.delenv("ALERT_RECIPIENTS_EXTRA", raising=False)
+    monkeypatch.delenv("DIGEST_RECIPIENTS_EXTRA", raising=False)
+    sent = []
+    monkeypatch.setattr(ea, "send_email",
+                        lambda subj, body, c, recipients=None: sent.append(recipients))
+    ea.send_digest([], _DIGEST_CFG)
+    assert sent == [["base@x.com"]]
+
+
+def test_send_digest_adds_digest_recipients_extra_on_top_of_the_full_list(monkeypatch):
+    monkeypatch.delenv("ALERT_RECIPIENTS_EXTRA", raising=False)
+    monkeypatch.setenv("DIGEST_RECIPIENTS_EXTRA", "commissioner@washtenaw.org, base@x.com")
+    sent = []
+    monkeypatch.setattr(ea, "send_email",
+                        lambda subj, body, c, recipients=None: sent.append(recipients))
+    ea.send_digest([], _DIGEST_CFG)
+    assert sent == [["base@x.com", "commissioner@washtenaw.org"]]
+
+
+def test_send_urgent_alert_never_sees_digest_recipients_extra(monkeypatch):
+    # The whole point: adding someone via DIGEST_RECIPIENTS_EXTRA must NOT put
+    # them on the same-day [URGENT] send.
+    monkeypatch.delenv("ALERT_RECIPIENTS_EXTRA", raising=False)
+    monkeypatch.setenv("DIGEST_RECIPIENTS_EXTRA", "commissioner@washtenaw.org")
+    sent = []
+    monkeypatch.setattr(ea, "send_email",
+                        lambda subj, body, c, recipients=None: sent.append(recipients))
+    ea.send_urgent_alert(_doc(severity="urgent"), {"document_name": "x"}, "http://x", _DIGEST_CFG)
+    assert sent == [None]  # send_urgent_alert passes no explicit recipients -> resolve_recipients only
