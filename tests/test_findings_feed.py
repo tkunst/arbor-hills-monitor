@@ -136,6 +136,17 @@ def test_strip_embedded_date_stays_fast_on_a_long_whitespace_run():
     assert result == "Title"  # trailing whitespace still gets cleaned up
 
 
+def test_strip_embedded_date_strips_a_real_date_regardless_of_trailing_whitespace():
+    # Round-2 verification of the ReDoS fix found this asymmetry: without an
+    # rstrip() first, unbounded trailing whitespace AFTER a real date could
+    # push the "(...)" itself outside the fixed trailing window, silently
+    # leaving the date in. rstrip() is a plain linear scan (no backtracking,
+    # safe even on an all-whitespace pathological string), so this closes
+    # the gap without reopening the O(n^2) vector.
+    for n in (0, 30, 35, 60, 1000, 50_000):
+        assert ff.strip_embedded_date("Report (1/1/26)" + " " * n) == "Report"
+
+
 def test_strip_embedded_date_still_strips_a_real_date_on_a_long_title():
     # The bounded window must not break the common case: a long-but-normal
     # title (no pathological padding) with a genuine trailing date suffix.
