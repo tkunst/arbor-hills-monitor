@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why I Built This: Arbor Hills Monitor</title>
+<meta name="description" content="Why an independent, automated monitor of Arbor Hills Landfill's regulatory record exists, and what it does.">
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<div class="wrap">
+
+<p><a href="../index.html">&larr; Arbor Hills Monitor</a></p>
+
+<p class="series-label">Unanswered Questions Regarding Arbor Hills &middot; Part 1</p>
+<h1>Why I Built This</h1>
+<p class="byline">Trisha Kunst</p>
+
+<p>I live in Northville Township, Michigan, near the Arbor Hills Landfill in
+neighboring Salem Township, Washtenaw County. Several facilities regulated by
+Michigan's Department of Environment, Great Lakes, and Energy (EGLE) sit on
+and around this one site, including the landfill itself, its groundwater
+Remediation Area, the Arbor Hills Energy gas-to-electricity plant, and the
+Emerald RNG gas-processing plant. Each files its own permits, inspection
+reports, and violation notices with the state, on its own schedule, in its own
+database.</p>
+
+<p>I am a data scientist. When I started reading this site's regulatory record
+for myself, I found that the record was public, and also that almost nobody
+was reading all of it, continuously, across every facility tied to the
+property. A document that mattered could sit unread in a state database for
+months. A pattern only becomes visible to someone who is watching for it all
+the time, not checking in occasionally.</p>
+
+<p>So I built a small program that does the continuous part. Every day it
+checks Michigan EGLE's public filing systems for every facility tied to this
+site, downloads anything new, and reads what it can: a routine report, a
+violation notice, a permit renewal, a measured reading checked against a
+permitted limit. It keeps a running, dated record of what it finds, and it
+emails a plain-language summary to a short, curated list of people whose role
+touches this record.</p>
+
+<p>Why did I build this instead of trusting that someone else would? Because I
+want to know, from the primary documents themselves, whether the facility
+near my home is being run the way its permits say it will be. I built this
+to keep my family safe without moving. Not to win an argument. To know.</p>
+
+<p>That gives this project one job: get the primary source right, and say
+plainly what it shows and what it doesn't yet show. It is not affiliated
+with, and does not speak for, any advocacy organization. It takes data from
+any source with a clear paper trail behind it: EGLE, the operator, townships
+and county records, community groups, whoever has it, as long as it is
+sourced and I can check it myself. If GFL's own compliance team wanted to
+send supplemental data, I would take that too, on the same terms.</p>
+
+<p>This is the first entry in a series I am calling "Unanswered Questions
+Regarding Arbor Hills." The questions in that series are not rhetorical.
+They are the specific things the public record does not yet answer, stated
+plainly, alongside what I do and do not know.</p>
+
+<div class="data-links">
+<h2>The code</h2>
+<ul>
+<li><a href="https://github.com/tkunst/arbor-hills-monitor">The monitor's pipeline and classification rules</a>, open source on GitHub: how it checks a filing, and what makes it worth an alert.</li>
+</ul>
+</div>
+
+<p>I will keep adding to both the code and this series as the record grows.</p>
+
+<footer class="site-footer">
+<p>An independent project. All source data is public regulatory filings from Michigan EGLE.</p>
+</footer>
+
+</div>
+</body>
+</html>
