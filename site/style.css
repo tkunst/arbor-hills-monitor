@@ -98,3 +98,41 @@ footer.site-footer {
   color: var(--muted);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
+
+.findings-count {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.findings-list {
+  margin-top: 1.5rem;
+}
+
+.finding {
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.finding:last-child {
+  border-bottom: none;
+}
+
+.finding h3 {
+  font-size: 1.05rem;
+  margin: 0.2rem 0 0.5rem;
+}
+
+.finding-meta {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.finding-kdp, .finding-risks {
+  font-size: 0.9rem;
+}
+
+.findings-nav {
+  margin-top: 2rem;
+}
