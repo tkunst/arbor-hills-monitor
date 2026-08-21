@@ -2,6 +2,14 @@
 handling, sort order, link passthrough, archive-link resolution, title
 date-stripping."""
 import findings_feed as ff
+import sheet_writer as sw
+
+
+def test_doc_id_extraction_reuses_sheet_writer_not_a_copy():
+    # findings_feed.doc_id_from_nsite_link delegates to sheet_writer.
+    # _link_doc_id (see its docstring) -- this pins that it stays a real
+    # delegation, not a copy-pasted reimplementation that could drift.
+    assert ff._link_doc_id is sw._link_doc_id
 
 
 def _row(date="2026-08-01", name="Doc", risks="R5", link="https://x/1",
@@ -133,8 +141,22 @@ def test_doc_id_from_nsite_link_extracts_the_trailing_id():
         "8094300008956198244"
 
 
-def test_doc_id_from_nsite_link_returns_none_for_a_non_nsite_link():
-    assert ff.doc_id_from_nsite_link(_DRIVE_LINK) is None
+def test_doc_id_from_nsite_link_handles_downloadfile_query_string_and_trailing_slash():
+    # Delegates to sheet_writer._link_doc_id (reused, not reimplemented) --
+    # handles the write_stub_row shape (.../downloadfile/<id>) and strips a
+    # query string or trailing slash, which a narrower nSITE-only regex would
+    # have silently missed.
+    assert ff.doc_id_from_nsite_link("https://mienviro.michigan.gov/ncore/downloadfile/123") == "123"
+    assert ff.doc_id_from_nsite_link("https://mienviro.michigan.gov/ncore/downloadpdf/123?foo=bar") == "123"
+    assert ff.doc_id_from_nsite_link("https://mienviro.michigan.gov/ncore/downloadpdf/123/") == "123"
+
+
+def test_doc_id_from_nsite_link_returns_none_for_blank_input():
+    # A non-nSITE link (e.g. one already resolved to a Drive URL) still
+    # extracts a trailing path segment rather than None -- that's fine, it's
+    # exercised end-to-end by test_resolve_display_link_falls_back_for_a_
+    # non_nsite_link below (it just won't match any real doc_id key, so
+    # resolve_display_link falls back correctly regardless).
     assert ff.doc_id_from_nsite_link("") is None
     assert ff.doc_id_from_nsite_link(None) is None
 
