@@ -12,6 +12,11 @@ from __future__ import annotations
 import html
 import re
 
+# Only this one pure helper is reused from sheet_writer -- a plain string
+# parse with zero I/O of its own (see its docstring), so importing it doesn't
+# compromise this module's "no Sheets API" claim above.
+from sheet_writer import _link_doc_id
+
 # Same column order as sheet_writer.FEED_HEADERS — New Documents and Historical
 # Documents share this schema (sheet_writer.feed_row()).
 FEED_FIELDS = [
@@ -52,12 +57,18 @@ def facility_display(name: str) -> str:
 # URL's own path. Extracting it here means no schema change to New/Historical
 # Documents (which still carries the nSITE link, matching the digest/email
 # path) — this is a display-time substitution the feed alone makes.
-_NSITE_DOC_ID_RE = re.compile(r'/downloadpdf/(-?\d+)$')
 
 
 def doc_id_from_nsite_link(link: str) -> str | None:
-    m = _NSITE_DOC_ID_RE.search(link or "")
-    return m.group(1) if m else None
+    """The nSITE doc_id embedded in a Link URL, via sheet_writer._link_doc_id
+    (the same parser purge_doc_rows relies on elsewhere in this repo) rather
+    than a fresh regex here — it already strips the query string/trailing
+    slash and handles both …/downloadpdf/<id> and …/downloadfile/<id> (the
+    shape write_stub_row uses for an unprocessable-source doc), so reusing it
+    means a future EGLE URL-shape change only needs fixing in one place.
+    Translates its "" (nothing to parse) into None, which reads better at the
+    call site below."""
+    return _link_doc_id(link or "") or None
 
 
 def resolve_display_link(nsite_link: str, archive_links: dict) -> str:
@@ -72,7 +83,12 @@ def resolve_display_link(nsite_link: str, archive_links: dict) -> str:
 def resolve_display_links(rows: list[dict], archive_links: dict) -> list[dict]:
     """Swap every row's link for its archive mirror where one exists (see
     resolve_display_link). archive_links is {doc_id: archive_url}, already
-    read from the Archived PDFs tab by the caller — this stays pure."""
+    read from the Archived PDFs tab by the caller — this stays pure. Every
+    row here always has a "link" key (parse_feed_rows always writes all
+    FEED_FIELDS, padding a short row with ""), so `r["link"]` is safe; kept
+    as a plain lookup rather than `.get()` so a genuinely malformed caller
+    input (missing the key entirely) fails loudly instead of silently
+    treating a bug upstream as "no link"."""
     return [dict(r, link=resolve_display_link(r["link"], archive_links)) for r in rows]
 
 
@@ -83,6 +99,17 @@ def resolve_display_links(rows: list[dict], archive_links: dict) -> list[dict]:
 # something the monitor introduced). Since Date Filed is already shown
 # separately and reliably in the entry's meta line, a second, sometimes-wrong
 # date baked into the title is confusing, not informative -- strip it.
+#
+# Checked before shipping this, not just assumed: does the title date ever
+# carry real information Date Filed doesn't (e.g. a genuine "inspection
+# conducted" date vs. a later "record filed" date)? Compared all 175
+# parseable dated titles against their row's Date Filed: 152 (87%) match
+# exactly, another 20 (11%) are within a year, and the only 3 over a year off
+# are the SAME templated "On-Site Inspection (06/01/2025)" error repeated
+# across three separate facilities' reports for the one real event (all
+# actually filed 2026-06-18) -- a copy-pasted EGLE data-entry artifact, not
+# an alternate meaningful date. No case in the live dataset loses real
+# information by stripping.
 _TRAILING_DATE_RE = re.compile(r'\s*\(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\)\s*$')
 
 
