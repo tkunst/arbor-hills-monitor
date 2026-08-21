@@ -209,8 +209,17 @@ def send_urgent_alert(parsed, metadata: dict, link: str, cfg: dict) -> None:
 
 
 def send_digest(items: list[dict], cfg: dict) -> None:
+    """The weekly digest goes to resolve_recipients(cfg) PLUS anyone in
+    DIGEST_RECIPIENTS_EXTRA (comma/semicolon-separated env, private — not
+    committed to this PUBLIC repo's config.yml). This is a DIGEST-ONLY
+    supplement: send_urgent_alert() above does not read this env, so adding
+    someone here gets them the Sunday roundup without also putting them on the
+    same-day [URGENT] send. Added 2026-08-21, Trisha's direction, to bring
+    Washtenaw commissioners onto the digest ahead of adding them to urgent/
+    methane-perimeter alerts later — see SUSPENSE.md for the follow-up dates."""
     subject = f"Arbor Hills N2688 digest — {len(items)} new document(s)"
-    send_email(subject, format_digest_body(items), cfg)
+    recipients = merge_extra_recipients(resolve_recipients(cfg), "DIGEST_RECIPIENTS_EXTRA")
+    send_email(subject, format_digest_body(items), cfg, recipients=recipients)
 
 
 def send_upcoming(upcoming_block: str, cfg: dict) -> None:
