@@ -1,0 +1,58 @@
+name: findings-feed
+
+# Regenerates the public Findings feed (site/findings/) from the case-file
+# Sheet's New Documents + Historical Documents tabs and commits any change
+# back to main. That push is what re-triggers pages.yml (its `paths: site/**`
+# filter), so the deployed site always reflects the current record — no
+# incremental append, no separate state to get out of sync; a missed run just
+# means the feed is stale by one day, never wrong. Read-only against the
+# Sheet: only `values().get` calls, see findings_feed.py / scripts/
+# gen_findings_feed.py.
+on:
+  schedule:
+    - cron: "30 11 * * *"   # ~30min after daily.yml's 6am ET / 11am UTC watcher run
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: findings-feed
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Regenerate the Findings feed
+        env:
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+        run: python scripts/gen_findings_feed.py
+      - name: Commit and push if the feed changed
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add site/findings
+          if git diff --cached --quiet; then
+            echo "No change to the Findings feed."
+          else
+            git commit -m "chore(findings): regenerate the public Findings feed"
+            git push
+          fi
