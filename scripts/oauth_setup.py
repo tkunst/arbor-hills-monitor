@@ -20,8 +20,8 @@ Then:
 
 A browser opens; sign in as Trisha and approve. The script prints the refresh
 token + folder ID and the exact `gh secret set` commands. Finally, share the new
-mirror folder in Drive as "Anyone with the link -> Viewer" so the Conservancy
-can open Archive Links (these are already-public EGLE filings).
+mirror folder in Drive as "Anyone with the link -> Viewer" so anyone with the
+link can open Archive Links (these are already-public EGLE filings).
 
 To add ANOTHER app-only mirror folder later (e.g. the GFL air exhibit, ADR 026),
 reuse this flow with an explicit name + secret:
@@ -119,7 +119,7 @@ def main() -> int:
           "clear your terminal scrollback.")
     print("\nLAST STEP: in Google Drive, right-click the new "
           f"'{folder_name}' folder -> Share -> General access -> "
-          "'Anyone with the link' -> Viewer, so Conservancy members can open "
+          "'Anyone with the link' -> Viewer, so readers can open "
           "Archive Links. (Folder sharing cascades to the PDFs inside it.)")
     return 0
 

@@ -291,17 +291,24 @@ gfl_air:
   # notification half of the two-tier CH4 scheme; the classifier above already
   # existed). A WATCH email sends ONCE per station per continuous >=40ppm episode
   # (re-arms only after that station drops back below 40) — dedicated subject/body,
-  # NEVER mixed with the full-list [URGENT]/anomaly email, so the whole Conservancy
-  # list isn't pinged for a sub-action-level trend. Real-specimen check (live feed,
+  # NEVER mixed with the full-list [URGENT]/anomaly email, so the whole
+  # distribution list isn't pinged for a sub-action-level trend. Real-specimen check (live feed,
   # 2026-07-21): CH4>=40 across the full ~4.4yr record is ~368 episodes total across
   # all 6 stations (~92/yr, ~1.75/wk combined) — not a flood; zero watch/exceedance
   # emails have fired since the classifier shipped 2026-07-17 (checked via the
   # workflow's run logs). Empty list = DISPLAY-ONLY (the rollback lever): the watch
   # line still shows on the snapshot tab and, unchanged from before this change,
   # still rides along in the full-list combined email — just no dedicated send.
+  # ⚠️ FLAGGED 2026-08-21 (Trisha's neutral-branding pass): this list, like
+  # alert_recipients above, is committed to a PUBLIC repo. Unlike alert_recipients
+  # there is no ALERT_RECIPIENTS_EXTRA-equivalent private path for this stream yet
+  # (gfl_air_watcher.py reads watch_alert_recipients directly from config, not
+  # through email_alerts.resolve_recipients). Trisha's call needed: remove the
+  # second address below, or build a small private-recipient mechanism for this
+  # list to match the main one.
   watch_alert_recipients:
     - arbor-hills@trishakunst.com          # Trisha
-    - ddrinan10@gmail.com                  # David Drinan, The Conservancy Initiative VP (added 2026-07-26)
+    - ddrinan10@gmail.com                  # added 2026-07-26 — see the flag above
   # Sentinel / no-data values in the feed (ambiguous no-data vs off-scale-high).
   # Excluded from the measured series; surfaced as anomalies. ADR 014 RECOMMENDS
   # treating them as alert-worthy (fail-safe — don't infer 'benign' when the
@@ -494,8 +501,8 @@ rop:
   # Optional per-watch recipient override (Trisha only, like Meeting Watch /
   # Ridge Wood's review_recipients). Leave unset to send to the full
   # alert_recipients list below — the default, since a ROP renewal advancing
-  # (especially reaching public comment) is a substantive advocacy signal for
-  # the whole Conservancy, not an operational/format concern.
+  # (especially reaching public comment) is a substantive signal for the whole
+  # distribution list, not an operational/format concern.
   # recipients:
   #   - arbor-hills@trishakunst.com
 
@@ -794,11 +801,16 @@ nsite_compliance_actions:
 
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
+# NOTE (2026-08-21, Trisha's direction): this list is committed to a PUBLIC repo,
+# so it is itself a public statement of who the monitor is associated with. Keep
+# it to addresses whose public visibility is fine (Trisha's own, sitting elected
+# officials). Any recipient tied to a specific advocacy organization goes via
+# ALERT_RECIPIENTS_EXTRA (a GitHub Secret, comma-separated, merged in by
+# email_alerts.resolve_recipients — see that function's docstring) so the
+# public config never brands the monitor as that org's. Same reasoning as the
+# BOC-distribution question — see the Lotext strategy doc.
 alert_recipients:
   - arbor-hills@trishakunst.com          # alerts go to Trisha (Cloudflare catch-all → Gmail)
-  - info@theconservancyinitiative.org    # The Conservancy Initiative (general)
-  - ddrinan@theconservancyinitiative.org # David Drinan — Conservancy VP; MMPC opposition seat
-  - leslievans@comcast.net               # Leslie Evans — Conservancy board member; downwind resident
   - hwangr@umich.edu                     # Roland Hwang — voting MMPC member (adjacent-community seat), Northville
 
 # --- Weekly digest "Upcoming Activities" section (ADR 027) ---
@@ -807,8 +819,9 @@ alert_recipients:
 # case-file Sheet must not. Because that content is confidential it is sent as its
 # OWN email to `recipients` below — NEVER folded into the coalition document digest
 # (which still goes to the full alert_recipients list above). Scoped to Trisha ONLY
-# to start, so the section can be tested before it is widened; add the Conservancy
-# addresses here when ready. NEVER add the operator (GFL) — that would defeat the
+# to start, so the section can be tested before it is widened; widen it via
+# ALERT_RECIPIENTS_EXTRA-style private handling, never advocacy-org addresses
+# committed here. NEVER add the operator (GFL) — that would defeat the
 # private Sheet's entire purpose. FAIL-SAFE: if this list is empty or removed the
 # upcoming email is simply NOT sent (the private content is never broadcast to the
 # full list by default). The whole section is also a no-op unless GSHEET_ID_PRIVATE

@@ -124,7 +124,7 @@ this app creates, never the rest of your Drive.
    | `GOAUTH_ARCHIVE_FOLDER_ID` | the mirror folder ID it created |
 
    Then clear your terminal scrollback.
-6. **Share the mirror folder** so the Conservancy can open Archive Links: in
+6. **Share the mirror folder** so readers can open Archive Links: in
    Drive, right-click the new folder → Share → General access → **Anyone with the
    link → Viewer**. Sharing cascades to the PDFs inside. (These are already-public
    EGLE filings, so this exposes nothing new.) Done in the UI, not in code —

@@ -101,7 +101,7 @@ JOB_MODULES = {"seed_wds_state", "verify_state", "smoke_one", "oauth_setup",
 # Secrets + local .env (GSHEET_ID / GDRIVE_SA_KEY / SMTP_* / ANTHROPIC_API_KEY),
 # none of it committed. We deliberately record only the logical name here.
 DATASTORES = [
-    ("ds:conservancy-sheet", "Conservancy Case-File Sheet"),
+    ("ds:case-file-sheet", "Case-File Sheet"),
     ("ds:drive-archive", "Google Drive PDF Archive"),
     ("ds:nsite", "EGLE nSITE Portal (Air)"),
     ("ds:wds", "EGLE WDS Portal (Solid Waste)"),
@@ -117,8 +117,8 @@ DATASTORES = [
 # code<->store read/write edges, attributed to the module that issues the I/O
 # (the client that actually calls the API), verified by reading each module.
 DATA_EDGES = [
-    ("sheet_writer", "ds:conservancy-sheet", "read"),
-    ("sheet_writer", "ds:conservancy-sheet", "write"),
+    ("sheet_writer", "ds:case-file-sheet", "read"),
+    ("sheet_writer", "ds:case-file-sheet", "write"),
     ("archive_client", "ds:drive-archive", "write"),
     ("nsite_client", "ds:nsite", "read"),
     ("wds_client", "ds:wds", "read"),
@@ -149,7 +149,7 @@ OBSERVATIONS = [
     "modules — a star topology and the daily run's single point of failure. "
     "Partly mitigated: the Stream C (WDS) step is wrapped in its own try/except "
     "so a fault there can't sink the nSITE path.",
-    "sheet_writer + the Conservancy Google Sheet is the data spine — the only "
+    "sheet_writer + the case-file Google Sheet is the data spine — the only "
     "read+write store, backing the append-only processing log (_state) plus the "
     "_meta singletons (digest queue, WDS seen-set + snapshot hashes, last-run) and "
     "the per-tab feeds (New/Historical, Evidence, MMPC Archived Files, PFAS Page "
@@ -205,7 +205,7 @@ OBSERVATIONS = [
 FLOWS = [
     {
         "name": "A new EGLE Air filing is caught and triaged",
-        "persona": "N2688 Conservancy advocate",
+        "persona": "N2688 monitor reader",
         "description": "The monitor spots a new Air permit filing for the "
                        "landfill, classifies its risk, and alerts the advocate.",
         "steps": [
@@ -216,14 +216,14 @@ FLOWS = [
             {"label": "Read each new PDF and classify it against the risk register with Claude",
              "nodes": ["egle_doc_parser", "risk_register", "ds:anthropic"]},
             {"label": "Record the finding as a row in the case-file Sheet",
-             "nodes": ["sheet_writer", "ds:conservancy-sheet"]},
+             "nodes": ["sheet_writer", "ds:case-file-sheet"]},
             {"label": "Email the advocate now if urgent, else queue for the Sunday digest",
              "nodes": ["email_alerts", "ds:smtp"]},
         ],
     },
     {
         "name": "A solid-waste change at the landfill (Stream C)",
-        "persona": "N2688 Conservancy advocate",
+        "persona": "N2688 monitor reader",
         "description": "When Stream C is enabled, a new construction permit or "
                        "groundwater exceedance in the Waste Data System reaches the advocate.",
         "steps": [
@@ -232,7 +232,7 @@ FLOWS = [
             {"label": "Poll the EGLE Waste Data System collections",
              "nodes": ["wds_watcher", "wds_client", "ds:wds"]},
             {"label": "Diff against the stored seen-set and classify severity",
-             "nodes": ["wds_watcher", "ds:conservancy-sheet"]},
+             "nodes": ["wds_watcher", "ds:case-file-sheet"]},
             {"label": "Urgent (new permit / violation) emails same-day; the rest joins the digest",
              "nodes": ["email_alerts", "ds:smtp", "sheet_writer"]},
         ],
@@ -246,7 +246,7 @@ FLOWS = [
             {"label": "The nightly archive job runs after the watcher (3am)",
              "nodes": ["archiver"]},
             {"label": "Find processed documents not yet mirrored",
-             "nodes": ["archiver", "sheet_writer", "ds:conservancy-sheet"]},
+             "nodes": ["archiver", "sheet_writer", "ds:case-file-sheet"]},
             {"label": "Download the source PDF from EGLE",
              "nodes": ["nsite_client", "ds:nsite"]},
             {"label": "Upload a durable copy to Google Drive",
@@ -264,7 +264,7 @@ FLOWS = [
             {"label": "Fetch the EGLE PFAS page and isolate + hash its <main> content",
              "nodes": ["pfas_watcher", "pfas_client", "ds:pfas"]},
             {"label": "Compare the hash to the last snapshot in the PFAS Page Watch tab",
-             "nodes": ["pfas_watcher", "sheet_writer", "ds:conservancy-sheet"]},
+             "nodes": ["pfas_watcher", "sheet_writer", "ds:case-file-sheet"]},
             {"label": "Email a visible-text diff when the page has changed",
              "nodes": ["email_alerts", "ds:smtp"]},
         ],
@@ -280,7 +280,7 @@ FLOWS = [
             {"label": "List every published file via the CivicClerk JSON API",
              "nodes": ["mmpc_archiver", "mmpc_client", "ds:mmpc"]},
             {"label": "Skip files already logged in the MMPC Archived Files tab",
-             "nodes": ["mmpc_archiver", "sheet_writer", "ds:conservancy-sheet"]},
+             "nodes": ["mmpc_archiver", "sheet_writer", "ds:case-file-sheet"]},
             {"label": "Download each new PDF and upload a durable copy to Drive",
              "nodes": ["archive_client", "ds:drive-archive"]},
         ],

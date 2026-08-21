@@ -51,7 +51,7 @@ and the retired MMPC minutes reminder (ADR 013).
 
 31 modules (24 runtime + 7 ops jobs) · 10 logical data stores · 83 edges ·
 5 persona flows. `watcher.py` is the orchestration hub (star topology, daily
-SPOF); the Conservancy Google Sheet is the single read+write data spine. Full
+SPOF); the case-file Google Sheet is the single read+write data spine. Full
 architect notes render in the viewer's **Observations** panel (and in a
 regenerated `topology.json` → `observations`).
 

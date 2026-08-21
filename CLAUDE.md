@@ -4,11 +4,20 @@ Context for any AI agent (or human) working in this repo.
 
 ## What this is
 
-Automated monitoring of EGLE regulatory filings for the Arbor Hills Landfill
-(SRN N2688), built for the Conservancy Initiative (a non-technical community
-advocacy group). It backfills the ~754 existing documents and watches for new
-ones, classifies each against a risk register (R1–R8), keeps a full-text-
-searchable PDF archive + a Google Sheet case file, and sends alerts.
+An independent, automated monitor of EGLE regulatory filings for the Arbor
+Hills Landfill (SRN N2688). It backfills the ~754 existing documents and
+watches for new ones, classifies each against a risk register (R1–R8), keeps a
+full-text-searchable PDF archive + a Google Sheet case file, and sends alerts.
+
+**Editorial posture (Trisha's direction, 2026-08-21):** the monitor is a
+neutral, provenance-agnostic data-scientist newsletter — not the voice or an
+arm of any advocacy organization. It takes data from any source with clear
+provenance (EGLE, the operator, township/county records, community groups
+alike) and labels each item by source. Do not attribute the project itself to,
+or describe it as built for, any single advocacy group in public-facing text
+(README, this file, code comments, the public Sheet, email/digest content).
+See `documents/arbor-hills/arbor-hills-voice-guide.md` in Lotext for the full
+voice guide.
 
 All EGLE data is public regulatory data. **Tier 0** project (solo dev, no PII,
 external users but no sensitive data). Public repo.
@@ -212,8 +221,8 @@ external users but no sensitive data). Public repo.
 - Sheet tabs are created idempotently (`ensure_tabs`).
 - Workflows use a `concurrency` group so two runs never race the state file.
 - **Two Sheets, two visibility rules.** `GSHEET_ID` is the case-file Sheet and is
-  **operator-visible** (shared with the Conservancy/GFL) — never put anything on
-  it you wouldn't hand the operator. `GSHEET_ID_PRIVATE` (optional; the Sunday
+  **public/operator-visible** — never put anything on it you wouldn't hand the
+  operator. `GSHEET_ID_PRIVATE` (optional; the Sunday
   digest's "Upcoming" tab, read by `upcoming.py`) is a **separate Sheet shared
   ONLY with the service account and Trisha** — never share it with the operator.
   Keep strategy-flavored key dates on the private Sheet, never the public one.
