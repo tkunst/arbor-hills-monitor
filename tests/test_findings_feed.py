@@ -122,6 +122,27 @@ def test_strip_embedded_date_leaves_non_date_parenthetical_content_alone():
     ) == "Additional information request omitted from previous email (due by 3/15/2021)"
 
 
+def test_strip_embedded_date_stays_fast_on_a_long_whitespace_run():
+    # Regression for Step 6 security review of PR #46 (2026-08-21): an
+    # unanchored leading \s* scanned against the WHOLE title was O(n^2) on a
+    # title that's mostly/entirely whitespace with no real date -- measured
+    # ~16s at ~100k chars before the fix (bounding the regex to a fixed
+    # trailing window). This must stay comfortably sub-second regardless of
+    # title length.
+    import time
+    start = time.monotonic()
+    result = ff.strip_embedded_date("Title " + " " * 100_000)
+    assert time.monotonic() - start < 1.0
+    assert result == "Title"  # trailing whitespace still gets cleaned up
+
+
+def test_strip_embedded_date_still_strips_a_real_date_on_a_long_title():
+    # The bounded window must not break the common case: a long-but-normal
+    # title (no pathological padding) with a genuine trailing date suffix.
+    long_title = ("Regular words here " * 3000) + "(06/01/2025)"
+    assert ff.strip_embedded_date(long_title) == ("Regular words here " * 3000).strip()
+
+
 def test_render_entry_uses_the_stripped_title():
     row = ff.parse_feed_rows([_row(name="On-Site Inspection (06/01/2025)")])[0]
     out = ff.render_entry(row)
