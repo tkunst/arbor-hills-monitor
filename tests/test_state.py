@@ -72,6 +72,7 @@ def test_empty_state_when_tabs_absent():
     assert state["processed"] == {}
     assert state["errors"] == {}
     assert state["pending_digest"] == []
+    assert state["pending_urgent_recap"] == []
     assert state["wds_seen"] == {}
     assert state["last_run"] == ""
 
@@ -148,18 +149,23 @@ def test_meta_round_trips_and_defaults_are_isolated():
     svc = FakeSheets()
     state = sw.read_state(svc, "SID")
     state["pending_digest"].append({"document_name": "X"})
+    state["pending_urgent_recap"].append({"document_name": "Y", "urgent_sent_at": "2026-08-15T09:00:00"})
     state["wds_snapshot_hashes"]["p1"] = "hashA"
     state["last_run"] = "2026-06-14T06:00:00"
     sw.write_meta(svc, "SID", state)
 
     reloaded = sw.read_state(svc, "SID")
     assert reloaded["pending_digest"] == [{"document_name": "X"}]
+    assert reloaded["pending_urgent_recap"] == [
+        {"document_name": "Y", "urgent_sent_at": "2026-08-15T09:00:00"}
+    ]
     assert reloaded["wds_snapshot_hashes"] == {"p1": "hashA"}
     assert reloaded["last_run"] == "2026-06-14T06:00:00"
 
     # The module-level defaults must not have been mutated by the round trip.
     fresh = sw.read_state(FakeSheets(), "SID2")
     assert fresh["pending_digest"] == []
+    assert fresh["pending_urgent_recap"] == []
     assert fresh["wds_snapshot_hashes"] == {}
 
 
@@ -185,6 +191,7 @@ def test_read_meta_empty_when_tab_absent():
     meta = sw.read_meta(svc, "SID")
     assert meta["wds_seen"] == {}
     assert meta["wds_snapshot_hashes"] == {}
+    assert meta["pending_urgent_recap"] == []
     assert meta["last_run"] == ""
 
 
@@ -220,3 +227,31 @@ def test_removed_meta_key_clears_orphan_without_losing_live_state():
     assert reloaded["wds_snapshot_hashes"] == {"p1": "oldhash"}
     assert reloaded["last_run"] == "2026-07-12T06:00:00"                       # (b)
     assert "mmpc_minutes_found" not in reloaded                                 # (c)
+
+
+def test_new_meta_key_defaults_safely_on_a_pre_migration_sheet():
+    """A Sheet written by code that predates `pending_urgent_recap` has only 4
+    _meta rows (no row for the new key at all — not even a blank one). Reading
+    it with the new _META_DEFAULTS must default the new key to [] rather than
+    misreading some other key's row for it (read_meta keys off column A, so a
+    missing row is safe by construction — this pins that down)."""
+    svc = FakeSheets()
+    svc._values._tabs[sw.TAB_META] = [
+        list(sw.META_HEADERS),
+        ["pending_digest", json.dumps([{"document_name": "old-item"}])],
+        ["wds_seen", json.dumps({"qmr": {"records": {"k": "h"}, "last_count": 2}})],
+        ["wds_snapshot_hashes", json.dumps({"p1": "oldhash"})],
+        ["last_run", json.dumps("2026-08-10T06:00:00")],
+    ]
+
+    state = sw.read_state(svc, "SID")
+    assert state["pending_urgent_recap"] == []
+    assert state["pending_digest"] == [{"document_name": "old-item"}]
+    assert state["last_run"] == "2026-08-10T06:00:00"
+
+    # Writing back with the new key set fills in the previously-absent row.
+    state["pending_urgent_recap"].append({"document_name": "new-urgent"})
+    sw.write_meta(svc, "SID", state)
+    reloaded = sw.read_meta(svc, "SID")
+    assert reloaded["pending_urgent_recap"] == [{"document_name": "new-urgent"}]
+    assert reloaded["pending_digest"] == [{"document_name": "old-item"}]

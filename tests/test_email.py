@@ -119,6 +119,86 @@ def test_send_digest_adds_digest_recipients_extra_on_top_of_the_full_list(monkey
     assert sent == [["base@x.com", "commissioner@washtenaw.org"]]
 
 
+# --- format_digest_body: urgent recap section (added 2026-08-21) ------------
+
+
+def _item(document_name="Doc A", date_filed="2026-08-10"):
+    return {
+        "parsed": _doc(severity="notable"),
+        "metadata": {"date_filed": date_filed, "document_name": document_name},
+        "link": "http://x/doc",
+    }
+
+
+def _recap_item(document_name="Urgent Doc", urgent_sent_at="2026-08-15T09:00:00"):
+    return {
+        "parsed": _doc(severity="urgent"),
+        "metadata": {
+            "date_filed": "2026-08-15",
+            "document_name": document_name,
+            "urgent_sent_at": urgent_sent_at,
+        },
+        "link": "http://x/urgent-doc",
+    }
+
+
+def test_format_digest_body_with_no_recap_is_byte_identical_to_before():
+    # Regression guard: every existing format_digest_body caller passes no
+    # second argument, so output must be unchanged when urgent_recap is
+    # omitted/None/empty.
+    items = [_item()]
+    baseline = ea.format_digest_body(items)
+    assert ea.format_digest_body(items, None) == baseline
+    assert ea.format_digest_body(items, []) == baseline
+    assert "Arbor Hills (N2688) digest — 1 new document(s)." in baseline
+    assert "URGENT ITEMS" not in baseline
+
+
+def test_format_digest_body_empty_with_no_recap_is_unchanged():
+    assert ea.format_digest_body([]) == "No new Arbor Hills (N2688) documents this period."
+    assert ea.format_digest_body([], None) == "No new Arbor Hills (N2688) documents this period."
+
+
+def test_format_digest_body_recap_only_still_renders_not_empty_message():
+    body = ea.format_digest_body([], [_recap_item()])
+    assert body != "No new Arbor Hills (N2688) documents this period."
+    assert "URGENT ITEMS FROM EARLIER THIS WEEK (already emailed separately):" in body
+    assert "Sent 2026-08-15T09:00:00  Urgent Doc" in body
+
+
+def test_format_digest_body_recap_section_renders_before_procedural_and_other():
+    body = ea.format_digest_body([_item()], [_recap_item()])
+    recap_idx = body.index("URGENT ITEMS FROM EARLIER THIS WEEK")
+    digest_idx = body.index("Arbor Hills (N2688) digest —")
+    assert recap_idx < digest_idx
+
+
+def test_format_digest_body_recap_line_shows_sent_at_per_item():
+    body = ea.format_digest_body([], [
+        _recap_item(document_name="First", urgent_sent_at="2026-08-12T10:00:00"),
+        _recap_item(document_name="Second", urgent_sent_at="2026-08-14T22:30:00"),
+    ])
+    assert "Sent 2026-08-12T10:00:00  First" in body
+    assert "Sent 2026-08-14T22:30:00  Second" in body
+
+
+def test_send_digest_passes_urgent_recap_through_and_resolves_recipients(monkeypatch):
+    monkeypatch.delenv("ALERT_RECIPIENTS_EXTRA", raising=False)
+    monkeypatch.delenv("DIGEST_RECIPIENTS_EXTRA", raising=False)
+    seen = {}
+    monkeypatch.setattr(
+        ea, "format_digest_body",
+        lambda items, urgent_recap=None: seen.update(items=items, urgent_recap=urgent_recap) or "body",
+    )
+    sent = []
+    monkeypatch.setattr(ea, "send_email",
+                        lambda subj, body, c, recipients=None: sent.append((subj, body, recipients)))
+    recap = [_recap_item()]
+    ea.send_digest([], _DIGEST_CFG, urgent_recap=recap)
+    assert seen == {"items": [], "urgent_recap": recap}
+    assert sent == [("Arbor Hills N2688 digest — 0 new document(s)", "body", ["base@x.com"])]
+
+
 def test_send_urgent_alert_never_sees_digest_recipients_extra(monkeypatch):
     # The whole point: adding someone via DIGEST_RECIPIENTS_EXTRA must NOT put
     # them on the same-day [URGENT] send.

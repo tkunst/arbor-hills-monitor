@@ -100,13 +100,28 @@ def format_urgent_body(parsed, metadata: dict, link: str) -> str:
     )
 
 
-def format_digest_body(items: list[dict]) -> str:
-    """items: [{parsed, metadata, link}]. Procedural action items first."""
-    if not items:
+def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None) -> str:
+    """items: [{parsed, metadata, link}]. Procedural action items first.
+
+    urgent_recap: same shape, plus each item's metadata carries
+    'urgent_sent_at' — a recap of items already sent as their own same-day
+    [URGENT] email. Rendered FIRST and clearly labeled as already-sent, so a
+    reader who got that email recognizes this as a repeat, not a new event."""
+    if not items and not urgent_recap:
         return "No new Arbor Hills (N2688) documents this period."
+    lines = []
+    if urgent_recap:
+        lines.append("URGENT ITEMS FROM EARLIER THIS WEEK (already emailed separately):")
+        for it in urgent_recap:
+            p, m = it["parsed"], it["metadata"]
+            sent_at = m.get("urgent_sent_at", "")
+            lines.append(f"  - Sent {sent_at}  {m.get('document_name','')}")
+            lines.append(f"      {p.key_data_point}")
+            lines.append(f"      {it['link']}")
+        lines.append("")
     procedural = [it for it in items if it["parsed"].doc_type == "procedural"]
     others = [it for it in items if it["parsed"].doc_type != "procedural"]
-    lines = [f"Arbor Hills (N2688) digest — {len(items)} new document(s).", ""]
+    lines += [f"Arbor Hills (N2688) digest — {len(items)} new document(s).", ""]
     if procedural:
         lines.append("ACTION ITEMS (deadlines / notices):")
         for it in procedural:
@@ -208,7 +223,7 @@ def send_urgent_alert(parsed, metadata: dict, link: str, cfg: dict) -> None:
     send_email(subject, format_urgent_body(parsed, metadata, link), cfg)
 
 
-def send_digest(items: list[dict], cfg: dict) -> None:
+def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = None) -> None:
     """The weekly digest goes to resolve_recipients(cfg) PLUS anyone in
     DIGEST_RECIPIENTS_EXTRA (comma/semicolon-separated env, private — not
     committed to this PUBLIC repo's config.yml). This is a DIGEST-ONLY
@@ -216,10 +231,15 @@ def send_digest(items: list[dict], cfg: dict) -> None:
     someone here gets them the Sunday roundup without also putting them on the
     same-day [URGENT] send. Added 2026-08-21, Trisha's direction, to bring
     Washtenaw commissioners onto the digest ahead of adding them to urgent/
-    methane-perimeter alerts later — see SUSPENSE.md for the follow-up dates."""
+    methane-perimeter alerts later — see SUSPENSE.md for the follow-up dates.
+
+    urgent_recap: items already sent as their own same-day [URGENT] email,
+    recapped here under their own labeled section. Kept out of the subject
+    line on purpose — the header still reads as "N new documents"; the recap
+    section inside the body is what surfaces the urgent items."""
     subject = f"Arbor Hills N2688 digest — {len(items)} new document(s)"
     recipients = merge_extra_recipients(resolve_recipients(cfg), "DIGEST_RECIPIENTS_EXTRA")
-    send_email(subject, format_digest_body(items), cfg, recipients=recipients)
+    send_email(subject, format_digest_body(items, urgent_recap), cfg, recipients=recipients)
 
 
 def send_upcoming(upcoming_block: str, cfg: dict) -> None:
