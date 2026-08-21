@@ -36,6 +36,7 @@ it.
 | AR-4 | Recipients = config list + private env addresses | Alert routing | policy |
 | AR-5 | Evidence fan-out: evidence-type docs only, one row per risk | Alert routing | classification |
 | AR-6 | Risk-register tally: count + most-recent date (string compare) | Alert routing | calculation |
+| AR-7 | Urgent items also recapped, labeled, in the next Sunday digest | Alert routing | policy |
 | MM-1…5 | *Retired 2026-07-12 (ADR 013) — the MMPC minutes reminder* | MMPC | — |
 | MM-6 | MMPC archive: type = Agenda/Minutes/Other, dedup from Sheet | MMPC | policy |
 | WD-1 | QMR: statistical exceedance = notable (R5), else watch | WDS classification | classification |
@@ -195,6 +196,12 @@ Worked example, because this distinction is the whole credibility model.
 - **Given** the Evidence-by-Risk tabs (nSITE + WDS unioned); **When** the register summary rebuilds; **Then** each risk shows its evidence-row count and the maximum date, where "most recent" is a plain `>` **string** comparison — which is why every date is normalized to ISO first (unpadded M/D/YYYY would sort by month).
 - `sheet_writer.py:391-399`; ISO-normalization rationale `wds_watcher.py:67-82`
 - calculation
+
+### AR-7 — Urgent items also recapped, labeled, in the next Sunday digest
+
+- **Given** an urgent document whose same-day `[URGENT]` email sends successfully; **When** the next Sunday digest is composed; **Then** the item is ALSO listed under an "Urgent items from earlier this week" section, labeled with the date/time its urgent alert actually went out, positioned before the routine new-this-week content — so a reader who only reads the digest still learns an urgent event happened that week, and a reader who already got the same-day email recognizes it as a repeat, not a new event. **Given** the same-day send instead fails; **Then** the item is queued to **neither** the digest nor the recap (an alert that never went out has nothing to recap — matches AR-1's existing handling of a failed urgent send). A week with an urgent recap and zero routine documents still sends a digest (recap-only); the same-day `[URGENT]` send itself (trigger, content, recipients) is unchanged.
+- `watcher.py:91-111` (`_route_urgent_or_digest`); `email_alerts.py:103-129` (`format_digest_body`'s `urgent_recap` section)
+- policy
 
 ---
 
