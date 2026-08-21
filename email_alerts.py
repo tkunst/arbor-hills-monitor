@@ -173,9 +173,14 @@ def resolve_recipients(cfg: dict) -> list:
     return merge_extra_recipients(cfg.get("alert_recipients", []) or [], "ALERT_RECIPIENTS_EXTRA")
 
 
-def send_email(subject: str, body: str, cfg: dict, recipients: list | None = None) -> None:
+def send_email(subject: str, body: str, cfg: dict, recipients: list | None = None) -> bool:
     """Send to all configured recipients via SMTP (TLS). No-op with a warning if
-    SMTP env vars are missing (so a dry/local run doesn't crash).
+    SMTP env vars are missing (so a dry/local run doesn't crash) — returns False
+    in that case, True once messages were actually handed to the SMTP server, so
+    a caller that needs to distinguish "sent" from "silently skipped" can (e.g.
+    _route_urgent_or_digest in watcher.py, which must not record a same-day
+    [URGENT] alert as sent — and recap it later — if it never actually went out).
+    A mid-send SMTP failure still raises (unchanged) rather than returning False.
 
     `recipients` overrides the audience: when a non-empty list is passed it is used
     VERBATIM (not merged with the shared `alert_recipients` list or the
@@ -190,7 +195,7 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
     port = int(os.environ.get("SMTP_PORT", "587"))
     if not (host and user and password and recipients):
         print(f"[email_alerts] SMTP not configured / no recipients — would send: {subject!r}")
-        return
+        return False
 
     sender = os.environ.get("SMTP_FROM") or user
     with smtplib.SMTP(host, port, timeout=30) as server:
@@ -204,6 +209,7 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
             msg.set_content(body)
             server.send_message(msg)
     print(f"[email_alerts] sent {subject!r} to {len(recipients)} recipient(s)")
+    return True
 
 
 def send_test_email(cfg: dict) -> None:
@@ -218,9 +224,14 @@ def send_test_email(cfg: dict) -> None:
     )
 
 
-def send_urgent_alert(parsed, metadata: dict, link: str, cfg: dict) -> None:
+def send_urgent_alert(parsed, metadata: dict, link: str, cfg: dict) -> bool:
+    """Returns True iff the email was actually handed to the SMTP server (False
+    if SMTP is unconfigured/no recipients — see send_email). watcher.py's
+    _route_urgent_or_digest uses this to avoid recording a same-day [URGENT]
+    alert as sent, and recapping it in the Sunday digest, when it never
+    actually went out."""
     subject = f"[URGENT] Arbor Hills N2688: {metadata.get('document_name', 'new document')}"
-    send_email(subject, format_urgent_body(parsed, metadata, link), cfg)
+    return send_email(subject, format_urgent_body(parsed, metadata, link), cfg)
 
 
 def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = None) -> None:

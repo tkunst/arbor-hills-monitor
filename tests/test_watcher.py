@@ -24,7 +24,7 @@ def _fresh_state():
 
 def test_urgent_success_appends_to_recap_only(monkeypatch):
     monkeypatch.setattr(w.ea, "is_urgent", lambda parsed, cfg: True)
-    monkeypatch.setattr(w.ea, "send_urgent_alert", lambda parsed, d, link, cfg: None)
+    monkeypatch.setattr(w.ea, "send_urgent_alert", lambda parsed, d, link, cfg: True)
     writes = []
     monkeypatch.setattr(w.sw, "write_meta", lambda sheets, sheet_id, state: writes.append(dict(state)))
 
@@ -71,6 +71,24 @@ def test_failed_urgent_send_queues_neither(monkeypatch):
     assert writes == []  # write_meta never reached on the failure path
 
 
+def test_urgent_send_skipped_smtp_not_configured_queues_neither(monkeypatch):
+    # send_urgent_alert can return False (no exception) when SMTP is
+    # unconfigured or has no recipients -- send_email() silently no-ops rather
+    # than raising. That must NOT be recorded as "sent": nothing actually went
+    # out, so there is nothing to recap, same as the exception path above.
+    monkeypatch.setattr(w.ea, "is_urgent", lambda parsed, cfg: True)
+    monkeypatch.setattr(w.ea, "send_urgent_alert", lambda parsed, d, link, cfg: False)
+    writes = []
+    monkeypatch.setattr(w.sw, "write_meta", lambda sheets, sheet_id, state: writes.append(dict(state)))
+
+    state = _fresh_state()
+    w._route_urgent_or_digest(_parsed("urgent"), _doc_meta(), "http://x", {}, state, object(), "SID")
+
+    assert state["pending_digest"] == []
+    assert state["pending_urgent_recap"] == []
+    assert writes == []  # write_meta never reached on the skipped-send path
+
+
 def test_write_meta_failure_after_successful_send_propagates_not_swallowed(monkeypatch):
     # A write_meta failure AFTER a successful send must NOT be caught by the
     # same except that guards send_urgent_alert — that would mislabel a real
@@ -79,7 +97,7 @@ def test_write_meta_failure_after_successful_send_propagates_not_swallowed(monke
     # the caller's outer per-doc try/except instead, same as the routine
     # branch's write_meta call already does today.
     monkeypatch.setattr(w.ea, "is_urgent", lambda parsed, cfg: True)
-    monkeypatch.setattr(w.ea, "send_urgent_alert", lambda parsed, d, link, cfg: None)
+    monkeypatch.setattr(w.ea, "send_urgent_alert", lambda parsed, d, link, cfg: True)
 
     def _write_meta_boom(sheets, sheet_id, state):
         raise RuntimeError("Sheets API 500")
