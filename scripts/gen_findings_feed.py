@@ -2,8 +2,9 @@
 """gen_findings_feed.py — regenerate the public Findings feed (site/findings/)
 from the case-file Sheet. Thin I/O wrapper around findings_feed.py's pure
 render logic: read-only against the Sheet — only `values().get` against
-New Documents / Historical Documents (see CLAUDE.md's "Two Sheets" invariant;
-GSHEET_ID is the public/operator-visible one) — then writes static HTML.
+New Documents / Historical Documents / Archived PDFs (see CLAUDE.md's "Two
+Sheets" invariant; GSHEET_ID is the public/operator-visible one) — then
+writes static HTML.
 
 Usage: python3 scripts/gen_findings_feed.py
 Reads GDRIVE_SA_KEY / GSHEET_ID from the environment, same as every other
@@ -48,14 +49,23 @@ def _previous_total(out_dir: str) -> int | None:
     return int(m.group(1).replace(",", "")) if m else None
 
 
-def _tab_values(service, sheet_id: str, tab: str) -> list:
+def _tab_values(service, sheet_id: str, tab: str, a1: str = "A2:I") -> list:
     resp = (
         service.spreadsheets()
         .values()
-        .get(spreadsheetId=sheet_id, range=f"'{tab}'!A2:I")
+        .get(spreadsheetId=sheet_id, range=f"'{tab}'!{a1}")
         .execute(num_retries=drive_client.GOOGLE_API_NUM_RETRIES)
     )
     return resp.get("values", [])
+
+
+def _archive_links(service, sheet_id: str) -> dict:
+    """{doc_id: archive_url} from the Archived PDFs tab (ADR 007's durable
+    Drive mirror) — sheet_writer.ARCHIVE_HEADERS puts Doc ID at column A,
+    Archive Link at column F. A row with no archive link yet (still being
+    mirrored) is skipped, not mapped to an empty string."""
+    rows = _tab_values(service, sheet_id, sheet_writer.TAB_ARCHIVE, "A2:F")
+    return {r[0]: r[5] for r in rows if len(r) > 5 and r[0] and r[5]}
 
 
 def main() -> None:
@@ -65,6 +75,10 @@ def main() -> None:
     new_rows = _tab_values(service, sheet_id, sheet_writer.TAB_NEW)
     historical_rows = _tab_values(service, sheet_id, sheet_writer.TAB_HISTORICAL)
     rows = findings_feed.merge_and_sort(new_rows, historical_rows)
+    # The nSITE link errors for a human clicking it in a browser (see
+    # findings_feed.resolve_display_link's docstring) -- swap in the durable
+    # Drive mirror wherever one exists before rendering.
+    rows = findings_feed.resolve_display_links(rows, _archive_links(service, sheet_id))
 
     previous_total = _previous_total(OUT_DIR)
     if findings_feed.is_suspicious_shrink(previous_total, len(rows)):
