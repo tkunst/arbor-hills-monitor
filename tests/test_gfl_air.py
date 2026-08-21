@@ -1012,6 +1012,7 @@ def _watch_cfg():
 def _wire_with_recipients(monkeypatch, cfg):
     fake = FakeSheets()
     sent = []                     # (subj, body, recipients)
+    monkeypatch.delenv("GFL_AIR_WATCH_RECIPIENTS_EXTRA", raising=False)
     monkeypatch.setenv("GSHEET_ID", "SID")
     monkeypatch.setattr(gw, "load_config", lambda: copy.deepcopy(cfg))
     monkeypatch.setattr(gw.dc, "sheets_service", lambda: fake)
@@ -1061,6 +1062,31 @@ def test_watch_recipients_configured_sends_scoped_email_and_marks_episode(monkey
     assert recipients == _WATCH_RECIPIENTS               # scoped, not the full list
     assert "MS-3" in body and "consent judgment" in body.lower() and "ET (" in body
     assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3"}
+
+
+def test_watch_recipients_extra_env_merges_and_dedupes(monkeypatch):
+    # GFL_AIR_WATCH_RECIPIENTS_EXTRA (private, not committed to config.yml) adds a
+    # recipient to the scoped watch-tier send, parallel to email_alerts'
+    # ALERT_RECIPIENTS_EXTRA for the main alert_recipients list.
+    cfg = _watch_cfg()
+    fake, sent = _wire_with_recipients(monkeypatch, cfg)
+    monkeypatch.setenv("GFL_AIR_WATCH_RECIPIENTS_EXTRA",
+                        "extra@example.com, arbor-hills@trishakunst.com")  # 2nd is a dup of config
+    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
+    gw.run()                                            # baseline -> cursor 105
+
+    new = [_reading(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
+    new[2]["CH4"] = 45.0                                 # MS-3 enters watch
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0
+
+    assert len(sent) == 1
+    _, _, recipients = sent[0]
+    # config order preserved, env addr appended, dup not duplicated
+    assert recipients == ["arbor-hills@trishakunst.com", "extra@example.com"]
 
 
 def test_watch_continuing_episode_is_suppressed_then_recovery_rearms(monkeypatch):
