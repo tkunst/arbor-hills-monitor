@@ -166,6 +166,12 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
         intro = ""
         title = f"Findings, page {page_num} &middot; Arbor Hills Monitor"
 
+    # The footer's "Generated ..." line (below) is prose-matched by
+    # findings-feed.yml's `git diff --cached --quiet -I'...'` regex, which is
+    # what lets a same-data rerun stay a no-op instead of committing all N
+    # pages on every timestamp bump. If this line's wording or date format
+    # ever changes, update that regex in the same commit — a silent mismatch
+    # there brings back the exact daily-noise bug that guard exists to fix.
     return f"""<!doctype html>
 <html lang="en">
 <head>
