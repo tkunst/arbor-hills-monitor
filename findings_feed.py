@@ -10,6 +10,7 @@ its row-building functions and its API calls.
 from __future__ import annotations
 
 import html
+import re
 
 # Same column order as sheet_writer.FEED_HEADERS — New Documents and Historical
 # Documents share this schema (sheet_writer.feed_row()).
@@ -40,6 +41,60 @@ FACILITY_DISPLAY = {
 
 def facility_display(name: str) -> str:
     return FACILITY_DISPLAY.get(name, name)
+
+
+# The nSITE `downloadpdf` link (New/Historical Documents' Link column) works
+# for the monitor's own authenticated fetch but errors for a human clicking it
+# in a browser (confirmed 2026-08-20 debugging a reader's broken links — see
+# sessions/2026-08-20-arbor-hills-term-search-and-dave-data-idea.md). The
+# archiver's Drive mirror (ADR 007) is a public, browser-clickable copy of the
+# same document, keyed by the same doc_id that's already embedded in the nSITE
+# URL's own path. Extracting it here means no schema change to New/Historical
+# Documents (which still carries the nSITE link, matching the digest/email
+# path) — this is a display-time substitution the feed alone makes.
+_NSITE_DOC_ID_RE = re.compile(r'/downloadpdf/(-?\d+)$')
+
+
+def doc_id_from_nsite_link(link: str) -> str | None:
+    m = _NSITE_DOC_ID_RE.search(link or "")
+    return m.group(1) if m else None
+
+
+def resolve_display_link(nsite_link: str, archive_links: dict) -> str:
+    """The durable Drive archive mirror when one exists for this doc_id,
+    otherwise the original nSITE link unchanged (the archiver trails newly
+    filed/backfilled docs by up to one nightly run, so a small minority have
+    no mirror yet)."""
+    doc_id = doc_id_from_nsite_link(nsite_link)
+    return archive_links.get(doc_id, nsite_link) if doc_id else nsite_link
+
+
+def resolve_display_links(rows: list[dict], archive_links: dict) -> list[dict]:
+    """Swap every row's link for its archive mirror where one exists (see
+    resolve_display_link). archive_links is {doc_id: archive_url}, already
+    read from the Archived PDFs tab by the caller — this stays pure."""
+    return [dict(r, link=resolve_display_link(r["link"], archive_links)) for r in rows]
+
+
+# EGLE's own filing metadata sometimes embeds a date in a document's title
+# that doesn't match its actual Date Filed -- confirmed on a real doc: title
+# read "On-Site Inspection (06/01/2025)", the actual inspection/filing date
+# was 2026-06-18 (over a year off; an EGLE-side data entry artifact, not
+# something the monitor introduced). Since Date Filed is already shown
+# separately and reliably in the entry's meta line, a second, sometimes-wrong
+# date baked into the title is confusing, not informative -- strip it.
+_TRAILING_DATE_RE = re.compile(r'\s*\(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\)\s*$')
+
+
+def strip_embedded_date(name: str) -> str:
+    """Drop a trailing "(MM/DD/YYYY)"-shaped date from a title before display.
+    Only a BARE parenthetical date at the very end matches -- other
+    parenthetical content ("(Updated 5/12/2022)", "(due by 3/15/2021)") is
+    left alone, since that's part of the title's own meaning, not a redundant
+    restatement of Date Filed. Confirmed against all 1,720 real Document Name
+    values in the Sheet: 195 end in a bare date suffix, zero false positives
+    on the other ~30 titles that merely contain a parenthetical."""
+    return _TRAILING_DATE_RE.sub("", name or "").strip()
 
 
 # The feed only ever grows in normal operation (append-only Sheet tabs). A
@@ -95,13 +150,15 @@ def _esc(v) -> str:
 
 def render_entry(row: dict) -> str:
     """One finding as an HTML <article>. A blank optional field (summary, key
-    data point, risks) is left out of the markup entirely — never rendered as
-    the literal "None" or an empty element. Some historical rows carry a
-    blank Key Data Point (older backfill entries) or are stub rows for an
-    unprocessable source (sheet_writer.write_stub_row) with no risks; both
-    must render cleanly, not crash the whole page."""
+    data point) is left out of the markup entirely — never rendered as the
+    literal "None" or an empty element. Some historical rows carry a blank
+    Key Data Point (older backfill entries) or are stub rows for an
+    unprocessable source (sheet_writer.write_stub_row); both must render
+    cleanly, not crash the whole page. Risks (R1-R8) are deliberately never
+    rendered here -- they're this project's own internal case-file taxonomy,
+    meaningless to a public reader with no legend to decode them against."""
     date = _esc(row.get("date_filed"))
-    name = _esc(row.get("document_name")) or "(untitled document)"
+    name = _esc(strip_embedded_date(row.get("document_name") or "")) or "(untitled document)"
     doc_type = _esc(row.get("type"))
     severity = _esc(row.get("severity"))
     facility = _esc(facility_display(row.get("facility") or ""))
@@ -110,10 +167,11 @@ def render_entry(row: dict) -> str:
     # never classifier or free-text output — so this isn't a live injection
     # path today. Still worth a scheme check as defense in depth: an http(s)
     # link renders as a clickable href, anything else renders as plain text
-    # instead of ever reaching an <a href="..."> attribute.
+    # instead of ever reaching an <a href="..."> attribute. By the time a row
+    # reaches here `link` may already be a Drive archive-mirror URL, not the
+    # original nSITE one — see resolve_display_link; both are https.
     raw_link = row.get("link") or ""
     link = _esc(raw_link) if raw_link.startswith(("http://", "https://")) else ""
-    risks = _esc(row.get("risks"))
     summary = _esc(row.get("summary"))
     kdp = _esc(row.get("key_data_point"))
 
@@ -130,8 +188,6 @@ def render_entry(row: dict) -> str:
         parts.append(f'<p>{summary}</p>')
     if kdp:
         parts.append(f'<p class="finding-kdp"><strong>Key data point:</strong> {kdp}</p>')
-    if risks:
-        parts.append(f'<p class="finding-risks">Risks: {risks}</p>')
     parts.append('</article>')
     return "\n".join(parts)
 
