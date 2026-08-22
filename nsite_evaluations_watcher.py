@@ -271,11 +271,20 @@ def _cell_payload(snap: dict, budget: int = DEFAULT_SNAPSHOT_CHAR_BUDGET) -> str
     blob = json.dumps(snap, sort_keys=True, ensure_ascii=False)
     if len(blob) <= budget:
         return blob
+    fields = snap.get("fields") or []
+    # Looked up by field NAME, not position 0, for the same reason
+    # _rows_by_key/_digest_map do: this snapshot was just built by
+    # evaluations_snapshot() so eval_num IS at position 0 today, but nothing
+    # here should silently depend on EVALUATION_FIELDS' declared order.
+    key_idx = fields.index("eval_num") if "eval_num" in fields else 0
     truncated = {
-        "fields": snap.get("fields", []),
+        "fields": fields,
         "n": snap.get("n", 0),
         "truncated": True,
-        "digests": sorted([row[0], _row_digest(row[1:])] for row in snap.get("rows", [])),
+        "digests": sorted(
+            [row[key_idx], _row_digest([v for i, v in enumerate(row) if i != key_idx])]
+            for row in snap.get("rows", [])
+        ),
     }
     blob = json.dumps(truncated, sort_keys=True, ensure_ascii=False)
     if len(blob) <= budget:
@@ -330,19 +339,56 @@ def _digest_map(snap: dict) -> dict[str, str] | None:
         return None
 
 
+def _duplicate_key_count(snap: dict) -> int:
+    """How many eval_num occurrences in this snapshot are duplicates of an
+    earlier one in the same snapshot — 0 when eval_num is behaving as the
+    genuine unique key this profile's whole diff design rests on (verified
+    live for every real site with evaluations, ADR 029). A non-zero count
+    means that assumption has stopped holding for THIS snapshot, and
+    summarize_evaluations_change must not proceed to _rows_by_key/_digest_map
+    — both collapse same-key rows into a dict, so a genuinely NEW record that
+    happens to share an existing eval_num would silently vanish into a
+    same-key "changed" line instead of being reported at all. Checked on
+    whichever form the snapshot is in (truncated digests or full rows) so the
+    guard covers N2688's permanently-degraded steady state too, not just the
+    untruncated path. Returns 0 (nothing to check) rather than raising on a
+    malformed payload — that failure mode is _rows_by_key/_digest_map's to
+    report, not this one's."""
+    try:
+        if snap.get("truncated"):
+            keys = [k for k, _ in snap.get("digests", [])] if not snap.get("digests_dropped") else []
+        else:
+            fields = snap.get("fields") or []
+            if "eval_num" not in fields:
+                return 0
+            idx = fields.index("eval_num")
+            keys = [row[idx] for row in snap.get("rows", [])
+                    if isinstance(row, list) and len(row) > idx]
+        return len(keys) - len(set(keys))
+    except Exception:  # noqa: BLE001 — malformed payload: not this check's job
+        return 0
+
+
 def summarize_evaluations_change(old: dict, new: dict) -> tuple[str, str]:
     """(note, body) describing what changed between two evaluation snapshots.
     Pure — unit-tested.
 
-    Handles, in order, four cases a bare ref-keyed diff would misreport:
+    Handles, in order, five cases a bare ref-keyed diff would misreport:
       1. the previous snapshot is MISSING or UNREADABLE — which must never be
          confused with "the site had zero evaluations",
       2. the diffed FIELD SET changed (a config edit, not an EGLE event),
-      3. either side was TRUNCATED — still reports exactly which eval_num is
+      3. eval_num has STOPPED BEING UNIQUE in either snapshot — the load-
+         bearing assumption behind this whole profile's design (verified
+         live, not guaranteed by the API) — checked BEFORE any by-key dict is
+         built, because both _rows_by_key and _digest_map silently collapse
+         same-key rows, which would otherwise misreport a genuinely NEW
+         record sharing an existing key as a bland "changed" line instead of
+         surfacing the collision at all,
+      4. either side was TRUNCATED — still reports exactly which eval_num is
          new/changed/removed (digest-level, no field detail), NOT a bare
          count delta, because eval_num survives truncation (see the module
          docstring) — this is the case N2688 hits on every real run,
-      4. the untruncated case — full field-level ADDED/CHANGED/REMOVED,
+      5. the untruncated case — full field-level ADDED/CHANGED/REMOVED,
          mirroring nsite_submissions_watcher.summarize_submissions_change."""
     # A genuine snapshot ALWAYS carries "fields", even when it holds zero
     # records — so its absence means the stored cell was empty, cleared, or
@@ -367,6 +413,23 @@ def summarize_evaluations_change(old: dict, new: dict) -> tuple[str, str]:
             "The nsite_evaluations.exclude_fields setting changed, so this "
             "run's snapshot is not comparable to the previous one. This row "
             "re-baselines the site; no evaluation-level change is implied.",
+        )
+
+    old_dupes, new_dupes = _duplicate_key_count(old), _duplicate_key_count(new)
+    if old_dupes or new_dupes:
+        return (
+            f"changed — {old.get('n', 0)} -> {new.get('n', 0)} evaluation "
+            f"record(s), but eval_num was NOT unique in "
+            f"{'both snapshots' if old_dupes and new_dupes else 'this snapshot'} "
+            f"({new_dupes} duplicate key occurrence(s) now, {old_dupes} before) "
+            "— no reliable per-evaluation diff could be computed",
+            "This profile's diff assumes eval_num uniquely identifies each "
+            "evaluation (verified live for every real site — see ADR 029), but "
+            "two or more records now share the same eval_num at this site. "
+            "Comparing by key under that condition risks misreporting a "
+            "genuinely new evaluation as a change to an existing one, so this "
+            "row only reports total record counts. This row re-baselines the "
+            "site; review MiEnviro directly for what actually changed.",
         )
 
     if old.get("truncated") or new.get("truncated"):
