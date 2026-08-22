@@ -40,6 +40,17 @@ genuine unique key per site (477/477 at N2688, 40/40 at RA, 5/5 at N1504,
 1/1 at WRD), so this profile is keyed like fetch_site_submissions rather than
 diffed as a multiset. See nsite_evaluations_watcher for why the snapshot still
 needs a budget-degradation guard despite the keyed design.
+
+And fetch_site_permits() (Stream O, ADR 030) — a SIXTH sibling profile, the
+facility's PERMIT lifecycle (issued -> extended -> expiring -> terminated).
+Same raise-don't-swallow contract; DOES filter (like fetch_site_evaluations),
+because the live spike found prmtPrmtNum IS a genuine unique key everywhere it
+has any records (9/9 at N2688, 4/4 at N1504, 3/3 at P1488, 2/2 at RA, 2/2 at
+WRD, 1/1 at P1504, 1/1 at SANL) — so this profile is ref-number-keyed too. This
+profile OVERLAPS Stream H's targeted ROP watch (rop_client.py) at exactly three
+permits (ROP0000224/0656/0236, confirmed live) but watches a DIFFERENT event
+(permit status/lifecycle, not the public-comment trip-wire) — see
+nsite_permits_watcher for the disambiguation.
 """
 from __future__ import annotations
 
@@ -801,6 +812,144 @@ def fetch_site_evaluations(session: requests.Session, nsite_id: str) -> list[dic
                 time.sleep(2 ** attempt)
     raise NsiteFetchError(
         f"GET evaluations for site {nsite_id} failed after 3 attempts: {last_exc}"
+    ) from last_exc
+
+
+# A SIXTH sibling profile — the facility's PERMIT lifecycle (issued ->
+# extended -> expiring -> terminated), broader than Stream H's targeted ROP
+# watch (every permit type, not just Air ROPs). Same query shape as the four
+# profiles above; anonymous, no auth. Confirmed live 2026-08-22 across all 19
+# `nsite_sites` (Stream O, ADR 030): 22 records total, all carrying exactly
+# the seven PERMIT_FIELDS below, with real history at N2688 (9, incl. the
+# Air ROP `ROP0000224`), N1504 (4, incl. `ROP0000656`), P1488 (3, incl.
+# `ROP0000236`), RA (2), WRD (2), P1504 (1) and SANL (1).
+PERMITS_ENDPOINT = (
+    f"{NSITE_BASE}/nsite/ss/api/nsite-explorer/default-mode"
+    "/profiles/2-environmental-interests/1-permits"
+)
+
+# The seven fields EGLE's Permits profile serves, renamed to short readable
+# names. Confirmed 2026-08-22 present on ALL 22 live records across every site
+# that has any — one distinct key-set, no optional fields, no nesting (also
+# confirmed against the response's own `lookups.metadata` field descriptions).
+# `prmt_num` leads because, like `eval_num`, it IS a genuine unique key (see
+# _normalize_permit) — it is what nsite_permits_watcher diffs on.
+PERMIT_FIELDS = (
+    "prmt_num", "status", "category", "permit_type",
+    "effective_date", "expiration_date", "termination_date",
+)
+
+_PERMIT_RAW_KEYS = {
+    "prmt_num": "prmtPrmtNum",                # "ROP0000224", "MIS210766" — stable, unique per site
+    "status": "prmtRefPrmtStatDescr",         # "Extended", "In Effect", "Terminated", "Expired"
+    "category": "prmtRefPrmtCatgDescr",       # "Air Renewable Operating Permit", "NPDES ... (COC)"
+    "permit_type": "prmtPrmtTypeDescr",       # null on 18/22 live records; e.g. "SW-Industrial CY2"
+    "effective_date": "prmtEfctvDate",        # ISO datetime w/ UTC offset
+    "expiration_date": "prmtExprDate",        # ISO datetime w/ UTC offset; often null
+    "termination_date": "prmtTermDate",       # ISO datetime w/ UTC offset; null until terminated
+}
+
+
+def _normalize_permit(raw: dict) -> dict:
+    """Convert a raw nSITE permit dict into the fields the watch diffs on.
+
+    UNLIKE _normalize_violation/_normalize_compliance_action, `prmt_num` IS a
+    genuine unique key within a site's record set — verified 2026-08-22 across
+    every site with any permits (9/9 N2688, 4/4 N1504, 3/3 P1488, 2/2 RA,
+    2/2 WRD, 1/1 P1504, 1/1 SANL) — so nsite_permits_watcher diffs a
+    REF-NUMBER-KEYED snapshot (the Submissions/Evaluations idiom), not a
+    Counter multiset.
+
+    Three date fields need the same offset-stripping canonicalization
+    `_parse_egle_date` already provides for `_normalize_evaluation` — reused
+    here rather than re-duplicating the inline parsing
+    `_normalize_violation`/`_normalize_compliance_action` still carry (this is
+    the third caller, and the first with three date fields in one record), so
+    a UTC-offset flip each EDT/EST transition must not read as a change on any
+    of the three.
+
+    Every field is read with `or ""` (NOT `.get(f, "")`), matching every
+    sibling normalizer: a present-but-null key (`permit_type` is null on 18/22
+    live records) must normalize to the same "" an absent key would."""
+    out = {f: (raw.get(_PERMIT_RAW_KEYS[f]) or "") for f in PERMIT_FIELDS}
+    out["effective_date"] = _parse_egle_date(raw.get(_PERMIT_RAW_KEYS["effective_date"]))
+    out["expiration_date"] = _parse_egle_date(raw.get(_PERMIT_RAW_KEYS["expiration_date"]))
+    out["termination_date"] = _parse_egle_date(raw.get(_PERMIT_RAW_KEYS["termination_date"]))
+    return out
+
+
+def fetch_site_permits(session: requests.Session, nsite_id: str) -> list[dict]:
+    """Return the full list of normalized permits for one nSITE site.
+
+    Raises NsiteFetchError after 3 attempts on ANY network/HTTP/structural
+    failure — the same contract as fetch_site_violations / fetch_site_
+    compliance_actions / fetch_site_evaluations (nsite_permits_watcher DIFFS
+    this list, so a swallowed failure returned as [] would read as "every
+    permit withdrawn at once"), NOT fetch_site_documents' swallow-and-return-[].
+
+    Like fetch_site_evaluations (and UNLIKE fetch_site_violations/fetch_site_
+    compliance_actions), this DOES filter — on `prmtPrmtNum` present — because
+    prmt_num is this profile's genuine unique diff key and a keyless record
+    cannot be placed in a ref-number-keyed snapshot. No such record has been
+    observed live; if nSITE ever serves one, it is silently excluded from the
+    diff rather than raising, matching the Evaluations/Submissions precedent.
+
+    An empty list is a VALID result (12 of the 19 watched sites have zero
+    permits on file); only a fetch/structural failure raises."""
+    query_params = urllib.parse.quote('{"filter":[{"id":"' + str(nsite_id) + '"}]}')
+    url = (
+        f"{PERMITS_ENDPOINT}"
+        f"?responseContentType=application/json"
+        f"&includeMetadataInResponse=true"
+        f"&loadChildren=true"
+        f"&queryParams={query_params}"
+        f"&filterString="
+    )
+    referer = f"{NSITE_BASE}/nsite/DEFAULT/map/results/detail/{nsite_id}/Documents"
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            r = session.get(
+                url,
+                headers={"Referer": referer, "Accept": "application/json"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            data = r.json()
+            if "queryResults" not in data:
+                raise NsiteFetchError(
+                    f"permits response for site {nsite_id} is missing "
+                    f"'queryResults' — nSITE may have changed its response shape"
+                )
+            if data.get("hasResultsRemaining"):
+                # Null on every site today (verified 2026-08-22). If nSITE ever
+                # enables server-side paging, a partial page would be
+                # INDISTINGUISHABLE from a shrunken record set: the caller's
+                # ref-keyed diff would read the missing tail as permits
+                # withdrawn and email that as fact. Fail loudly instead — the
+                # same guard as every sibling fetch above.
+                raise NsiteStructuralError(
+                    f"permits response for site {nsite_id} reports "
+                    f"hasResultsRemaining — nSITE has started paging this "
+                    f"profile and this client would otherwise diff a PARTIAL "
+                    f"page as mass withdrawals. Pagination support is needed."
+                )
+            return [_normalize_permit(p) for p in data["queryResults"]
+                    if p.get("prmtPrmtNum")]
+        except NsiteStructuralError:
+            # Re-raise immediately, before the retry loop can swallow it into a
+            # generic NsiteFetchError: retrying a shape change is pointless, and
+            # the caller distinguishes the two types deliberately (a generic
+            # NsiteFetchError is treated as transient skip-and-warn, the exact
+            # silent-forever outcome this class exists to avoid).
+            raise
+        except Exception as e:  # noqa: BLE001 — network/HTTP: retry, then raise loud
+            last_exc = e
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+    raise NsiteFetchError(
+        f"GET permits for site {nsite_id} failed after 3 attempts: {last_exc}"
     ) from last_exc
 
 

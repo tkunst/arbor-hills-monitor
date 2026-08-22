@@ -867,6 +867,89 @@ nsite_evaluations:
     SANL: quarterly
     ERNGX: quarterly
 
+# --- nSITE Permits watch (Stream O, ADR 030) ---
+# Watch on the "Permits" profile — a facility's permit lifecycle (issued ->
+# extended -> expiring -> terminated), across EVERY permit type on file (Air
+# ROPs, Air Permits to Install, Air Reporting Schedules, NPDES water permits,
+# Resources/wetland permits) — a sixth sibling profile to Documents
+# (`facilities:`), Submissions, Violations, Compliance Actions, and
+# Evaluations above. ONE fetch per site -> ONE item ("prmt:<srn>"); the FIRST
+# sighting of each site's permit list baselines silently. Like Evaluations,
+# this profile has a genuine unique key (`prmtPrmtNum`, live-verified 9/9 at
+# N2688, 4/4 at N1504, 3/3 at P1488, 2/2 at RA, 2/2 at WRD, 1/1 at P1504,
+# 1/1 at SANL), so the diff is REF-NUMBER-KEYED: a new prmt_num alerts as a
+# brand-new permit; an existing one with a changed field (most importantly
+# `status`, e.g. Extended -> Expired, or `termination_date` populating)
+# alerts as that permit's status advancing — THIS is the primary signal, not
+# a new number appearing.
+#
+# OVERLAP WITH STREAM H (`rop_client.py`/`rop_watcher.py`): three of this
+# profile's permits (ROP0000224 at N2688, ROP0000656 at N1504, ROP0000236 at
+# P1488 — confirmed live) are ALSO watched by the targeted ROP watch. This is
+# NOT a duplicate: Stream H trip-wires the permit ENTERING its 30-day public-
+# comment window (via a statewide notice PDF); this watch trip-wires the
+# permit's STATUS/LIFECYCLE via nSITE's own record. Neither is suppressed for
+# the other; the alert copy (nsite_permits_watcher.format_change_body)
+# disambiguates explicitly so a reader isn't confused into thinking one
+# supersedes the other.
+#
+# `tiers` maps srn -> poll cadence for THIS profile only; every key MUST be a
+# srn present in `nsite_sites` above — a typo'd/unknown srn is a config error
+# and raises loudly (ADR 022). The tiers below are DELIBERATELY NOT a copy of
+# any sibling profile's tiers: every site with any permits was live-fetched
+# on 2026-08-22 and assigned from Permits-specific status/recency (see
+# ADR 030 for the full table).
+nsite_permits:
+  # Ships OFF: a brand-new poller against a live external system, built
+  # unattended (overnight-coder Step 3). Flipping this to true is a separate
+  # human step. The first enabled run baselines every due site silently — no
+  # alert flood, even at N2688's 9 records.
+  enabled: false
+  # Recipient override: Trisha only to start (the Meeting Watch / MMD / RIDE /
+  # Submissions / Violations / Compliance Actions / Evaluations precedent for
+  # a brand-new alert stream). Delete/comment this block to send to the full
+  # alert_recipients list once the alert copy has been seen in the wild.
+  recipients:
+    - arbor-hills@trishakunst.com
+  # ROLLBACK LEVER, inherited from ADR 029 for parity — `prmt_num` can NEVER
+  # be excluded regardless of what is listed here (see diff_fields() in
+  # nsite_permits_watcher.py): it is the diff KEY, not a display headline. No
+  # field is known to churn between identical fetches (the live spike
+  # double-fetched N2688 and found zero volatile fields), so it ships
+  # excluding nothing.
+  # exclude_fields:
+  #   - permit_type
+  # Max characters written to the Snapshot JSON cell before the watch degrades
+  # to a per-permit digest map. A Sheets cell hard-caps at 50,000; UNLIKE
+  # Evaluations this is verified-INERT insurance at Permits volumes — N2688
+  # (the largest, 9 records) serializes to well under 1,000 chars even as
+  # plain per-record objects, so this guard is copy-paste structural parity
+  # with its siblings, not a live necessity (see ADR 030).
+  snapshot_char_budget: 45000
+  tiers:
+    # --- daily (3) — every site with a permit currently mid-renewal-lifecycle ---
+    N2688: daily      # 9 permits, incl. Air ROP ROP0000224 ("Extended") — the primary advocacy concern
+    N1504: daily      # 4 permits, incl. Air ROP ROP0000656 ("Extended")
+    P1488: daily      # 3 permits, incl. Air ROP ROP0000236 ("Extended") — plus a live ROP renewal in public comment
+    # --- biweekly (2) — real, currently-active permits, but none mid-renewal ---
+    RA: biweekly      # 2 permits, both "In Effect" (NPDES water) — no active status transition pending
+    WRD: biweekly     # 2 permits, both "In Effect" (Resources/wetland) — open JPA + PFOS interest, same override every sibling profile uses
+    # --- quarterly (14) — a single already-settled permit, or zero permits ever ---
+    P1504: quarterly  # 1 permit, already "Terminated" — settled, not pending
+    SANL: quarterly   # 1 permit, already "Expired" (since 1996) — the stalest real record in this profile
+    AHLI: quarterly   # 0 permits on file; typo/mis-filing insurance only (unlike Violations/CA, a permit isn't the kind of record prone to mis-filing under a duplicate registration)
+    AHLA: quarterly
+    AHLB: quarterly
+    AHLC: quarterly
+    AHLD: quarterly
+    AHLE: quarterly
+    ADL1: quarterly
+    ADL2: quarterly
+    COMP: quarterly
+    AHE1: quarterly
+    AHE2: quarterly
+    ERNGX: quarterly
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 # NOTE (2026-08-21, Trisha's direction): this list is committed to a PUBLIC repo,
