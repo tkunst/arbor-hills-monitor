@@ -795,6 +795,78 @@ nsite_compliance_actions:
     SANL: quarterly
     ERNGX: quarterly
 
+# --- nSITE Evaluations watch (Stream N, ADR 029) ---
+# Watch on the "Evaluations" profile — the underlying INSPECTION record a
+# violation or compliance action often stems from (a Violations record already
+# carries `evalEvalNum`, joining a violation back to its evaluation) — a fifth
+# sibling profile to Documents (`facilities:`), Submissions, Violations, and
+# Compliance Actions above. ONE fetch per site -> ONE item ("eval:<srn>"); the
+# FIRST sighting of each site's evaluation list baselines silently. UNLIKE
+# Violations/Compliance Actions, this profile has a genuine unique key
+# (`evalEvalNum`, live-verified 477/477 at N2688, 40/40 at RA, 5/5 at N1504,
+# 1/1 at WRD), so the diff is REF-NUMBER-KEYED (the Submissions idiom): a new
+# eval_num alerts as a brand-new evaluation (a new inspection); an existing
+# eval_num with a changed field alerts as that evaluation's detail advancing.
+# This profile has no status field, so there is no severity judgment to make.
+#
+# `tiers` maps srn -> poll cadence for THIS profile only; every key MUST be a
+# srn present in `nsite_sites` above — a typo'd/unknown srn is a config error
+# and raises loudly (ADR 022). The tiers below are DELIBERATELY NOT a copy of
+# `nsite_submissions.tiers` / `nsite_violations.tiers` / `nsite_compliance_
+# actions.tiers`: all 19 sites were live-fetched on 2026-08-08 (re-confirmed
+# at build time) and assigned from Evaluations-specific counts AND recency
+# (see ADR 029 for the full table).
+nsite_evaluations:
+  # Ships OFF: a brand-new poller against a live external system, built
+  # unattended (overnight-coder Step 3). Flipping this to true is a separate
+  # human step. The first enabled run baselines every due site silently — no
+  # alert flood, even at N2688's 477 records.
+  enabled: false
+  # Recipient override: Trisha only to start (the Meeting Watch / MMD / RIDE /
+  # Submissions / Violations / Compliance Actions precedent for a brand-new
+  # alert stream). Delete/comment this block to send to the full
+  # alert_recipients list once the alert copy has been seen in the wild.
+  recipients:
+    - arbor-hills@trishakunst.com
+  # ROLLBACK LEVER, inherited from ADR 023/028 for parity — `eval_num` can
+  # NEVER be excluded regardless of what is listed here (see diff_fields() in
+  # nsite_evaluations_watcher.py): it is the diff KEY, not a display headline.
+  # No field is known to churn between identical fetches (the live spike
+  # double-fetched N2688 and found zero volatile fields), so it ships
+  # excluding nothing.
+  # exclude_fields:
+  #   - sample_transmit_date
+  # Max characters written to the Snapshot JSON cell before the watch degrades
+  # to a per-evaluation digest map. A Sheets cell hard-caps at 50,000; UNLIKE
+  # Violations/Compliance Actions this is NOT theoretical insurance here —
+  # N2688 (the largest, 477 records) serializes to 75,494 chars even in the
+  # compact positional form the watch uses, so N2688 runs in this degraded
+  # branch on every real run (still ref-number-level accurate — see ADR 029).
+  snapshot_char_budget: 45000
+  tiers:
+    # --- daily (1) — the only site with recent, ongoing evaluation activity ---
+    N2688: daily      # 477 evaluations, 2007-09-13..2026-08-07 — most recent 2 weeks old at build time
+    # --- biweekly (4) — real evaluation history, or an open matter that could plausibly produce a new one ---
+    RA: biweekly      # 40 evaluations, 1989-09-27..2024-10-17 — real but not recent (water/NPDES inspections)
+    N1504: biweekly   # 5 evaluations, 2025-03-06..2025-08-27
+    P1488: biweekly   # 2 evaluations, 2025-06-01 — plus a live ROP renewal in public comment
+    WRD: biweekly     # 1 evaluation (2022-03-18) — bumped up from what its own count suggests: an open JPA + PFOS interest, same override Violations/CA use
+    # --- quarterly (14) — zero evaluations ever; typo/mis-filing insurance only ---
+    AHLI: quarterly
+    P1504: quarterly
+    AHLA: quarterly
+    AHLB: quarterly
+    AHLC: quarterly
+    AHLD: quarterly
+    AHLE: quarterly
+    ADL1: quarterly
+    ADL2: quarterly
+    COMP: quarterly
+    AHE1: quarterly
+    AHE2: quarterly
+    SANL: quarterly
+    ERNGX: quarterly
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 # NOTE (2026-08-21, Trisha's direction): this list is committed to a PUBLIC repo,

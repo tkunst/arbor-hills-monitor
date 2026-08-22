@@ -216,6 +216,33 @@ any advocacy organization.
     `docs/pending-workflows/nsite-compliance-actions-watch.yml` and must be
     moved into `.github/workflows/` before `enabled` is flipped).
 
+18. **nSITE Evaluations watch (Stream N)** (daily, optional —
+    `nsite_evaluations.enabled: false`, ships disabled): watches a FIFTH nSITE
+    profile for the same 19 sites — **Evaluations**, the underlying
+    inspection record a violation or compliance action often stems from (a
+    Violations record already carries `evalEvalNum`, joining a violation back
+    to its evaluation). Live-fetched 2026-08-08/2026-08-22: N2688 477
+    evaluations (most recent **2026-08-07**, actively ongoing), RA 40, N1504
+    5, P1488 2, WRD 1. UNLIKE Violations/Compliance Actions, `evalEvalNum`
+    proved a **genuine unique key** everywhere (477/477 at N2688) — so the
+    diff is **ref-number-keyed** (the Submissions idiom), not a multiset: a
+    new `eval_num` alerts as a brand-new evaluation, an existing one with a
+    changed field alerts as that evaluation's detail advancing. There is no
+    status field to trip-wire, so a new inspection appearing IS the primary
+    signal. N2688's 477 records serialize to 75,494 chars even in the
+    compact positional encoding — over the Sheets cell cap — so N2688
+    **permanently runs in a digest-degraded mode** (unlike Violations/CA,
+    where the same guard never actually fires); the degraded form still keeps
+    `eval_num` visible so a truncated diff can name exactly which evaluation
+    is new even without field-level detail. Own per-site tiers (`1/4/14`),
+    deliberately not a copy of any sibling: only N2688 is daily. Snapshot-diff
+    into the `Evaluations Watch` tab; first sighting baselines silently. New
+    source, ships disabled — see
+    `docs/decisions/029-nsite-evaluations-watch.md` for activation (**one**
+    step here: the workflow file landed directly in `.github/workflows/`
+    since the build session's SSH key authenticated non-interactively, so
+    only `enabled` needs to flip).
+
 > **A note on the document links (expected behavior).** Every case-file row's
 > **Link** column points to EGLE's nSITE portal
 > (`https://mienviro.michigan.gov/ncore/downloadpdf/<id>`). Clicking one
