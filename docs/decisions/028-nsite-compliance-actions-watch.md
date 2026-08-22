@@ -294,15 +294,15 @@ Meeting/MMD/RIDE/Submissions/Violations precedent for a brand-new alert stream.
 - The monitor now watches **four** nSITE profiles per site — Documents, Submissions,
   Violations, and Compliance Actions — each with its own cadence map over the one
   shared `nsite_sites` registry.
-- **Three** of the six profiles ADR 020/021 flagged remain unpolled:
-  Complaints, Permits, Evaluations, Active Public Notices (Evaluations is the
-  fourth of a six-list; Violations + Compliance Actions are now done). The
-  `nsite-six-unpolled-profiles-schemas` memory carries confirmed endpoints for
-  the rest.
-- **Best next pick: Evaluations.** Every violation record carries an `evalEvalNum`
-  and every compliance action responds to one, so Evaluations is the shared
-  parent both enforcement profiles hang off — the record of EGLE's inspections
-  themselves. It closes the inspection → finding → action chain this monitor now
-  watches the back two-thirds of. Complaints (citizen-reported) is the other
-  high-value candidate but has a different shape (it is intake, closer to
-  Submissions) and would be a fresh feasibility gate rather than a near-copy.
+- **Three** of the six profiles ADR 020/021 flagged remain unpolled at the
+  time this ADR was written: Complaints, Permits, Evaluations, Active Public
+  Notices. The `nsite-six-unpolled-profiles-schemas` memory carries confirmed
+  endpoints for the rest.
+- **Best next pick: Evaluations** — since built, see ADR 029. Every violation
+  record carries an `evalEvalNum` and every compliance action responds to
+  one, so Evaluations is the shared parent both enforcement profiles hang
+  off — the record of EGLE's inspections themselves. It closes the
+  inspection → finding → action chain this monitor now watches the back
+  two-thirds of. Complaints (citizen-reported) is the other high-value
+  candidate but has a different shape (it is intake, closer to Submissions)
+  and would be a fresh feasibility gate rather than a near-copy.
