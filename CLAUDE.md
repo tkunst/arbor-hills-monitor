@@ -221,6 +221,33 @@ external users but no sensitive data). Public repo.
   build session's SSH key authenticated non-interactively, so the
   `workflow`-OAuth-scope parking Streams L/M needed did not apply). See
   ADR 029.
+- `nsite_permits_watcher.py` — Stream O: daily snapshot-diff of EGLE's nSITE
+  **Permits** profile (a facility's permit lifecycle — issued, extended,
+  expiring, terminated — across EVERY permit type on file, broader than
+  Stream H's targeted ROP-renewal watch) for every srn in
+  `nsite_permits.tiers`, against the `Permits Watch` tab. Item key
+  `prmt:<srn>`. The feasibility gate (live, every site with any permits)
+  found `prmtPrmtNum` **IS unique** per site (9/9 at N2688, 4/4 at N1504) —
+  like Evaluations, so the diff is **ref-number-keyed**: a new `prmt_num`
+  alerts as a new permit; an existing one with a changed field — most
+  importantly `status` (e.g. Extended -> Expired) or `termination_date`
+  populating — alerts as that permit's status advancing, THE primary signal
+  this watch exists for (tested explicitly, not left to a generic
+  "field changed" case). **Overlaps Stream H at exactly three permit numbers**
+  (ROP0000224/0656/0236, confirmed live, all currently "Extended") — NOT
+  suppressed from the diff; `format_change_body` disambiguates explicitly
+  that this watch trip-wires permit status/lifecycle, a different event than
+  Stream H's public-comment-window entry. Makes no severity judgment beyond
+  that disambiguation. Tiers are this profile's own (**3 daily / 2 biweekly /
+  14 quarterly**), NOT a copy of any sibling — all three ROP-holding sites
+  (N2688/N1504/P1488) are daily here, since each currently holds an
+  "Extended" permit, this profile's own headline concern. The budget-
+  degradation guard is inherited for structural parity but verified-inert at
+  real Permits volumes (max 9 records). Gated on `nsite_permits.enabled`
+  (new source; ships `false`). Its workflow landed directly in
+  `.github/workflows/nsite-permits-watch.yml` (this build session's SSH key
+  authenticated non-interactively, so the `workflow`-OAuth-scope parking
+  Streams L/M needed did not apply). See ADR 030.
 
 ## Forbidden patterns (do not do these)
 
