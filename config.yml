@@ -928,7 +928,7 @@ nsite_permits:
   snapshot_char_budget: 45000
   tiers:
     # --- daily (3) — every site with a permit currently mid-renewal-lifecycle ---
-    N2688: daily      # 9 permits, incl. Air ROP ROP0000224 ("Extended") — the primary advocacy concern
+    N2688: daily      # 9 permits, incl. Air ROP ROP0000224 ("Extended") — the fastest-moving of the three ROP sites by record count
     N1504: daily      # 4 permits, incl. Air ROP ROP0000656 ("Extended")
     P1488: daily      # 3 permits, incl. Air ROP ROP0000236 ("Extended") — plus a live ROP renewal in public comment
     # --- biweekly (2) — real, currently-active permits, but none mid-renewal ---
