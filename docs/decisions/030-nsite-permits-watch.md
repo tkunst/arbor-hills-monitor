@@ -208,7 +208,7 @@ Compliance Actions 2/4/13; Evaluations 1/4/14):
 
 | srn | why |
 |---|---|
-| N2688 | 9 permits, incl. Air ROP `ROP0000224` — currently "Extended", the primary advocacy concern, and the fastest-moving of the three ROP sites by record count. |
+| N2688 | 9 permits, incl. Air ROP `ROP0000224` — currently "Extended", and the fastest-moving of the three ROP sites by record count. |
 | N1504 | 4 permits, incl. Air ROP `ROP0000656` — also currently "Extended". |
 | P1488 | 3 permits, incl. Air ROP `ROP0000236` — also currently "Extended", plus a live ROP renewal in public comment (Stream H). |
 
