@@ -232,6 +232,20 @@ TAB_VIOLATIONS = "Violations Watch"
 # cell cap at CA volumes — N2688's 39 records are ~4.8k chars). See
 # nsite_compliance_actions_watcher.compliance_actions_snapshot.
 TAB_COMPLIANCE_ACTIONS = "Compliance Actions Watch"
+# nSITE Evaluations watch (Stream N, ADR 029) — same on-demand policy: no tab
+# appears until nsite_evaluations_watcher actually runs. Append-only, keyed by
+# Item (e.g. "eval:N2688") in col B for dedup/state — the Violations/Compliance
+# Actions/Submissions Watch idiom (Sheet-derived ⇒ race-free, NOT _meta). One
+# row per observed state of a watched site's EVALUATIONS (the underlying
+# inspection record) — "baseline" (first sighting, silent) or "changed" (fires
+# an alert distinguishing a brand-new evaluation from an existing one's detail
+# advancing). UNLIKE Violations/Compliance Actions, the diff is REF-NUMBER-
+# KEYED on evalEvalNum (verified unique per site) — the Submissions idiom —
+# but the snapshot still needs Violations/CA's budget-degradation guard:
+# N2688's 477 records serialize to 75,494 chars even in the compact positional
+# form, over the 45,000-char budget, so N2688 runs in permanently-degraded
+# (digest) mode. See nsite_evaluations_watcher.evaluations_snapshot.
+TAB_EVALUATIONS = "Evaluations Watch"
 # Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
 # TAB_NEW/TAB_HISTORICAL. "Change" is new/changed (live) or historical (dump).
 WDS_HEADERS = [
@@ -355,6 +369,14 @@ VIOLATIONS_WATCH_HEADERS = [
 # nSITE Compliance Actions watch (Stream M, ADR 028). Identical row shape to
 # VIOLATIONS_WATCH_HEADERS above — same append-only, tab-is-the-state design.
 COMPLIANCE_ACTIONS_WATCH_HEADERS = [
+    "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
+    "Snapshot JSON",
+]
+
+# nSITE Evaluations watch (Stream N, ADR 029). Identical row shape to
+# VIOLATIONS_WATCH_HEADERS/COMPLIANCE_ACTIONS_WATCH_HEADERS above — same
+# append-only, tab-is-the-state design.
+EVALUATIONS_WATCH_HEADERS = [
     "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
     "Snapshot JSON",
 ]
@@ -1730,6 +1752,86 @@ def append_compliance_actions_watch_row(
     is sent (durable record first, alert best-effort second — same crash-safe
     ordering as append_violations_watch_row)."""
     append_rows(service, sheet_id, TAB_COMPLIANCE_ACTIONS, [[
+        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
+    ]])
+
+
+# ---------------------------------------------------------------------------
+# nSITE Evaluations watch (Stream N, ADR 029) — the tab is the state
+# (append-only ⇒ race-free), exactly like the Violations/Compliance Actions
+# Watch tabs above.
+# ---------------------------------------------------------------------------
+
+
+def ensure_evaluations_tabs(service, sheet_id: str) -> None:
+    """Create the Evaluations Watch tab if missing and reconcile its header row
+    on every run (same self-healing policy as ensure_compliance_actions_tabs()).
+    Called only from nsite_evaluations_watcher.py, so the tab doesn't appear
+    until the watch actually runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_EVALUATIONS not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_EVALUATIONS}}}]},
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    _set_header(service, sheet_id, TAB_EVALUATIONS, EVALUATIONS_WATCH_HEADERS)
+
+
+def last_evaluations_snapshots(
+    service, sheet_id: str, item_keys: list[str],
+) -> dict[str, tuple[str, str] | None]:
+    """Return {item_key: (snapshot_hash, snapshot_json) or None} for each key
+    (e.g. "eval:N2688"), reading the whole tab ONCE however many keys are
+    asked for. None means 'baseline this item'; a hash mismatch means
+    'changed'. Reading the last matching row (not a _meta cell) is what makes
+    the watch race-free — the tab is append-only, so no concurrent job can
+    clobber it.
+
+    Same contract as last_violations_snapshots/last_compliance_actions_snapshots
+    (batched, no singular wrapper): the watcher reads every key it needs in ONE
+    call at the top of the run.
+
+    DELIBERATELY does NOT go through _tab_rows, which swallows every read
+    exception and returns [] (fine for its append-only-accumulator callers,
+    wrong here). For a watch that DIFFS, an indistinguishable [] is a silent
+    data-loss bug: a throttled read would make every key look never-seen, the
+    watcher would write a fresh "baseline" row, and because the tab is
+    append-only with last-write-wins that spurious baseline BECOMES the state —
+    erasing a real, un-alerted change permanently rather than deferring it. So a
+    read failure raises and the caller fails loudly instead.
+
+    The tab's own absence is not a case here: nsite_evaluations_watcher calls
+    ensure_evaluations_tabs() before any read, so the tab always exists by the
+    time this runs."""
+    resp = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_EVALUATIONS}'!A2:H")
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    )
+    latest_by_key: dict[str, list] = {}
+    for r in resp.get("values", []):
+        if r and len(r) > 1:
+            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
+    result: dict[str, tuple[str, str] | None] = {}
+    for key in item_keys:
+        r = latest_by_key.get(key)
+        if r is None:
+            result[key] = None
+        else:
+            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
+    return result
+
+
+def append_evaluations_watch_row(
+    service, sheet_id: str, date: str, item_key: str, label: str, change: str,
+    snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
+) -> None:
+    """Append one Evaluations Watch row. Written BEFORE the change email is
+    sent (durable record first, alert best-effort second — same crash-safe
+    ordering as append_violations_watch_row/append_compliance_actions_watch_row)."""
+    append_rows(service, sheet_id, TAB_EVALUATIONS, [[
         date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
     ]])
 

@@ -196,6 +196,31 @@ external users but no sensitive data). Public repo.
   is parked at `docs/pending-workflows/nsite-compliance-actions-watch.yml` (the
   build token lacked the `workflow` OAuth scope) and must be `git mv`'d into
   `.github/workflows/` before the flag is flipped. See ADR 028.
+- `nsite_evaluations_watcher.py` — Stream N: daily snapshot-diff of EGLE's
+  nSITE **Evaluations** profile (the underlying inspection record a violation
+  or compliance action often stems from — a Violations record already
+  carries `evalEvalNum`, joining a violation back to its evaluation) for
+  every srn in `nsite_evaluations.tiers`, against the `Evaluations Watch`
+  tab. Item key `eval:<srn>`. The feasibility gate (live, all 19 sites) found
+  `evalEvalNum` **IS unique** per site (477/477 at N2688, 40/40 at RA) —
+  UNLIKE Violations/Compliance Actions, so the diff is **ref-number-keyed**
+  (the Submissions idiom, not a multiset): a new `eval_num` alerts as a new
+  evaluation, an existing one with a changed field alerts as detail
+  advancing. No status field exists in this profile, so a new evaluation
+  appearing IS the primary signal. N2688's 477 records serialize to 75,494
+  chars even in the compact positional snapshot form — OVER the Sheets cell
+  cap — so unlike Violations/CA (where the same budget guard never actually
+  fires), N2688 runs in a digest-degraded mode on every real run; the
+  degraded form keeps `[eval_num, digest]` pairs (not an anonymous digest
+  multiset) so a truncated diff still names exactly which evaluation is
+  new/changed/removed. Makes no severity judgment. Tiers are this profile's
+  own (**1 daily / 4 biweekly / 14 quarterly**), NOT a copy of any sibling —
+  only N2688 has recent evaluation activity (latest 2026-08-07). Gated on
+  `nsite_evaluations.enabled` (new source; ships `false`). Its workflow
+  landed directly in `.github/workflows/nsite-evaluations-watch.yml` (this
+  build session's SSH key authenticated non-interactively, so the
+  `workflow`-OAuth-scope parking Streams L/M needed did not apply). See
+  ADR 029.
 
 ## Forbidden patterns (do not do these)
 

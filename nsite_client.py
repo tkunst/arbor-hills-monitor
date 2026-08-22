@@ -31,6 +31,15 @@ Judgments). Same raise-don't-swallow contract and same no-filter/multiset
 posture as fetch_site_violations — its candidate reference number
 (cmplActnCmplActnNum) proved non-unique in the live spike (N2688 files one
 number, a federal case number, on two records), so it too keeps every record.
+
+And fetch_site_evaluations() (Stream N, ADR 029) — a FIFTH sibling profile,
+the underlying INSPECTION record a violation or compliance action stems from.
+Same raise-don't-swallow contract as its three siblings, but UNLIKE Violations
+and Compliance Actions it DOES filter — the live spike found evalEvalNum IS a
+genuine unique key per site (477/477 at N2688, 40/40 at RA, 5/5 at N1504,
+1/1 at WRD), so this profile is keyed like fetch_site_submissions rather than
+diffed as a multiset. See nsite_evaluations_watcher for why the snapshot still
+needs a budget-degradation guard despite the keyed design.
 """
 from __future__ import annotations
 
@@ -621,6 +630,177 @@ def fetch_site_compliance_actions(session: requests.Session, nsite_id: str) -> l
                 time.sleep(2 ** attempt)
     raise NsiteFetchError(
         f"GET compliance actions for site {nsite_id} failed after 3 attempts: {last_exc}"
+    ) from last_exc
+
+
+# Another sibling profile — the underlying INSPECTION record. A Violations
+# record already carries `evalEvalNum` (see VIOLATION_FIELDS' eval_num), so an
+# evaluation can be joined back to the violation(s) it produced; watching
+# Evaluations gives visibility into new inspections — the event that often
+# PRECEDES a violation or compliance action — rather than only their
+# downstream consequences. Same query shape as the three profiles above;
+# anonymous, no auth. Confirmed live 2026-08-08 and re-confirmed across all 19
+# `nsite_sites` (Stream N, ADR 029): 525 records total, all carrying exactly
+# the eight EVALUATION_FIELDS below, with real history at N2688 (477, most
+# recent 2026-08-07 — actively ongoing), RA (40), N1504 (5), P1488 (2) and
+# WRD (1).
+EVALUATIONS_ENDPOINT = (
+    f"{NSITE_BASE}/nsite/ss/api/nsite-explorer/default-mode"
+    "/profiles/3-compliance/1-evaluations"
+)
+
+# The eight fields EGLE's Evaluations profile serves, renamed to short
+# readable names. Confirmed 2026-08-08 present on ALL 525 records across every
+# site that has any (N2688/RA/N1504/P1488/WRD) — one distinct key-set per
+# site, no optional fields, no nesting. `eval_num` leads because, UNLIKE
+# Violations/Compliance Actions, it IS a genuine unique key (see
+# _normalize_evaluation) — it is what nsite_evaluations_watcher diffs on.
+EVALUATION_FIELDS = (
+    "eval_num", "program_area", "eval_type", "eval_category", "permit_num",
+    "start_date", "sample_transmit_date", "site_name",
+)
+
+_EVALUATION_RAW_KEYS = {
+    "eval_num": "evalEvalNum",                    # "E-AHZX-TW7C-8EN5" — stable, unique per site
+    "program_area": "evalRefProgramAreaDescr",     # "AQD - Air", "WRD - NPDES"
+    "eval_type": "evalRefEvalTypeDescr",           # "Records Review", "Stormwater Inspection"
+    "eval_category": "evalRefEvalCatgDescr",       # "On-Site Inspection"
+    "permit_num": "evalPrmtNum",                   # cross-references the Permits profile; often null
+    "start_date": "evalStartDate",                 # ISO datetime w/ UTC offset
+    "sample_transmit_date": "evalSmplTransmtDate",  # ISO datetime w/ UTC offset; null in 525/525 live
+    "site_name": "siteName",                       # site name echo
+}
+
+
+def _parse_egle_date(date_str) -> str:
+    """Shared date-normalization for the two date-shaped Evaluations fields
+    (start_date, sample_transmit_date) — inlined logic elsewhere in this file
+    (_normalize_violation/_normalize_compliance_action) is duplicated once
+    per field; here it's needed TWICE in the same function, so factoring it
+    out avoids a third copy-paste of the same six-line block within one
+    function. Same fail-soft contract as its siblings: a non-str (a sibling
+    EGLE ArcGIS feed serves epoch-ms ints for dates) or an out-of-range day
+    (a real "2026-02-30") must degrade to "" rather than raise and blind the
+    whole site behind a permanent NsiteFetchError over one bad record."""
+    if date_str is None:
+        return ""
+    if not isinstance(date_str, str):
+        date_str = str(date_str)
+    if not date_str:
+        return ""
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(date_str[: len(fmt) + 2], fmt).date().isoformat()
+        except ValueError:
+            continue
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", date_str)
+    if m:
+        try:
+            return date(int(m[1]), int(m[2]), int(m[3])).isoformat()
+        except (ValueError, TypeError):
+            return ""
+    return ""
+
+
+def _normalize_evaluation(raw: dict) -> dict:
+    """Convert a raw nSITE evaluation dict into the fields the watch diffs on.
+
+    UNLIKE _normalize_violation/_normalize_compliance_action, `eval_num` IS a
+    genuine unique key within a site's record set — verified 2026-08-08 across
+    all 525 live records (477/477 at N2688, 40/40 at RA, 5/5 at N1504, 1/1 at
+    WRD) — so nsite_evaluations_watcher diffs a REF-NUMBER-KEYED snapshot (the
+    Submissions idiom), not a Counter multiset.
+
+    Two date fields need the same offset-stripping canonicalization
+    _normalize_violation's start_date gets (a UTC-offset flip each EDT/EST
+    transition must not read as a change): `start_date` and
+    `sample_transmit_date`. The latter is null on all 525 live records, but
+    the schema promises it and a future evaluation could populate it.
+
+    Every field is read with `or ""` (NOT `.get(f, "")`), matching
+    _normalize_violation/_normalize_compliance_action: a present-but-null key
+    (permit_num is null on 470/477 at N2688) must normalize to the same "" an
+    absent key would."""
+    out = {f: (raw.get(_EVALUATION_RAW_KEYS[f]) or "") for f in EVALUATION_FIELDS}
+    out["start_date"] = _parse_egle_date(raw.get(_EVALUATION_RAW_KEYS["start_date"]))
+    out["sample_transmit_date"] = _parse_egle_date(
+        raw.get(_EVALUATION_RAW_KEYS["sample_transmit_date"]))
+    return out
+
+
+def fetch_site_evaluations(session: requests.Session, nsite_id: str) -> list[dict]:
+    """Return the full list of normalized evaluations for one nSITE site.
+
+    Raises NsiteFetchError after 3 attempts on ANY network/HTTP/structural
+    failure — the same contract as fetch_site_violations / fetch_site_submissions
+    / fetch_site_compliance_actions (nsite_evaluations_watcher DIFFS this list,
+    so a swallowed failure returned as [] would read as "every evaluation
+    withdrawn at once"), NOT fetch_site_documents' swallow-and-return-[].
+
+    UNLIKE fetch_site_violations/fetch_site_compliance_actions, this DOES
+    filter — on `evalEvalNum` present, the same filter fetch_site_submissions
+    applies to `submSubmRefNum` — because eval_num is this profile's genuine
+    unique diff key (see _normalize_evaluation) and a keyless record cannot be
+    placed in a ref-number-keyed snapshot. No such record has been observed
+    live; if nSITE ever serves one, it is silently excluded from the diff
+    rather than raising, matching fetch_site_submissions' precedent.
+
+    An empty list is a VALID result (14 of the 19 watched sites have zero
+    evaluations); only a fetch/structural failure raises."""
+    query_params = urllib.parse.quote('{"filter":[{"id":"' + str(nsite_id) + '"}]}')
+    url = (
+        f"{EVALUATIONS_ENDPOINT}"
+        f"?responseContentType=application/json"
+        f"&includeMetadataInResponse=true"
+        f"&loadChildren=true"
+        f"&queryParams={query_params}"
+        f"&filterString="
+    )
+    referer = f"{NSITE_BASE}/nsite/DEFAULT/map/results/detail/{nsite_id}/Documents"
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            r = session.get(
+                url,
+                headers={"Referer": referer, "Accept": "application/json"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            data = r.json()
+            if "queryResults" not in data:
+                raise NsiteFetchError(
+                    f"evaluations response for site {nsite_id} is missing "
+                    f"'queryResults' — nSITE may have changed its response shape"
+                )
+            if data.get("hasResultsRemaining"):
+                # Null on every site today (verified 2026-08-08). If nSITE ever
+                # enables server-side paging, a partial page would be
+                # INDISTINGUISHABLE from a shrunken record set: the caller's
+                # ref-keyed diff would read the missing tail as evaluations
+                # withdrawn and email that as fact. Fail loudly instead — the
+                # same guard as fetch_site_violations/fetch_site_compliance_actions.
+                raise NsiteStructuralError(
+                    f"evaluations response for site {nsite_id} reports "
+                    f"hasResultsRemaining — nSITE has started paging this "
+                    f"profile and this client would otherwise diff a PARTIAL "
+                    f"page as mass withdrawals. Pagination support is needed."
+                )
+            return [_normalize_evaluation(e) for e in data["queryResults"]
+                    if e.get("evalEvalNum")]
+        except NsiteStructuralError:
+            # Re-raise immediately, before the retry loop can swallow it into a
+            # generic NsiteFetchError: retrying a shape change is pointless, and
+            # the caller distinguishes the two types deliberately (a generic
+            # NsiteFetchError is treated as transient skip-and-warn, the exact
+            # silent-forever outcome this class exists to avoid).
+            raise
+        except Exception as e:  # noqa: BLE001 — network/HTTP: retry, then raise loud
+            last_exc = e
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+    raise NsiteFetchError(
+        f"GET evaluations for site {nsite_id} failed after 3 attempts: {last_exc}"
     ) from last_exc
 
 
