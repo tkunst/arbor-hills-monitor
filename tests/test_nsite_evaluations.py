@@ -363,6 +363,43 @@ def test_a_structurally_invalid_stored_snapshot_is_reported_not_crashed():
     assert "re-baselines" in note
 
 
+def test_a_new_record_sharing_an_existing_eval_num_is_flagged_not_silently_misreported():
+    """The load-bearing assumption behind this whole design: eval_num is
+    verified unique live, but not GUARANTEED unique by the API. If it were
+    ever to stop holding, a naive by-key dict diff would silently collapse a
+    genuinely NEW evaluation sharing an existing key into a bland "changed"
+    line, understating what happened. It must instead be surfaced as a
+    distinct, loud case."""
+    old = ew.evaluations_snapshot([_ev(eval_num="X", eval_type="A")], FIELDS)
+    new = ew.evaluations_snapshot(
+        [_ev(eval_num="X", eval_type="A"), _ev(eval_num="X", eval_type="B")], FIELDS)
+    note, body = ew.summarize_evaluations_change(old, new)
+    assert "not unique" in note.lower()
+    assert "1 -> 2" in note
+    assert "existing evaluation changed" not in note   # must NOT misreport as a benign update
+    assert "new evaluation recorded" not in note        # the collision itself is the headline
+
+
+def test_a_key_collision_is_caught_even_in_the_degraded_truncated_form():
+    """_digest_map's dict(...) collapse on read affects the truncated payload
+    exactly like _rows_by_key does on the full one — N2688 runs permanently
+    truncated, so the guard must cover this path too, not just the
+    untruncated one the simpler unit test above exercises."""
+    big_rows = [_ev(eval_num=f"E-{i:05d}") for i in range(477)]
+    old_trunc = json.loads(ew._cell_payload(
+        ew.evaluations_snapshot(big_rows, FIELDS), budget=ew.DEFAULT_SNAPSHOT_CHAR_BUDGET))
+    dup_rows = big_rows + [_ev(eval_num="E-00000", eval_type="DUPLICATE-KEY-NEW-RECORD")]
+    note, _ = ew.summarize_evaluations_change(old_trunc, ew.evaluations_snapshot(dup_rows, FIELDS))
+    assert "not unique" in note.lower()
+
+
+def test_duplicate_key_count_is_zero_for_a_clean_snapshot_full_and_truncated():
+    clean = ew.evaluations_snapshot([_ev(eval_num="A"), _ev(eval_num="B")], FIELDS)
+    assert ew._duplicate_key_count(clean) == 0
+    truncated = json.loads(ew._cell_payload(clean, budget=1))   # force degrade
+    assert ew._duplicate_key_count(truncated) == 0
+
+
 def test_no_ref_level_diff_when_snapshots_are_equal_but_hash_check_was_skipped():
     snap = ew.evaluations_snapshot([_ev()], FIELDS)
     note, body = ew.summarize_evaluations_change(snap, copy.deepcopy(snap))
@@ -466,6 +503,24 @@ def test_snapshot_hash_ignores_the_cell_budget_entirely():
     snap = ew.evaluations_snapshot([_ev(eval_num=f"E-{i:06d}") for i in range(600)], FIELDS)
     assert ew._cell_payload(snap, budget=10) != ew._cell_payload(snap, budget=999999)
     assert ew.snapshot_hash(snap) == ew.snapshot_hash(copy.deepcopy(snap))
+
+
+def test_cell_payload_degrade_looks_up_eval_num_by_field_name_not_position():
+    """_cell_payload's own degrade step must key off the same field-name
+    lookup _rows_by_key/_digest_map use when READING a stored snapshot — not
+    a hardcoded row[0] — so a future reordering of EVALUATION_FIELDS can't
+    silently corrupt every degraded-mode digest."""
+    rows = [_ev(eval_num=f"E-{i:05d}") for i in range(600)]
+    snap = ew.evaluations_snapshot(rows, ("site_name", "eval_num") + tuple(
+        f for f in FIELDS if f not in ("site_name", "eval_num")))
+    full = json.dumps(snap, sort_keys=True, ensure_ascii=False)
+    assert len(full) > 20000                       # the fixture really is oversized at this budget
+    payload = ew._cell_payload(snap, budget=20000)
+    body = json.loads(payload)
+    assert body["truncated"] is True
+    assert not body.get("digests_dropped")          # must land in the digest form, not the final clamp
+    digest_keys = {k for k, _ in body["digests"]}
+    assert digest_keys == {r["eval_num"] for r in rows}
 
 
 def test_digest_map_looks_up_eval_num_by_field_name_not_position():
