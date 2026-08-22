@@ -243,6 +243,39 @@ any advocacy organization.
     since the build session's SSH key authenticated non-interactively, so
     only `enabled` needs to flip).
 
+19. **nSITE Permits watch (Stream O)** (daily, optional —
+    `nsite_permits.enabled: false`, ships disabled): watches a SIXTH nSITE
+    profile for the same 19 sites — **Permits**, a facility's permit
+    lifecycle (issued → extended → expiring → terminated) across EVERY
+    permit type on file (Air ROPs, Air Permits to Install, Air Reporting
+    Schedules, NPDES water permits, Resources/wetland permits) — broader than
+    Stream H's targeted ROP watch, which follows only the Air ROP renewal
+    process for N2688/N1504/P1488. Live-fetched 2026-08-22: N2688 9 permits
+    (incl. Air ROP `ROP0000224`, currently "Extended"), N1504 4 (incl.
+    `ROP0000656`), P1488 3 (incl. `ROP0000236`), RA 2, WRD 2, P1504 1
+    (already "Terminated"), SANL 1 (already "Expired"). Like Evaluations,
+    `prmtPrmtNum` proved a **genuine unique key** everywhere it has any
+    records — so the diff is **ref-number-keyed**: a new `prmt_num` alerts as
+    a brand-new permit; an existing one with a changed field — most
+    importantly `status` advancing (e.g. Extended → Expired) or
+    `termination_date` populating — alerts as that permit's status changing,
+    the primary signal this watch exists to surface, not a secondary case.
+    **Overlaps Stream H at exactly three permit numbers** (confirmed live);
+    this watch does NOT suppress them (that would blind it to a real status
+    change) and instead disambiguates explicitly in the alert copy — the two
+    streams trip-wire different events (permit status/lifecycle here vs. the
+    public-comment-window entry there) and neither supersedes the other. Own
+    per-site tiers (`3/2/14`), deliberately not a copy of any sibling:
+    N2688/N1504/P1488 are all daily here (each currently holds an "Extended"
+    Air ROP, this profile's own headline concern), unlike any prior profile
+    where at most one or two sites earn daily. Snapshot-diff into the
+    `Permits Watch` tab; first sighting baselines silently. New
+    source, ships disabled — see
+    `docs/decisions/030-nsite-permits-watch.md` for activation (**one**
+    step here: the workflow file landed directly in `.github/workflows/`
+    since the build session's SSH key authenticated non-interactively, so
+    only `enabled` needs to flip).
+
 > **A note on the document links (expected behavior).** Every case-file row's
 > **Link** column points to EGLE's nSITE portal
 > (`https://mienviro.michigan.gov/ncore/downloadpdf/<id>`). Clicking one

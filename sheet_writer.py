@@ -246,6 +246,20 @@ TAB_COMPLIANCE_ACTIONS = "Compliance Actions Watch"
 # form, over the 45,000-char budget, so N2688 runs in permanently-degraded
 # (digest) mode. See nsite_evaluations_watcher.evaluations_snapshot.
 TAB_EVALUATIONS = "Evaluations Watch"
+# nSITE Permits watch (Stream O, ADR 030) — same on-demand policy: no tab
+# appears until nsite_permits_watcher actually runs. Append-only, keyed by
+# Item (e.g. "prmt:N2688") in col B for dedup/state — the Violations/
+# Compliance Actions/Evaluations Watch idiom (Sheet-derived ⇒ race-free, NOT
+# _meta). One row per observed state of a watched site's PERMITS (issued ->
+# extended -> expiring -> terminated) — "baseline" (first sighting, silent) or
+# "changed" (fires an alert distinguishing a brand-new permit from an existing
+# one's status/date advancing — e.g. Extended -> Expired, or a termination
+# date populating). Like Evaluations, the diff is REF-NUMBER-KEYED on
+# prmtPrmtNum (verified unique per site); UNLIKE Evaluations, volumes are
+# small everywhere (max 9 at N2688), so the inherited budget-degradation guard
+# is verified-inert insurance, not a live necessity. See
+# nsite_permits_watcher.permits_snapshot.
+TAB_PERMITS = "Permits Watch"
 # Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
 # TAB_NEW/TAB_HISTORICAL. "Change" is new/changed (live) or historical (dump).
 WDS_HEADERS = [
@@ -377,6 +391,13 @@ COMPLIANCE_ACTIONS_WATCH_HEADERS = [
 # VIOLATIONS_WATCH_HEADERS/COMPLIANCE_ACTIONS_WATCH_HEADERS above — same
 # append-only, tab-is-the-state design.
 EVALUATIONS_WATCH_HEADERS = [
+    "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
+    "Snapshot JSON",
+]
+
+# nSITE Permits watch (Stream O, ADR 030). Identical row shape to
+# EVALUATIONS_WATCH_HEADERS above — same append-only, tab-is-the-state design.
+PERMITS_WATCH_HEADERS = [
     "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
     "Snapshot JSON",
 ]
@@ -1832,6 +1853,85 @@ def append_evaluations_watch_row(
     sent (durable record first, alert best-effort second — same crash-safe
     ordering as append_violations_watch_row/append_compliance_actions_watch_row)."""
     append_rows(service, sheet_id, TAB_EVALUATIONS, [[
+        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
+    ]])
+
+
+# ---------------------------------------------------------------------------
+# nSITE Permits watch (Stream O, ADR 030) — the tab is the state (append-
+# only ⇒ race-free), exactly like the Evaluations Watch tab above.
+# ---------------------------------------------------------------------------
+
+
+def ensure_permits_tabs(service, sheet_id: str) -> None:
+    """Create the Permits Watch tab if missing and reconcile its header row on
+    every run (same self-healing policy as ensure_evaluations_tabs()). Called
+    only from nsite_permits_watcher.py, so the tab doesn't appear until the
+    watch actually runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_PERMITS not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_PERMITS}}}]},
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    _set_header(service, sheet_id, TAB_PERMITS, PERMITS_WATCH_HEADERS)
+
+
+def last_permits_snapshots(
+    service, sheet_id: str, item_keys: list[str],
+) -> dict[str, tuple[str, str] | None]:
+    """Return {item_key: (snapshot_hash, snapshot_json) or None} for each key
+    (e.g. "prmt:N2688"), reading the whole tab ONCE however many keys are
+    asked for. None means 'baseline this item'; a hash mismatch means
+    'changed'. Reading the last matching row (not a _meta cell) is what makes
+    the watch race-free — the tab is append-only, so no concurrent job can
+    clobber it.
+
+    Same contract as last_evaluations_snapshots/last_compliance_actions_
+    snapshots (batched, no singular wrapper): the watcher reads every key it
+    needs in ONE call at the top of the run.
+
+    DELIBERATELY does NOT go through _tab_rows, which swallows every read
+    exception and returns [] (fine for its append-only-accumulator callers,
+    wrong here). For a watch that DIFFS, an indistinguishable [] is a silent
+    data-loss bug: a throttled read would make every key look never-seen, the
+    watcher would write a fresh "baseline" row, and because the tab is
+    append-only with last-write-wins that spurious baseline BECOMES the state —
+    erasing a real, un-alerted change permanently rather than deferring it. So a
+    read failure raises and the caller fails loudly instead.
+
+    The tab's own absence is not a case here: nsite_permits_watcher calls
+    ensure_permits_tabs() before any read, so the tab always exists by the
+    time this runs."""
+    resp = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_PERMITS}'!A2:H")
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    )
+    latest_by_key: dict[str, list] = {}
+    for r in resp.get("values", []):
+        if r and len(r) > 1:
+            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
+    result: dict[str, tuple[str, str] | None] = {}
+    for key in item_keys:
+        r = latest_by_key.get(key)
+        if r is None:
+            result[key] = None
+        else:
+            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
+    return result
+
+
+def append_permits_watch_row(
+    service, sheet_id: str, date: str, item_key: str, label: str, change: str,
+    snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
+) -> None:
+    """Append one Permits Watch row. Written BEFORE the change email is sent
+    (durable record first, alert best-effort second — same crash-safe ordering
+    as append_evaluations_watch_row)."""
+    append_rows(service, sheet_id, TAB_PERMITS, [[
         date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
     ]])
 
