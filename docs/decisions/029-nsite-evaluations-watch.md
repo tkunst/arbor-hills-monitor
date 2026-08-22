@@ -233,6 +233,22 @@ copy-paste drift fails the suite.
 
 ## Risks and mitigations
 
+**Show-stopper if unmitigated: `evalEvalNum` uniqueness is verified live, not
+guaranteed by the API — and both prior enforcement profiles' feasibility
+gates found their own candidate keys NOT unique in production
+(`cmplActnCmplActnNum` collides at N2688; no Violations field/composite is
+unique at all).** A naive by-key dict diff (`_rows_by_key`/`_digest_map`)
+silently collapses same-key rows, which would misreport a genuinely NEW
+evaluation sharing an existing `eval_num` as a bland "changed" line on the
+existing one — understating what happened, behind a green build, forever.
+**Mitigated:** `_duplicate_key_count` checks both snapshots (in whichever
+form — full or digest-degraded, since N2688 runs the latter permanently) for
+a duplicate `eval_num` BEFORE any by-key dict is built, and
+`summarize_evaluations_change` surfaces a distinct, loud "eval_num was NOT
+unique" note + re-baseline rather than proceeding to a diff it can no longer
+trust. Caught in review before merge; regression-tested on both the full and
+truncated paths.
+
 **Manageable: N2688 runs permanently degraded, so its alert body never shows
 field-level detail on a changed evaluation.** Mitigated by the digest form
 still naming the exact `eval_num` (Finding 2) — a human can look it up in
