@@ -90,3 +90,69 @@ programmatically — `drive.file` is not relied on to grant `permissions.create`
   the `GOAUTH_*` secrets exist, then mirrors whatever the backfill has processed.
 - The durable mirror is one-way (nSITE → Drive). It is insurance, not the system
   of record; the Sheet + `_state` remain authoritative for what was processed.
+
+## Addendum (2026-08-23): inline mirroring, and the real reason a mirror link matters
+
+**A second failure mode nSITE link rot didn't cover, found live:** Trisha
+reported a stored `downloadpdf/<doc_id>` link that threw an error when she
+clicked it, even though the exact same URL worked when pasted directly. Tested
+live: `mienviro.michigan.gov`'s `downloadpdf`/`downloadfile` endpoints reject
+requests whose `Referer` header isn't one they recognize — confirmed with a
+plain `curl -e "https://www.google.com/"` reproducing the identical "Runtime
+Error"/401 page from her own screenshots on a link that succeeds with no
+referer. This matters far beyond a one-off broken link: **Google's own
+link-click-through (opening a link from inside Gmail, or clicking a URL typed
+into a Sheets cell) routes through a `google.com`-hosted redirect before
+reaching the destination**, so essentially every nSITE link this monitor ever
+emailed or wrote into the Sheet was at risk of erroring for a human clicking
+it from the two places she'd actually encounter it — not a rare edge case.
+Direct verification confirmed the fix: the identical `google.com` referer that
+500s against nSITE returns a real PDF, no auth wall, straight from a Drive
+mirror link — because the destination is a Google service, immune to nSITE's
+own referer check by construction.
+
+**This means the mirror isn't just link-rot insurance anymore — it's the
+functional fix for referer rejection, and the timing of WHEN a document gets
+mirrored now matters in a way it didn't before.** Under the original design,
+`archive.yml`'s nightly 3am run can only mirror doc_ids already present in
+`_state.processed`, populated by watcher.py/backfill.py runs. A same-day new
+filing is discovered by the 6am watcher AFTER that day's 3am archive run
+already happened — so it would wait a FULL cycle (up to ~21h) for a Drive
+mirror, during which its Sheet row and any alert email carry only the
+referer-fragile nSITE link. For a same-day urgent alert — exactly the kind of
+document most likely to be opened immediately — that gap defeats the whole
+purpose.
+
+**Fix: `archiver.mirror_one_now()`, called INLINE from watcher.py/backfill.py
+at write time**, not only on `archive.yml`'s own schedule. There was no
+principled reason left to keep mirroring exclusively on a separate nightly
+job — that separation was how this ADR happened to sequence the original
+build ("it grows alongside the backfill"), not a resilience requirement in
+its own right. The resilience requirement — mirroring must never block or
+degrade classification/alerting — is unchanged and is preserved explicitly:
+`mirror_one_now()` ALWAYS falls back to the nSITE link on any failure (not
+configured, a dead/revoked OAuth token, a network error, a Drive quota
+problem, a Sheet-write failure) and never raises to its caller. Merging WHEN
+the mirror runs is not the same as making the alert DEPEND on it succeeding.
+
+`archive.yml`'s own scheduled `run()` is unchanged in mechanism and kept
+running — it is now a **catch-up net**: anything `mirror_one_now()` missed in
+the moment (a transient OAuth/Drive blip) plus the pre-2026-08-23 backlog.
+Both paths read and write the same "Archived PDFs" index
+(`sheet_writer.archived_doc_links()`/`archived_doc_ids()`), so they coordinate
+naturally and never double-upload the same doc_id.
+
+**Consequence for credential exposure:** `daily.yml` (watcher.py) and
+`backfill.yml` now also carry the four `GOAUTH_*` secrets, previously scoped
+to `archive.yml` alone. Unset, `mirror_one_now()` behaves exactly as before
+this addendum (quiet fallback to the nSITE link) — no new failure mode, only
+a new success path.
+
+**Scope note:** this addendum covers the GO-FORWARD path only — new documents
+processed from 2026-08-23 onward. It does not retroactively rewrite the
+~1,720 already-written nSITE links sitting in the New/Historical Documents
+tabs (a separate, explicitly scoped decision — see the repair-plan discussion
+in the session notes — since many already have a mirror in "Archived PDFs"
+and could be swapped, but that touches the public/operator-visible Sheet's
+existing cell contents and needs its own confirmation, not a silent bundle
+into this change).
