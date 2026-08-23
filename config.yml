@@ -950,6 +950,91 @@ nsite_permits:
     AHE2: quarterly
     ERNGX: quarterly
 
+# --- nSITE Complaints watch (Stream P, ADR 031) ---
+# Watch on the "Complaints" profile — citizen/agency reports filed against a
+# facility, often the trigger for an inspection — a seventh sibling profile to
+# Documents (`facilities:`), Submissions, Violations, Compliance Actions,
+# Evaluations, and Permits above. ONE fetch per site -> ONE item
+# ("cmplt:<srn>"); the FIRST sighting of each site's complaint list baselines
+# silently, EVEN AT N2688's 6,396 records (no alert flood on first enable —
+# verified by test).
+#
+# UNLIKE every sibling above, this profile's snapshot is NOT a per-record
+# encoding at all. N2688's volume (live-fetched 2026-08-22) is too large for
+# ANY full-membership form to fit a Sheets cell — even the digest-multiset
+# machinery Violations/Compliance Actions degrade to under budget pressure
+# measures at ~102,000 chars here (2x the 50,000 cap), because complaints
+# carry ZERO duplicate-tuple compression (6,396 of 6,396 records distinct),
+# unlike Violations' RA where repeated rows collapse 64%. So the stored
+# snapshot is a tiny fingerprint instead — `{n, hash, latest[K]}` — small BY
+# CONSTRUCTION, not degraded into smallness. `hash` is over the sorted
+# reference-number SET (not full field tuples, so it's immune to the twice-
+# yearly EDT/EST date-offset flip); `latest` is the K most-recently-received
+# complaints, which lets the watch NAME new complaints exactly whenever fewer
+# than K arrived since the last check (the common case at N2688's current
+# ~0.16/day rate), falling back to an honest count-only note when a burst
+# exceeds the window (N2688's own history has one: 246 complaints in a single
+# day, 2019-11-18) or removals overlap with additions in the same period. See
+# nsite_complaints_watcher.py's module docstring and ADR 031 for the full
+# measured-size table and the design this forced.
+#
+# `tiers` maps srn -> poll cadence for THIS profile only; every key MUST be a
+# srn present in `nsite_sites` above — a typo'd/unknown srn is a config error
+# and raises loudly (ADR 022). The tiers below are DELIBERATELY NOT a copy of
+# any sibling profile's tiers: every site was live-fetched on 2026-08-22 and
+# assigned from Complaints-specific RATE, not the raw 6,396 (see ADR 031 for
+# the full table).
+nsite_complaints:
+  # Ships OFF: a brand-new poller against a live external system, built
+  # unattended (overnight-coder Step 3). Flipping this to true is a separate
+  # human step. The first enabled run baselines every due site silently — no
+  # alert flood, even at N2688's 6,396 records.
+  enabled: false
+  # Recipient override: Trisha only to start (the Meeting Watch / MMD / RIDE /
+  # Submissions / Violations / Compliance Actions / Evaluations / Permits
+  # precedent for a brand-new alert stream). Delete/comment this block to send
+  # to the full alert_recipients list once the alert copy has been seen in
+  # the wild.
+  recipients:
+    - arbor-hills@trishakunst.com
+  # How many of the most-recently-received complaints the snapshot keeps, for
+  # both the exact-diff naming path and as display context when the exact
+  # diff can't be established. 50 gives roughly 300 days of margin at N2688's
+  # trailing-365-day rate (~60/year); raising it is safe up to roughly 1,000
+  # before `snapshot_char_budget` below would start truncating it (see
+  # nsite_complaints_watcher._cell_payload) — a config-only rollback lever,
+  # no code change needed either direction.
+  latest_window: 50
+  # Max characters written to the Snapshot JSON cell before the watch trims
+  # the `latest` window. A Sheets cell hard-caps at 50,000; the complaints
+  # fingerprint never approaches this at ANY realistic `latest_window` value
+  # (see above) — this is defensive insurance against a pathological config
+  # bump, not a live concern the way it is for Violations' RA.
+  snapshot_char_budget: 45000
+  tiers:
+    # --- daily (1) — the only site with recent, ongoing complaint activity ---
+    N2688: daily      # 6,396 complaints, 2007-09-12..2026-08-17 — a 2016-2020 filing burst is ~92% of the total, but 60 in the trailing 365 days (~0.16/day) justifies daily over the raw count
+    # --- biweekly (3) — real-but-not-recent history, or an open matter that could plausibly produce a new complaint ---
+    RA: biweekly      # 5 complaints, 2018-12-12..2023-09-13 — real but none in ~3 years
+    WRD: biweekly     # 0 complaints, but an open JPA + PFOS interest at the Land & Water Interface site — same override every sibling profile applies to this site
+    P1488: biweekly   # 0 complaints, but a live ROP renewal in public comment (Emerald RNG) — same override every sibling profile applies to this site
+    # --- quarterly (15) — zero complaints ever (or one ancient one); typo/mis-filing insurance only ---
+    N1504: quarterly
+    AHLI: quarterly
+    P1504: quarterly
+    AHLA: quarterly
+    AHLB: quarterly
+    AHLC: quarterly
+    AHLD: quarterly
+    AHLE: quarterly
+    ADL1: quarterly
+    ADL2: quarterly
+    COMP: quarterly   # 1 complaint, 2014-08-06 — ancient, insurance only
+    AHE1: quarterly
+    AHE2: quarterly
+    SANL: quarterly
+    ERNGX: quarterly
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 # NOTE (2026-08-21, Trisha's direction): this list is committed to a PUBLIC repo,
