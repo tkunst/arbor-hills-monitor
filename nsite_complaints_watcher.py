@@ -436,16 +436,16 @@ def summarize_complaints_change(old: dict, new: dict) -> tuple[str, str]:
         # A conditional caveat doesn't help either: which alerts are at risk
         # can't be told apart from which aren't, so the honest count+context
         # note below is used for EVERY growth case, unconditionally.
-        window_size = new.get("latest_window") or len(new.get("latest") or []) or DEFAULT_LATEST_WINDOW
+        shown = new.get("latest", [])[:10]
         return (
             f"complaint count changed — {old_n} -> {new_n} on file "
             "(a windowed diff can't safely name which complaint(s) are new "
             "at this site's volume — see nSITE for the complete list)",
-            "Most recent complaints currently on file, context only — NOT "
-            f"a list of what changed (up to the {window_size} most recent):\n"
+            f"Most recent {len(shown)} complaint(s) currently on file, "
+            "context only — NOT a list of what changed:\n"
             + "\n".join(
                 f"  {ref}  (received {received or 'unknown date'})"
-                for ref, received in new.get("latest", [])[:10]
+                for ref, received in shown
             ),
         )
 
@@ -481,16 +481,17 @@ def format_change_body(label: str, note: str, body: str) -> str:
         f"{shown}\n\n"
         "This is an automated watch on EGLE's nSITE Complaints profile — "
         "citizen/agency reports filed against this facility, often the "
-        "trigger for an inspection. It trip-wires a change in the complaint "
-        "count the moment EGLE's record for this site differs from the last "
-        "check. It makes NO judgment about a complaint's substance — only "
-        "that EGLE's count changed — so read MiEnviro directly for full "
-        "context. This watch deliberately does NOT try to name which "
+        "trigger for an inspection. It trip-wires the moment EGLE's record "
+        "for this site differs from the last check — a change to the "
+        "complaint count, or which complaints are on file even if the count "
+        "didn't move. It makes NO judgment about a complaint's substance — "
+        "only that EGLE's record changed — so read MiEnviro directly for "
+        "full context. This watch deliberately does NOT try to name which "
         "complaint(s) are new: at this profile's volume (its largest site "
         "carries thousands of historical records), no snapshot small enough "
         "to store can distinguish a genuinely new complaint from an existing "
-        "one that simply became newly visible, so it reports the count "
-        "change plus recent context and points you at nSITE for the rest.\n"
+        "one that simply became newly visible, so it reports the change "
+        "plus recent context and points you at nSITE for the rest.\n"
     )
 
 
