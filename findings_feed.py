@@ -1,5 +1,5 @@
 """findings_feed.py — pure render/format logic for the public "Findings" feed
-(site/findings/): every document from the case-file Sheet's New Documents +
+(site/public-records/): every document from the case-file Sheet's New Documents +
 Historical Documents tabs, newest first, paginated as static HTML.
 
 Reads nothing, writes nothing, no Sheets API — scripts/gen_findings_feed.py is
@@ -242,7 +242,7 @@ def render_entry(row: dict) -> str:
 
 
 def page_filename(page_num: int) -> str:
-    """Page 1 is index.html (so /findings/ works with no query string); every
+    """Page 1 is index.html (so /public-records/ works with no query string); every
     later page is page-N.html. Filenames are stable across regenerations —
     only the file count changes as the total row count changes."""
     return "index.html" if page_num == 1 else f"page-{page_num}.html"
@@ -266,10 +266,10 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
             "filing system and updates automatically as new documents come "
             "in.</p>\n"
         )
-        title = "Findings &middot; Arbor Hills Monitor"
+        title = "Public Records &middot; Arbor Hills Monitor"
     else:
         intro = ""
-        title = f"Findings, page {page_num} &middot; Arbor Hills Monitor"
+        title = f"Public Records, page {page_num} &middot; Arbor Hills Monitor"
 
     # The footer's "Generated ..." line (below) is prose-matched by
     # findings-feed.yml's `git diff --cached --quiet -I'...'` regex, which is
@@ -291,7 +291,7 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
 
 <p><a href="../index.html">&larr; Arbor Hills Monitor</a></p>
 
-<h1>Findings</h1>
+<h1>Public Records on Arbor Hills</h1>
 {intro}<p class="findings-count">{total_count:,} documents &middot; page {page_num} of {total_pages}</p>
 
 <div class="findings-list">

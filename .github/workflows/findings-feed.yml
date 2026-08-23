@@ -1,6 +1,6 @@
 name: findings-feed
 
-# Regenerates the public Findings feed (site/findings/) from the case-file
+# Regenerates the public "Public Records" feed (site/public-records/) from the case-file
 # Sheet's New Documents + Historical Documents tabs and commits any REAL
 # change back to main (a run where nothing new was filed makes no commit --
 # see the diff-quiet guard below). pages.yml redeploys on that commit via a
@@ -50,7 +50,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add site/findings
+          git add site/public-records
           # Every page's footer carries a fresh "Generated <timestamp>" line on
           # every run (see findings_feed.render_page), so a bare
           # `git diff --cached --quiet` would NEVER be quiet -- it would commit
@@ -58,8 +58,8 @@ jobs:
           # byte-identical. -I ignores a changed line that matches this regex,
           # so only a REAL content change (a new/changed document) counts.
           if git diff --cached --quiet -I'^<p>Generated .* UTC from the monitor'; then
-            echo "No change to the Findings feed (beyond the regeneration timestamp)."
-            git restore --staged --worktree site/findings
+            echo "No change to the Public Records feed (beyond the regeneration timestamp)."
+            git restore --staged --worktree site/public-records
           else
             git commit -m "chore(findings): regenerate the public Findings feed"
             git push

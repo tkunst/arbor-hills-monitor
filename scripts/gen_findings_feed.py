@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gen_findings_feed.py — regenerate the public Findings feed (site/findings/)
+"""gen_findings_feed.py — regenerate the public "Public Records" feed (site/public-records/)
 from the case-file Sheet. Thin I/O wrapper around findings_feed.py's pure
 render logic: read-only against the Sheet — only `values().get` against
 New Documents / Historical Documents / Archived PDFs (see CLAUDE.md's "Two
@@ -29,7 +29,7 @@ import findings_feed  # noqa: E402
 import sheet_writer  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_DIR = os.path.join(REPO_ROOT, "site", "findings")
+OUT_DIR = os.path.join(REPO_ROOT, "site", "public-records")
 
 
 _COUNT_RE = re.compile(r'class="findings-count">([\d,]+) documents')

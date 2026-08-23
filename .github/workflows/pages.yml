@@ -6,7 +6,7 @@ on:
     paths:
       - 'site/**'
       - '.github/workflows/pages.yml'
-  # findings-feed.yml commits its regenerated site/findings/ straight to
+  # findings-feed.yml commits its regenerated site/public-records/ straight to
   # `main` using the default GITHUB_TOKEN — and pushes made with that token
   # are deliberately excluded from re-triggering `push`-triggered workflows
   # (GitHub's anti-recursion rule), so the `push` trigger above alone would
