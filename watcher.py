@@ -2,9 +2,12 @@
 watcher.py — daily run: new nSITE filings + alerts (+ WDS Stream C when enabled).
 
   - New docs: anything in the nSITE list not already in _state.
-    Download -> parse -> Sheet row (linked to the nSITE source) -> alert/digest
-    -> THEN append the 'processed' state event (crash-safe order). Urgent docs
-    trigger a same-day email; everything else accrues into the Sunday digest.
+    Download -> parse -> mirror to Drive inline, best-effort (ADR 007 addendum
+    — the Sheet row and alert link to the durable Drive copy when the mirror
+    succeeds, the nSITE link otherwise; never blocks on a Drive problem) ->
+    Sheet row -> alert/digest -> THEN append the 'processed' state event
+    (crash-safe order). Urgent docs trigger a same-day email; everything else
+    accrues into the Sunday digest.
   - Digest: on Sunday, email the accumulated non-urgent items and clear them.
     An urgent item ALSO gets a labeled recap in that same Sunday email (a
     reader who only reads the digest would otherwise never see it) — the
@@ -37,6 +40,7 @@ import nsite_client as nc
 import email_alerts as ea
 import retry_policy as rp
 import woi_router
+import archiver as av
 from egle_doc_parser import parse_document
 from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
 from config_loader import load_config
@@ -174,6 +178,9 @@ def run() -> int:
     else:
         print(f"[watcher] {len(new_docs)} new document(s).")
     tmp = tempfile.gettempdir()
+    # Reused across every doc this run so the OAuth handshake + Archived PDFs
+    # index read happen at most once — see archiver.mirror_one_now().
+    drive_state = {}
 
     for d in new_docs:
         did = d["doc_id"]
@@ -187,7 +194,13 @@ def run() -> int:
                 max_keyword_pages=cfg["large_doc_max_keyword_pages"],
                 max_tokens=cfg["classification_max_tokens"],
             )
-            link = d["doc_url"]  # canonical nSITE source (resolves unauthenticated)
+            # Mirror to Drive inline (best-effort; falls back to the nSITE link
+            # on any failure — see archiver.mirror_one_now()) so the Sheet row
+            # and any alert below link somewhere that survives a Google-referer
+            # click-through (Gmail, a Sheets cell) without the ~21h lag of
+            # waiting for archive.yml's own nightly catch-up run.
+            link = av.mirror_one_now(
+                session, sheets, sheet_id, d, drive_state, local_path=local)
 
             # WOI Status Reports (180-320pp gas-extraction tables) are keyword-
             # windowed by the generic parser (<5% of ~14k readings; a >=145F well

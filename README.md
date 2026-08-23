@@ -308,17 +308,29 @@ any advocacy organization.
     since the build session's SSH key authenticated non-interactively, so
     only `enabled` needs to flip).
 
-> **A note on the document links (expected behavior).** Every case-file row's
-> **Link** column points to EGLE's nSITE portal
-> (`https://mienviro.michigan.gov/ncore/downloadpdf/<id>`). Clicking one
-> sometimes shows a **"Server Error in '/ncore' Application"** page **while still
-> downloading the file** — this is a harmless, intermittent quirk of EGLE's
-> portal, *not* a problem with the document or the link. **The file that
-> downloads is the correct, complete PDF.** (Verified: a direct fetch returns a
-> valid `application/pdf`, and the monitor ingests these files server-side
-> without ever seeing the error page — which is why, e.g., the 181-page 2025 WOI
-> Status Report processed fine.) If the download doesn't start, just reload the
-> link, or open the report's file directly. Nothing to fix on our side.
+> **A note on the document links (corrected 2026-08-23 — see ADR 007's
+> addendum).** Every case-file row's **Link** column points to EGLE's nSITE
+> portal (`https://mienviro.michigan.gov/ncore/downloadpdf/<id>`). Clicking one
+> can show a **"Server Error in '/ncore' Application"** page (or a plain
+> `{"errorCode":401,...}` JSON error) **with no download at all** — an earlier
+> version of this note called this harmless and said the file downloads
+> anyway; that was wrong, confirmed by direct reproduction. **The real cause:**
+> nSITE's `downloadpdf`/`downloadfile` endpoints reject requests whose
+> `Referer` header isn't one they recognize — and Google's own link-click-
+> through (opening a link from inside Gmail, or clicking a URL in a Sheets
+> cell) routes through a `google.com`-hosted redirect first, which nSITE's
+> server rejects. It is NOT random and NOT harmless: a direct paste of the
+> same URL, with no referer, always works — the monitor's own server-side
+> fetches never hit this because they never carry a browser referer either,
+> which is why ingestion was never affected. **The actual fix, live since
+> 2026-08-23:** new documents are now mirrored to Google Drive *immediately*
+> when first processed (`archiver.mirror_one_now()`), and the Sheet row/alert
+> link to that durable Drive copy instead — a Drive-hosted link isn't subject
+> to nSITE's referer check at all, since the destination is a Google service.
+> If a row still shows a raw nSITE link (documents processed before
+> 2026-08-23, or a mirror attempt that failed), the safe workaround remains:
+> paste the URL directly into the address bar rather than clicking it from
+> Gmail or a Sheets cell.
 
 ## Risk register (R1–R8)
 
@@ -383,16 +395,18 @@ pytest -q               # hermetic: synthetic PDFs, all APIs mocked, no secrets
    fire urgent alerts on years-old exceedances (the watcher has a
    `max_new_docs_per_run` backstop, but disabling the schedule is the clean fix).
 10. **Durable PDF mirror — ACTIVE since 2026-06-15** (was optional; now set up).
-    Insurance against nSITE link rot (ADR 007). The four `GOAUTH_*` secrets are
-    set, the mirror folder ("Arbor Hills EGLE Document Mirror") is created and
-    shared "Anyone with the link → Viewer", and `archive.yml` runs daily,
-    mirroring each processed PDF into Trisha's Drive and filling the **Archived
-    PDFs** tab. As of 2026-06-17 it is mid-backfill (~100 PDFs/run, ~1,249
-    remaining; expected complete ~June 30), so not every Sheet row has an
-    Archive Link yet. To re-do the setup (e.g. after a token revoke): run
-    `python scripts/oauth_setup.py <oauth-client.json>`, re-set the `GOAUTH_*`
-    secrets it prints, and re-share the mirror folder. Full steps:
-    `scripts/setup_gcp.md` §9.
+    Insurance against nSITE link rot AND (since 2026-08-23, ADR 007's
+    addendum) the functional fix for nSITE's referer-rejection error (see the
+    document-links note above). The four `GOAUTH_*` secrets are set, the
+    mirror folder ("Arbor Hills EGLE Document Mirror") is created and shared
+    "Anyone with the link → Viewer", and every new document is now mirrored
+    **inline** the moment it's processed (`watcher.py`/`backfill.py` calling
+    `archiver.mirror_one_now()`), with `archive.yml` (3am ET daily) as a
+    catch-up net for anything that misses the inline path. To re-do the setup
+    (e.g. after a token revoke): run `python scripts/oauth_setup.py
+    <oauth-client.json>`, re-set the `GOAUTH_*` secrets it prints (now needed
+    by `daily.yml`/`backfill.yml` too, not just `archive.yml`), and re-share
+    the mirror folder. Full steps: `scripts/setup_gcp.md` §9.
 
 ## Scheduling
 
@@ -414,14 +428,17 @@ docs/day) is essentially free. Model is configurable in `config.yml`.
   **GitHub's workflow-failure emails** — confirm those are enabled for the repo
   owner (GitHub → Settings → Notifications → Actions). Recovery: re-run the
   failed workflow; runs are idempotent and resume from the Sheet's `_state` tab.
-- **nSITE link rot (now actively mitigated by the archive, ADR 007).** The
-  Evidence/New/Historical Sheet rows link to the canonical nSITE source rather
-  than a Drive copy, because the service account has no Drive quota (ADR 006). If
-  EGLE removes or renames a document, that link dies. The OAuth archiver (deploy
-  step 10) closes this by mirroring every PDF into Trisha's Drive and recording
-  it in the **Archived PDFs** tab — **active since 2026-06-15**. The residual
-  window is now just whatever the archiver hasn't caught up on (mid-backfill as
-  of 2026-06-17, ~1,249 remaining), shrinking daily until backfill completes.
+- **nSITE link rot AND referer rejection (now actively mitigated by the
+  archive, ADR 007 + its 2026-08-23 addendum).** A raw nSITE link dies if
+  EGLE removes/renames the document, AND separately errors for a human
+  clicking it from Gmail or a Sheets cell (nSITE rejects the `google.com`
+  referer Google's own link-click-through sends — see the document-links
+  note above). The OAuth archiver closes both: every new document is now
+  mirrored to Drive **inline**, the moment it's processed, with the nightly
+  `archive.yml` run as a catch-up net. The residual window is whatever the
+  inline mirror attempt missed (a transient Drive/OAuth blip) plus documents
+  processed before 2026-08-23 that haven't been backfilled to a Drive link
+  yet — shrinking as `archive.yml`'s catch-up runs.
 - **MMPC archiving rides CivicClerk's undocumented JSON API.** Mirror D (ADR 010)
   downloads MMPC PDFs through a public API found by inspecting the portal's own
   traffic; if CivicClerk changes it, the fetch fails loudly (aborts the run)
