@@ -3,13 +3,19 @@ backfill.py — process the existing ~754 N2688 documents, one batch per run.
 
 Seeds from the AUTHORITATIVE nSITE document list (not the unseen Documents.csv —
 see docs/decisions/003-seed-from-nsite.md). For each not-yet-processed doc:
-  download from nSITE -> parse (OCR + classify) -> write the Sheet row (linking
-  to the canonical nSITE URL) -> THEN append the 'processed' state event (so a
-  kill between the two double-writes the row on resume, never silently drops it).
+  download from nSITE -> parse (OCR + classify) -> mirror to Drive inline,
+  best-effort (ADR 007 addendum — the Sheet row links to the durable Drive
+  copy when the mirror succeeds, the nSITE link otherwise; never blocks on a
+  Drive problem) -> write the Sheet row -> THEN append the 'processed' state
+  event (so a kill between the two double-writes the row on resume, never
+  silently drops it).
 
-No PDFs are uploaded to Drive: the service account has no Drive quota and the
-nSITE download URLs resolve unauthenticated, so the Sheet links straight to the
-source (see ADR 006). State is the Sheet's _state tab, not a Drive file.
+The service account itself still has no Drive quota (ADR 006) — the mirror
+upload goes through the separate OAuth user credential (see archive_client.py
+/ archiver.mirror_one_now()), same as the nightly archive.yml catch-up job.
+When archiving isn't configured (no GOAUTH_*) or a mirror attempt fails, the
+Sheet links straight to the nSITE source instead, as before. State is the
+Sheet's _state tab, not a Drive file.
 
 Self-terminating: when _state shows every doc processed, it logs "Backfill
 complete" and exits 0 — a no-op. Runs on manual workflow_dispatch only; the
@@ -28,6 +34,7 @@ import sheet_writer as sw
 import nsite_client as nc
 import retry_policy as rp
 import woi_router
+import archiver as av
 from egle_doc_parser import parse_document
 from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
 from config_loader import load_config
@@ -192,6 +199,9 @@ def run() -> int:
     batch = todo[:batch_size]
     tmp = tempfile.gettempdir()
     processed_this_run = 0
+    # Reused across every doc this run so the OAuth handshake + Archived PDFs
+    # index read happen at most once — see archiver.mirror_one_now().
+    drive_state = {}
 
     for d in batch:
         did = d["doc_id"]
@@ -222,7 +232,12 @@ def run() -> int:
                 max_tokens=cfg["classification_max_tokens"],
             )
 
-            link = d["doc_url"]  # canonical nSITE source (resolves unauthenticated)
+            # Mirror to Drive inline (best-effort; falls back to the nSITE link
+            # on any failure — see archiver.mirror_one_now()) so the Sheet row
+            # links somewhere that survives a Google-referer click-through
+            # (Gmail, a Sheets cell), same as watcher.py's new-doc path.
+            link = av.mirror_one_now(
+                session, sheets, sheet_id, d, drive_state, local_path=local)
 
             # Route WOI Status Reports to the exhaustive woi_table_parser and
             # REPLACE parsed.measurements before write_document (see woi_router /

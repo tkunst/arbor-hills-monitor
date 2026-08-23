@@ -33,9 +33,24 @@ external users but no sensitive data). Public repo.
 - `mmpc_client.py` — CivicClerk JSON API: enumerate + fetch MMPC event PDFs.
 - `mmpc_archiver.py` — Mirror D: auto-archive MMPC Agenda/Minutes PDFs (ADR 010).
   (The old in-watcher "go check the minutes" reminder was retired; see ADR 013.)
+- `archiver.py` — the durable nSITE PDF → Drive mirror (ADR 007). Two entry
+  points: `mirror_one_now()`, called INLINE from watcher.py/backfill.py at
+  write time (ADR 007 addendum, 2026-08-23) so a same-day Sheet row/alert can
+  link to the durable Drive copy instead of the referer-fragile nSITE link
+  (nSITE's `downloadpdf`/`downloadfile` reject requests referred from a
+  google.com origin — which is what happens clicking from Gmail or a Sheets
+  cell — a Drive-hosted link isn't); and `run()`, the original nightly 3am ET
+  job, now a catch-up net for whatever the inline path missed. Both share one
+  Archived PDFs index (`sheet_writer.archived_doc_links()`) so they never
+  double-upload. `mirror_one_now()` NEVER raises to its caller — any failure
+  (not configured, dead OAuth token, network, quota) falls back to the nSITE
+  link; mirroring must never block classification or alerting.
 - `email_alerts.py` — SMTP urgent alerts + weekly digest; urgency is pure.
-- `backfill.py` — nightly batch of 50, self-terminating, resumable.
+- `backfill.py` — nightly batch of 50, self-terminating, resumable. Mirrors
+  each doc to Drive inline (`archiver.mirror_one_now()`) before writing its
+  Sheet row.
 - `watcher.py` — daily new-doc check + alerts (+ WDS Stream C when enabled).
+  Same inline-mirror-before-write as backfill.py.
 - `pfas_client.py` — content-hash normalizer for EGLE's PFAS pages (isolates
   `<main>`, ignores Sitecore theme cache-busters). Pure; stdlib-only.
 - `pfas_watcher.py` — daily page-watch: alerts on any change vs. the last

@@ -74,4 +74,15 @@ jobs:
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
           DIGEST_RECIPIENTS_EXTRA: ${{ secrets.DIGEST_RECIPIENTS_EXTRA }}
+          # ADR 007 addendum: the watcher now mirrors each new doc to Drive
+          # inline (archiver.mirror_one_now()), best-effort, so its Sheet row
+          # and alert link to the durable copy instead of the referer-fragile
+          # nSITE link. If any of these four are unset, mirroring is a quiet
+          # no-op (archive_client.is_configured() is false) — the watcher
+          # falls back to the nSITE link exactly as it did before this was
+          # added, never failing or blocking on it.
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}
+          GOAUTH_ARCHIVE_FOLDER_ID: ${{ secrets.GOAUTH_ARCHIVE_FOLDER_ID }}
         run: python watcher.py

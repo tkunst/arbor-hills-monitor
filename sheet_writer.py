@@ -1182,6 +1182,19 @@ def archived_doc_ids(service, sheet_id: str) -> set:
     return {r[0] for r in _tab_rows(service, sheet_id, TAB_ARCHIVE, "A2:A") if r[0]}
 
 
+def archived_doc_links(service, sheet_id: str) -> dict:
+    """{doc_id: archive_link} for every doc already mirrored to Drive (cols A + F
+    of the Archived PDFs tab). Lets a caller reuse an existing mirror link
+    without re-uploading — last-write-wins if a doc_id ever appears twice,
+    matching this tab's own idempotent-by-doc_id design (a duplicate row should
+    not normally occur; find_in_folder + this same lookup is what prevents it)."""
+    out = {}
+    for r in _tab_rows(service, sheet_id, TAB_ARCHIVE, "A2:F"):
+        if r and r[0] and len(r) > 5 and r[5]:
+            out[r[0]] = r[5]
+    return out
+
+
 def append_archive_row(
     service, sheet_id: str, doc_id: str, document_name: str, date_filed: str,
     risks, source_link: str, archive_link: str, archived_at: str,
