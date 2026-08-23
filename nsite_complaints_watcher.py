@@ -79,22 +79,30 @@ cancel out of the set difference, leaving only the genuinely new ones. This
 is verified, not assumed — summarize_complaints_change() below cross-checks
 THREE conditions before ever presenting the diff as exact, not just one: the
 windowed diff's size must equal the count delta; that delta must be smaller
-than the window; AND every old-window entry pure growth alone would still
-leave inside the window must still be visible in the new one ("no-removal
-evidence" — under pure growth an old item's rank relative to other old items
-can only stay the same or worsen, never improve, so its disappearance from an
-otherwise-consistent-looking window means a removal happened somewhere and
-promoted a different old item into view, not that something new arrived).
-That third condition exists because the first two ALONE are insufficient — a
-Step 5 independent review found a live counterexample where a removal inside
-the window plus new arrivals below an existing near-boundary complaint could
-satisfy the first two checks by coincidence while naming a non-new survivor
-as new. Any of the three failing falls back to an honest, un-named "count
-changed, more than the window can confirm — see nSITE" message (a burst
-exceeding the window, overlapping adds and removals, or removal-promotion
-ambiguity). N2688's own history contains a real burst case — 246 complaints
-arrived on a single day in 2019 — so the fallback path is real insurance,
-not a hypothetical.
+than the window; AND every ref newly visible in the window must rank NEWER
+(by the same sort key `latest` is itself ordered by) than every ref that
+dropped OUT of the window ("no-removal evidence" — under pure growth,
+anything that displaces an old window member must rank above everything it
+displaces, since old items' relative order never changes; a removal breaks
+this, because the survivor it promotes ranks OLDER than whatever left the
+window above it). That third condition exists because the first two ALONE
+are insufficient — a Step 5 independent review (two rounds) found a live
+counterexample where a removal inside the window plus new arrivals dated
+below an existing near-boundary complaint could satisfy the first two checks
+by coincidence while naming a non-new survivor as new; round 1's initial fix
+(excusing the window's OLDEST `delta` entries by POSITION) was itself found
+incomplete in round 2 — a removal of one of those excused bottom entries
+could still slip through undetected. The value-based comparison shipped here
+is provably non-regressive (verified: under genuine pure growth, the added
+and surviving items together form the new top-K by construction, so the
+comparison can never reject a case the first two checks already accept) and
+catches a removal regardless of WHERE in the window it occurs. Any of the
+three conditions failing falls back to an honest, un-named "count changed,
+more than the window can confirm — see nSITE" message (a burst exceeding the
+window, overlapping adds and removals, or removal-promotion ambiguity).
+N2688's own history contains a real burst case — 246 complaints arrived on a
+single day in 2019 — so the fallback path is real insurance, not a
+hypothetical.
 
 WHY A COUNT DECREASE IS NEVER MISREAD AS "NEW": if `n` decreases, the note
 says a complaint no longer appears (withdrawn or reclassified), never "new" —
@@ -424,35 +432,58 @@ def summarize_complaints_change(old: dict, new: dict) -> tuple[str, str]:
         delta = new_n - old_n
         old_window, new_window = _window_refs(old), _window_refs(new)
         added = sorted(set(new_window) - set(old_window))
+        dropped = set(old_window) - set(new_window)
         window_size = new.get("latest_window") or len(new.get("latest") or []) or DEFAULT_LATEST_WINDOW
         # The windowed diff is trustworthy only when THREE independent checks
         # all hold — the first two alone are NOT sufficient (found in Step 5
-        # review): a removal of an in-window complaint can promote an older,
-        # previously-invisible survivor into the window, and if the counts
-        # happen to line up, that survivor would be misreported as new.
+        # review, round 1): a removal of an in-window complaint can promote an
+        # older, previously-invisible survivor into the window, and if the
+        # counts happen to line up, that survivor would be misreported as new.
         #   1. `delta` must equal how many refs are newly visible in the
         #      window (catches most non-pure-growth cases, but not the
         #      promotion case above, where the WINDOW SIZE of the diff can
         #      coincidentally match `delta` even though a removal occurred).
         #   2. `delta` must be smaller than the window itself (otherwise a
         #      burst could exceed it and we'd silently under-report).
-        #   3. NO-REMOVAL EVIDENCE: under pure growth, an old item's rank
-        #      relative to other old items can only stay the same or worsen —
-        #      it can never spontaneously improve. So every old-window entry
-        #      that pure growth alone would still leave inside the window
-        #      (all but the OLDEST `delta` of them, which `delta` new arrivals
-        #      would push out) must still be visible in the new window. If any
-        #      of them is missing, something was removed somewhere, and the
-        #      window diff can no longer be trusted to mean "these are new" —
-        #      it may be showing a survivor promoted by that removal instead.
-        #      An already-truncated OLD window (a pathological `latest_window`
-        #      config bump once overflowed the cell budget) can't support
-        #      this check either, so it's treated the same as missing evidence.
-        old_window_ordered = [ref for ref, _ in old.get("latest", [])]
-        survivors_expected = old_window_ordered[: max(0, len(old_window_ordered) - delta)]
+        #   3. NO-REMOVAL EVIDENCE — a VALUE comparison, not a position-based
+        #      one (a round-1 fix using window POSITION — "every old-window
+        #      entry but the oldest `delta`" — was itself found incomplete in
+        #      Step 5 review round 2: a removal of one of THOSE excused bottom
+        #      entries can still promote a survivor undetected). The sound
+        #      invariant is: under pure growth, anything that displaces an old
+        #      window member out of the window must rank NEWER than every
+        #      member it displaces — old items' relative order never changes,
+        #      so a dropped item can only have been pushed to rank >= K by
+        #      new items ranking above it, and every item now occupying the
+        #      top K (old survivors + new arrivals alike) necessarily ranks
+        #      above every dropped item. So require the OLDEST added ref to
+        #      still rank newer than the NEWEST dropped ref, by the same
+        #      (received_date, ref_num) sort key `latest` is itself ordered
+        #      by. A removal breaks this: the promoted survivor's rank is, by
+        #      definition, OLDER than whatever got dropped out from above it,
+        #      so the comparison fails and the fallback fires. Verified
+        #      non-regressive: under genuine pure growth this never rejects a
+        #      case the first two checks already accept (the added items and
+        #      the surviving old items together form the new top-K, so every
+        #      added item ranks above every dropped one by construction).
+        #      A DROPPED set that's empty (nothing displaced — the window
+        #      wasn't at capacity) trivially satisfies this. An already-
+        #      truncated OLD window (a pathological `latest_window` config
+        #      bump once overflowed the cell budget) can't support any of
+        #      this either, so it's treated the same as missing evidence.
+        def _sort_key(ref: str, dates: dict[str, str]) -> tuple[str, str]:
+            return (dates.get(ref) or "", ref)
+
         no_removal_evidence = (
             not old.get("latest_truncated")
-            and all(ref in new_window for ref in survivors_expected)
+            and (
+                not dropped
+                or (
+                    bool(added)
+                    and min(_sort_key(r, new_window) for r in added)
+                    > max(_sort_key(r, old_window) for r in dropped)
+                )
+            )
         )
         if added and len(added) == delta and delta < window_size and no_removal_evidence:
             lines = "\n".join(
