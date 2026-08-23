@@ -518,11 +518,23 @@ def test_snapshot_char_budget_is_clamped_below_the_hard_sheets_cap(monkeypatch):
     assert seen["budget"] < cw.HARD_SHEETS_CELL_LIMIT
 
 
-def test_latest_window_config_lever_is_clamped_to_at_least_one(monkeypatch):
+def test_latest_window_config_zero_falls_back_to_the_default(monkeypatch):
+    """0 is falsy in Python, so `ccfg.get("latest_window") or DEFAULT` routes
+    an explicit 0 to the default (50) before max(1, ...) ever sees it — this
+    pins that actual behavior rather than the max()-clamp, which a negative
+    value (tested below) is what really exercises."""
     cfg = copy.deepcopy(COMPLAINTS_CFG)
     cfg["nsite_complaints"]["latest_window"] = 0
     fake, sent = _wire(monkeypatch, cfg, {"N2688": [_c()], "WRD": []})
-    assert cw.run() == 0   # must not crash / disable the named-diff path entirely
+    assert cw.run() == 0
+    assert cw.load_config()["nsite_complaints"]["latest_window"] == 0   # config itself untouched
+
+
+def test_latest_window_config_negative_is_clamped_to_at_least_one(monkeypatch):
+    cfg = copy.deepcopy(COMPLAINTS_CFG)
+    cfg["nsite_complaints"]["latest_window"] = -5
+    fake, sent = _wire(monkeypatch, cfg, {"N2688": [_c()], "WRD": []})
+    assert cw.run() == 0   # must not crash
 
 
 def test_the_parked_workflow_must_be_in_place_before_the_stream_is_enabled():
