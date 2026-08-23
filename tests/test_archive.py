@@ -327,6 +327,34 @@ def test_upload_failure_falls_back_and_records_nothing(monkeypatch, tmp_path):
     assert sw.archived_doc_ids(svc, "SID") == set()  # nothing recorded on failure
 
 
+def test_sheet_write_failure_after_a_successful_upload_still_falls_back(monkeypatch, tmp_path):
+    """Upload succeeds, THEN the index-row write fails (a transient Sheets
+    error) — the PDF is now orphaned in Drive (uploaded, unindexed), which is
+    real but accepted: find_in_folder's idempotency means the next run (or
+    archive.yml's own catch-up) reuses it under the same name rather than
+    re-uploading. What must NEVER happen is this bubbling up and taking down
+    the caller's run — verify the fallback link still comes back cleanly."""
+    monkeypatch.setattr(av.ac, "is_configured", lambda: True)
+    monkeypatch.setattr(av.ac, "oauth_drive_service", lambda: _FakeDrive())
+    monkeypatch.setattr(av.ac, "folder_id", lambda: "FID")
+    upload_calls = []
+    monkeypatch.setattr(av.ac, "upload_pdf",
+                         lambda *a, **kw: upload_calls.append(1) or "https://drive/orphaned")
+
+    def _boom(*a, **kw):
+        raise RuntimeError("Sheets API 503")
+    monkeypatch.setattr(av.sw, "append_archive_row", _boom)
+
+    local = str(tmp_path / "on-disk.pdf")
+    open(local, "wb").write(b"%PDF-fake")
+    svc = FakeSheets()
+    link = av.mirror_one_now(object(), svc, "SID", _doc(), {}, local_path=local)
+
+    assert upload_calls == [1]  # the upload DID happen (the orphan)
+    assert link == "https://nsite/doc-1"  # but the caller still gets a safe fallback, not a raise
+    assert sw.archived_doc_ids(svc, "SID") == set()  # the index row never landed
+
+
 def test_drive_state_reused_across_calls_within_one_run(monkeypatch, tmp_path):
     monkeypatch.setattr(av.ac, "is_configured", lambda: True)
     oauth_calls = []

@@ -153,6 +153,19 @@ def mirror_one_now(session, sheets, sheet_id: str, doc: dict, drive_state: dict,
         return nsite_link
 
     if "service" not in drive_state:
+        # The OAuth handshake and the archived_doc_links() read are bundled
+        # into ONE try, deliberately — NOT split so a Sheets-read failure
+        # alone could still proceed with links={} while keeping the working
+        # Drive service. That looks like it would degrade more gracefully,
+        # but it's actually less safe: sheet_writer._tab_rows swallows a
+        # transient read error into an empty list, indistinguishable from
+        # "genuinely nothing archived yet" — proceeding on links={} in that
+        # case would re-upload and APPEND A DUPLICATE archive-index row for
+        # every already-mirrored doc this run touches. Discarding the whole
+        # service and falling back to nSITE links for the rest of the run is
+        # the safe choice given that ambiguity; a future fix to _tab_rows
+        # distinguishing "empty" from "failed" would make splitting this
+        # worthwhile, but isn't the case today.
         try:
             drive_state["service"] = ac.oauth_drive_service()
             drive_state["links"] = sw.archived_doc_links(sheets, sheet_id)
