@@ -33,4 +33,9 @@ jobs:
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
           DIGEST_RECIPIENTS_EXTRA: ${{ secrets.DIGEST_RECIPIENTS_EXTRA }}
+          # The script lives in scripts/, so its own directory (not the repo
+          # root) is Python's default sys.path[0] — PYTHONPATH=. adds the repo
+          # root so `import email_alerts`/`config_loader` (both at the root)
+          # resolve, matching every other workflow's scripts-run-from-root norm.
+          PYTHONPATH: .
         run: python scripts/oneoff_resend_2026_08_23_digest.py
