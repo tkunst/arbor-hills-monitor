@@ -248,6 +248,35 @@ external users but no sensitive data). Public repo.
   `.github/workflows/nsite-permits-watch.yml` (this build session's SSH key
   authenticated non-interactively, so the `workflow`-OAuth-scope parking
   Streams L/M needed did not apply). See ADR 030.
+- `nsite_complaints_watcher.py` — Stream P: daily snapshot-diff of EGLE's
+  nSITE **Complaints** profile (citizen/agency reports against a facility,
+  often the trigger for an inspection) for every srn in
+  `nsite_complaints.tiers`, against the `Complaints Watch` tab. Item key
+  `cmplt:<srn>`. The feasibility gate (live, all 19 sites) found
+  `submSubmRefNum` **IS unique** (6,396/6,396 at N2688, 5/5 at RA) — but
+  UNLIKE Evaluations/Permits this is NOT ref-number-keyed: N2688's volume
+  (6,396 records, live-fetched 2026-08-22) breaks even Violations'/
+  Compliance Actions' own digest-multiset degradation (~102,336 chars here —
+  still 2x the 50,000-char Sheets cell cap, since complaints carry ZERO
+  duplicate-tuple compression, unlike Violations' 64%-collapsing RA). So the
+  snapshot is a `{n, hash, latest[K]}` fingerprint instead — small BY
+  CONSTRUCTION, not degraded into smallness. `hash` is over the sorted
+  ref-number SET only (immune to the EDT/EST date-offset flip); `latest` is
+  the K=50 most-recently-received complaints, which lets the watch NAME a new
+  complaint exactly whenever fewer than K arrived since the last check (the
+  windowed-diff arithmetic is self-verified before being presented as exact —
+  see `summarize_complaints_change`), falling back to an honest count-only
+  note on a burst exceeding the window (N2688's own history has one: 246
+  complaints in a single day, 2019-11-18) or on simultaneous adds/removals. A
+  count decrease is always labeled a removal, never misread as new. Makes no
+  severity judgment (this profile carries no status field at all). Tiers are
+  this profile's own (**1 daily / 3 biweekly / 15 quarterly**), assigned from
+  the complaint-filing RATE (N2688's trailing-365-day rate, ~0.16/day), not
+  the raw 6,396 — only N2688 is daily. Gated on `nsite_complaints.enabled`
+  (new source; ships `false`). Its workflow landed directly in
+  `.github/workflows/nsite-complaints-watch.yml` (this build session's SSH
+  key authenticated non-interactively, so the `workflow`-OAuth-scope parking
+  Streams L/M needed did not apply). See ADR 031.
 
 ## Forbidden patterns (do not do these)
 

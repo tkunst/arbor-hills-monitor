@@ -275,6 +275,35 @@ any advocacy organization.
     step here: the workflow file landed directly in `.github/workflows/`
     since the build session's SSH key authenticated non-interactively, so
     only `enabled` needs to flip).
+20. **nSITE Complaints watch (Stream P)** (daily, optional —
+    `nsite_complaints.enabled: false`, ships disabled): watches a SEVENTH
+    nSITE profile for the same 19 sites — **Complaints**, citizen/agency
+    reports filed against a facility, often the trigger for an inspection.
+    Live-fetched 2026-08-22: N2688 carries **6,396** complaints (2007-2026, a
+    2016-2020 filing burst is ~92% of the total, but only 60 in the trailing
+    365 days — roughly one every 6 days at today's rate), RA 5, COMP 1
+    (ancient), every other site 0. `submSubmRefNum` proved a **genuine unique
+    key**, but the volume rules out every per-record encoding this repo's
+    other nSITE watches use — even Violations'/Compliance Actions' own
+    digest-degradation machinery still serializes to ~102,000 chars here (2x
+    the 50,000-char Sheets cell cap), since complaints carry zero
+    duplicate-tuple compression, unlike Violations' RA. So the snapshot is a
+    tiny `{n, hash, latest[K]}` fingerprint instead — small **by
+    construction**, not degraded into smallness — that names a new complaint
+    exactly whenever fewer than K arrived since the last check (the common
+    case; K=50 gives ~300 days of margin at N2688's current rate), falling
+    back to an honest count-only note when a burst exceeds the window
+    (N2688's own history has one: 246 complaints in a single day,
+    2019-11-18) rather than presenting a partial list as exhaustive. A
+    removed/withdrawn complaint is always labeled a removal, never
+    misreported as new. Own per-site tiers (`1/3/15`), assigned from the
+    complaint-filing RATE, not the raw 6,396 — only N2688 earns daily.
+    Snapshot-diff into the `Complaints Watch` tab; first sighting baselines
+    silently, verified at N2688's real scale. New source, ships disabled —
+    see `docs/decisions/031-nsite-complaints-watch.md` for activation (**one**
+    step here: the workflow file landed directly in `.github/workflows/`
+    since the build session's SSH key authenticated non-interactively, so
+    only `enabled` needs to flip).
 
 > **A note on the document links (expected behavior).** Every case-file row's
 > **Link** column points to EGLE's nSITE portal

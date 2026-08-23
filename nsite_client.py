@@ -51,6 +51,21 @@ profile OVERLAPS Stream H's targeted ROP watch (rop_client.py) at exactly three
 permits (ROP0000224/0656/0236, confirmed live) but watches a DIFFERENT event
 (permit status/lifecycle, not the public-comment trip-wire) — see
 nsite_permits_watcher for the disambiguation.
+
+And fetch_site_complaints() (Stream P, ADR 031) — a SEVENTH sibling profile,
+citizen/agency COMPLAINTS filed against a facility. Same raise-don't-swallow
+contract; DOES filter on submSubmRefNum present, because the live spike
+(2026-08-22) found it IS a genuine unique key at both non-zero sites (6,396/
+6,396 at N2688, 5/5 at RA). Field NAMES are identical to fetch_site_submissions
+(same subm* prefix — Complaints is filed through the same submission machinery,
+just a different form type) but this is a DISTINCT profile at a DISTINCT
+endpoint, not a filtered view of Submissions. UNLIKE every prior sibling,
+N2688's volume (6,396 records) is too large for ANY per-record encoding to fit
+a Sheets cell — even Violations'/Compliance Actions' digest-multiset
+degradation (~102K chars here, since complaints carry zero duplicate-tuple
+compression, 6396/6396 distinct, unlike Violations' 299->108 collapse) blows
+past the 50,000-char cap. See nsite_complaints_watcher for the count+hash+
+windowed-recency design this forces.
 """
 from __future__ import annotations
 
@@ -950,6 +965,142 @@ def fetch_site_permits(session: requests.Session, nsite_id: str) -> list[dict]:
                 time.sleep(2 ** attempt)
     raise NsiteFetchError(
         f"GET permits for site {nsite_id} failed after 3 attempts: {last_exc}"
+    ) from last_exc
+
+
+# A SEVENTH sibling profile — citizen/agency COMPLAINTS filed against a
+# facility. Same query shape as the six profiles above; anonymous, no auth.
+# Confirmed live 2026-08-22 across all 19 `nsite_sites` (Stream P, ADR 031):
+# 6,402 records total, all carrying exactly the four COMPLAINT_FIELDS below —
+# real history concentrated at N2688 (6,396, 2007-09-12..2026-08-17, a 2016-
+# 2020 filing burst that alone accounts for ~92% of the total, but only 60 in
+# the trailing 365 days — roughly one every 6 days at today's rate) and RA (5,
+# 2018-12-12..2023-09-13); COMP carries one lone record from 2014.
+COMPLAINTS_ENDPOINT = (
+    f"{NSITE_BASE}/nsite/ss/api/nsite-explorer/default-mode"
+    "/profiles/2-environmental-interests/3-complaints"
+)
+
+# The four fields EGLE's Complaints profile serves — SAME FIELD NAMES as
+# Submissions (subm* prefix; Complaints is filed through the same submission
+# machinery, just a distinct form type and a distinct endpoint), renamed to
+# short readable names. Confirmed 2026-08-22 present on every live record at
+# both non-zero sites, one distinct key-set, no optional fields, no nesting.
+COMPLAINT_FIELDS = ("ref_num", "form_type", "program_area", "received_date")
+
+_COMPLAINT_RAW_KEYS = {
+    "ref_num": "submSubmRefNum",              # "HQQ-WA43-BC4YM" — stable, unique per site
+    "form_type": "submRefFormTypeDescr",      # "Complaint" on every live record in this profile
+    "program_area": "submRefProgramAreaDescr",  # "AQD - Air", "WRD - NPDES"
+    "received_date": "submRcvdDate",          # ISO datetime w/ UTC offset
+}
+
+
+def _normalize_complaint(raw: dict) -> dict:
+    """Convert a raw nSITE complaint dict into the fields the watch reads.
+
+    `ref_num` (submSubmRefNum) IS a genuine unique key within a site's record
+    set — verified 2026-08-22 at both non-zero sites (6,396/6,396 at N2688,
+    5/5 at RA) — but nsite_complaints_watcher does NOT diff a ref-number-keyed
+    snapshot the way Evaluations/Permits do: at N2688's volume, even a
+    minimal {ref_num: [...]} mapping serializes to ~422K chars (the bare keys
+    alone are ~90K), so no per-record membership can be persisted in one
+    Sheets cell. See nsite_complaints_watcher's module docstring for the
+    count+hash+windowed-recency design this forces instead.
+
+    `received_date` is canonicalized via `_parse_egle_date` — the raw value
+    carries a UTC offset ("...-04:00" in EDT, "...-05:00" in EST) that must
+    not flip any downstream comparison across the EDT/EST transition, same
+    reasoning as every sibling normalizer's date fields.
+
+    Every field is read with `or ""` (NOT `.get(f, "")`), matching every
+    sibling normalizer: a present-but-null key must normalize to the same ""
+    an absent key would."""
+    out = {f: (raw.get(_COMPLAINT_RAW_KEYS[f]) or "") for f in COMPLAINT_FIELDS}
+    out["received_date"] = _parse_egle_date(raw.get(_COMPLAINT_RAW_KEYS["received_date"]))
+    return out
+
+
+def fetch_site_complaints(session: requests.Session, nsite_id: str) -> list[dict]:
+    """Return the full list of normalized complaints for one nSITE site.
+
+    Raises NsiteFetchError after 3 attempts on ANY network/HTTP/structural
+    failure — the same contract as every sibling fetch_site_* above
+    (nsite_complaints_watcher diffs a fingerprint of this list, so a
+    swallowed failure returned as [] would read as "every complaint
+    withdrawn at once"), NOT fetch_site_documents' swallow-and-return-[].
+
+    Like fetch_site_evaluations/fetch_site_permits, this DOES filter — on
+    `submSubmRefNum` present — because ref_num is this profile's genuine
+    unique key and a keyless record cannot be placed in the watcher's
+    ref-number-set fingerprint. No such record has been observed live; if
+    nSITE ever serves one, it is silently excluded, matching the Evaluations/
+    Permits/Submissions precedent.
+
+    The `hasResultsRemaining` structural-paging guard matters MORE here than
+    on any sibling: this is by far the largest-volume profile (6,396 records
+    at N2688 alone, vs. Evaluations' 477), so a future server-side paging
+    change silently truncating the response is a live risk, not a
+    theoretical one — a partial page would read as thousands of complaints
+    having vanished.
+
+    An empty list is a VALID result (17 of the 19 watched sites have zero
+    complaints on file); only a fetch/structural failure raises."""
+    query_params = urllib.parse.quote('{"filter":[{"id":"' + str(nsite_id) + '"}]}')
+    url = (
+        f"{COMPLAINTS_ENDPOINT}"
+        f"?responseContentType=application/json"
+        f"&includeMetadataInResponse=true"
+        f"&loadChildren=true"
+        f"&queryParams={query_params}"
+        f"&filterString="
+    )
+    referer = f"{NSITE_BASE}/nsite/DEFAULT/map/results/detail/{nsite_id}/Documents"
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            r = session.get(
+                url,
+                headers={"Referer": referer, "Accept": "application/json"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            data = r.json()
+            if "queryResults" not in data:
+                raise NsiteFetchError(
+                    f"complaints response for site {nsite_id} is missing "
+                    f"'queryResults' — nSITE may have changed its response shape"
+                )
+            if data.get("hasResultsRemaining"):
+                # Null on every site today (verified 2026-08-22). If nSITE ever
+                # enables server-side paging, a partial page would be
+                # INDISTINGUISHABLE from a shrunken record set: the watcher's
+                # ref-set hash would read the missing tail as complaints
+                # withdrawn and email that as fact. Fail loudly instead — the
+                # same guard as every sibling fetch above, and the single most
+                # likely profile to actually trip it given its record count.
+                raise NsiteStructuralError(
+                    f"complaints response for site {nsite_id} reports "
+                    f"hasResultsRemaining — nSITE has started paging this "
+                    f"profile and this client would otherwise diff a PARTIAL "
+                    f"page as mass withdrawals. Pagination support is needed."
+                )
+            return [_normalize_complaint(c) for c in data["queryResults"]
+                    if c.get("submSubmRefNum")]
+        except NsiteStructuralError:
+            # Re-raise immediately, before the retry loop can swallow it into a
+            # generic NsiteFetchError: retrying a shape change is pointless, and
+            # the caller distinguishes the two types deliberately (a generic
+            # NsiteFetchError is treated as transient skip-and-warn, the exact
+            # silent-forever outcome this class exists to avoid).
+            raise
+        except Exception as e:  # noqa: BLE001 — network/HTTP: retry, then raise loud
+            last_exc = e
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+    raise NsiteFetchError(
+        f"GET complaints for site {nsite_id} failed after 3 attempts: {last_exc}"
     ) from last_exc
 
 

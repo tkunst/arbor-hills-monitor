@@ -260,6 +260,19 @@ TAB_EVALUATIONS = "Evaluations Watch"
 # is verified-inert insurance, not a live necessity. See
 # nsite_permits_watcher.permits_snapshot.
 TAB_PERMITS = "Permits Watch"
+# nSITE Complaints watch (Stream P, ADR 031) — same on-demand policy: no tab
+# appears until nsite_complaints_watcher actually runs. Append-only, keyed by
+# Item (e.g. "cmplt:N2688") in col B for dedup/state — the same Sheet-derived,
+# race-free idiom as every sibling Watch tab above. One row per observed state
+# of a watched site's COMPLAINTS (citizen/agency reports) — "baseline" (first
+# sighting, silent) or "changed" (fires an alert). UNLIKE every sibling, the
+# snapshot here is NOT a per-record encoding at all — N2688's 6,396 complaints
+# make even Violations'/Compliance Actions' digest-multiset degradation
+# (~102K chars) blow past the 50,000-char cell cap, since complaints carry
+# zero duplicate-tuple compression. The snapshot is instead a tiny
+# {n, hash, latest[K]} fingerprint, small BY CONSTRUCTION rather than
+# degraded into smallness. See nsite_complaints_watcher.complaints_snapshot.
+TAB_COMPLAINTS = "Complaints Watch"
 # Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
 # TAB_NEW/TAB_HISTORICAL. "Change" is new/changed (live) or historical (dump).
 WDS_HEADERS = [
@@ -398,6 +411,19 @@ EVALUATIONS_WATCH_HEADERS = [
 # nSITE Permits watch (Stream O, ADR 030). Identical row shape to
 # EVALUATIONS_WATCH_HEADERS above — same append-only, tab-is-the-state design.
 PERMITS_WATCH_HEADERS = [
+    "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
+    "Snapshot JSON",
+]
+
+# nSITE Complaints watch (Stream P, ADR 031). Identical row shape to
+# PERMITS_WATCH_HEADERS above — same append-only, tab-is-the-state design.
+# "Snapshot Hash" here is the ref-number-SET hash (nsite_complaints_watcher
+# hashes the complaint list directly, unlike the whole-canonical-snapshot
+# hash every sibling profile computes) — same column, same role (a compact
+# "did the underlying record set change" fingerprint), just a cheaper
+# computation given what it's fingerprinting. "Snapshot JSON" carries the
+# tiny {n, hash, latest[K]} fingerprint, not a per-record encoding.
+COMPLAINTS_WATCH_HEADERS = [
     "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
     "Snapshot JSON",
 ]
@@ -1932,6 +1958,91 @@ def append_permits_watch_row(
     (durable record first, alert best-effort second — same crash-safe ordering
     as append_evaluations_watch_row)."""
     append_rows(service, sheet_id, TAB_PERMITS, [[
+        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
+    ]])
+
+
+# ---------------------------------------------------------------------------
+# nSITE Complaints watch (Stream P, ADR 031) — the tab is the state (append-
+# only ⇒ race-free), exactly like the Permits Watch tab above. The row SHAPE
+# is identical to every sibling Watch tab; only the snapshot the "Snapshot
+# JSON" cell carries differs (a tiny {n, hash, latest[K]} fingerprint, not a
+# per-record encoding — see nsite_complaints_watcher.complaints_snapshot).
+# ---------------------------------------------------------------------------
+
+
+def ensure_complaints_tabs(service, sheet_id: str) -> None:
+    """Create the Complaints Watch tab if missing and reconcile its header row
+    on every run (same self-healing policy as ensure_permits_tabs()). Called
+    only from nsite_complaints_watcher.py, so the tab doesn't appear until the
+    watch actually runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_COMPLAINTS not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_COMPLAINTS}}}]},
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    _set_header(service, sheet_id, TAB_COMPLAINTS, COMPLAINTS_WATCH_HEADERS)
+
+
+def last_complaints_snapshots(
+    service, sheet_id: str, item_keys: list[str],
+) -> dict[str, tuple[str, str] | None]:
+    """Return {item_key: (snapshot_hash, snapshot_json) or None} for each key
+    (e.g. "cmplt:N2688"), reading the whole tab ONCE however many keys are
+    asked for. None means 'baseline this item'; a hash mismatch means
+    'changed'. Reading the last matching row (not a _meta cell) is what makes
+    the watch race-free — the tab is append-only, so no concurrent job can
+    clobber it.
+
+    Same contract as last_permits_snapshots/last_evaluations_snapshots
+    (batched, no singular wrapper): the watcher reads every key it needs in
+    ONE call at the top of the run.
+
+    DELIBERATELY does NOT go through _tab_rows, which swallows every read
+    exception and returns [] (fine for its append-only-accumulator callers,
+    wrong here). For a watch that DIFFS, an indistinguishable [] is a silent
+    data-loss bug: a throttled read would make every key look never-seen, the
+    watcher would write a fresh "baseline" row, and because the tab is
+    append-only with last-write-wins that spurious baseline BECOMES the state
+    — erasing a real, un-alerted change permanently rather than deferring it.
+    So a read failure raises and the caller fails loudly instead. This is
+    especially load-bearing here: N2688 alone holds 6,396 complaints, so a
+    spurious re-baseline at this site would silently discard the most
+    consequential history this watch is meant to protect.
+
+    The tab's own absence is not a case here: nsite_complaints_watcher calls
+    ensure_complaints_tabs() before any read, so the tab always exists by the
+    time this runs."""
+    resp = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_COMPLAINTS}'!A2:H")
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    )
+    latest_by_key: dict[str, list] = {}
+    for r in resp.get("values", []):
+        if r and len(r) > 1:
+            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
+    result: dict[str, tuple[str, str] | None] = {}
+    for key in item_keys:
+        r = latest_by_key.get(key)
+        if r is None:
+            result[key] = None
+        else:
+            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
+    return result
+
+
+def append_complaints_watch_row(
+    service, sheet_id: str, date: str, item_key: str, label: str, change: str,
+    snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
+) -> None:
+    """Append one Complaints Watch row. Written BEFORE the change email is
+    sent (durable record first, alert best-effort second — same crash-safe
+    ordering as append_permits_watch_row)."""
+    append_rows(service, sheet_id, TAB_COMPLAINTS, [[
         date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
     ]])
 
