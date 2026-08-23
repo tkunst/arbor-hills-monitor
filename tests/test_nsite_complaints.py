@@ -270,6 +270,21 @@ def test_growth_is_reported_as_an_honest_count_change_never_named():
     assert "R1" in body          # ...alongside every other item in the window
 
 
+def test_growth_body_states_the_true_count_of_complaints_it_actually_shows():
+    """Regression: the body caps the displayed list at 10 entries regardless
+    of latest_window, so the stated count must match what's actually shown —
+    NOT the configured window size, which would silently overclaim (e.g.
+    "up to the 50 most recent" while only ever printing 10)."""
+    old_rows = [_c(ref=f"OLD{i}", received=f"2026-01-{(i % 28) + 1:02d}") for i in range(20)]
+    old = cw.complaints_snapshot(old_rows, latest_window=50)
+    new_rows = old_rows + [_c(ref="NEW1", received="2026-08-20")]
+    new = cw.complaints_snapshot(new_rows, latest_window=50)
+    _, body = cw.summarize_complaints_change(old, new)
+    assert "Most recent 10 complaint(s)" in body
+    assert "50" not in body   # the configured window size never leaks into a count claim
+    assert len([line for line in body.splitlines() if line.startswith("  ")]) == 10
+
+
 def test_growth_beyond_the_window_still_gives_honest_count_and_context():
     """N2688's own history has a real burst (246 complaints in a single day,
     2019-11-18) — even at that scale the note is just the count change plus
