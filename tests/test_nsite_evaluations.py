@@ -678,14 +678,25 @@ def test_shipped_config_tiers_cover_every_registry_site_and_differ_from_siblings
 
 
 def test_shipped_config_ships_disabled():
-    """New source, unattended overnight build — enabled: false is Trisha's
-    activation step, not this build's."""
+    """New source, unattended overnight build — enabled: false was Trisha's
+    activation step to take, not this build's. It was since activated
+    2026-08-22 (config.yml `enabled: true`), same as the Compliance Actions
+    stream's own post-activation update — the flag's value is no longer
+    asserted here, only that the workflow is actually scheduled (the
+    invariant that matters once a stream is live)."""
     import pathlib
 
     import yaml
-    with open(pathlib.Path(__file__).resolve().parent.parent / "config.yml") as f:
+    root = pathlib.Path(__file__).resolve().parent.parent
+    with open(root / "config.yml") as f:
         cfg = yaml.safe_load(f)
-    assert cfg["nsite_evaluations"]["enabled"] is False
+    scheduled = (root / ".github" / "workflows" / "nsite-evaluations-watch.yml").exists()
+    parked = (root / "docs" / "pending-workflows" / "nsite-evaluations-watch.yml").exists()
+    assert scheduled or parked, "the workflow file has gone missing entirely"
+    assert cfg["nsite_evaluations"]["enabled"] is False or scheduled, (
+        "nsite_evaluations.enabled is true but the workflow is still parked "
+        "at docs/pending-workflows/ — the watch would never be scheduled."
+    )
 
 
 # ==============================================================================
