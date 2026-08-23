@@ -191,6 +191,43 @@ complaints on a single day, 2019-11-18 — so the honest fallback path is
 tested insurance, not a hypothetical (`test_growth_exceeding_the_window_
 falls_back_honestly_not_a_false_claim`).
 
+**Step 5 independent review found the two-condition self-consistency check
+above (delta == windowed-diff size, and under the window) is NECESSARY but
+NOT SUFFICIENT**, with a concrete counterexample: removing an in-window
+complaint while unrelated new ones arrive can promote an older, previously-
+invisible survivor into the window. If the counts happen to line up (e.g. 1
+removed + 2 added nets to +1, and exactly one old survivor gets promoted
+into view), the two-condition check passes by coincidence and the survivor
+would be named as new — even though it was on file all along, just outside
+the old window.
+
+**Fixed with a third, independent condition — "no-removal evidence":** under
+pure growth (zero removals), an old item's rank relative to other old items
+can only stay the same or worsen; it can never spontaneously improve enough
+to enter the window from outside. So every old-window entry that growth
+ALONE would still leave inside the window (all but its oldest `delta`
+entries, which `delta` genuine new arrivals would push out regardless of
+their own dates) must still be visible in the new window. If any is missing,
+a removal happened somewhere, and the window diff can no longer be trusted
+to mean "these are new." An already budget-truncated OLD window (the
+pathological-`latest_window` clamp case) is treated as missing evidence too,
+since it can't support this check either.
+
+This is a strictly ADDITIONAL, sound constraint — verified NOT to make the
+design overly conservative: `test_growth_with_interspersed_dates_still_
+names_exactly_no_over_conservatism` confirms a genuinely new complaint dated
+BETWEEN two existing window entries (not the newest overall — a plausible
+delayed-data-entry scenario) is still named exactly, and
+`test_a_removal_that_promotes_an_old_survivor_does_not_misname_it_as_new`
+reproduces the review's exact counterexample and confirms it now falls back
+honestly instead of naming the survivor.
+
+The zero-baseline ("FIRST COMPLAINT(S) RECORDED") branch had a related,
+lower-severity gap: it listed the `latest` window's contents unconditionally,
+with no caveat if the true count exceeded what fit in the window — unlike
+the >K-growth fallback, which already says so explicitly. Fixed the same
+way (`test_first_sighting_exceeding_the_window_caveats_the_partial_list`).
+
 ### Removals are never misread as new
 
 Matching Violations'/Compliance Actions' mitigation for their own multiset

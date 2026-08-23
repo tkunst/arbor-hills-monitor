@@ -77,13 +77,24 @@ arrived complaints: the K-minus-the-new-count carried-over entries are by
 construction the same entries that were already in the old window, so they
 cancel out of the set difference, leaving only the genuinely new ones. This
 is verified, not assumed — summarize_complaints_change() below cross-checks
-that arithmetic (the windowed diff's size must equal the count delta) before
-ever presenting it as exact, and falls back to an honest, un-named "count
-changed, more than the window can confirm — see nSITE" message the moment
-that check fails (a burst exceeding the window, or overlapping adds and
-removals in the same period). N2688's own history contains exactly this
-burst case — 246 complaints arrived on a single day in 2019 — so the
-fallback path is real insurance, not a hypothetical.
+THREE conditions before ever presenting the diff as exact, not just one: the
+windowed diff's size must equal the count delta; that delta must be smaller
+than the window; AND every old-window entry pure growth alone would still
+leave inside the window must still be visible in the new one ("no-removal
+evidence" — under pure growth an old item's rank relative to other old items
+can only stay the same or worsen, never improve, so its disappearance from an
+otherwise-consistent-looking window means a removal happened somewhere and
+promoted a different old item into view, not that something new arrived).
+That third condition exists because the first two ALONE are insufficient — a
+Step 5 independent review found a live counterexample where a removal inside
+the window plus new arrivals below an existing near-boundary complaint could
+satisfy the first two checks by coincidence while naming a non-new survivor
+as new. Any of the three failing falls back to an honest, un-named "count
+changed, more than the window can confirm — see nSITE" message (a burst
+exceeding the window, overlapping adds and removals, or removal-promotion
+ambiguity). N2688's own history contains a real burst case — 246 complaints
+arrived on a single day in 2019 — so the fallback path is real insurance,
+not a hypothetical.
 
 WHY A COUNT DECREASE IS NEVER MISREAD AS "NEW": if `n` decreases, the note
 says a complaint no longer appears (withdrawn or reclassified), never "new" —
@@ -380,10 +391,21 @@ def summarize_complaints_change(old: dict, new: dict) -> tuple[str, str]:
     old_n, new_n = old.get("n", 0), new.get("n", 0)
 
     if new_n and not old_n:
+        shown = new.get("latest", [])
         latest_lines = "\n".join(
             f"+ NEW      {ref} (received {received or 'unknown date'})"
-            for ref, received in new.get("latest", [])
+            for ref, received in shown
         )
+        # `latest` is capped at the window size — if the true count exceeds
+        # what's shown (a zero-baseline site that turns out to have more
+        # than K complaints on its very first sighting), say so explicitly
+        # rather than silently implying the list below is complete. This
+        # mirrors the caveat the >K-growth fallback below already carries.
+        if new_n > len(shown):
+            latest_lines += (
+                f"\n... and {new_n - len(shown)} more not shown here — see "
+                f"nSITE for the complete list."
+            )
         return (
             f"FIRST COMPLAINT(S) RECORDED — this site had none on file (now {new_n})",
             latest_lines or "(no per-complaint detail available — see the Complaints "
@@ -402,16 +424,37 @@ def summarize_complaints_change(old: dict, new: dict) -> tuple[str, str]:
         delta = new_n - old_n
         old_window, new_window = _window_refs(old), _window_refs(new)
         added = sorted(set(new_window) - set(old_window))
-        # The windowed diff is trustworthy ONLY when it's internally
-        # self-consistent: the delta the COUNT reports must exactly equal how
-        # many refs are newly visible in the window, AND that must be fewer
-        # than the window itself (otherwise a burst could exceed the window
-        # and we'd silently under-report). Either check failing means either
-        # a burst (delta >= window) or simultaneous adds+removals inside the
-        # window (the two numbers disagree) — both get the honest fallback
-        # rather than a confidently wrong name-the-complaint claim.
         window_size = new.get("latest_window") or len(new.get("latest") or []) or DEFAULT_LATEST_WINDOW
-        if added and len(added) == delta and delta < window_size:
+        # The windowed diff is trustworthy only when THREE independent checks
+        # all hold — the first two alone are NOT sufficient (found in Step 5
+        # review): a removal of an in-window complaint can promote an older,
+        # previously-invisible survivor into the window, and if the counts
+        # happen to line up, that survivor would be misreported as new.
+        #   1. `delta` must equal how many refs are newly visible in the
+        #      window (catches most non-pure-growth cases, but not the
+        #      promotion case above, where the WINDOW SIZE of the diff can
+        #      coincidentally match `delta` even though a removal occurred).
+        #   2. `delta` must be smaller than the window itself (otherwise a
+        #      burst could exceed it and we'd silently under-report).
+        #   3. NO-REMOVAL EVIDENCE: under pure growth, an old item's rank
+        #      relative to other old items can only stay the same or worsen —
+        #      it can never spontaneously improve. So every old-window entry
+        #      that pure growth alone would still leave inside the window
+        #      (all but the OLDEST `delta` of them, which `delta` new arrivals
+        #      would push out) must still be visible in the new window. If any
+        #      of them is missing, something was removed somewhere, and the
+        #      window diff can no longer be trusted to mean "these are new" —
+        #      it may be showing a survivor promoted by that removal instead.
+        #      An already-truncated OLD window (a pathological `latest_window`
+        #      config bump once overflowed the cell budget) can't support
+        #      this check either, so it's treated the same as missing evidence.
+        old_window_ordered = [ref for ref, _ in old.get("latest", [])]
+        survivors_expected = old_window_ordered[: max(0, len(old_window_ordered) - delta)]
+        no_removal_evidence = (
+            not old.get("latest_truncated")
+            and all(ref in new_window for ref in survivors_expected)
+        )
+        if added and len(added) == delta and delta < window_size and no_removal_evidence:
             lines = "\n".join(
                 f"+ NEW      {ref} (received {new_window.get(ref) or 'unknown date'})"
                 for ref in added
