@@ -821,7 +821,7 @@ nsite_evaluations:
   # unattended (overnight-coder Step 3). Flipping this to true is a separate
   # human step. The first enabled run baselines every due site silently — no
   # alert flood, even at N2688's 477 records.
-  enabled: false
+  enabled: true                     # activated 2026-08-22 (Trisha) — see ADR 029; no new secret
   # Recipient override: Trisha only to start (the Meeting Watch / MMD / RIDE /
   # Submissions / Violations / Compliance Actions precedent for a brand-new
   # alert stream). Delete/comment this block to send to the full
@@ -904,7 +904,7 @@ nsite_permits:
   # unattended (overnight-coder Step 3). Flipping this to true is a separate
   # human step. The first enabled run baselines every due site silently — no
   # alert flood, even at N2688's 9 records.
-  enabled: false
+  enabled: true                     # activated 2026-08-22 (Trisha) — see ADR 030; no new secret
   # Recipient override: Trisha only to start (the Meeting Watch / MMD / RIDE /
   # Submissions / Violations / Compliance Actions / Evaluations precedent for
   # a brand-new alert stream). Delete/comment this block to send to the full
