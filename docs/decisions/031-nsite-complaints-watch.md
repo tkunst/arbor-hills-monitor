@@ -201,26 +201,46 @@ into view), the two-condition check passes by coincidence and the survivor
 would be named as new — even though it was on file all along, just outside
 the old window.
 
-**Fixed with a third, independent condition — "no-removal evidence":** under
-pure growth (zero removals), an old item's rank relative to other old items
-can only stay the same or worsen; it can never spontaneously improve enough
-to enter the window from outside. So every old-window entry that growth
-ALONE would still leave inside the window (all but its oldest `delta`
-entries, which `delta` genuine new arrivals would push out regardless of
-their own dates) must still be visible in the new window. If any is missing,
-a removal happened somewhere, and the window diff can no longer be trusted
-to mean "these are new." An already budget-truncated OLD window (the
-pathological-`latest_window` clamp case) is treated as missing evidence too,
-since it can't support this check either.
+**Round 1 fix (superseded — see round 2 below):** a third, POSITION-based
+condition — every old-window entry that pure growth alone would still leave
+inside the window (all but its oldest `delta` entries, on the theory that
+`delta` genuine new arrivals would push exactly those out) had to still be
+visible in the new window.
+
+**Round 2 of the Step 5 review found round 1's fix itself incomplete:**
+excusing the window's bottom `delta` entries BY POSITION means a removal of
+one of those excused entries can still promote a survivor undetected — the
+position-based check never looks at them. Concrete counterexample: same old
+set `A(10), B(9), C(8), D(7)`, window=3 → `[A,B,C]`; this time **C** (the
+window's bottom entry, not the top) is removed, with two new, older
+complaints arriving — the same coincidence (count +1, window-diff size 1)
+passes round 1's fix just as it passed the original two-condition check,
+naming survivor D as new.
+
+**Fixed (shipped) with a VALUE-based comparison instead of a position-based
+one:** every ref newly visible in the window must rank NEWER — by the same
+`(received_date, ref_num)` sort key `latest` is itself ordered by — than
+every ref that dropped OUT of the window. This is the sound invariant
+position-based reasoning was an incomplete proxy for: under pure growth,
+anything that displaces an old window member must rank above everything it
+displaces (old items' relative order never changes, so a dropped item can
+only have been pushed out by items ranking above it); a removal breaks this
+because the survivor it promotes ranks OLDER than whatever left the window
+above it, regardless of WHERE in the window that removal occurred. Verified
+non-regressive: under genuine pure growth, the added and surviving items
+together form the new top-K by construction, so this comparison can never
+reject a case the first two conditions already accept.
 
 This is a strictly ADDITIONAL, sound constraint — verified NOT to make the
-design overly conservative: `test_growth_with_interspersed_dates_still_
-names_exactly_no_over_conservatism` confirms a genuinely new complaint dated
-BETWEEN two existing window entries (not the newest overall — a plausible
-delayed-data-entry scenario) is still named exactly, and
-`test_a_removal_that_promotes_an_old_survivor_does_not_misname_it_as_new`
-reproduces the review's exact counterexample and confirms it now falls back
-honestly instead of naming the survivor.
+design overly conservative
+(`test_growth_with_interspersed_dates_still_names_exactly_no_over_
+conservatism` — a genuinely new complaint dated BETWEEN two existing window
+entries, not the newest overall, is still named exactly) and verified to
+catch BOTH counterexamples regardless of removal position within the window
+(`test_a_removal_that_promotes_an_old_survivor_does_not_misname_it_as_new`
+for the top-of-window case, `test_a_removal_at_the_bottom_of_the_window_
+also_does_not_misname_a_survivor` for the bottom-of-window case round 2
+found round 1's fix missed).
 
 The zero-baseline ("FIRST COMPLAINT(S) RECORDED") branch had a related,
 lower-severity gap: it listed the `latest` window's contents unconditionally,

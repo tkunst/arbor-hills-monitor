@@ -298,12 +298,13 @@ def test_growth_with_interspersed_dates_still_names_exactly_no_over_conservatism
 
 
 def test_a_removal_that_promotes_an_old_survivor_does_not_misname_it_as_new():
-    """The Step 5 review's counterexample: removing an in-window complaint
-    while unrelated new ones arrive can promote an old, previously-invisible
-    survivor into the window. The naive check (delta == len(added) < window)
-    passes here BY COINCIDENCE even though the "added" ref (D) is not new —
-    it was on file all along, just outside the old window. Must fall back to
-    the honest count-only note, never name D as new."""
+    """The Step 5 review's round-1 counterexample: removing the NEWEST
+    in-window complaint while unrelated new ones arrive can promote an old,
+    previously-invisible survivor into the window. The naive check
+    (delta == len(added) < window) passes here BY COINCIDENCE even though the
+    "added" ref (D) is not new — it was on file all along, just outside the
+    old window. Must fall back to the honest count-only note, never name D
+    as new."""
     # old full set: A(10), B(9), C(8), D(7) — window=3 shows only [A, B, C].
     old_rows = [_c(ref="A", received="2026-01-10"), _c(ref="B", received="2026-01-09"),
                 _c(ref="C", received="2026-01-08"), _c(ref="D", received="2026-01-07")]
@@ -326,6 +327,31 @@ def test_a_removal_that_promotes_an_old_survivor_does_not_misname_it_as_new():
     assert "+ NEW      D" not in body
     assert "1 new complaint(s) —" not in note   # not the confident/exact form
     assert "likely" in note                     # the honest fallback form
+    assert "4 -> 5" in note
+
+
+def test_a_removal_at_the_bottom_of_the_window_also_does_not_misname_a_survivor():
+    """The Step 5 review's round-2 counterexample: round 1's first fix
+    (excusing the window's OLDEST `delta` entries by POSITION, on the theory
+    growth alone would push exactly those out) was itself incomplete — a
+    removal of one of those excused BOTTOM entries can still promote a
+    survivor undetected, since the position-based check never looks at it.
+    Here C (the bottom of the 3-entry window, not the top) is removed."""
+    # Same old full set as above: A(10), B(9), C(8), D(7) — window=3 -> [A,B,C].
+    old_rows = [_c(ref="A", received="2026-01-10"), _c(ref="B", received="2026-01-09"),
+                _c(ref="C", received="2026-01-08"), _c(ref="D", received="2026-01-07")]
+    old = cw.complaints_snapshot(old_rows, latest_window=3)
+    # C (bottom of window) is removed this time; E(6)/F(5) are genuinely new
+    # but both older than D, so D — an old survivor — is promoted instead.
+    new_rows = [_c(ref="A", received="2026-01-10"), _c(ref="B", received="2026-01-09"),
+                _c(ref="D", received="2026-01-07"), _c(ref="E", received="2026-01-06"),
+                _c(ref="F", received="2026-01-05")]
+    new = cw.complaints_snapshot(new_rows, latest_window=3)
+    assert new["n"] - old["n"] == 1   # same coincidence as the round-1 case
+    note, body = cw.summarize_complaints_change(old, new)
+    assert "+ NEW      D" not in body
+    assert "1 new complaint(s) —" not in note
+    assert "likely" in note
     assert "4 -> 5" in note
 
 
