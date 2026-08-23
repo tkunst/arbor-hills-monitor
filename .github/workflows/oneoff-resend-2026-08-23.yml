@@ -1,0 +1,36 @@
+name: oneoff-resend-2026-08-23
+
+# TEMPORARY, one-time corrective re-send of the 2026-08-23 Sunday digest with
+# fixed Drive links (that morning's original send used the referer-fragile
+# nSITE links — see ADR 007's addendum). Delete this file and
+# scripts/oneoff_resend_2026_08_23_digest.py once the send is confirmed —
+# this is not a capability the repo carries forward.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  resend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Send the corrected re-send
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
+          DIGEST_RECIPIENTS_EXTRA: ${{ secrets.DIGEST_RECIPIENTS_EXTRA }}
+        run: python scripts/oneoff_resend_2026_08_23_digest.py
