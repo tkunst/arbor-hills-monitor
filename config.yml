@@ -997,14 +997,17 @@ nsite_complaints:
   # the wild.
   recipients:
     - arbor-hills@trishakunst.com
-  # How many of the most-recently-received complaints the snapshot keeps as
-  # display CONTEXT on a change alert — NEVER diffed to name a specific
-  # complaint as new (see ADR 031's residual risks: three review rounds each
-  # found a different way a windowed diff can misname an old survivor).
-  # Raising it is safe up to roughly 1,000 before `snapshot_char_budget`
-  # below would start truncating it (see nsite_complaints_watcher.
-  # _cell_payload) — a config-only rollback lever, no code change needed
-  # either direction.
+  # How many of the most-recently-received complaints the SNAPSHOT keeps —
+  # NEVER diffed to name a specific complaint as new (see ADR 031's residual
+  # risks: three review rounds each found a different way a windowed diff
+  # can misname an old survivor). This bounds the Snapshot JSON cell and the
+  # one-time "FIRST COMPLAINT(S) RECORDED" (zero-baseline) alert; it does
+  # NOT change what an ordinary growth-alert email shows — that path always
+  # caps its displayed list at 10, regardless of this value (see
+  # summarize_complaints_change). Raising it is safe up to roughly 1,000
+  # before `snapshot_char_budget` below would start truncating it (see
+  # nsite_complaints_watcher._cell_payload) — a config-only rollback lever,
+  # no code change needed either direction.
   latest_window: 50
   # Max characters written to the Snapshot JSON cell before the watch trims
   # the `latest` window. A Sheets cell hard-caps at 50,000; the complaints

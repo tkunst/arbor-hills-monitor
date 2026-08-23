@@ -148,10 +148,10 @@ subsumes (b) and delivers (a)'s value in the common case:** a snapshot of
 - `latest` — the K most-recently-received complaints (`[ref_num,
   received_date]` pairs), K = `nsite_complaints.latest_window` (default 50).
 
-This whole structure serializes to under 1,000 chars even at N2688's real
-volume (measured: 6,400 synthetic records -> well under 5,000 chars,
-comfortably inside a 45,000-char budget with ~40x margin) — **small by
-construction**, not degraded after the fact. There is consequently no
+This whole structure serializes to ~1,600 chars even at N2688's real
+volume (measured: 6,400 synthetic records with the default 50-entry window
+-> 1,572 chars, well under 5,000, comfortably inside a 45,000-char budget
+with ~28x margin) — **small by construction**, not degraded after the fact. There is consequently no
 `counted_rows`-to-digest CASCADE the way Violations/Compliance Actions have;
 `nsite_complaints_watcher._cell_payload` is a bespoke clamp fitted to this
 snapshot's actual shape (trim the `latest` list from the end if a
