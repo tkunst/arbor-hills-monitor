@@ -67,42 +67,43 @@ _cell_payload), only a defensive truncate-the-window clamp
 structurally separate from the multiset idiom because its shape doesn't
 match: there is no `counted_rows` to degrade to a digest form.
 
-WHY THE WINDOWED "latest" FIELD CAN NAME NEW COMPLAINTS EXACTLY, MOST OF THE
-TIME: `latest` is the top-K by received_date, both today and at the last
-recorded snapshot. If FEWER than K complaints arrived since the last check —
-true almost always, given N2688's trailing-365-day rate is ~60/year, roughly
-one every six days, against a default K=50 — then the newly-visible refs in
-`latest` (this run's window minus last run's window) are EXACTLY the newly-
-arrived complaints: the K-minus-the-new-count carried-over entries are by
-construction the same entries that were already in the old window, so they
-cancel out of the set difference, leaving only the genuinely new ones. This
-is verified, not assumed — summarize_complaints_change() below cross-checks
-THREE conditions before ever presenting the diff as exact, not just one: the
-windowed diff's size must equal the count delta; that delta must be smaller
-than the window; AND every ref newly visible in the window must rank NEWER
-(by the same sort key `latest` is itself ordered by) than every ref that
-dropped OUT of the window ("no-removal evidence" — under pure growth,
-anything that displaces an old window member must rank above everything it
-displaces, since old items' relative order never changes; a removal breaks
-this, because the survivor it promotes ranks OLDER than whatever left the
-window above it). That third condition exists because the first two ALONE
-are insufficient — a Step 5 independent review (two rounds) found a live
-counterexample where a removal inside the window plus new arrivals dated
-below an existing near-boundary complaint could satisfy the first two checks
-by coincidence while naming a non-new survivor as new; round 1's initial fix
-(excusing the window's OLDEST `delta` entries by POSITION) was itself found
-incomplete in round 2 — a removal of one of those excused bottom entries
-could still slip through undetected. The value-based comparison shipped here
-is provably non-regressive (verified: under genuine pure growth, the added
-and surviving items together form the new top-K by construction, so the
-comparison can never reject a case the first two checks already accept) and
-catches a removal regardless of WHERE in the window it occurs. Any of the
-three conditions failing falls back to an honest, un-named "count changed,
-more than the window can confirm — see nSITE" message (a burst exceeding the
-window, overlapping adds and removals, or removal-promotion ambiguity).
-N2688's own history contains a real burst case — 246 complaints arrived on a
-single day in 2019 — so the fallback path is real insurance, not a
-hypothetical.
+WHY THE WINDOWED "latest" FIELD IS CONTEXT ONLY, NEVER A NAMED DIFF: an
+earlier version of this module tried to name specific new complaints exactly
+whenever fewer than K arrived since the last check, treating `latest` (this
+run's window minus last run's window) as if it could only contain genuinely
+new refs. Three independent Step 5 review rounds each found a DIFFERENT way
+that assumption breaks:
+  - round 1: a removal of an in-window complaint can promote an older,
+    previously-invisible survivor into the window; if the counts happened to
+    line up, that survivor was misreported as new.
+  - round 2: round 1's fix (excusing the window's oldest `delta` entries by
+    POSITION, on the theory growth alone would push exactly those out) was
+    itself incomplete — a removal of one of those excused bottom entries
+    could still promote a survivor undetected.
+  - round 3: a value-based fix closed the removal-promotion class for good
+    (verified: under pure growth, anything displacing an old window member
+    must rank above everything it displaces) — but found a THIRD, different
+    mechanism reaching the same failure: an EXISTING complaint's
+    received_date being corrected by EGLE (e.g. blank -> populated) re-sorts
+    it into the window without any removal, and `hash` — deliberately over
+    the ref-number SET only, to stay immune to the EDT/EST date-offset flip —
+    does not change when only a date is corrected, so this is invisible to
+    the primary change signal too.
+Each fix closed the round that found it and was defeated by the next, which
+is the pattern the round-3 review correctly read as structural rather than a
+missed edge case: this snapshot never stores old's full ref-number set (the
+entire reason it fits one Sheets cell), so for any ref newly visible in
+`latest` there is no stored fact able to distinguish "this complaint is
+genuinely new" from "this complaint existed all along outside the visible
+window and something just made it visible." No further check on this data
+closes that gap, and a CONDITIONAL caveat doesn't help either — which alerts
+are at risk can't be told apart from which aren't. So `latest` is exposed
+purely as recent-context (a human reads it and cross-checks nSITE), and
+summarize_complaints_change() below never claims a specific ref is new for
+a nonzero old baseline — only that the count changed. The one case naming IS
+sound is old_n == 0 (a confirmed-empty baseline): the old window was empty
+too, so there is no possibility of an old survivor hiding outside it, and
+every ref in `latest` is unambiguously new. See ADR 031's residual risks.
 
 WHY A COUNT DECREASE IS NEVER MISREAD AS "NEW": if `n` decreases, the note
 says a complaint no longer appears (withdrawn or reclassified), never "new" —
@@ -189,13 +190,12 @@ from nsite_submissions_watcher import _is_due
 HARD_SHEETS_CELL_LIMIT = 50000
 DEFAULT_SNAPSHOT_CHAR_BUDGET = 45000
 
-# How many of the most-recently-received complaints the snapshot keeps —
-# both for the windowed exact-diff (see module docstring) and as fallback
-# display context when the exact diff can't be established. 50 against
-# N2688's trailing-365-day rate of ~60/year (~0.16/day) gives roughly 300
-# days of margin before a normal filing pace could exceed the window; the
-# site's own history contains a real burst (246 in one day, 2019) the exact
-# diff explicitly detects and declines to name rather than mis-describes.
+# How many of the most-recently-received complaints the snapshot keeps as
+# display context on a change alert (see module docstring — this is NEVER
+# diffed to name a specific complaint as new, for a nonzero old baseline).
+# 50 is generous relative to N2688's trailing-365-day rate of ~60/year
+# (~0.16/day) — plenty of recent complaints shown as a starting point for
+# checking nSITE, without implying the list is exhaustive.
 DEFAULT_LATEST_WINDOW = 50
 
 
@@ -278,9 +278,9 @@ def complaints_snapshot(rows: list[dict], latest_window: int = DEFAULT_LATEST_WI
     ties broken by ref_num for determinism), K = `latest_window`. This is NOT
     a degraded form of some larger stored structure — it is the whole
     per-record content this snapshot ever keeps, computed fresh from `rows`
-    every run. See summarize_complaints_change for how two consecutive
-    `latest` windows combine with `n` to name new complaints exactly when
-    fewer than K arrived between runs.
+    every run. It is display CONTEXT only — see summarize_complaints_change
+    and the module docstring for why it is never diffed to name a specific
+    complaint as new once the site has a nonzero baseline.
 
     An EMPTY record set is a valid snapshot — for 17 of the 19 watched sites,
     "no complaints on file" IS the baseline and the first complaint appearing
@@ -348,40 +348,25 @@ def _cell_payload(snap: dict, budget: int = DEFAULT_SNAPSHOT_CHAR_BUDGET) -> str
     return json.dumps(trimmed, sort_keys=True, ensure_ascii=False)
 
 
-def _window_refs(snap: dict) -> dict[str, str]:
-    """{ref_num: received_date} for a snapshot's `latest` window, tolerant of
-    a missing/malformed field (an old or unreadable stored snapshot) — callers
-    treat an empty result the same as "no window information available",
-    which degrades summarize_complaints_change to its honest fallback rather
-    than raising."""
-    out: dict[str, str] = {}
-    for entry in snap.get("latest") or []:
-        try:
-            ref, received = entry[0], entry[1]
-        except (IndexError, TypeError):
-            continue
-        if ref:
-            out[ref] = received
-    return out
-
-
 def summarize_complaints_change(old: dict, new: dict) -> tuple[str, str]:
     """(note, body) describing what changed between two complaint snapshots.
     Pure — unit-tested.
 
-    Handles, in order, five cases a bare count-and-hash comparison would
+    Handles, in order, four cases a bare count-and-hash comparison would
     misreport:
       1. the previous snapshot is MISSING or UNREADABLE — which must never be
          confused with "the site had zero complaints",
       2. zero -> some / some -> zero, the single highest-value alert for a
-         site whose baseline is empty,
-      3. growth (n increased) where the windowed diff is PROVABLY exact —
-         named, with ref numbers and dates,
-      4. growth where the windowed diff cannot be trusted (a burst exceeding
-         the window, or the count delta and the windowed diff disagree,
-         meaning simultaneous adds and removals happened) — an honest,
-         un-named count-only note,
-      5. a decrease (n went down) — always labeled a removal/withdrawal,
+         site whose baseline is empty — the only case where naming specific
+         refs as new is actually sound (old_n == 0 means the old window was
+         also empty, so there is no possibility of an old survivor hiding
+         outside it),
+      3. growth (n increased) with a nonzero old baseline — an honest,
+         un-named count-only note. Naming specific refs here was tried and
+         reverted: three Step 5 review rounds each found a different way a
+         windowed top-K snapshot can misname an old survivor as new (see the
+         comment at the growth branch below and ADR 031's residual risks),
+      4. a decrease (n went down) — always labeled a removal/withdrawal,
          NEVER misread as "new", and never claims to name which one (no
          removal window is kept)."""
     if "hash" not in old:
@@ -429,77 +414,36 @@ def summarize_complaints_change(old: dict, new: dict) -> tuple[str, str]:
         )
 
     if new_n > old_n:
-        delta = new_n - old_n
-        old_window, new_window = _window_refs(old), _window_refs(new)
-        added = sorted(set(new_window) - set(old_window))
-        dropped = set(old_window) - set(new_window)
+        # Deliberately NOT a named diff. Three independent Step 5 review
+        # rounds each found a different, genuine way for a windowed top-K
+        # snapshot to misname an old survivor as new: round 1, a removal
+        # promoting a previously-invisible entry into view; round 2, the
+        # same promotion at the bottom of the window (the round-1 fix's
+        # position-based excuse missed it); round 3, an EXISTING complaint's
+        # `received_date` being corrected by EGLE (blank -> populated),
+        # which re-sorts it into the window without changing `hash` (hash is
+        # deliberately over the ref-number SET only, to stay immune to the
+        # EDT/EST date-offset flip) and without any removal at all. Each
+        # fix closed the round that found it and was defeated by the next.
+        # The reason is structural, not a missed edge case: this snapshot
+        # never stores old's full ref-number set (that's the entire point —
+        # N2688 has 6,396 records and won't fit one Sheets cell otherwise),
+        # so for any ref newly visible in `latest`, there is no stored fact
+        # that can distinguish "this complaint didn't exist before" from
+        # "this complaint existed all along, outside the visible window,
+        # and something just made it visible." No further check on this
+        # data can close that gap — see ADR 031's "Residual risks" section.
+        # A conditional caveat doesn't help either: which alerts are at risk
+        # can't be told apart from which aren't, so the honest count+context
+        # note below is used for EVERY growth case, unconditionally.
         window_size = new.get("latest_window") or len(new.get("latest") or []) or DEFAULT_LATEST_WINDOW
-        # The windowed diff is trustworthy only when THREE independent checks
-        # all hold — the first two alone are NOT sufficient (found in Step 5
-        # review, round 1): a removal of an in-window complaint can promote an
-        # older, previously-invisible survivor into the window, and if the
-        # counts happen to line up, that survivor would be misreported as new.
-        #   1. `delta` must equal how many refs are newly visible in the
-        #      window (catches most non-pure-growth cases, but not the
-        #      promotion case above, where the WINDOW SIZE of the diff can
-        #      coincidentally match `delta` even though a removal occurred).
-        #   2. `delta` must be smaller than the window itself (otherwise a
-        #      burst could exceed it and we'd silently under-report).
-        #   3. NO-REMOVAL EVIDENCE — a VALUE comparison, not a position-based
-        #      one (a round-1 fix using window POSITION — "every old-window
-        #      entry but the oldest `delta`" — was itself found incomplete in
-        #      Step 5 review round 2: a removal of one of THOSE excused bottom
-        #      entries can still promote a survivor undetected). The sound
-        #      invariant is: under pure growth, anything that displaces an old
-        #      window member out of the window must rank NEWER than every
-        #      member it displaces — old items' relative order never changes,
-        #      so a dropped item can only have been pushed to rank >= K by
-        #      new items ranking above it, and every item now occupying the
-        #      top K (old survivors + new arrivals alike) necessarily ranks
-        #      above every dropped item. So require the OLDEST added ref to
-        #      still rank newer than the NEWEST dropped ref, by the same
-        #      (received_date, ref_num) sort key `latest` is itself ordered
-        #      by. A removal breaks this: the promoted survivor's rank is, by
-        #      definition, OLDER than whatever got dropped out from above it,
-        #      so the comparison fails and the fallback fires. Verified
-        #      non-regressive: under genuine pure growth this never rejects a
-        #      case the first two checks already accept (the added items and
-        #      the surviving old items together form the new top-K, so every
-        #      added item ranks above every dropped one by construction).
-        #      A DROPPED set that's empty (nothing displaced — the window
-        #      wasn't at capacity) trivially satisfies this. An already-
-        #      truncated OLD window (a pathological `latest_window` config
-        #      bump once overflowed the cell budget) can't support any of
-        #      this either, so it's treated the same as missing evidence.
-        def _sort_key(ref: str, dates: dict[str, str]) -> tuple[str, str]:
-            return (dates.get(ref) or "", ref)
-
-        no_removal_evidence = (
-            not old.get("latest_truncated")
-            and (
-                not dropped
-                or (
-                    bool(added)
-                    and min(_sort_key(r, new_window) for r in added)
-                    > max(_sort_key(r, old_window) for r in dropped)
-                )
-            )
-        )
-        if added and len(added) == delta and delta < window_size and no_removal_evidence:
-            lines = "\n".join(
-                f"+ NEW      {ref} (received {new_window.get(ref) or 'unknown date'})"
-                for ref in added
-            )
-            return (
-                f"{delta} new complaint(s) — count went {old_n} -> {new_n}",
-                lines,
-            )
         return (
-            f"{delta} new complaint(s) likely — count went {old_n} -> {new_n} "
-            f"(the {window_size} most recently-received complaints on file "
-            f"can't confirm all of them — see nSITE for the complete list)",
-            "Most recent complaints currently on file (context only — not "
-            "necessarily an exhaustive list of what's new):\n" + "\n".join(
+            f"complaint count changed — {old_n} -> {new_n} on file "
+            "(a windowed diff can't safely name which complaint(s) are new "
+            "at this site's volume — see nSITE for the complete list)",
+            "Most recent complaints currently on file, context only — NOT "
+            f"a list of what changed (up to the {window_size} most recent):\n"
+            + "\n".join(
                 f"  {ref}  (received {received or 'unknown date'})"
                 for ref, received in new.get("latest", [])[:10]
             ),
@@ -537,14 +481,16 @@ def format_change_body(label: str, note: str, body: str) -> str:
         f"{shown}\n\n"
         "This is an automated watch on EGLE's nSITE Complaints profile — "
         "citizen/agency reports filed against this facility, often the "
-        "trigger for an inspection. It trip-wires a brand-new complaint the "
-        "moment EGLE records one under this site. It makes NO judgment about "
-        "a complaint's substance — only that EGLE recorded one — so read the "
-        "change in MiEnviro directly for full context. At high volume (this "
-        "profile's largest site carries thousands of historical records), an "
-        "exact list of what's new is only possible when fewer complaints "
-        "arrived since the last check than this watch's recent-window size; "
-        "beyond that it reports the count change and points you at nSITE.\n"
+        "trigger for an inspection. It trip-wires a change in the complaint "
+        "count the moment EGLE's record for this site differs from the last "
+        "check. It makes NO judgment about a complaint's substance — only "
+        "that EGLE's count changed — so read MiEnviro directly for full "
+        "context. This watch deliberately does NOT try to name which "
+        "complaint(s) are new: at this profile's volume (its largest site "
+        "carries thousands of historical records), no snapshot small enough "
+        "to store can distinguish a genuinely new complaint from an existing "
+        "one that simply became newly visible, so it reports the count "
+        "change plus recent context and points you at nSITE for the rest.\n"
     )
 
 
@@ -630,9 +576,10 @@ def run() -> int:
     # entirely and hand the site a permanently rejected write.
     budget = min(int(ccfg.get("snapshot_char_budget") or DEFAULT_SNAPSHOT_CHAR_BUDGET),
                  HARD_SHEETS_CELL_LIMIT - 1000)
-    # Clamped to at least 1: a window of 0 would make EVERY growth event look
-    # like a burst (delta < window_size can never hold), silently disabling
-    # the named-diff path entirely rather than just shrinking its margin.
+    # Clamped to at least 1: a window of 0 would show zero context lines on
+    # every change alert, which is a degraded experience but not a
+    # correctness issue (the count+context note never depends on the window
+    # covering the full delta — see summarize_complaints_change).
     latest_window = max(1, int(ccfg.get("latest_window") or DEFAULT_LATEST_WINDOW))
     # Resolve the working site list by joining the shared identity registry
     # (nsite_sites, ADR 022) with THIS profile's own cadence map. A `tiers` srn

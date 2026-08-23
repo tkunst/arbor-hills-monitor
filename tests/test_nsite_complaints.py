@@ -253,106 +253,84 @@ def test_some_to_zero_is_the_headline_all_gone_case():
     assert "ALL COMPLAINTS NO LONGER LISTED" in note
 
 
-def test_growth_under_the_window_names_the_new_complaint_exactly():
-    """The core value proposition: when fewer than K arrived since the last
-    check, the windowed diff is provably exact."""
+def test_growth_is_reported_as_an_honest_count_change_never_named():
+    """The shipped design: a nonzero-baseline count increase is ALWAYS a
+    count+context note, never a claimed diff — see the module docstring's
+    "WHY THE WINDOWED latest FIELD IS CONTEXT ONLY" section for why naming
+    was tried, defeated by three independent review rounds, and reverted."""
     old = cw.complaints_snapshot([_c(ref="R1", received="2026-01-01")], latest_window=50)
     new = cw.complaints_snapshot(
         [_c(ref="R1", received="2026-01-01"), _c(ref="R2", received="2026-08-01")],
         latest_window=50)
     note, body = cw.summarize_complaints_change(old, new)
-    assert "1 new complaint(s)" in note
+    assert "1 -> 2" in note
     assert "0 -> " not in note   # not the zero->some case
-    assert "R2" in body
-    assert "2026-08-01" in body
-    assert "R1" not in body   # only the NEW one is named
+    assert "+ NEW" not in body
+    assert "R2" in body          # shown as context...
+    assert "R1" in body          # ...alongside every other item in the window
 
 
-def test_growth_exceeding_the_window_falls_back_honestly_not_a_false_claim():
-    """The burst case — N2688's own history has a real one (246 complaints in
-    a single day, 2019-11-18). Must never present a partial list as exhaustive."""
+def test_growth_beyond_the_window_still_gives_honest_count_and_context():
+    """N2688's own history has a real burst (246 complaints in a single day,
+    2019-11-18) — even at that scale the note is just the count change plus
+    whatever fits in the context window, never a false completeness claim."""
     old_rows = [_c(ref=f"OLD{i}", received=f"2026-01-{(i % 28) + 1:02d}") for i in range(5)]
     old = cw.complaints_snapshot(old_rows, latest_window=3)
     new_rows = old_rows + [_c(ref=f"NEW{i}", received="2026-08-15") for i in range(10)]
     new = cw.complaints_snapshot(new_rows, latest_window=3)
     note, body = cw.summarize_complaints_change(old, new)
-    assert "10 new complaint(s) likely" in note
-    assert "can't confirm all of them" in note
     assert "5 -> 15" in note
+    assert "can't safely name" in note
+    assert "context only" in body
 
 
-def test_growth_with_interspersed_dates_still_names_exactly_no_over_conservatism():
-    """A genuinely new complaint that ISN'T the most recent by date (e.g. a
-    slightly-delayed data entry) must still be named — the fix for the
-    removal-promotion gap below must not become overly conservative and
-    reject perfectly safe pure-growth cases."""
-    old_rows = [_c(ref="A", received="2026-01-10"), _c(ref="B", received="2026-01-09"),
-                _c(ref="C", received="2026-01-08")]
-    old = cw.complaints_snapshot(old_rows, latest_window=3)
-    # G is dated BETWEEN B and C, not the newest overall.
-    new = cw.complaints_snapshot(old_rows + [_c(ref="G", received="2026-01-08.5")],
-                                 latest_window=3)
-    note, body = cw.summarize_complaints_change(old, new)
-    assert "1 new complaint(s)" in note
-    assert "G" in body
-
-
-def test_a_removal_that_promotes_an_old_survivor_does_not_misname_it_as_new():
-    """The Step 5 review's round-1 counterexample: removing the NEWEST
-    in-window complaint while unrelated new ones arrive can promote an old,
-    previously-invisible survivor into the window. The naive check
-    (delta == len(added) < window) passes here BY COINCIDENCE even though the
-    "added" ref (D) is not new — it was on file all along, just outside the
-    old window. Must fall back to the honest count-only note, never name D
-    as new."""
-    # old full set: A(10), B(9), C(8), D(7) — window=3 shows only [A, B, C].
+def test_a_removal_coinciding_with_growth_never_produces_a_false_new_claim():
+    """Regression coverage for the Step 5 review's round-1/round-2 findings:
+    an EARLIER version of this module tried to name specific new complaints,
+    and a removal coinciding with new arrivals could promote an old,
+    previously-invisible survivor (D) into the window and misname it as new
+    whenever the counts happened to coincide. The shipped design makes this
+    impossible by construction — nothing is ever named — but this test stays
+    as a tripwire against reintroducing a named-diff path without also
+    reintroducing that bug class."""
     old_rows = [_c(ref="A", received="2026-01-10"), _c(ref="B", received="2026-01-09"),
                 _c(ref="C", received="2026-01-08"), _c(ref="D", received="2026-01-07")]
     old = cw.complaints_snapshot(old_rows, latest_window=3)
-    # A is removed; E(6) and F(5) are genuinely new but both OLDER than D,
-    # so neither makes the new top-3 window — D (an old survivor) does.
     new_rows = [_c(ref="B", received="2026-01-09"), _c(ref="C", received="2026-01-08"),
                 _c(ref="D", received="2026-01-07"), _c(ref="E", received="2026-01-06"),
                 _c(ref="F", received="2026-01-05")]
     new = cw.complaints_snapshot(new_rows, latest_window=3)
-    # Sanity check the setup actually reproduces the coincidence: count went
-    # up by exactly 1 (4 removed+2 added nets to +1) and the window-diff size
-    # is also exactly 1 (only D is newly visible) — the naive check alone
-    # would pass.
-    assert new["n"] - old["n"] == 1
+    assert new["n"] - old["n"] == 1   # the exact coincidence that used to slip through
     note, body = cw.summarize_complaints_change(old, new)
-    # D may legitimately appear as unclaimed CONTEXT (the fallback body shows
-    # current recent complaints, explicitly caveated as "not necessarily
-    # exhaustive") — what must never happen is D being claimed AS new.
     assert "+ NEW      D" not in body
-    assert "1 new complaint(s) —" not in note   # not the confident/exact form
-    assert "likely" in note                     # the honest fallback form
     assert "4 -> 5" in note
 
 
-def test_a_removal_at_the_bottom_of_the_window_also_does_not_misname_a_survivor():
-    """The Step 5 review's round-2 counterexample: round 1's first fix
-    (excusing the window's OLDEST `delta` entries by POSITION, on the theory
-    growth alone would push exactly those out) was itself incomplete — a
-    removal of one of those excused BOTTOM entries can still promote a
-    survivor undetected, since the position-based check never looks at it.
-    Here C (the bottom of the 3-entry window, not the top) is removed."""
-    # Same old full set as above: A(10), B(9), C(8), D(7) — window=3 -> [A,B,C].
+def test_a_date_correction_on_an_existing_complaint_never_produces_a_false_new_claim():
+    """Regression coverage for the Step 5 review's round-3 finding: an
+    EXISTING complaint's received_date being corrected by EGLE (e.g. blank ->
+    populated) can re-sort it into the window alongside a genuinely new
+    arrival, with no removal involved at all — a mechanism a purely
+    removal-based check (rounds 1/2's fix) could never catch. This is the
+    specific gap that proved the windowed-diff approach unfixable and
+    triggered dropping the named-diff path entirely: previously, a naive
+    diff could mislabel BOTH the genuinely-new ref and the merely-promoted
+    one as new. The shipped design never labels either."""
     old_rows = [_c(ref="A", received="2026-01-10"), _c(ref="B", received="2026-01-09"),
-                _c(ref="C", received="2026-01-08"), _c(ref="D", received="2026-01-07")]
-    old = cw.complaints_snapshot(old_rows, latest_window=3)
-    # C (bottom of window) is removed this time; E(6)/F(5) are genuinely new
-    # but both older than D, so D — an old survivor — is promoted instead.
+                _c(ref="C", received="")]  # C's date is unknown/blank at first, so it
+    old = cw.complaints_snapshot(old_rows, latest_window=2)   # sorts oldest; window is [A, B]
+    # C's date gets corrected (now ranks newest of all) AND D genuinely
+    # arrives — the ref-number set changes (D is new), so hash changes and
+    # an alert does fire, with C promoted into view for a reason that has
+    # nothing to do with being new.
     new_rows = [_c(ref="A", received="2026-01-10"), _c(ref="B", received="2026-01-09"),
-                _c(ref="D", received="2026-01-07"), _c(ref="E", received="2026-01-06"),
-                _c(ref="F", received="2026-01-05")]
-    new = cw.complaints_snapshot(new_rows, latest_window=3)
-    assert new["n"] - old["n"] == 1   # same coincidence as the round-1 case
+                _c(ref="C", received="2026-01-11"), _c(ref="D", received="2026-01-12")]
+    new = cw.complaints_snapshot(new_rows, latest_window=2)   # window is now [D, C]
+    assert new["n"] - old["n"] == 1   # only D is genuinely new
     note, body = cw.summarize_complaints_change(old, new)
+    assert "3 -> 4" in note
     assert "+ NEW      D" not in body
-    assert "1 new complaint(s) —" not in note
-    assert "likely" in note
-    assert "4 -> 5" in note
+    assert "+ NEW      C" not in body
 
 
 def test_first_sighting_exceeding_the_window_caveats_the_partial_list():
@@ -367,20 +345,20 @@ def test_first_sighting_exceeding_the_window_caveats_the_partial_list():
     assert "2 more not shown" in body
 
 
-def test_simultaneous_add_and_remove_inside_the_window_falls_back_honestly():
-    """A delta that doesn't match the windowed diff's size means something
-    more complex happened than pure growth — must not mis-name it."""
+def test_simultaneous_add_and_remove_reports_the_honest_net_count():
+    """A count delta that doesn't match how many refs changed (a removal
+    coinciding with arrivals) is exactly the case where naming an arrival
+    count would be wrong — net delta != arrival count. The note reports the
+    NET count change only, never an implied arrival count."""
     old = cw.complaints_snapshot([_c(ref="R1", received="2026-01-01"),
                                   _c(ref="R2", received="2026-01-02")], latest_window=50)
     new = cw.complaints_snapshot([_c(ref="R1", received="2026-01-01"),
                                   _c(ref="R3", received="2026-08-01"),
                                   _c(ref="R4", received="2026-08-02")], latest_window=50)
-    # n went 2 -> 3 (delta=1) but TWO refs are newly visible (R3, R4) and R2
-    # dropped out — the self-consistency check must catch this, not claim R3
-    # or R4 alone is "the" new complaint.
+    # n went 2 -> 3 even though TWO refs arrived (R3, R4) and one (R2) left.
     note, _ = cw.summarize_complaints_change(old, new)
     assert "2 -> 3" in note
-    assert "likely" in note   # honest fallback, not a confident name
+    assert "2 new" not in note   # never implies an arrival count from the net delta
 
 
 def test_decrease_is_always_a_removal_never_misread_as_new():
@@ -397,12 +375,6 @@ def test_same_count_but_changed_ref_set_is_reported_as_no_net_change():
     new = cw.complaints_snapshot([_c(ref="R2")])
     note, _ = cw.summarize_complaints_change(old, new)
     assert "no net count change" in note
-
-
-def test_window_refs_tolerates_a_malformed_latest_entry():
-    assert cw._window_refs({"latest": [["R1", "2026-01-01"], ["bad-entry"], None, []]}) == {
-        "R1": "2026-01-01"}
-    assert cw._window_refs({}) == {}
 
 
 # ==============================================================================
@@ -436,10 +408,12 @@ def test_baseline_at_n2688_scale_does_not_flood_an_alert(monkeypatch):
     assert sent == []
 
 
-def test_a_single_new_complaint_on_top_of_n2688_scale_is_named_exactly(monkeypatch):
+def test_a_single_new_complaint_on_top_of_n2688_scale_still_alerts_honestly(monkeypatch):
     """The scenario the whole design exists to serve: one real new filing
-    arrives on top of thousands of historical ones and must be named, not
-    buried in a bare count change."""
+    arrives on top of thousands of historical ones and must still trigger a
+    visible alert — reporting the honest count change plus context, not a
+    claimed name (see the module docstring for why naming was tried and
+    reverted), and NOT silently swallowed by the scale."""
     baseline_rows = [_c(ref=f"HQQ-{i:06d}", received="2020-01-01") for i in range(6400)]
     fake, sent = _wire(monkeypatch, COMPLAINTS_CFG, {"N2688": baseline_rows, "WRD": []})
     cw.run()   # baseline
@@ -451,8 +425,9 @@ def test_a_single_new_complaint_on_top_of_n2688_scale_is_named_exactly(monkeypat
     assert cw.run() == 0
     matches = [s for s in sent if "N2688" in s[0]]
     assert len(matches) == 1
-    assert "1 new complaint(s)" in matches[0][1]
-    assert "NEW-COMPLAINT-1" in matches[0][1]
+    assert "6400 -> 6401" in matches[0][1]
+    assert "NEW-COMPLAINT-1" in matches[0][1]   # newest-received, so it's in the context window
+    assert "+ NEW      NEW-COMPLAINT-1" not in matches[0][1]
 
 
 # ==============================================================================
@@ -698,7 +673,7 @@ def test_new_complaint_emails_an_alert(monkeypatch):
     assert cw.run() == 0
     matches = [s for s in sent if "N2688" in s[0] or "Arbor Hills Landfill" in s[0]]
     assert len(matches) == 1
-    assert "1 new complaint(s)" in matches[0][1]
+    assert "1 -> 2" in matches[0][1]
     assert "R2" in matches[0][1]
     assert matches[0][2] is None   # None -> send_email resolves full alert_recipients
 

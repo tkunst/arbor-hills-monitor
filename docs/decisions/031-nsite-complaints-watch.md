@@ -159,94 +159,95 @@ pathological `latest_window` config bump ever pushed it over budget), kept
 deliberately separate from the inherited digest-multiset machinery rather
 than force-fit into a shape that doesn't match what this profile stores.
 
-### Naming new complaints exactly, when the arithmetic proves it's safe
+### Naming new complaints was attempted, then deliberately reverted
 
-`latest` is not merely display context — it lets the watch name new
-complaints exactly in the common case, delivering design (a)'s value without
-its storage cost. If `latest` is the top-K by date **both this run and last
-run**, and fewer than K complaints arrived in between, then `new_window -
-old_window` (a plain set difference) is EXACTLY the newly-arrived refs: the
-`K - m` carried-over entries are, by construction, the same entries already
-present in the old window, so they cancel out of the difference, leaving
-only the genuinely new ones.
+An earlier version of this design tried to have `latest` do double duty: not
+just display context, but a windowed diff that could name new complaints
+exactly in the common case, delivering design (a)'s value without its
+storage cost. The idea — if `latest` is the top-K by date both this run and
+last run, and fewer than K complaints arrived in between, then
+`new_window - old_window` is exactly the newly-arrived refs — is correct
+under PURE growth. Three successive rounds of independent Step 5 review each
+found a different way real data breaks that purity assumption, and the
+pattern across the three rounds is what changed the decision, not any single
+bug:
 
-This claim is not merely asserted — `summarize_complaints_change` verifies
-it arithmetically before ever presenting it as exact: the windowed diff's
-size must equal the count delta (`new_n - old_n`) AND be smaller than the
-window itself. Either check failing (a burst exceeding the window, or
-simultaneous adds and removals producing a delta the window can't account
-for) falls back to an honest, un-named "count changed, more than the window
-can confirm — see nSITE" note rather than a confidently wrong claim. This
-was adversarially reviewed before implementation (see "Adversarial review"
-below) — an earlier draft of this design rejected windowing entirely on the
-mistaken belief that `current_full - old_window` (comparing the FULL current
-set against only the old window) was the only available diff, which does
-overestimate; the corrected comparison is `current_window - old_window`
-(both top-K), which does not.
+- **Round 1:** a self-consistency check (windowed-diff size equals the count
+  delta, and the delta is smaller than the window) is necessary but not
+  sufficient. Removing an in-window complaint while unrelated new ones
+  arrive can promote an older, previously-invisible survivor into the
+  window; if the counts happen to coincide, the check passes and the
+  survivor gets misnamed as new. **Fix attempted:** a third, POSITION-based
+  condition excusing the window's oldest `delta` entries (the ones pure
+  growth alone would push out).
+- **Round 2:** the position-based fix was itself incomplete — a removal of
+  one of the excused BOTTOM entries could still promote a survivor
+  undetected, since the position-based check never examined them. Concrete
+  counterexample: old set `A(10), B(9), C(8), D(7)`, window=3 → `[A,B,C]`;
+  removing **C** (the window's bottom entry) with two new, older complaints
+  arriving reproduces the same false-positive. **Fix attempted:** replaced
+  the position-based check with a VALUE-based one — every ref newly visible
+  in the window must rank NEWER (by the `(received_date, ref_num)` sort key)
+  than every ref that dropped out. Proven non-regressive (under pure growth,
+  the added and surviving items always form the new top-K by construction,
+  so the comparison can never reject a genuine case) and verified to catch a
+  removal at either end of the window.
+- **Round 3:** the value-based fix closed every REMOVAL-based route to a
+  false positive — but a THIRD, structurally different mechanism reaches the
+  same failure without any removal at all: an EXISTING complaint's
+  `received_date` being corrected by EGLE (e.g. a previously blank/
+  unparseable date getting populated later) re-sorts that complaint into the
+  window. `hash` — deliberately scoped to the ref-number SET only, to stay
+  immune to the EDT/EST date-offset flip (see the hash rationale above) —
+  does not change when only a date is corrected, so this is invisible to the
+  primary change signal too, and the exact-naming path's soundness proof
+  implicitly assumed dates on existing records never change, which is false
+  in this specific case.
 
-At N2688's current rate (~0.16/day, ~60/year), a default K=50 gives roughly
-300 days of margin before ordinary growth alone could exceed the window.
-N2688's own history contains a real burst that WOULD exceed it — 246
-complaints on a single day, 2019-11-18 — so the honest fallback path is
-tested insurance, not a hypothetical (`test_growth_exceeding_the_window_
-falls_back_honestly_not_a_false_claim`).
+**The pattern across three rounds — not the individual bugs — is what forced
+the decision.** Each fix closed exactly the failure mode the prior round
+found and was defeated by a differently-shaped one. That is the signature of
+a structural limitation, not a sequence of missed edge cases: this snapshot,
+by design, never stores old's full ref-number set (that is the entire reason
+it fits in one Sheets cell at N2688's 6,396-record scale — see Finding 2
+above). For any ref newly visible in `latest`, there is consequently no
+stored fact able to distinguish "this complaint is genuinely new" from "this
+complaint existed all along outside the visible window, and something —
+removal of a displacing entry, or a date correction — just made it visible."
+No further check on `{n, hash, latest[K]}` can close that gap; doing so
+would require storing something about full prior-set membership, which is
+exactly what Finding 2 ruled out. A CONDITIONAL caveat (name it, but warn
+"might be wrong") doesn't help either, because which alerts are at risk
+can't be told apart from which aren't — it would fire on every single growth
+alert, which is the honest count+context message below with extra ceremony
+and a live false-positive-prone code path still behind it.
 
-**Step 5 independent review found the two-condition self-consistency check
-above (delta == windowed-diff size, and under the window) is NECESSARY but
-NOT SUFFICIENT**, with a concrete counterexample: removing an in-window
-complaint while unrelated new ones arrive can promote an older, previously-
-invisible survivor into the window. If the counts happen to line up (e.g. 1
-removed + 2 added nets to +1, and exactly one old survivor gets promoted
-into view), the two-condition check passes by coincidence and the survivor
-would be named as new — even though it was on file all along, just outside
-the old window.
+**Decision: the named-diff branch is removed. Every growth case — a nonzero
+old baseline with `n` increased, for ANY reason — gets the same honest
+message: the count change (`old_n -> new_n`) plus the `latest` window shown
+purely as recent-complaint CONTEXT, explicitly labeled as not necessarily
+exhaustive or exact.** `latest` still exists in the snapshot and still
+serves a real purpose — it gives a human reading the alert a concrete
+starting point in nSITE without a separate lookup — it is simply never
+diffed to make a naming claim. Deleting the claim, rather than caveating it,
+also deletes the three-round bug class at its root: if nothing is ever
+labeled "+ NEW", "a non-new thing labeled new" is impossible by
+construction, and all four findings across the three rounds evaporate
+together rather than needing a fourth defense.
 
-**Round 1 fix (superseded — see round 2 below):** a third, POSITION-based
-condition — every old-window entry that pure growth alone would still leave
-inside the window (all but its oldest `delta` entries, on the theory that
-`delta` genuine new arrivals would push exactly those out) had to still be
-visible in the new window.
+**The one case where naming specific refs IS sound, and is kept:** a
+confirmed-empty prior baseline (`old_n == 0`, from a real previously-recorded
+snapshot, not a missing one). If the old snapshot legitimately showed zero
+complaints, the old window was empty too — there is no possibility of an old
+survivor hiding outside a window that held nothing. Every ref appearing in
+`new`'s window is therefore unambiguously new, with no information-theoretic
+gap to close. This "FIRST COMPLAINT(S) RECORDED" branch is untouched by this
+decision and still names refs exactly (with the same over-window caveat as
+before, if the true count exceeds what the window shows —
+`test_first_sighting_exceeding_the_window_caveats_the_partial_list`).
 
-**Round 2 of the Step 5 review found round 1's fix itself incomplete:**
-excusing the window's bottom `delta` entries BY POSITION means a removal of
-one of those excused entries can still promote a survivor undetected — the
-position-based check never looks at them. Concrete counterexample: same old
-set `A(10), B(9), C(8), D(7)`, window=3 → `[A,B,C]`; this time **C** (the
-window's bottom entry, not the top) is removed, with two new, older
-complaints arriving — the same coincidence (count +1, window-diff size 1)
-passes round 1's fix just as it passed the original two-condition check,
-naming survivor D as new.
-
-**Fixed (shipped) with a VALUE-based comparison instead of a position-based
-one:** every ref newly visible in the window must rank NEWER — by the same
-`(received_date, ref_num)` sort key `latest` is itself ordered by — than
-every ref that dropped OUT of the window. This is the sound invariant
-position-based reasoning was an incomplete proxy for: under pure growth,
-anything that displaces an old window member must rank above everything it
-displaces (old items' relative order never changes, so a dropped item can
-only have been pushed out by items ranking above it); a removal breaks this
-because the survivor it promotes ranks OLDER than whatever left the window
-above it, regardless of WHERE in the window that removal occurred. Verified
-non-regressive: under genuine pure growth, the added and surviving items
-together form the new top-K by construction, so this comparison can never
-reject a case the first two conditions already accept.
-
-This is a strictly ADDITIONAL, sound constraint — verified NOT to make the
-design overly conservative
-(`test_growth_with_interspersed_dates_still_names_exactly_no_over_
-conservatism` — a genuinely new complaint dated BETWEEN two existing window
-entries, not the newest overall, is still named exactly) and verified to
-catch BOTH counterexamples regardless of removal position within the window
-(`test_a_removal_that_promotes_an_old_survivor_does_not_misname_it_as_new`
-for the top-of-window case, `test_a_removal_at_the_bottom_of_the_window_
-also_does_not_misname_a_survivor` for the bottom-of-window case round 2
-found round 1's fix missed).
-
-The zero-baseline ("FIRST COMPLAINT(S) RECORDED") branch had a related,
-lower-severity gap: it listed the `latest` window's contents unconditionally,
-with no caveat if the true count exceeded what fit in the window — unlike
-the >K-growth fallback, which already says so explicitly. Fixed the same
-way (`test_first_sighting_exceeding_the_window_caveats_the_partial_list`).
+This was NOT treated as "round 4 of the same fix-and-review loop" against
+this repo's 3-round convergence cap — see "Process note" below.
 
 ### Removals are never misread as new
 
@@ -258,12 +259,40 @@ kept — only the most-recent K by date, and a removed complaint could be
 anywhere in the history), so the note is honestly count-only for a removal
 rather than inventing a name it can't support.
 
+### Process note: why reverting the named-diff path was not "round 4"
+
+This repo's overnight-coder procedure caps Step 5/7's resolve-and-re-review
+loop at 3 rounds, with explicit guidance that failure to converge in 3
+rounds is a signal to stop and hand the PR to Trisha, not grind a 4th round —
+"a loop that can't converge in 3 rounds is telling you something (goal is
+underspecified, or the fix approach is wrong), not something a 4th round
+will fix." Round 3's finding was read as exactly that signal, correctly: it
+was the third instance of the SAME failure class (an old, non-new complaint
+labeled as new) reached by a third, structurally distinct mechanism, on top
+of a proof that the storage design cannot support any check closing the
+class for good. Attempting a fourth patch — a fourth condition on top of the
+value-based comparison — would have been the literal grinding this repo's
+procedure warns against, with no reason to expect a fourth mechanism
+wouldn't surface in a hypothetical round 5.
+
+The response taken instead — deleting the named-diff path rather than
+patching it again — is not a fourth patch attempt at the same approach; it
+is recognizing the approach itself was wrong and replacing it with the one
+the handoff already authorized as a fallback (design (b), "smaller and
+simpler," explicitly named as the fallback if design (a) didn't survive
+scrutiny). Nothing about this fix is conditional or heuristic — it does not
+depend on knowing which future case would break next, so it needed exactly
+one round of review (not a fresh 3-round budget), confirming the deletion is
+sound and that `/security-review` still passes on the simplified diff.
+
 ## Adversarial review (mitigations built in, per this repo's standing process rule)
 
-- **Show-stopper if unmitigated: a confidently-wrong "named" diff during a
-  burst.** The self-consistency check (delta must equal the windowed diff's
-  size AND be under the window) is the mitigation; both failure conditions
-  (burst, simultaneous churn) are directly tested, not merely reasoned about.
+- **Show-stopper if unmitigated: a confidently-wrong "named" diff misreporting
+  an old complaint as new.** Three review rounds each found a different
+  mechanism reaching this failure (see "Naming new complaints was attempted,
+  then deliberately reverted" above); the mitigation shipped is not a check
+  but a deletion — the named-diff branch is gone, so this class of bug is
+  impossible by construction rather than merely detected.
 - **Show-stopper if unmitigated: the snapshot silently exceeds the cell cap.**
   Mitigated by construction (the design is O(K), not O(n)) plus a defensive
   clamp for a pathological config bump; the large-volume test
@@ -276,9 +305,9 @@ rather than inventing a name it can't support.
   (`test_baseline_at_n2688_scale_does_not_flood_an_alert`), not only at toy
   volumes the way a naive test suite might stop short of.
 - **Manageable: a removed/withdrawn complaint changing the hash could read as
-  "new" if mishandled.** Mitigated: count comparison (`n` decreased) is
-  checked before any windowed-diff naming logic runs, so a removal is always
-  labeled a removal.
+  "new" if mishandled.** Mitigated: the count comparison (`n` decreased) is
+  checked and returned before the growth branch is ever reached, so a
+  removal is always labeled a removal, never new.
 - **Residual (accepted, same as every stream here): a persistent fetch
   failure after baseline goes skip-and-warn quiet.** Loud (exit 1) before
   baseline, so an activation-time block surfaces. Given this is the largest-
@@ -286,6 +315,35 @@ rather than inventing a name it can't support.
   structural-paging guard (inherited from every sibling) is a live risk
   here specifically, not theoretical insurance — a future EGLE paging
   change would otherwise read as thousands of complaints vanishing at once.
+
+## Residual risks (accepted)
+
+- **This watch cannot name which specific complaint is new, for a nonzero
+  baseline.** Every growth alert says the count changed and shows recent
+  complaints as context, never which one(s) are the change. This is the
+  direct, accepted cost of closing the three-round false-positive class
+  above — the two are the same trade-off, not two separate problems. A human
+  reading the alert checks nSITE directly for the specifics, same as they
+  already must for a removal (this watch never named which complaint was
+  removed either, from day one). **Recovery, if this residual ever becomes
+  the wrong trade for a specific high-value site:** the sound way to
+  actually name new complaints is full-set-membership storage, which
+  trivially fits for any low-volume site (RA has 5 complaints total, COMP
+  has 1) — only N2688's 6,396 records forced the windowed design in the
+  first place. A future per-site "full-membership-when-it-fits" mode would
+  be a small, clean addition on top of this same snapshot shape; it is
+  explicitly deferred, not built here, to keep this PR's diff to the
+  decision it actually needed to make.
+- **A pure `received_date` correction on an existing complaint, with no
+  count change, is invisible to this watch.** `hash` is deliberately scoped
+  to the ref-number set (see the hash rationale above) so it does not change
+  when only a date is corrected and nothing is added or removed — no alert
+  fires, and `latest`'s display order silently re-sorts on the next run
+  that IS triggered by something else. This is intentional, not an
+  oversight: the alternative (hashing dates too) would false-fire a
+  "changed" alert on every EDT/EST flip, twice a year, across all 6,396
+  N2688 records — a worse trade for a lower-value signal (EGLE data-entry
+  timing is not itself a finding worth alerting on).
 
 ## Decisions
 
@@ -402,9 +460,9 @@ Drive/OAuth dependency.
 not merely asserted. Which sites are due depends on the date via `_is_due`
 (N2688 daily always; RA/WRD/P1488 biweekly inside their staggered 3-day
 windows; the remaining 15 quarterly). Alerts begin only on the next run in
-which something changes — at N2688's current rate, plausibly one new
-complaint every week or so, which the watch will name exactly by ref number
-and received date.
+which something changes — at N2688's current rate, plausibly a count change
+every week or so, reported honestly (count changed X -> Y, plus recent
+complaints shown as context) rather than a claimed name.
 
 Recipients start as **Trisha only** (`nsite_complaints.recipients`), the
 established precedent for a brand-new alert stream.

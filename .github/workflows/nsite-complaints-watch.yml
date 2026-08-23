@@ -4,11 +4,12 @@ name: nsite-complaints-watch
 # Complaints profile — citizen/agency reports filed against a facility, often
 # the trigger for an inspection — for every site in config.yml's
 # `nsite_sites` registry that has an `nsite_complaints.tiers` entry. Emails
-# an alert on a brand-new complaint (named exactly when fewer arrived than
-# the watch's recent-window size, an honest count-only note otherwise) or a
-# complaint no longer appearing, vs the last fingerprint in the "Complaints
-# Watch" tab; the first sighting of each site baselines silently — including
-# at N2688's 6,396 real records.
+# an alert on a complaint count change (an honest count-change note plus
+# recent-complaint context — never a claimed diff naming which complaint is
+# new, a design tried and reverted after three review rounds; see ADR 031)
+# or a complaint no longer appearing, vs the last fingerprint in the
+# "Complaints Watch" tab; the first sighting of each site baselines
+# silently — including at N2688's 6,396 real records.
 #
 # Ships nsite_complaints.enabled: FALSE — a brand-new poller against a live
 # external system, built unattended (overnight-coder Step 3), so this job runs
