@@ -262,14 +262,23 @@ external users but no sensitive data). Public repo.
   snapshot is a `{n, hash, latest[K]}` fingerprint instead — small BY
   CONSTRUCTION, not degraded into smallness. `hash` is over the sorted
   ref-number SET only (immune to the EDT/EST date-offset flip); `latest` is
-  the K=50 most-recently-received complaints, which lets the watch NAME a new
-  complaint exactly whenever fewer than K arrived since the last check (the
-  windowed-diff arithmetic is self-verified before being presented as exact —
-  see `summarize_complaints_change`), falling back to an honest count-only
-  note on a burst exceeding the window (N2688's own history has one: 246
-  complaints in a single day, 2019-11-18) or on simultaneous adds/removals. A
-  count decrease is always labeled a removal, never misread as new. Makes no
-  severity judgment (this profile carries no status field at all). Tiers are
+  the K=50 most-recently-received complaints, kept as display CONTEXT only —
+  NEVER diffed to name a specific complaint as new. An earlier version tried
+  exactly that (naming whenever fewer than K arrived since the last check)
+  and three independent Step 5 review rounds each found a different way it
+  misnamed an old survivor as new — a removal promoting a hidden entry into
+  view; the same at the bottom of the window; an existing complaint's
+  `received_date` being corrected by EGLE, which re-sorts it into view
+  without changing `hash` (ref-set-only) and without any removal at all —
+  proving the gap structural (this snapshot never stores old's full
+  ref-number set, so no check on it can distinguish genuinely-new from
+  merely-revealed) rather than a fixable edge case. So every growth case
+  gets the same honest count-change note plus recent-complaint context
+  (`summarize_complaints_change`), unconditionally — the sole exception is a
+  confirmed-empty (`n==0`) prior baseline, where naming IS sound since there
+  is no possibility of a hidden survivor. A count decrease is always labeled
+  a removal, never misread as new. Makes no severity judgment (this profile
+  carries no status field at all). Tiers are
   this profile's own (**1 daily / 3 biweekly / 15 quarterly**), assigned from
   the complaint-filing RATE (N2688's trailing-365-day rate, ~0.16/day), not
   the raw 6,396 — only N2688 is daily. Gated on `nsite_complaints.enabled`

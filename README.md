@@ -289,15 +289,18 @@ any advocacy organization.
     the 50,000-char Sheets cell cap), since complaints carry zero
     duplicate-tuple compression, unlike Violations' RA. So the snapshot is a
     tiny `{n, hash, latest[K]}` fingerprint instead — small **by
-    construction**, not degraded into smallness — that names a new complaint
-    exactly whenever fewer than K arrived since the last check (the common
-    case; K=50 gives ~300 days of margin at N2688's current rate), falling
-    back to an honest count-only note when a burst exceeds the window
-    (N2688's own history has one: 246 complaints in a single day,
-    2019-11-18) rather than presenting a partial list as exhaustive. A
-    removed/withdrawn complaint is always labeled a removal, never
-    misreported as new. Own per-site tiers (`1/3/15`), assigned from the
-    complaint-filing RATE, not the raw 6,396 — only N2688 earns daily.
+    construction**, not degraded into smallness. It deliberately does NOT try
+    to name which complaint(s) are new: an earlier version tried to, and
+    three independent adversarial-review rounds each found a different way a
+    windowed top-K snapshot can misname an old survivor as new (a removal
+    promoting a hidden entry into view; the same at the bottom of the window;
+    an existing complaint's date being corrected by EGLE) — a structural
+    limit of never storing the old full ref-set, not a fixable edge case, so
+    every change alert is an honest count-change note plus recent-complaint
+    context, never a claimed diff. A removed/withdrawn complaint is always
+    labeled a removal, never misreported as new. Own per-site tiers
+    (`1/3/15`), assigned from the complaint-filing RATE, not the raw
+    6,396 — only N2688 earns daily.
     Snapshot-diff into the `Complaints Watch` tab; first sighting baselines
     silently, verified at N2688's real scale. New source, ships disabled —
     see `docs/decisions/031-nsite-complaints-watch.md` for activation (**one**
