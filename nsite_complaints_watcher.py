@@ -60,9 +60,11 @@ exactly three things per site:
   - `latest`         — the K most-recently-received complaints (ref_num +
                        received_date pairs), K from `nsite_complaints.
                        latest_window` (default 50).
-This whole structure serializes to well under 1,000 chars even at N2688's
-volume — there is no budget-degradation CASCADE here (unlike Violations'
-_cell_payload), only a defensive truncate-the-window clamp
+This whole structure serializes to ~1,600 chars at N2688's volume with the
+default 50-entry window (measured, not estimated) — a ~28x margin under the
+45,000-char budget, not merely under the 50,000-char Sheets cap. There is no
+budget-degradation CASCADE here (unlike Violations' _cell_payload), only a
+defensive truncate-the-window clamp
 (_cell_payload below) as insurance against a pathological config bump, kept
 structurally separate from the multiset idiom because its shape doesn't
 match: there is no `counted_rows` to degrade to a digest form.
@@ -183,7 +185,7 @@ from nsite_submissions_watcher import _is_due
 
 # A Google Sheets cell holds at most 50,000 characters — a hard API limit, not
 # a tunable. The complaints fingerprint never approaches it (see module
-# docstring: {n, hash, latest[K]} serializes to well under 1,000 chars even at
+# docstring: {n, hash, latest[K]} serializes to ~1,600 chars, measured, even at
 # N2688's 6,396 records), so this budget is defensive insurance against a
 # pathological `latest_window` config bump, NOT a live concern the way it was
 # for Violations' RA (299 records, 24,884 chars counted).
@@ -577,10 +579,13 @@ def run() -> int:
     # entirely and hand the site a permanently rejected write.
     budget = min(int(ccfg.get("snapshot_char_budget") or DEFAULT_SNAPSHOT_CHAR_BUDGET),
                  HARD_SHEETS_CELL_LIMIT - 1000)
-    # Clamped to at least 1: a window of 0 would show zero context lines on
-    # every change alert, which is a degraded experience but not a
-    # correctness issue (the count+context note never depends on the window
-    # covering the full delta — see summarize_complaints_change).
+    # Clamped to at least 1 for a NEGATIVE config value (a typo like -5) —
+    # NOT for an explicit 0, which the `or DEFAULT_LATEST_WINDOW` above
+    # already redirects to the default (50) before max() ever sees it,
+    # since 0 is falsy in Python. Either way there is no correctness issue
+    # to guard against, only a degraded-context-list edge case: the
+    # count+context note never depends on the window covering the full
+    # delta — see summarize_complaints_change.
     latest_window = max(1, int(ccfg.get("latest_window") or DEFAULT_LATEST_WINDOW))
     # Resolve the working site list by joining the shared identity registry
     # (nsite_sites, ADR 022) with THIS profile's own cadence map. A `tiers` srn
