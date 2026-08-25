@@ -81,8 +81,8 @@ jobs:
           # no-op (archive_client.is_configured() is false) — the watcher
           # falls back to the nSITE link exactly as it did before this was
           # added, never failing or blocking on it.
-          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID }}
-          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
-          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID_KUNST }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET_KUNST }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN_KUNST }}
           GOAUTH_ARCHIVE_FOLDER_ID: ${{ secrets.GOAUTH_ARCHIVE_FOLDER_ID }}
         run: python watcher.py
