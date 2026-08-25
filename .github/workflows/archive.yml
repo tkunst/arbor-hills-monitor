@@ -44,8 +44,8 @@ jobs:
           # Sheets I/O uses the service account (drive.file grants no Sheets
           # access); the Drive upload uses the OAuth user client. Hence both.
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
-          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID }}
-          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
-          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID_KUNST }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET_KUNST }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN_KUNST }}
           GOAUTH_ARCHIVE_FOLDER_ID: ${{ secrets.GOAUTH_ARCHIVE_FOLDER_ID }}
         run: python archiver.py

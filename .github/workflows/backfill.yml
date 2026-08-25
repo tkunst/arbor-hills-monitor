@@ -87,8 +87,8 @@ jobs:
           # Drive inline (archiver.mirror_one_now()), best-effort, same as
           # daily.yml's watcher step. Unset = quiet no-op, falls back to the
           # nSITE link exactly as before this was added.
-          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID }}
-          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
-          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID_KUNST }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET_KUNST }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN_KUNST }}
           GOAUTH_ARCHIVE_FOLDER_ID: ${{ secrets.GOAUTH_ARCHIVE_FOLDER_ID }}
         run: python backfill.py
