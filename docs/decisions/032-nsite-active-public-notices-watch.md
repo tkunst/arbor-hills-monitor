@@ -414,6 +414,20 @@ that match can't be made confidently.**
   now read backwards — an email firing at all means THIS TIME it didn't
   look like one).
 
+### Residual risk: the heuristic is validated only against ROP samples
+
+Both real records seen to date (2026-07-24 and 2026-08-25) are ROP renewal
+notices — the test suite's realistic fixtures are necessarily drawn from the
+same two samples. That means the one direction that actually costs something
+is unmeasured: a **false positive**, where a genuinely novel *non-ROP* notice
+happens to mention "ROP" or "renewable operating permit" in passing (e.g. a
+hearing notice distinguishing itself from the ROP track) and has its **email
+suppressed** — muting the exact signal this stream exists to add over Stream
+H, on the one category of notice it uniquely surfaces. The durable Sheet row
+is unaffected (nothing is lost from the audit trail), but the alert — the
+deliverable — would be silent. If that ever bites, `rop_alert_suppression:
+false` is the immediate rollback, no code change required.
+
 ### What this does not change
 
 - Open Decision 2 (the diff key's evidence base is n=1 real records) is
