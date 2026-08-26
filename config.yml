@@ -1050,27 +1050,42 @@ nsite_complaints:
 # (publicNotifPnurl), NOT publicNotifExtrnlPublNoticeNum (null on every live
 # record seen so far) — see nsite_client._normalize_public_notice.
 #
-# THIS PROFILE SHIPS ENABLED:FALSE AND STAYS FALSE PENDING A HUMAN DECISION,
-# not just "until reviewed" like a routine new poller. Live sampling found
-# only ONE record total across all 19 sites on BOTH 2026-07-24 and 2026-08-25,
-# and both times it was a ROP renewal comment-window notice ALREADY watched
-# by the dedicated ROP watch below (`rop:`, ADR 017) through a different
-# mechanism. Confirmed via the API's own field-metadata that no program-area
-# or facility-category field exists in this profile to filter on, so a clean
-# "just the non-ROP notices" scope is not available without EGLE adding one.
-# See docs/decisions/032-nsite-active-public-notices-watch.md for the full
-# three-option writeup (standalone / dedupe against `rop:` / scope to
-# non-ROP) this profile leaves for Trisha to decide before it is ever turned
-# on — turning it on today, unmodified, silently chooses "standalone" (double
-# alerts on a ROP renewal window) by default.
+# Live sampling found only ONE record total across all 19 sites on BOTH
+# 2026-07-24 and 2026-08-25, and both times it was a ROP renewal
+# comment-window notice ALREADY watched by the dedicated ROP watch below
+# (`rop:`, ADR 017) through a different mechanism. Confirmed via the API's
+# own field-metadata that no program-area or facility-category field exists
+# in this profile to filter on, so a clean "just the non-ROP notices" scope
+# via a structured field is not available without EGLE adding one.
+#
+# RESOLVED 2026-08-26 (Trisha-directed): rather than pick pure standalone
+# (both real alerts to date would have been redundant with Stream H) or a
+# Stream H state-based dedupe (couples two independently-evolving mechanisms
+# for uncertain benefit), this watch suppresses its own EMAIL — never the
+# durable Sheet row — when a changed notice's text reads as a ROP renewal by
+# keyword match, failing open (alerting) whenever that match can't be made
+# confidently. See `rop_alert_suppression` below and
+# docs/decisions/032-nsite-active-public-notices-watch.md's 2026-08-26
+# addendum for the full writeup.
 nsite_public_notices:
+  # Ships FALSE still — the DESIGN question above is resolved, but turning
+  # this live poller on against a real external system is a separate, later
+  # human step, same as every other new-source stream in this series.
   enabled: false
   # Recipient override: Trisha only to start (every sibling nSITE watch's
   # precedent for a brand-new alert stream). Delete/comment this block to
   # send to the full alert_recipients list once the alert copy has been seen
-  # in the wild — and once the ROP-overlap question above has an answer.
+  # in the wild.
   recipients:
     - arbor-hills@trishakunst.com
+  # Suppress the EMAIL (never the durable Sheet row above it) when EVERY
+  # notice in a given change reads as a ROP renewal comment window by
+  # keyword match on its `comments` text — see
+  # nsite_public_notices_watcher._all_changed_notices_look_like_rop. Fails
+  # open (alerts) on any non-match, any degraded/truncated snapshot, or an
+  # unreadable previous snapshot. Set to `false` to revert to pure
+  # standalone alerting (every change emails) without a code change.
+  rop_alert_suppression: true
   # ROLLBACK LEVER, inherited from ADR 029/030 for parity — `notice_id` can
   # NEVER be excluded regardless of what is listed here (see diff_fields() in
   # nsite_public_notices_watcher.py): it is the diff KEY, not a display

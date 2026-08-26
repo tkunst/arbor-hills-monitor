@@ -426,13 +426,107 @@ def test_format_change_body_has_essentials_and_no_severity_judgment():
 
 
 def test_format_change_body_discloses_the_rop_overlap():
-    """The core mitigation ADR 032 asks for regardless of which of the three
-    ROP-overlap options Trisha eventually picks: every alert this profile
-    sends must say plainly that it may duplicate Stream H's ROP watch."""
+    """Every alert this profile sends must still say plainly that a mismatch
+    here doesn't guarantee this isn't a ROP notice, and that a duplicate-
+    seeming email from Stream H is a known, disclosed limitation."""
     body = pnw.format_change_body("nSITE Active Public Notices — Arbor Hills Energy (N1504)",
                                   "new public notice recorded", "+ NEW NOTICE  N-1")
     assert "ROP" in body
     assert "known, disclosed overlap" in body
+
+
+# ==============================================================================
+# ROP-overlap alert suppression (ADR 032's Open Decision 1, resolved
+# 2026-08-26) — suppress the redundant EMAIL, never the durable Sheet row,
+# for a notice that reads as a ROP renewal Stream H already tracks
+# ==============================================================================
+
+_ROP_COMMENTS = _RAW_NOTICE_N1504["publicNotifComments"]   # the real live specimen's text
+_NON_ROP_COMMENTS = "A wetland permit application public comment period."
+
+
+def test_looks_like_rop_notice_matches_the_real_live_specimen():
+    assert pnw._looks_like_rop_notice(_ROP_COMMENTS) is True
+
+
+def test_looks_like_rop_notice_does_not_match_unrelated_text():
+    assert pnw._looks_like_rop_notice(_NON_ROP_COMMENTS) is False
+
+
+def test_looks_like_rop_notice_matches_a_bare_rop_token_case_insensitively():
+    assert pnw._looks_like_rop_notice("see the attached rop renewal packet") is True
+
+
+def test_looks_like_rop_notice_does_not_false_positive_on_a_substring():
+    """\bROP\b must not match inside an unrelated word like "crop" or "drop"."""
+    assert pnw._looks_like_rop_notice("a crop disposal and drop-off site notice") is False
+
+
+def test_looks_like_rop_notice_handles_empty_and_none():
+    assert pnw._looks_like_rop_notice("") is False
+    assert pnw._looks_like_rop_notice(None) is False
+
+
+def test_all_changed_notices_look_like_rop_true_for_a_new_rop_notice():
+    old = pnw.public_notices_snapshot([], FIELDS)
+    new = pnw.public_notices_snapshot([_pn(comments=_ROP_COMMENTS)], FIELDS)
+    assert pnw._all_changed_notices_look_like_rop(old, new) is True
+
+
+def test_all_changed_notices_look_like_rop_false_for_a_new_non_rop_notice():
+    old = pnw.public_notices_snapshot([], FIELDS)
+    new = pnw.public_notices_snapshot([_pn(comments=_NON_ROP_COMMENTS)], FIELDS)
+    assert pnw._all_changed_notices_look_like_rop(old, new) is False
+
+
+def test_all_changed_notices_look_like_rop_checks_the_new_side_for_a_changed_notice():
+    old = pnw.public_notices_snapshot([_pn(comments=_NON_ROP_COMMENTS, end_date="2026-09-09")], FIELDS)
+    new = pnw.public_notices_snapshot([_pn(comments=_ROP_COMMENTS, end_date="2026-10-09")], FIELDS)
+    assert pnw._all_changed_notices_look_like_rop(old, new) is True
+
+
+def test_all_changed_notices_look_like_rop_checks_the_old_side_for_a_removed_notice():
+    old = pnw.public_notices_snapshot([_pn(comments=_ROP_COMMENTS)], FIELDS)
+    new = pnw.public_notices_snapshot([], FIELDS)
+    assert pnw._all_changed_notices_look_like_rop(old, new) is True
+
+
+def test_all_changed_notices_look_like_rop_fails_open_on_a_mixed_batch():
+    """One non-matching notice among several must mean the WHOLE diff still
+    alerts — no partial suppression."""
+    old = pnw.public_notices_snapshot([], FIELDS)
+    new = pnw.public_notices_snapshot(
+        [_pn(notice_id="A", comments=_ROP_COMMENTS),
+         _pn(notice_id="B", comments=_NON_ROP_COMMENTS)], FIELDS)
+    assert pnw._all_changed_notices_look_like_rop(old, new) is False
+
+
+def test_all_changed_notices_look_like_rop_fails_open_on_a_truncated_snapshot():
+    old = pnw.public_notices_snapshot([], FIELDS)
+    huge_new = pnw.public_notices_snapshot(
+        [_pn(notice_id=f"N-{i:05d}", comments=_ROP_COMMENTS) for i in range(400)], FIELDS)
+    truncated_new = json.loads(pnw._cell_payload(huge_new, budget=20000))
+    assert truncated_new.get("truncated") is True
+    assert pnw._all_changed_notices_look_like_rop(old, truncated_new) is False
+
+
+def test_all_changed_notices_look_like_rop_fails_open_on_a_duplicate_key_state():
+    old = pnw.public_notices_snapshot([], FIELDS)
+    new = pnw.public_notices_snapshot(
+        [_pn(notice_id="X", comments=_ROP_COMMENTS),
+         _pn(notice_id="X", comments=_ROP_COMMENTS, coverage="Statewide")], FIELDS)
+    assert pnw._duplicate_key_count(new) > 0
+    assert pnw._all_changed_notices_look_like_rop(old, new) is False
+
+
+def test_all_changed_notices_look_like_rop_fails_open_on_an_unreadable_previous_snapshot():
+    new = pnw.public_notices_snapshot([_pn(comments=_ROP_COMMENTS)], FIELDS)
+    assert pnw._all_changed_notices_look_like_rop({}, new) is False
+
+
+def test_all_changed_notices_look_like_rop_false_when_there_is_nothing_to_check():
+    snap = pnw.public_notices_snapshot([_pn(comments=_ROP_COMMENTS)], FIELDS)
+    assert pnw._all_changed_notices_look_like_rop(snap, copy.deepcopy(snap)) is False
 
 
 # ==============================================================================
@@ -788,6 +882,117 @@ def test_detail_change_on_an_existing_notice_emails_an_alert(monkeypatch):
     assert len(matches) == 1
     assert "N-1" in matches[0][1]
     assert "end_date: 2026-09-09 -> 2026-10-09" in matches[0][1]
+
+
+def test_a_new_notice_matching_rop_language_is_recorded_but_email_suppressed(monkeypatch):
+    """The core resolved behavior: a ROP-looking notice still gets its
+    durable Sheet row (baseline -> changed), but no email fires, and this is
+    NOT treated as a failure (exit 0, no alert_failed count)."""
+    fake, sent = _wire(monkeypatch, PN_CFG, {"N1504": [], "WRD": []})
+    pnw.run()   # baseline both at zero
+    monkeypatch.setattr(pnw.nc, "fetch_site_public_notices",
+                        lambda session, nsite_id: (
+                            [_pn(notice_id="N-1", comments=_ROP_COMMENTS)]
+                            if nsite_id == _N1504_ID else []))
+    assert pnw.run() == 0
+    n1504_rows = [r for r in _rows(fake) if r[1] == "pubntc:N1504"]
+    assert len(n1504_rows) == 2 and n1504_rows[1][3] == "changed"
+    assert "N-1" in n1504_rows[1][7]           # the durable row IS written, in full
+    assert sent == []                          # but no email
+
+
+def test_the_real_n1504_specimen_is_suppressed_end_to_end(monkeypatch):
+    """The live specimen this whole design question was built around: fed
+    through the REAL fetch/normalize path (nc.fetch_site_public_notices,
+    not a stand-in), it must be suppressed exactly like the synthetic ROP
+    fixture above."""
+    real_fetch = nc.fetch_site_public_notices   # captured BEFORE _wire monkeypatches it
+    fake, sent = _wire(monkeypatch, PN_CFG, {"N1504": [], "WRD": []})
+    pnw.run()   # baseline at zero
+
+    class _Resp2:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"queryResults": [_RAW_NOTICE_N1504]}
+
+    class _RealFetchSession:
+        def get(self, url, headers=None, timeout=None):
+            return _Resp2()
+
+    monkeypatch.setattr(pnw.nc, "fetch_site_public_notices",
+                        lambda session, nsite_id: (
+                            real_fetch(_RealFetchSession(), nsite_id)
+                            if nsite_id == _N1504_ID else []))
+    assert pnw.run() == 0
+    n1504_rows = [r for r in _rows(fake) if r[1] == "pubntc:N1504"]
+    assert len(n1504_rows) == 2 and n1504_rows[1][3] == "changed"
+    assert "-1797947627965436698" in n1504_rows[1][7]   # the real extracted notice_id, in the durable row
+    assert sent == []
+
+
+def test_a_new_notice_not_matching_rop_language_still_emails(monkeypatch):
+    fake, sent = _wire(monkeypatch, PN_CFG, {"N1504": [], "WRD": []})
+    pnw.run()   # baseline
+    monkeypatch.setattr(pnw.nc, "fetch_site_public_notices",
+                        lambda session, nsite_id: (
+                            [_pn(notice_id="N-1", comments=_NON_ROP_COMMENTS)]
+                            if nsite_id == _N1504_ID else []))
+    assert pnw.run() == 0
+    matches = [s for s in sent if "Arbor Hills Energy" in s[0]]
+    assert len(matches) == 1
+    assert "N-1" in matches[0][1]
+
+
+def test_rop_alert_suppression_config_lever_off_reverts_to_always_alert(monkeypatch):
+    cfg = copy.deepcopy(PN_CFG)
+    cfg["nsite_public_notices"]["rop_alert_suppression"] = False
+    fake, sent = _wire(monkeypatch, cfg, {"N1504": [], "WRD": []})
+    pnw.run()   # baseline
+    monkeypatch.setattr(pnw.nc, "fetch_site_public_notices",
+                        lambda session, nsite_id: (
+                            [_pn(notice_id="N-1", comments=_ROP_COMMENTS)]
+                            if nsite_id == _N1504_ID else []))
+    assert pnw.run() == 0
+    matches = [s for s in sent if "Arbor Hills Energy" in s[0]]
+    assert len(matches) == 1   # the lever being off means this now DOES email
+
+
+def test_rop_alert_suppression_defaults_true_when_key_absent(monkeypatch):
+    """A bare/minimal config (no rop_alert_suppression key at all) still
+    gets the safer suppression behavior, matching every other config-lever
+    default in this module."""
+    cfg = copy.deepcopy(PN_CFG)
+    cfg["nsite_public_notices"].pop("rop_alert_suppression", None)
+    fake, sent = _wire(monkeypatch, cfg, {"N1504": [], "WRD": []})
+    pnw.run()   # baseline
+    monkeypatch.setattr(pnw.nc, "fetch_site_public_notices",
+                        lambda session, nsite_id: (
+                            [_pn(notice_id="N-1", comments=_ROP_COMMENTS)]
+                            if nsite_id == _N1504_ID else []))
+    assert pnw.run() == 0
+    assert sent == []
+
+
+def test_a_suppressed_change_is_not_double_counted_as_changed_and_is_not_an_alert_failure(monkeypatch):
+    reads = []
+    real = pnw._diff_and_record
+
+    def _capture(*a, **kw):
+        result = real(*a, **kw)
+        reads.append(result)
+        return result
+    fake, sent = _wire(monkeypatch, PN_CFG, {"N1504": [], "WRD": []})
+    pnw.run()   # baseline
+    monkeypatch.setattr(pnw, "_diff_and_record", _capture)
+    monkeypatch.setattr(pnw.nc, "fetch_site_public_notices",
+                        lambda session, nsite_id: (
+                            [_pn(notice_id="N-1", comments=_ROP_COMMENTS)]
+                            if nsite_id == _N1504_ID else []))
+    assert pnw.run() == 0
+    assert ("changed_suppressed", None) in reads
+    assert sent == []
 
 
 def test_first_notice_at_a_zero_site_alerts_as_new(monkeypatch):

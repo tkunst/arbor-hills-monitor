@@ -54,11 +54,32 @@ Stream H's —
      inspection of `comments` (both live samples say "Renewable Operating
      Permit (ROP)" in prose) — a fragile keyword match, not a structured
      filter, and NOT implemented here.
-This module ships doing (1) with disambiguating alert copy (see
+This module ORIGINALLY shipped doing (1) with disambiguating alert copy (see
 format_change_body) so a human reading either email at least knows the two
-streams are distinct mechanisms, not that this profile resolves the overlap.
-Which of the three Trisha wants is an open question for the PR, not a choice
-this build makes for her.
+streams are distinct mechanisms, not that this profile resolves the overlap
+— Which of the three Trisha wants was left as an open question for the PR,
+not a choice this build made for her.
+
+RESOLUTION (2026-08-26, Trisha-directed): a hybrid, built from (1) and (3).
+`_all_changed_notices_look_like_rop` inspects the CHANGED notices' `comments`
+text for ROP-renewal language (the same boilerplate phrase, "Renewable
+Operating Permit (ROP)," both live records have used) and, if EVERY notice
+in a given change matches, suppresses the EMAIL for that change —
+`_diff_and_record` still writes the durable Sheet row unconditionally either
+way, so nothing is ever silently lost from the audit trail, only the
+redundant notification. The check FAILS OPEN: any notice that doesn't
+clearly match, any degraded/truncated snapshot, a duplicate-key state, or an
+unreadable previous snapshot all mean the email fires — the design
+deliberately errs toward an occasional redundant email over ever silently
+dropping a real alert. This was chosen over pure standalone (both real
+alerts to date would have been redundant with Stream H) and over a Stream H
+state-based dedupe (would couple two independently-evolving mechanisms with
+different keys — a URL id here vs. "mentioned in a statewide PDF" there —
+for uncertain benefit over a simpler, self-contained heuristic). Gated by
+`nsite_public_notices.rop_alert_suppression` (defaults true; set false to
+revert to pure standalone without a code change). Open Decision 2 (the n=1
+evidence base for the diff key itself) is unaffected and remains a disclosed
+residual risk — see ADR 032's 2026-08-26 addendum for the full writeup.
 
 ONE item per site — `pubntc:<srn>` (e.g. "pubntc:N2688") — derived from ONE
 fetch per site, so each item's fetch failure is independent (no ROP-style
@@ -141,12 +162,11 @@ nsite_permits_watcher):
     is the alert, and the advanced hash means the next run reports "unchanged"
     and never retries.
 
-GATED on nsite_public_notices.enabled, which ships FALSE and STAYS FALSE
-pending Trisha's answer to the ROP-overlap question above — this is not the
-usual "flip it whenever you like" new-poller gate (though mechanically it is
-the same flag); the PR holds this as a draft specifically because activating
-it without a decision on options 1-3 above means choosing option 1 by
-default, silently.
+GATED on nsite_public_notices.enabled, which still ships FALSE — the
+ROP-overlap DESIGN question above is now resolved (see RESOLUTION), but
+turning this live poller on against a real external system is a separate,
+later human step, same as every other new-source stream in this series
+(overnight-coder Step 3).
 
 TIERED CADENCE: `_is_due` is IMPORTED from nsite_submissions_watcher rather
 than reimplemented — it is already generic over (cadence, srn, today). The
@@ -171,6 +191,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 from datetime import date, datetime
 
@@ -614,17 +635,87 @@ def summarize_public_notices_change(old: dict, new: dict) -> tuple[str, str]:
     return note, "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# ROP-overlap alert suppression (ADR 032's Open Decision 1, resolved
+# 2026-08-26) — suppress the redundant EMAIL, never the durable Sheet row,
+# for a notice that reads as a ROP renewal comment window Stream H
+# (rop_watcher.py) already tracks and alerts on separately.
+# ---------------------------------------------------------------------------
+
+# Matches EGLE's own boilerplate phrasing for a ROP renewal notice (both live
+# records seen so far say "Renewable Operating Permit (ROP)" in prose) plus a
+# bare "ROP" token, case-insensitive. A free-text heuristic, not a structured
+# filter — confirmed 2026-08-25 that no structured field exists in this
+# profile's schema to do this cleanly (ADR 032, Open Decision 1 Option 3).
+_ROP_KEYWORD_RE = re.compile(r"renewable operating permit|\brop\b", re.IGNORECASE)
+
+
+def _looks_like_rop_notice(comments: str) -> bool:
+    """Whether a notice's comments text reads as a ROP renewal notice, by
+    keyword match. Pure, unit-tested. FALSE means "alert" (fail open); TRUE
+    is what lets the caller consider suppressing the email — never the
+    durable row, which is always written regardless."""
+    return bool(_ROP_KEYWORD_RE.search(comments or ""))
+
+
+def _all_changed_notices_look_like_rop(old: dict, new: dict) -> bool:
+    """True iff EVERY notice this diff would otherwise alert on — newly
+    added, changed, or no-longer-listed — reads as a ROP renewal notice by
+    keyword match. Used by _diff_and_record to decide whether to suppress
+    the redundant EMAIL for this profile's one real event pattern observed
+    so far (see the module docstring's RESOLUTION note and ADR 032).
+
+    FAILS OPEN (returns False, so the caller still emails) whenever the
+    check cannot be confidently evaluated: either snapshot is in the
+    truncated/degraded form (no full comments text to inspect — currently
+    theoretical at this profile's observed volume), notice_id has stopped
+    being unique in either snapshot (the by-key comparison below would be
+    unreliable), the previous snapshot is missing/malformed, or there is
+    nothing to check. `summarize_public_notices_change` is what reports
+    those cases to a human; this function isn't meant to also reason about
+    them, so it declines to and lets the email through instead.
+
+    A NON-matching notice among several changed ones means the WHOLE diff
+    still alerts — this does not try to alert on "just the non-ROP part",
+    since the email already describes every changed notice together, and
+    splitting that is not worth the complexity this profile's real volume
+    (0-1 records per site) does not call for."""
+    if old.get("truncated") or new.get("truncated"):
+        return False
+    if _duplicate_key_count(old) or _duplicate_key_count(new):
+        return False
+    try:
+        old_by_key = _rows_by_key(old)
+        new_by_key = _rows_by_key(new)
+    except Exception:  # noqa: BLE001 — malformed/missing payload: fail open
+        return False
+    new_ids = set(new_by_key) - set(old_by_key)
+    removed_ids = set(old_by_key) - set(new_by_key)
+    changed_ids = {i for i in (set(new_by_key) & set(old_by_key))
+                   if new_by_key[i] != old_by_key[i]}
+    if not (new_ids or removed_ids or changed_ids):
+        return False
+    for nid in new_ids | changed_ids:
+        if not _looks_like_rop_notice(new_by_key[nid].get("comments", "")):
+            return False
+    for nid in removed_ids:
+        if not _looks_like_rop_notice(old_by_key[nid].get("comments", "")):
+            return False
+    return True
+
+
 def format_change_body(label: str, note: str, body: str) -> str:
     """The change-alert email body. Pure — unit-tested. All EGLE-derived text
     lands HERE, in the body — never in the subject line (see run()).
 
     Carries an explicit disambiguation paragraph (per ADR 032's Open Decision
-    1): this profile has, on both live records ever seen, alerted on a ROP
-    renewal comment window that Stream H (the dedicated ROP-renewal watch)
-    ALSO tracks and emails about separately. Rather than silently resolve
-    that overlap, every alert this profile sends says so plainly, so a reader
-    does not mistake two independently-worded emails about the same window
-    for two separate matters."""
+    1, resolved 2026-08-26): this watch normally SUPPRESSES its own email
+    (never the durable row) for a notice that reads as a ROP renewal comment
+    window — the same event type Stream H already tracks separately — so by
+    the time this function runs at all, the change either didn't match that
+    pattern, or suppression is disabled. Either way, the disclosure below
+    still fires: a keyword match can miss real phrasing variance, so a
+    reader should not assume a mismatch here means "definitely not ROP"."""
     shown = body or "(no further detail — see the Public Notices Watch tab's Snapshot JSON.)"
     return (
         "A watched Arbor Hills nSITE ACTIVE PUBLIC NOTICES list changed.\n\n"
@@ -638,13 +729,16 @@ def format_change_body(label: str, note: str, body: str) -> str:
         "brand-new notice the moment EGLE records one, or an existing "
         "notice's detail (including its comment-window dates) advancing. It "
         "makes no severity judgment beyond that.\n\n"
-        "NOTE ON OVERLAP: this profile has, so far, only ever surfaced ROP "
-        "(air permit) renewal comment-window notices — the SAME event type "
-        "the monitor's separate ROP renewal watch (Stream H) already tracks "
-        "and alerts on through a different mechanism. If this notice IS a "
-        "ROP renewal, you may also receive (or have already received) a "
-        "separate email from that watch about the same comment window — "
-        "that is a known, disclosed overlap, not a duplicate error.\n"
+        "NOTE ON OVERLAP: this watch normally suppresses its own email "
+        "(never the durable Sheet row above) when a notice's text reads as "
+        "a ROP renewal comment window — the SAME event type the monitor's "
+        "separate ROP renewal watch (Stream H) already tracks and alerts on "
+        "through a different mechanism. You are receiving this email "
+        "because this change did not clearly match that pattern. If it "
+        "nonetheless turns out to be a ROP renewal notice, the automatic "
+        "filter missed it this time — a separate email from that watch "
+        "about the same window would be a known, disclosed overlap, not a "
+        "duplicate error. See ADR 032.\n"
     )
 
 
@@ -654,11 +748,13 @@ def format_change_body(label: str, note: str, body: str) -> str:
 
 
 def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients,
-                     last, budget=DEFAULT_SNAPSHOT_CHAR_BUDGET) -> tuple[str, str | None]:
+                     last, budget=DEFAULT_SNAPSHOT_CHAR_BUDGET,
+                     suppress_rop_matches: bool = True) -> tuple[str, str | None]:
     """Baseline/compare/record/alert for one site. Returns
-    (result, alert_error) where result is "baseline"/"changed"/"unchanged" and
-    alert_error is None unless a change was recorded but its email could not be
-    sent.
+    (result, alert_error) where result is "baseline"/"changed"/
+    "changed_suppressed"/"unchanged" and alert_error is None unless a change
+    was recorded but its email could not be sent ("changed_suppressed" never
+    carries an alert_error — a deliberate suppression is not a failure).
 
     `last` is passed IN (the run's single batched tab read) rather than looked
     up here — a per-site read that could fail is what would let a throttled
@@ -692,6 +788,15 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients,
                                        "changed", new_hash, note, _now(), snap_json)
     print(f"[nsite-public-notices-watch] {label}: CHANGED "
           f"({last_hash} -> {new_hash}; {note}).")
+
+    if suppress_rop_matches and _all_changed_notices_look_like_rop(old_snap, snap):
+        print(f"[nsite-public-notices-watch] {label}: every notice in this "
+              f"change reads as a ROP renewal comment window Stream H "
+              f"already tracks — email suppressed by design (the row above "
+              f"is durable regardless; see ADR 032). Set "
+              f"nsite_public_notices.rop_alert_suppression: false to disable this.")
+        return "changed_suppressed", None
+
     # The row above is already durable — everything from here down is
     # alerting for THIS site only, so a failure in either step is reported
     # rather than raised, and can never abort run()'s other sites.
@@ -730,6 +835,11 @@ def run() -> int:
     # entirely and hand the site a permanently rejected write.
     budget = min(int(pcfg.get("snapshot_char_budget") or DEFAULT_SNAPSHOT_CHAR_BUDGET),
                  HARD_SHEETS_CELL_LIMIT - 1000)
+    # Config-only rollback lever (ADR 032's Open Decision 1, resolved
+    # 2026-08-26): defaults True, so a bare/minimal config still gets the
+    # safer behavior. Set to false to revert to pure standalone alerting
+    # without a code change.
+    suppress_rop_matches = bool(pcfg.get("rop_alert_suppression", True))
     fields = diff_fields(cfg)
     # Resolve the working site list by joining the shared identity registry
     # (nsite_sites, ADR 022) with THIS profile's own cadence map. A `tiers` srn
@@ -764,8 +874,9 @@ def run() -> int:
     session = nc.make_session()
     today_date = _today_date()
     today = today_date.isoformat()
-    counts = {"baseline": 0, "changed": 0, "unchanged": 0, "skipped": 0,
-              "fetch_failed": 0, "failed": 0, "alert_failed": 0}
+    counts = {"baseline": 0, "changed": 0, "changed_suppressed": 0,
+              "unchanged": 0, "skipped": 0, "fetch_failed": 0, "failed": 0,
+              "alert_failed": 0}
     exit_code = 0
 
     # Cadence gate first, so the batched read below asks only about sites this
@@ -848,7 +959,8 @@ def run() -> int:
 
             snap = public_notices_snapshot(notices, fields)
             result, alert_error = _diff_and_record(
-                sheets, sheet_id, today, key, label, snap, cfg, recipients, last, budget)
+                sheets, sheet_id, today, key, label, snap, cfg, recipients, last,
+                budget, suppress_rop_matches)
             counts[result] += 1
             if alert_error:
                 counts["alert_failed"] += 1
@@ -861,6 +973,8 @@ def run() -> int:
             exit_code = 1
 
     print(f"[nsite-public-notices-watch] done — {counts['changed']} changed, "
+          f"{counts['changed_suppressed']} changed-but-email-suppressed "
+          f"(looked like an already-covered ROP notice), "
           f"{counts['baseline']} baselined, {counts['unchanged']} unchanged, "
           f"{counts['skipped']} not-due-today, {counts['fetch_failed']} fetch-failed, "
           f"{counts['failed']} errored, {counts['alert_failed']} change(s) recorded "

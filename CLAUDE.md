@@ -311,18 +311,23 @@ external users but no sensitive data). Public repo.
   every live record seen), and deliberately NOT conditional on that field
   ever populating, to avoid a false remove+add pair if it later does (see
   ADR 032). **This is the 6th and LAST of the six originally-unpolled nSITE
-  profiles, and the only one that ships as a DRAFT PR held for review rather
-  than an autonomous merge:** live sampling (2026-07-24 and re-confirmed
-  2026-08-25, a month apart) found just ONE record total across all 19
-  sites, and both times it was itself a ROP renewal comment-window notice
-  Stream H (`rop_client.py`, ADR 017) already watches through a different
-  mechanism. No program-area field exists anywhere in this profile's schema
-  (confirmed against the API's own field metadata) to scope around that
-  overlap, so ADR 032 surfaces three options (standalone / dedupe / scope)
-  for Trisha to decide rather than resolving one unilaterally. Ships doing
-  the simplest (standalone) behavior with an explicit ROP-overlap disclosure
-  in every alert, and `nsite_public_notices.enabled: false` — held pending
-  that decision, not merely "not yet activated." See ADR 032.
+  profiles.** Live sampling (2026-07-24 and re-confirmed 2026-08-25, a month
+  apart) found just ONE record total across all 19 sites, and both times it
+  was itself a ROP renewal comment-window notice Stream H (`rop_client.py`,
+  ADR 017) already watches through a different mechanism; no program-area
+  field exists anywhere in this profile's schema (confirmed against the
+  API's own field metadata) to scope around that overlap via a structured
+  filter. **Resolved 2026-08-26 (Trisha-directed):** rather than pure
+  standalone or a Stream-H state-based dedupe, `_all_changed_notices_look_
+  like_rop` suppresses the EMAIL — never the durable Sheet row, written
+  unconditionally either way — when every notice in a change reads as a ROP
+  renewal by keyword match on `comments`, failing open (still alerting) on
+  any non-match, mixed batch, duplicate-key state, or degraded/unreadable
+  snapshot. Gated by `nsite_public_notices.rop_alert_suppression` (defaults
+  `true`; `false` reverts to pure standalone without a code change). Ships
+  `nsite_public_notices.enabled: false` still — the DESIGN question is
+  resolved, but activating this live poller is a separate, later step, same
+  as every other new-source stream. See ADR 032 + its 2026-08-26 addendum.
 
 ## Forbidden patterns (do not do these)
 

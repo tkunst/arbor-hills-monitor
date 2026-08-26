@@ -1,9 +1,13 @@
 # ADR 032 — Stream Q: nSITE Active Public Notices watch
 
-Date: 2026-08-25
-Status: **proposed** (held for Trisha's decision — this is the one nSITE
-watch in this series that does NOT ship as a normal accept-on-green-CI merge;
-see "Why this ADR is `proposed`, not `accepted`" below)
+Date: 2026-08-25 (Open Decision 1 resolved 2026-08-26 — see the addendum at
+the end)
+Status: **accepted, as amended by the 2026-08-26 addendum.** Open Decision 1
+(the ROP-overlap question) is resolved; Open Decision 2 (the n=1 evidence
+base for the diff key) is unaffected and remains a disclosed residual risk.
+Activation (`enabled: true`) is still a separate, later human step, same as
+every other new-source stream in this series — resolving the design
+question is not the same action as turning the poller on.
 Builds on: ADR 023 (Violations), ADR 028 (Compliance Actions), ADR 029/030
 (Evaluations/Permits — the ref-number-keyed idiom this profile follows), ADR
 031 (Complaints — the most recent merged sibling, whose mechanics this
@@ -263,7 +267,7 @@ raising `NsiteStructuralError` rather than silently diffing a partial page.
 Imported from `nsite_submissions_watcher`, with an identity test
 (`test_is_due_is_imported_not_reimplemented`).
 
-## Why this ADR is `proposed`, not `accepted`
+## Why this ADR was `proposed`, not `accepted`, at first (historical — see the 2026-08-26 addendum for the resolution)
 
 Every prior nSITE ADR in this series (023/028/029/030/031) reached
 `accepted` status by merging on green CI with zero open review findings —
@@ -341,3 +345,83 @@ established precedent for a brand-new alert stream.
   design question as its headline deliverable, not a settled default
   waiting on a flag flip. The PR holding this ADR is a draft for exactly
   that reason.
+
+## Addendum (2026-08-26) — Open Decision 1 resolved
+
+Trisha reviewed the three options above and asked for a hybrid, built from
+Options 1 and 3 rather than a pure pick of one: **suppress the redundant
+EMAIL, never the durable Sheet row, when a notice's `comments` text reads as
+a ROP renewal by keyword match — failing open (still emailing) whenever
+that match can't be made confidently.**
+
+### Why this, and not a pure option
+
+- **Pure standalone (Option 1) was rejected** on the evidence this build
+  gathered: both real notices this profile has ever surfaced (2026-07-24
+  and 2026-08-25) were ROP renewals Stream H already covers. Shipping
+  standalone unmodified would mean every alert emitted so far in this
+  profile's real history would have been a duplicate — training recipients
+  to ignore the stream before it ever earns their attention for a genuinely
+  new event type.
+- **A Stream H state-based dedupe (Option 2) was rejected** as more
+  correct in principle but not worth its coupling cost: `rop_watcher.py`
+  keys on (SRN, "mentioned in the statewide notice PDF text"), a
+  fundamentally different and fuzzier signal than this profile's
+  URL-embedded notice id. Building a reliable cross-mechanism match between
+  the two — especially one that must not silently swallow a real, new,
+  non-ROP notice if the match logic is ever wrong — is real ongoing
+  engineering risk for a benefit the simpler heuristic below already
+  captures for the one pattern actually observed.
+- **A pure keyword-suppress-and-drop version of Option 3 was also rejected**
+  — suppressing the underlying RECORD (not just the email) risks silently
+  losing a real event if the keyword heuristic ever misfires, which
+  conflicts with this monitor's broader posture of never letting a
+  parse/classification choice make a real filing disappear without a
+  trace.
+
+### The implementation
+
+- `nsite_public_notices_watcher._looks_like_rop_notice(comments)` — a pure,
+  case-insensitive keyword match on `"renewable operating permit"` or a bare
+  `"rop"` token. Both live records seen say "Renewable Operating Permit
+  (ROP)" in prose; this is a free-text heuristic (Option 3's structured
+  filter is still unavailable — see the schema finding above), disclosed as
+  such, not dressed up as a reliable classifier.
+- `_all_changed_notices_look_like_rop(old, new)` — True only if EVERY
+  notice a given diff would otherwise alert on (newly added, changed, or
+  no-longer-listed) matches. FAILS OPEN (returns False, meaning "still
+  alert") on: a truncated/degraded snapshot (no full comments text to
+  inspect — currently theoretical at this profile's real volume), a
+  duplicate-key state, an unreadable previous snapshot, or a mixed batch
+  where even one notice doesn't match. A mixed batch is not split into a
+  "partial" email — this profile's real volume (0-1 records per site)
+  doesn't call for that complexity, and the whole batch alerting on one
+  non-match is the safer default anyway.
+- `_diff_and_record` writes the durable Sheet row FIRST, unconditionally,
+  exactly as before this change — suppression only ever affects whether
+  `ea.send_email` is subsequently called. A suppressed change is a NEW
+  result state, `"changed_suppressed"`, tracked separately from `"changed"`
+  in `run()`'s counts and NEVER treated as an `alert_failed` (a deliberate
+  suppression is working as designed, not a failure, and must not exit
+  non-zero the way a lost alert does).
+- Gated by a new config lever, `nsite_public_notices.rop_alert_suppression`
+  (defaults `true` — a bare/minimal config still gets the safer behavior;
+  set `false` to revert to pure standalone alerting without a code change).
+- `format_change_body`'s disclosure paragraph was rewritten to match: since
+  an email now only fires when the ROP-keyword match failed (or
+  suppression is disabled), the copy explains that plainly rather than
+  claiming "this profile has only ever surfaced ROP notices" (which would
+  now read backwards — an email firing at all means THIS TIME it didn't
+  look like one).
+
+### What this does not change
+
+- Open Decision 2 (the diff key's evidence base is n=1 real records) is
+  untouched — this addendum is scoped to the ROP-overlap question only.
+  `_duplicate_key_count` remains the code-level backstop for that residual
+  risk.
+- Activation (`nsite_public_notices.enabled: true`) remains a separate,
+  later step. Resolving the design question removes the reason this PR
+  could not be merged; it does not by itself make turning the live poller
+  on Trisha's next action — that is still hers to decide and take
+  explicitly, same as every other new-source stream in this series.
