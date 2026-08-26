@@ -273,6 +273,24 @@ TAB_PERMITS = "Permits Watch"
 # {n, hash, latest[K]} fingerprint, small BY CONSTRUCTION rather than
 # degraded into smallness. See nsite_complaints_watcher.complaints_snapshot.
 TAB_COMPLAINTS = "Complaints Watch"
+# nSITE Active Public Notices watch (Stream Q, ADR 032) — same on-demand
+# policy: no tab appears until nsite_public_notices_watcher actually runs.
+# Append-only, keyed by Item (e.g. "pubntc:N2688") in col B for dedup/state —
+# the same Sheet-derived, race-free idiom as every sibling Watch tab above.
+# One row per observed state of a watched site's ACTIVE PUBLIC NOTICES (the
+# formal comment-window announcements — permit renewals, draft permits,
+# hearings) — "baseline" (first sighting, silent) or "changed" (fires an
+# alert distinguishing a brand-new notice from an existing one's detail
+# advancing). Live sampling (2026-07-24, re-confirmed 2026-08-25) found only
+# ONE record total across all 19 sites, and both times it was itself a ROP
+# renewal notice Stream H (rop_client.py, ADR 017) already watches — see
+# nsite_public_notices_watcher for the resulting design question this
+# profile deliberately leaves open. Diff is REF-NUMBER-KEYED, like
+# Evaluations/Permits, but on a URL-embedded id (regex-extracted from
+# publicNotifPnurl), NOT publicNotifExtrnlPublNoticeNum — see
+# nsite_client._normalize_public_notice for why. See
+# nsite_public_notices_watcher.public_notices_snapshot.
+TAB_PUBLIC_NOTICES = "Public Notices Watch"
 # Shared by WDS New + Historical, the same way FEED_HEADERS is shared by
 # TAB_NEW/TAB_HISTORICAL. "Change" is new/changed (live) or historical (dump).
 WDS_HEADERS = [
@@ -411,6 +429,15 @@ EVALUATIONS_WATCH_HEADERS = [
 # nSITE Permits watch (Stream O, ADR 030). Identical row shape to
 # EVALUATIONS_WATCH_HEADERS above — same append-only, tab-is-the-state design.
 PERMITS_WATCH_HEADERS = [
+    "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
+    "Snapshot JSON",
+]
+
+# nSITE Active Public Notices watch (Stream Q, ADR 032). Identical row shape
+# to EVALUATIONS_WATCH_HEADERS/PERMITS_WATCH_HEADERS above — same append-only,
+# tab-is-the-state design (ref-number-keyed, like those two, not the
+# Violations/Compliance-Actions multiset).
+PUBLIC_NOTICES_WATCH_HEADERS = [
     "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
     "Snapshot JSON",
 ]
@@ -2056,6 +2083,87 @@ def append_complaints_watch_row(
     sent (durable record first, alert best-effort second — same crash-safe
     ordering as append_permits_watch_row)."""
     append_rows(service, sheet_id, TAB_COMPLAINTS, [[
+        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
+    ]])
+
+
+# ---------------------------------------------------------------------------
+# nSITE Active Public Notices watch (Stream Q, ADR 032) — the tab is the
+# state (append-only ⇒ race-free), exactly like the Evaluations/Permits Watch
+# tabs above (ref-number-keyed, not the Violations/Compliance-Actions
+# multiset). Row shape is identical to every sibling Watch tab.
+# ---------------------------------------------------------------------------
+
+
+def ensure_public_notices_tabs(service, sheet_id: str) -> None:
+    """Create the Public Notices Watch tab if missing and reconcile its header
+    row on every run (same self-healing policy as ensure_complaints_tabs()).
+    Called only from nsite_public_notices_watcher.py, so the tab doesn't
+    appear until the watch actually runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_PUBLIC_NOTICES not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_PUBLIC_NOTICES}}}]},
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    _set_header(service, sheet_id, TAB_PUBLIC_NOTICES, PUBLIC_NOTICES_WATCH_HEADERS)
+
+
+def last_public_notices_snapshots(
+    service, sheet_id: str, item_keys: list[str],
+) -> dict[str, tuple[str, str] | None]:
+    """Return {item_key: (snapshot_hash, snapshot_json) or None} for each key
+    (e.g. "pubntc:N2688"), reading the whole tab ONCE however many keys are
+    asked for. None means 'baseline this item'; a hash mismatch means
+    'changed'. Reading the last matching row (not a _meta cell) is what makes
+    the watch race-free — the tab is append-only, so no concurrent job can
+    clobber it.
+
+    Same contract as last_permits_snapshots/last_evaluations_snapshots
+    (batched, no singular wrapper): the watcher reads every key it needs in
+    ONE call at the top of the run.
+
+    DELIBERATELY does NOT go through _tab_rows, which swallows every read
+    exception and returns [] (fine for its append-only-accumulator callers,
+    wrong here). For a watch that DIFFS, an indistinguishable [] is a silent
+    data-loss bug: a throttled read would make every key look never-seen, the
+    watcher would write a fresh "baseline" row, and because the tab is
+    append-only with last-write-wins that spurious baseline BECOMES the state
+    — erasing a real, un-alerted change permanently rather than deferring it.
+    So a read failure raises and the caller fails loudly instead.
+
+    The tab's own absence is not a case here: nsite_public_notices_watcher
+    calls ensure_public_notices_tabs() before any read, so the tab always
+    exists by the time this runs."""
+    resp = (
+        service.spreadsheets()
+        .values()
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_PUBLIC_NOTICES}'!A2:H")
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    )
+    latest_by_key: dict[str, list] = {}
+    for r in resp.get("values", []):
+        if r and len(r) > 1:
+            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
+    result: dict[str, tuple[str, str] | None] = {}
+    for key in item_keys:
+        r = latest_by_key.get(key)
+        if r is None:
+            result[key] = None
+        else:
+            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
+    return result
+
+
+def append_public_notices_watch_row(
+    service, sheet_id: str, date: str, item_key: str, label: str, change: str,
+    snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
+) -> None:
+    """Append one Public Notices Watch row. Written BEFORE the change email is
+    sent (durable record first, alert best-effort second — same crash-safe
+    ordering as append_complaints_watch_row)."""
+    append_rows(service, sheet_id, TAB_PUBLIC_NOTICES, [[
         date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
     ]])
 

@@ -301,6 +301,28 @@ external users but no sensitive data). Public repo.
   `.github/workflows/nsite-complaints-watch.yml` (this build session's SSH
   key authenticated non-interactively, so the `workflow`-OAuth-scope parking
   Streams L/M needed did not apply). See ADR 031.
+- `nsite_public_notices_watcher.py` — Stream Q: daily snapshot-diff of EGLE's
+  nSITE **Active Public Notices** profile (the formal comment-window
+  announcements — permit renewals, draft permits, hearings) for every srn in
+  `nsite_public_notices.tiers`, against the `Public Notices Watch` tab. Item
+  key `pubntc:<srn>`; a near-copy of the Evaluations/Permits ref-number-keyed
+  watch pattern, but keyed on an id regex-extracted from the notice's own
+  `publicNotifPnurl` URL — NOT `publicNotifExtrnlPublNoticeNum` (null on
+  every live record seen), and deliberately NOT conditional on that field
+  ever populating, to avoid a false remove+add pair if it later does (see
+  ADR 032). **This is the 6th and LAST of the six originally-unpolled nSITE
+  profiles, and the only one that ships as a DRAFT PR held for review rather
+  than an autonomous merge:** live sampling (2026-07-24 and re-confirmed
+  2026-08-25, a month apart) found just ONE record total across all 19
+  sites, and both times it was itself a ROP renewal comment-window notice
+  Stream H (`rop_client.py`, ADR 017) already watches through a different
+  mechanism. No program-area field exists anywhere in this profile's schema
+  (confirmed against the API's own field metadata) to scope around that
+  overlap, so ADR 032 surfaces three options (standalone / dedupe / scope)
+  for Trisha to decide rather than resolving one unilaterally. Ships doing
+  the simplest (standalone) behavior with an explicit ROP-overlap disclosure
+  in every alert, and `nsite_public_notices.enabled: false` — held pending
+  that decision, not merely "not yet activated." See ADR 032.
 
 ## Forbidden patterns (do not do these)
 
