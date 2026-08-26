@@ -501,13 +501,35 @@ def test_all_changed_notices_look_like_rop_fails_open_on_a_mixed_batch():
     assert pnw._all_changed_notices_look_like_rop(old, new) is False
 
 
-def test_all_changed_notices_look_like_rop_fails_open_on_a_truncated_snapshot():
+def test_all_changed_notices_look_like_rop_fails_open_on_a_truncated_new_snapshot():
+    """Defensive-only at the real call site: `new` is always the freshly
+    built, full in-memory snapshot in production (public_notices_snapshot's
+    output never sets "truncated"), so this branch is currently
+    unreachable there — kept as insurance for a future caller, not because
+    this direction is live today. See test_..._truncated_old_snapshot below
+    for the direction that actually fires in production."""
     old = pnw.public_notices_snapshot([], FIELDS)
     huge_new = pnw.public_notices_snapshot(
         [_pn(notice_id=f"N-{i:05d}", comments=_ROP_COMMENTS) for i in range(400)], FIELDS)
     truncated_new = json.loads(pnw._cell_payload(huge_new, budget=20000))
     assert truncated_new.get("truncated") is True
     assert pnw._all_changed_notices_look_like_rop(old, truncated_new) is False
+
+
+def test_all_changed_notices_look_like_rop_fails_open_on_a_truncated_old_snapshot():
+    """THE direction that actually fires in production: `old` is always
+    reloaded from the stored Sheet cell (_load_json(last_snap_json, {})),
+    so it's the side that can genuinely arrive truncated once a site's
+    volume grows enough to trip the Sheets cell budget. Mirrors how
+    test_nsite_violations.py tests the identical guard on ITS old side."""
+    huge_old = pnw.public_notices_snapshot(
+        [_pn(notice_id=f"N-{i:05d}", comments=_ROP_COMMENTS) for i in range(400)], FIELDS)
+    truncated_old = json.loads(pnw._cell_payload(huge_old, budget=20000))
+    assert truncated_old.get("truncated") is True
+    new = pnw.public_notices_snapshot(
+        [_pn(notice_id=f"N-{i:05d}", comments=_ROP_COMMENTS) for i in range(400)]
+        + [_pn(notice_id="N-BRANDNEW", comments=_ROP_COMMENTS)], FIELDS)
+    assert pnw._all_changed_notices_look_like_rop(truncated_old, new) is False
 
 
 def test_all_changed_notices_look_like_rop_fails_open_on_a_duplicate_key_state():

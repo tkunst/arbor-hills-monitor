@@ -667,13 +667,18 @@ def _all_changed_notices_look_like_rop(old: dict, new: dict) -> bool:
 
     FAILS OPEN (returns False, so the caller still emails) whenever the
     check cannot be confidently evaluated: either snapshot is in the
-    truncated/degraded form (no full comments text to inspect — currently
-    theoretical at this profile's observed volume), notice_id has stopped
-    being unique in either snapshot (the by-key comparison below would be
-    unreliable), the previous snapshot is missing/malformed, or there is
-    nothing to check. `summarize_public_notices_change` is what reports
-    those cases to a human; this function isn't meant to also reason about
-    them, so it declines to and lets the email through instead.
+    truncated/degraded form (no full comments text to inspect) — in
+    practice only `old`, the stored/reloaded snapshot, can actually arrive
+    truncated at the real call site (_diff_and_record always passes the
+    freshly built, full `new` snapshot; public_notices_snapshot() never
+    marks its own output truncated), so the `new`-side check is defensive
+    insurance for a future caller, not a currently-exercised path — or
+    notice_id has stopped being unique in either snapshot (the by-key
+    comparison below would be unreliable), or the previous snapshot is
+    missing/malformed, or there is nothing to check.
+    `summarize_public_notices_change` is what reports those cases to a
+    human; this function isn't meant to also reason about them, so it
+    declines to and lets the email through instead.
 
     A NON-matching notice among several changed ones means the WHOLE diff
     still alerts — this does not try to alert on "just the non-ROP part",
