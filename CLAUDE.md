@@ -324,10 +324,13 @@ external users but no sensitive data). Public repo.
   renewal by keyword match on `comments`, failing open (still alerting) on
   any non-match, mixed batch, duplicate-key state, or degraded/unreadable
   snapshot. Gated by `nsite_public_notices.rop_alert_suppression` (defaults
-  `true`; `false` reverts to pure standalone without a code change). Ships
-  `nsite_public_notices.enabled: false` still — the DESIGN question is
-  resolved, but activating this live poller is a separate, later step, same
-  as every other new-source stream. See ADR 032 + its 2026-08-26 addendum.
+  `true`; `false` reverts to pure standalone without a code change).
+  **Activated 2026-08-26 (Trisha-directed):** `nsite_public_notices.enabled:
+  true` is live. The suppression heuristic is validated only against the two
+  real ROP records seen to date — a novel non-ROP notice that happens to
+  mention "ROP" in passing would have its email (not its Sheet row)
+  wrongly suppressed; `rop_alert_suppression: false` is the rollback if that
+  ever bites. See ADR 032 + its 2026-08-26 addendum.
 
 ## Forbidden patterns (do not do these)
 

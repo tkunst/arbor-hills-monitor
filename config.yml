@@ -1068,10 +1068,10 @@ nsite_complaints:
 # docs/decisions/032-nsite-active-public-notices-watch.md's 2026-08-26
 # addendum for the full writeup.
 nsite_public_notices:
-  # Ships FALSE still — the DESIGN question above is resolved, but turning
-  # this live poller on against a real external system is a separate, later
-  # human step, same as every other new-source stream in this series.
-  enabled: false
+  # ACTIVATED 2026-08-26 (Trisha-directed) — the design question above is
+  # resolved and the live poller is now on, same activation step every prior
+  # nSITE watch in this series took explicitly.
+  enabled: true
   # Recipient override: Trisha only to start (every sibling nSITE watch's
   # precedent for a brand-new alert stream). Delete/comment this block to
   # send to the full alert_recipients list once the alert copy has been seen

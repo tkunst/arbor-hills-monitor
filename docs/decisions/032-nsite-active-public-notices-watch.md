@@ -308,15 +308,15 @@ Trisha answers Open Decision 1 and the PR is either merged as-is or amended.
 
 ## Activation (Trisha's step, not the build's — and gated on more than the usual review)
 
-Ships **`nsite_public_notices.enabled: false`**. Unlike every sibling new
-poller in this series, this is not simply "flip it whenever you like after
-skimming the diff" — it is held specifically pending Open Decision 1. The
-config's own comment block says so directly: turning this on unmodified
-silently picks "standalone" (Option 1) by default.
-`test_shipped_config_ships_disabled_and_stays_disabled` asserts the flag
-itself (not merely that a workflow exists), because for this one profile
-"not yet activated" and "deliberately held" need to be told apart in the
-test suite too.
+**Activated 2026-08-26 (Trisha-directed):** `nsite_public_notices.enabled:
+true` is live. Unlike every sibling new poller in this series, this was not
+simply "flip it whenever you like after skimming the diff" — it was held
+specifically pending Open Decision 1, resolved by the 2026-08-26 addendum
+below before activation. `test_shipped_config_ships_disabled_and_stays_
+disabled`, which asserted the held-not-just-unactivated flag while the
+design question was still open, was removed at activation (the
+workflow-scheduled invariant in `test_the_workflow_is_scheduled_directly_
+not_parked` continues to guard against a silent no-op).
 
 The workflow file was landed directly into `.github/workflows/`, not
 parked: this build session's SSH key authenticated non-interactively

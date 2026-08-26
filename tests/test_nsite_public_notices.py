@@ -751,21 +751,6 @@ def test_shipped_config_tiers_cover_every_registry_site_and_differ_from_siblings
     assert tiers != cfg["nsite_complaints"]["tiers"]
 
 
-def test_shipped_config_ships_disabled_and_stays_disabled():
-    """UNLIKE every sibling new-poller gate, this one is not merely "not yet
-    activated" — it is deliberately held pending Trisha's answer to the
-    ROP-overlap design question (ADR 032). This asserts the flag itself,
-    not just that a workflow exists to run it, because turning it on
-    unmodified silently picks the "standalone" option by default."""
-    import pathlib
-
-    import yaml
-    root = pathlib.Path(__file__).resolve().parent.parent
-    with open(root / "config.yml") as f:
-        cfg = yaml.safe_load(f)
-    assert cfg["nsite_public_notices"]["enabled"] is False
-
-
 # ==============================================================================
 # Full run() flows through a fake Sheets service
 # ==============================================================================

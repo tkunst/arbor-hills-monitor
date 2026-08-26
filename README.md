@@ -308,7 +308,7 @@ any advocacy organization.
     since the build session's SSH key authenticated non-interactively, so
     only `enabled` needs to flip).
 21. **nSITE Active Public Notices watch (Stream Q)** (daily, optional —
-    `nsite_public_notices.enabled: false`, ships disabled): watches the
+    `nsite_public_notices.enabled: true`, activated 2026-08-26): watches the
     EIGHTH and last nSITE profile for the same 19 sites — **Active Public
     Notices**, the formal comment-window announcements (permit renewals,
     draft permits, hearings) EGLE files per site. Live-fetched twice a month
@@ -336,7 +336,9 @@ any advocacy organization.
     also carries. Snapshot-diff into the `Public Notices Watch` tab; first
     sighting baselines silently. This completes the six-profile nSITE
     build-out staged 2026-08-08 — see `docs/decisions/032-nsite-active-
-    public-notices-watch.md` (incl. its 2026-08-26 addendum) for the full
+    public-notices-watch.md` (incl. its 2026-08-26 addendum, which also
+    flags the suppression heuristic's untested false-positive direction —
+    validated only against the two real ROP records seen) for the full
     writeup.
 
 > **A note on the document links (corrected 2026-08-23 — see ADR 007's
