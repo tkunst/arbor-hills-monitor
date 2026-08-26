@@ -301,6 +301,36 @@ external users but no sensitive data). Public repo.
   `.github/workflows/nsite-complaints-watch.yml` (this build session's SSH
   key authenticated non-interactively, so the `workflow`-OAuth-scope parking
   Streams L/M needed did not apply). See ADR 031.
+- `nsite_public_notices_watcher.py` — Stream Q: daily snapshot-diff of EGLE's
+  nSITE **Active Public Notices** profile (the formal comment-window
+  announcements — permit renewals, draft permits, hearings) for every srn in
+  `nsite_public_notices.tiers`, against the `Public Notices Watch` tab. Item
+  key `pubntc:<srn>`; a near-copy of the Evaluations/Permits ref-number-keyed
+  watch pattern, but keyed on an id regex-extracted from the notice's own
+  `publicNotifPnurl` URL — NOT `publicNotifExtrnlPublNoticeNum` (null on
+  every live record seen), and deliberately NOT conditional on that field
+  ever populating, to avoid a false remove+add pair if it later does (see
+  ADR 032). **This is the 6th and LAST of the six originally-unpolled nSITE
+  profiles.** Live sampling (2026-07-24 and re-confirmed 2026-08-25, a month
+  apart) found just ONE record total across all 19 sites, and both times it
+  was itself a ROP renewal comment-window notice Stream H (`rop_client.py`,
+  ADR 017) already watches through a different mechanism; no program-area
+  field exists anywhere in this profile's schema (confirmed against the
+  API's own field metadata) to scope around that overlap via a structured
+  filter. **Resolved 2026-08-26 (Trisha-directed):** rather than pure
+  standalone or a Stream-H state-based dedupe, `_all_changed_notices_look_
+  like_rop` suppresses the EMAIL — never the durable Sheet row, written
+  unconditionally either way — when every notice in a change reads as a ROP
+  renewal by keyword match on `comments`, failing open (still alerting) on
+  any non-match, mixed batch, duplicate-key state, or degraded/unreadable
+  snapshot. Gated by `nsite_public_notices.rop_alert_suppression` (defaults
+  `true`; `false` reverts to pure standalone without a code change).
+  **Activated 2026-08-26 (Trisha-directed):** `nsite_public_notices.enabled:
+  true` is live. The suppression heuristic is validated only against the two
+  real ROP records seen to date — a novel non-ROP notice that happens to
+  mention "ROP" in passing would have its email (not its Sheet row)
+  wrongly suppressed; `rop_alert_suppression: false` is the rollback if that
+  ever bites. See ADR 032 + its 2026-08-26 addendum.
 
 ## Forbidden patterns (do not do these)
 

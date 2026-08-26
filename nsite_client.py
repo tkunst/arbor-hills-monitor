@@ -66,6 +66,18 @@ degradation (~102K chars here, since complaints carry zero duplicate-tuple
 compression, 6396/6396 distinct, unlike Violations' 299->108 collapse) blows
 past the 50,000-char cap. See nsite_complaints_watcher for the count+hash+
 windowed-recency design this forces.
+
+And fetch_site_public_notices() (Stream Q, ADR 032) — the EIGHTH and last
+sibling profile, the formal comment-window announcements (permit renewals,
+draft permits, hearings). Same raise-don't-swallow contract; the schema has NO
+guaranteed-unique reference field (publicNotifExtrnlPublNoticeNum was null on
+the only live record seen so far, both 2026-07-24 and 2026-08-25), so this
+profile keys on an ID regex-extracted from publicNotifPnurl instead — see its
+own docstring for why. Live sampling across all 19 sites (2026-07-24, then
+re-confirmed 2026-08-25) found only ONE record total, and it was itself a ROP
+renewal comment-window notice already covered by Stream H's targeted watch
+(rop_client.py, ADR 017) — see nsite_public_notices_watcher for the resulting
+ROP-overlap design question this profile deliberately leaves for a human.
 """
 from __future__ import annotations
 
@@ -1101,6 +1113,173 @@ def fetch_site_complaints(session: requests.Session, nsite_id: str) -> list[dict
                 time.sleep(2 ** attempt)
     raise NsiteFetchError(
         f"GET complaints for site {nsite_id} failed after 3 attempts: {last_exc}"
+    ) from last_exc
+
+
+# The EIGHTH and LAST sibling profile — the formal comment-window
+# announcements (permit renewals, draft permits, hearings). Same query shape
+# as the seven profiles above; anonymous, no auth. Confirmed live 2026-07-24
+# and RE-CONFIRMED across all 19 `nsite_sites` on 2026-08-25 (Stream Q, ADR
+# 032): ONE record total both times — 2026-07-24 found a P1488 ROP renewal
+# notice, 2026-08-25 found a DIFFERENT one, an N1504 ROP renewal notice
+# (comment window 2026-08-10..2026-09-09) — confirming this profile's
+# near-zero volume is real, not a one-off sampling artifact, and that its one
+# live record is, both times, exactly the kind of ROP renewal notice Stream H
+# (rop_client.py) already watches. See nsite_public_notices_watcher for the
+# resulting design question.
+PUBLIC_NOTICES_ENDPOINT = (
+    f"{NSITE_BASE}/nsite/ss/api/nsite-explorer/default-mode"
+    "/profiles/1-profile/2-active-public-notices"
+)
+
+# The six fields EGLE's Active Public Notices profile serves, renamed to short
+# readable names. Confirmed 2026-08-25 against the API's own
+# `lookups.defaultElement.metadata` field-description block (not just the one
+# live record) — these six are the complete schema; no program-area or
+# facility-identifying field exists anywhere in it. `notice_id` leads because
+# it is this profile's diff key (see _normalize_public_notice).
+PUBLIC_NOTICE_FIELDS = (
+    "notice_id", "ext_num", "coverage", "start_date", "end_date", "comments",
+)
+
+_PUBLIC_NOTICE_RAW_KEYS = {
+    "ext_num": "publicNotifExtrnlPublNoticeNum",   # null on both live records seen so far
+    "coverage": "publicNotifRefPublicNotifCovrg",   # "Facility Location" on the one sample
+    "start_date": "publicNotifStartDate",           # ISO datetime w/ UTC offset — comment window opens
+    "end_date": "publicNotifEndDate",                # ISO datetime w/ UTC offset — the actionable deadline
+    "comments": "publicNotifComments",               # free text; can be long (a full ROP notice paragraph)
+}
+
+# Matches the long +/- integer ID embedded in publicNotifPnurl, e.g.
+# ".../publicnotice/info/-1797947627965436698/details". This, not
+# publicNotifExtrnlPublNoticeNum, is this profile's diff key — see
+# _normalize_public_notice for why.
+_NOTICE_URL_ID_RE = re.compile(r"/info/(-?\d+)/")
+
+
+def _extract_notice_id(pnurl: str) -> str:
+    """Pull the stable per-notice ID out of publicNotifPnurl's embedded URL.
+    Returns "" if the URL doesn't match the expected shape (a keyless record
+    is excluded by fetch_site_public_notices' filter, same as every ref-keyed
+    sibling profile)."""
+    m = _NOTICE_URL_ID_RE.search(pnurl or "")
+    return m.group(1) if m else ""
+
+
+def _normalize_public_notice(raw: dict) -> dict:
+    """Convert a raw nSITE public-notice dict into the fields the watch diffs
+    on.
+
+    KEYED ON THE URL-EMBEDDED ID (regex-extracted from publicNotifPnurl), NOT
+    `publicNotifExtrnlPublNoticeNum` — even though the handoff that staged this
+    build named the latter as the "cleaner key if it ever populates". It has
+    been null on every live record seen (2026-07-24 and 2026-08-25). Keying on
+    it anyway would create exactly the false-alert pair this design avoids: if
+    EGLE ever populates ext_num on a notice that was FIRST seen with ext_num
+    null (keyed by its URL-id), the record's key would change out from under
+    it, and nsite_public_notices_watcher's diff would report the old key
+    REMOVED (a false "comment window closed") plus the new key ADDED (a false
+    "new comment window opened") for what is really the same, unchanged
+    notice. The URL-id has no such failure mode — it's embedded in a link
+    nSITE itself serves and was present on both live records. `ext_num` is
+    still carried as an ORDINARY diffed field, so the day it does populate on
+    an existing notice, that shows up as a benign "changed" line instead of a
+    silent miss.
+
+    `start_date`/`end_date` are canonicalized via `_parse_egle_date` — the raw
+    values carry a UTC offset that must not flip any downstream comparison
+    across the EDT/EST transition, same reasoning as every sibling normalizer.
+
+    `comments` is passed through RAW here (not CRLF-collapsed like
+    _normalize_violation's) — the char-budget guard in
+    nsite_public_notices_watcher truncates/hashes it before it ever reaches a
+    stored snapshot, so a duplicate normalization pass isn't needed for it to
+    stay hash-stable there.
+
+    Every field is read with `or ""` (NOT `.get(f, "")`), matching every
+    sibling normalizer: a present-but-null key must normalize to the same ""
+    an absent key would."""
+    out = {f: (raw.get(_PUBLIC_NOTICE_RAW_KEYS[f]) or "")
+           for f in PUBLIC_NOTICE_FIELDS if f != "notice_id"}
+    out["notice_id"] = _extract_notice_id(raw.get("publicNotifPnurl", ""))
+    out["start_date"] = _parse_egle_date(raw.get(_PUBLIC_NOTICE_RAW_KEYS["start_date"]))
+    out["end_date"] = _parse_egle_date(raw.get(_PUBLIC_NOTICE_RAW_KEYS["end_date"]))
+    return out
+
+
+def fetch_site_public_notices(session: requests.Session, nsite_id: str) -> list[dict]:
+    """Return the full list of normalized public notices for one nSITE site.
+
+    Raises NsiteFetchError after 3 attempts on ANY network/HTTP/structural
+    failure — the same contract as every sibling fetch_site_* above
+    (nsite_public_notices_watcher DIFFS this list, so a swallowed failure
+    returned as [] would read as "every notice withdrawn at once"), NOT
+    fetch_site_documents' swallow-and-return-[].
+
+    Like fetch_site_evaluations/fetch_site_permits/fetch_site_complaints, this
+    DOES filter — on a non-empty regex-extracted URL id — because that id is
+    this profile's diff key and a keyless record cannot be placed in a
+    ref-number-keyed snapshot. No such record has been observed live; if
+    nSITE ever serves one, it is silently excluded, matching the sibling
+    precedent.
+
+    An empty list is a VALID result (18 of the 19 watched sites have zero
+    active public notices as of the 2026-08-25 live sample); only a fetch/
+    structural failure raises."""
+    query_params = urllib.parse.quote('{"filter":[{"id":"' + str(nsite_id) + '"}]}')
+    url = (
+        f"{PUBLIC_NOTICES_ENDPOINT}"
+        f"?responseContentType=application/json"
+        f"&includeMetadataInResponse=true"
+        f"&loadChildren=true"
+        f"&queryParams={query_params}"
+        f"&filterString="
+    )
+    referer = f"{NSITE_BASE}/nsite/DEFAULT/map/results/detail/{nsite_id}/Documents"
+
+    last_exc: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            r = session.get(
+                url,
+                headers={"Referer": referer, "Accept": "application/json"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            data = r.json()
+            if "queryResults" not in data:
+                raise NsiteFetchError(
+                    f"public-notices response for site {nsite_id} is missing "
+                    f"'queryResults' — nSITE may have changed its response shape"
+                )
+            if data.get("hasResultsRemaining"):
+                # Null on every site today (verified 2026-08-25). If nSITE ever
+                # enables server-side paging, a partial page would be
+                # INDISTINGUISHABLE from a shrunken record set: the ref-keyed
+                # diff would read the missing tail as notices withdrawn and
+                # email that as fact. Fail loudly instead — the same guard as
+                # every sibling fetch above.
+                raise NsiteStructuralError(
+                    f"public-notices response for site {nsite_id} reports "
+                    f"hasResultsRemaining — nSITE has started paging this "
+                    f"profile and this client would otherwise diff a PARTIAL "
+                    f"page as mass withdrawals. Pagination support is needed."
+                )
+            return [_normalize_public_notice(n) for n in data["queryResults"]
+                    if _extract_notice_id(n.get("publicNotifPnurl", ""))]
+        except NsiteStructuralError:
+            # Re-raise immediately, before the retry loop can swallow it into a
+            # generic NsiteFetchError: retrying a shape change is pointless, and
+            # the caller distinguishes the two types deliberately (a generic
+            # NsiteFetchError is treated as transient skip-and-warn, the exact
+            # silent-forever outcome this class exists to avoid).
+            raise
+        except Exception as e:  # noqa: BLE001 — network/HTTP: retry, then raise loud
+            last_exc = e
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+    raise NsiteFetchError(
+        f"GET public notices for site {nsite_id} failed after 3 attempts: {last_exc}"
     ) from last_exc
 
 

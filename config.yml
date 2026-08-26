@@ -1039,6 +1039,96 @@ nsite_complaints:
     SANL: quarterly
     ERNGX: quarterly
 
+# --- nSITE Active Public Notices watch (Stream Q, ADR 032) ---
+# Watch on the "Active Public Notices" profile — the formal comment-window
+# announcements (permit renewals, draft permits, hearings) — the EIGHTH and
+# LAST sibling profile to Documents (`facilities:`), Submissions, Violations,
+# Compliance Actions, Evaluations, Permits, and Complaints above. ONE fetch
+# per site -> ONE item ("pubntc:<srn>"); the FIRST sighting of each site's
+# notice list baselines silently. Diff is REF-NUMBER-KEYED like Evaluations/
+# Permits, but on an id regex-extracted from the notice's own URL
+# (publicNotifPnurl), NOT publicNotifExtrnlPublNoticeNum (null on every live
+# record seen so far) — see nsite_client._normalize_public_notice.
+#
+# Live sampling found only ONE record total across all 19 sites on BOTH
+# 2026-07-24 and 2026-08-25, and both times it was a ROP renewal
+# comment-window notice ALREADY watched by the dedicated ROP watch below
+# (`rop:`, ADR 017) through a different mechanism. Confirmed via the API's
+# own field-metadata that no program-area or facility-category field exists
+# in this profile to filter on, so a clean "just the non-ROP notices" scope
+# via a structured field is not available without EGLE adding one.
+#
+# RESOLVED 2026-08-26 (Trisha-directed): rather than pick pure standalone
+# (both real alerts to date would have been redundant with Stream H) or a
+# Stream H state-based dedupe (couples two independently-evolving mechanisms
+# for uncertain benefit), this watch suppresses its own EMAIL — never the
+# durable Sheet row — when a changed notice's text reads as a ROP renewal by
+# keyword match, failing open (alerting) whenever that match can't be made
+# confidently. See `rop_alert_suppression` below and
+# docs/decisions/032-nsite-active-public-notices-watch.md's 2026-08-26
+# addendum for the full writeup.
+nsite_public_notices:
+  # ACTIVATED 2026-08-26 (Trisha-directed) — the design question above is
+  # resolved and the live poller is now on, same activation step every prior
+  # nSITE watch in this series took explicitly.
+  enabled: true
+  # Recipient override: Trisha only to start (every sibling nSITE watch's
+  # precedent for a brand-new alert stream). Delete/comment this block to
+  # send to the full alert_recipients list once the alert copy has been seen
+  # in the wild.
+  recipients:
+    - arbor-hills@trishakunst.com
+  # Suppress the EMAIL (never the durable Sheet row above it) when EVERY
+  # notice in a given change reads as a ROP renewal comment window by
+  # keyword match on its `comments` text — see
+  # nsite_public_notices_watcher._all_changed_notices_look_like_rop. Fails
+  # open (alerts) on any non-match, any degraded/truncated snapshot, or an
+  # unreadable previous snapshot. Set to `false` to revert to pure
+  # standalone alerting (every change emails) without a code change.
+  rop_alert_suppression: true
+  # ROLLBACK LEVER, inherited from ADR 029/030 for parity — `notice_id` can
+  # NEVER be excluded regardless of what is listed here (see diff_fields() in
+  # nsite_public_notices_watcher.py): it is the diff KEY, not a display
+  # headline. No field is known to churn between identical fetches (only one
+  # live record has ever existed to check), so it ships excluding nothing.
+  # exclude_fields:
+  #   - coverage
+  # Max characters written to the Snapshot JSON cell before the watch
+  # degrades to a per-notice digest map. A Sheets cell hard-caps at 50,000;
+  # at this profile's observed volume (0-1 records per site) this is purely
+  # theoretical insurance, inherited for structural parity with every sibling
+  # nSITE watch — the guard that actually matters at this profile's scale is
+  # the per-record `publicNotifComments` cap (see
+  # nsite_public_notices_watcher.COMMENTS_STORED_CHARS), which is not
+  # config-tunable since it protects a single field, not the whole snapshot.
+  snapshot_char_budget: 45000
+  tiers:
+    # --- daily (3) — the three ROP-permit-holding sites; a live comment
+    # window has now been observed at two of the three (2026-07-24 P1488,
+    # 2026-08-25 N1504) ---
+    N2688: daily
+    N1504: daily
+    P1488: daily
+    # --- biweekly (3) — sites with another open matter tracked elsewhere in
+    # this monitor, or a mis-filing-insurance duplicate of N2688 ---
+    RA: biweekly      # water/NPDES facility with other open enforcement history
+    WRD: biweekly     # open JPA + PFOS interest at the Land & Water Interface site
+    AHLI: biweekly    # bare duplicate registration for the same landfill as N2688
+    # --- quarterly (13) — zero active public notices ever seen; typo/mis-filing insurance only ---
+    P1504: quarterly
+    AHLA: quarterly
+    AHLB: quarterly
+    AHLC: quarterly
+    AHLD: quarterly
+    AHLE: quarterly
+    ADL1: quarterly
+    ADL2: quarterly
+    COMP: quarterly
+    AHE1: quarterly
+    AHE2: quarterly
+    SANL: quarterly
+    ERNGX: quarterly
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 # NOTE (2026-08-21, Trisha's direction): this list is committed to a PUBLIC repo,

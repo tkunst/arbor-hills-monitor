@@ -307,6 +307,39 @@ any advocacy organization.
     step here: the workflow file landed directly in `.github/workflows/`
     since the build session's SSH key authenticated non-interactively, so
     only `enabled` needs to flip).
+21. **nSITE Active Public Notices watch (Stream Q)** (daily, optional —
+    `nsite_public_notices.enabled: true`, activated 2026-08-26): watches the
+    EIGHTH and last nSITE profile for the same 19 sites — **Active Public
+    Notices**, the formal comment-window announcements (permit renewals,
+    draft permits, hearings) EGLE files per site. Live-fetched twice a month
+    apart (2026-07-24 and 2026-08-25): **one record total**, across all 19
+    sites, both times — and both times it was itself a ROP renewal
+    comment-window notice (P1488 in July, N1504 in August) that the
+    monitor's separate, targeted ROP watch (Stream H) already tracks and
+    alerts on through a different mechanism. No program-area or
+    facility-category field exists anywhere in this profile's schema
+    (confirmed against the API's own field-metadata block) to scope around
+    that overlap via a structured filter. **Resolved 2026-08-26
+    (Trisha-directed):** rather than pick pure standalone or a Stream-H
+    state-based dedupe, this watch suppresses its own EMAIL — never the
+    durable Sheet row — when a notice's text reads as a ROP renewal by
+    keyword match (`nsite_public_notices.rop_alert_suppression`, defaults
+    `true`), failing open (still alerting) on any non-match, mixed batch, or
+    degraded/unreadable snapshot. Diff is ref-number-keyed on an id
+    regex-extracted from the notice's own URL (`publicNotifPnurl`) —
+    deliberately NOT `publicNotifExtrnlPublNoticeNum` (null on every live
+    record seen), and NOT conditional on that field ever populating, to
+    avoid misreporting one unchanged notice as a false "window closed" +
+    "new window opened" pair if EGLE later fills it in. A single long
+    comment field is capped + content-hashed per record, independent of the
+    general multi-record Sheets-cell budget guard every sibling nSITE watch
+    also carries. Snapshot-diff into the `Public Notices Watch` tab; first
+    sighting baselines silently. This completes the six-profile nSITE
+    build-out staged 2026-08-08 — see `docs/decisions/032-nsite-active-
+    public-notices-watch.md` (incl. its 2026-08-26 addendum, which also
+    flags the suppression heuristic's untested false-positive direction —
+    validated only against the two real ROP records seen) for the full
+    writeup.
 
 > **A note on the document links (corrected 2026-08-23 — see ADR 007's
 > addendum).** Every case-file row's **Link** column points to EGLE's nSITE
