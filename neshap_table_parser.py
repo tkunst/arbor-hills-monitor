@@ -477,13 +477,26 @@ def _find_next_any_divider_page(pages: list[str], start_from: int) -> Optional[i
 
 def _section_end(pages: list[str], start: int, expected_next_letter: str) -> int:
     """Resolve the exclusive end-page index for a section starting at `start`
-    (a divider page found by _find_divider_page): the specifically-expected
-    next letter's divider if found, else ANY later appendix divider, else
-    end-of-document (only when this is genuinely the report's last appendix)."""
-    hi = _find_divider_page(pages, expected_next_letter, start_from=start + 1)
-    if hi is None:
-        hi = _find_next_any_divider_page(pages, start + 1)
-    return hi if hi is not None else len(pages)
+    (a divider page found by _find_divider_page): the NEAREST later appendix
+    divider — whether or not it's the specifically-expected next letter —
+    else end-of-document (only when this is genuinely the report's last
+    appendix).
+
+    Deliberately takes the MIN of the two searches rather than preferring the
+    specific letter: an earlier version of this function preferred the
+    expected letter's divider outright, which only helped when that letter
+    was entirely absent — if the expected letter's divider existed further
+    away than an intervening different-letter divider (e.g. a future report
+    with an extra/reordered appendix between this section and its normal
+    successor), that version would skip straight past the intervening
+    divider and re-open the exact bleed-through this function exists to
+    prevent (see _find_next_any_divider_page's docstring). Confirmed via a
+    round-3 code review's empirical reproduction before this fix; the
+    regression test below encodes that exact scenario."""
+    specific = _find_divider_page(pages, expected_next_letter, start_from=start + 1)
+    nearest_any = _find_next_any_divider_page(pages, start + 1)
+    candidates = [x for x in (specific, nearest_any) if x is not None]
+    return min(candidates) if candidates else len(pages)
 
 
 def _lines_for_pages(pages: list[str], lo: int, hi: int) -> list[tuple[str, int]]:

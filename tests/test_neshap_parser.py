@@ -104,6 +104,16 @@ def test_well_re_requires_a_digit_so_all_caps_narrative_words_dont_match():
     assert n.WELL_RE.match("AHW272R4") is not None
 
 
+def test_well_re_rejects_trailing_asterisk_unlike_the_woi_sibling():
+    # Regression guard for the module docstring's specific empirical claim:
+    # unlike woi_table_parser.WELL_RE (which tolerates 0-4 trailing footnote
+    # asterisks, confirmed against real WOI report text), this module's
+    # WELL_RE has no such tolerance -- a would-be asterisk-suffixed well ID
+    # is REJECTED (skip rather than mis-tag), not silently accepted.
+    assert n.WELL_RE.match("AHW272R4*") is None
+    assert n.WELL_RE.match("AHW272R4**") is None
+
+
 def test_exceedance_reading_plausible_gate_catches_gross_misalignment():
     good = ExceedanceReading("AHW263R5", "07/23/25 10:13", "temperature",
                               157.7, 145.0, True, None, page=26)
@@ -324,6 +334,30 @@ def test_section_end_falls_back_to_end_of_document_when_no_divider_exists_at_all
     # closing divider of any letter -- true end-of-document IS correct here.
     pages = [REAL_DIVIDER_F, "Methane\nAHW263R5\n07/01/25 10:11\n50.3\n0\n160"]
     assert n._section_end(pages, 0, "G") == 2
+
+
+def test_section_end_stops_at_the_nearest_divider_even_when_the_expected_letter_exists_further_away():
+    # Regression test for the exact bug an earlier version of _section_end
+    # had (found + reproduced by a round-3 code review): it PREFERRED the
+    # specifically-expected letter's divider outright, which only helped
+    # when that letter was entirely absent. If the expected letter's divider
+    # existed but an INTERVENING different-letter divider sat closer (e.g. a
+    # future report with an extra/reordered appendix), the old version would
+    # skip straight past the intervening divider and reopen the exact
+    # bleed-through this function exists to prevent -- Appendix F's row here
+    # would have been silently mis-parsed as an Appendix A pressure reading.
+    pages = [
+        REAL_DIVIDER_A,                                                  # 0
+        "(Pressure)\nAHEW0012\n08/14/25 11:28\n1.63",                    # 1: pressure table
+        REAL_DIVIDER_F,                                                  # 2: intervening -- closer than B
+        "Methane\nAHW263R5\n07/01/25 10:11\n50.3\n0\n160\n120",          # 3: Appendix F's own table
+        REAL_DIVIDER_B,                                                  # 4: the "expected" letter -- further away
+        "downtime table",                                                # 5
+    ]
+    hi = n._section_end(pages, 0, "B")
+    assert hi == 2   # stops at the NEARER Appendix F divider, not the farther B (index 4)
+    rows = n._parse_appendix_a_lines(n._lines_for_pages(pages, 0, hi))
+    assert [r.well_id for r in rows] == ["AHEW0012"]   # F's row never entered
 
 
 def test_find_next_any_divider_page_matches_any_letter_not_just_one():

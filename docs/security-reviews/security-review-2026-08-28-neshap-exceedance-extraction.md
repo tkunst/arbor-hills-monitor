@@ -1,7 +1,14 @@
 # Security review — NESHAP exceedance-extraction parser (`neshap-exceedance-extraction`)
 
-*PR #53 (`neshap-exceedance-extraction`), reviewed at final state `<merge-commit-sha>`
-(branch tip before merge: see PR history). **Result: zero medium/high findings — no
+*PR #53 (`neshap-exceedance-extraction`). This pass reviewed branch tip `c98ef6c`
+(the round-1 fix commit — the diff at the time this pass ran). A second pass (see
+"Round 2 re-review addendum" below) independently re-reviewed the branch after it
+gained the round-2 `_section_end`/`_find_next_any_divider_page` divider-boundary
+fix, at branch tip `3889419`, specifically re-tracing that new logic rather than
+assuming the first pass already covered it. A round-3 code-only fix (the
+nearest-divider correction, non-security) landed after both security passes; see
+the "Round 3 note" at the end of this file for why it doesn't reopen either
+verdict. **Result across both security passes: zero medium/high findings — no
 exploitable vulnerability introduced.***
 
 ## Tooling note — read this first
@@ -124,12 +131,65 @@ than it actually was.
 Single review pass on the code paths reviewed here; no findings reached the
 reporting threshold. Confirmed no hardcoded local filesystem paths in either new
 Python file, consistent with this repo's `docs/decisions/002` forbidden-patterns
-rule. This review's diff snapshot predates the final round-2 correctness fixes
+rule. This pass's diff snapshot (`c98ef6c`) predated the round-2 correctness fixes
 (the `_section_end` divider-bleed fix, the `plausible` docstring correction, and
-the added regression tests) — those changes are non-security in nature (data-
-integrity/correctness, traced in full in ADR 033) and do not alter any of the
-flows traced above (no new I/O, no new external input, no new sink); they were not
-re-run through a second security pass for that reason.
+the added regression tests) — those changes were non-security in nature (data-
+integrity/correctness, traced in full in ADR 033), but rather than assume that on
+faith, a **second pass was run** (below) specifically to re-trace the new
+`_section_end`/`_find_next_any_divider_page` logic.
+
+## Round 2 re-review addendum
+
+*Independent pass, fresh subagent, no context from the pass above. Reviewed
+branch tip `3889419` (after the round-2 `_section_end` fix landed). Result:
+**zero medium/high findings — confirms, rather than inherits, the verdict above.***
+
+- **Independently re-verified (not re-cited) that zero callers of
+  `neshap_table_parser` exist anywhere else in the repo** — a fresh whole-repo
+  grep, since this fact is what "not exploitable" rests on for the path-traversal
+  flow and the new divider-boundary logic alike.
+- **`_section_end` / `_find_next_any_divider_page` traced specifically**: both
+  add only bounded linear re-scans (`O(pages)`) of the `pages` list that
+  `_page_texts()` already fully materializes before any boundary logic runs — no
+  recursion, no unbounded backtracking, no quadratic blowup, so no new
+  resource-exhaustion surface. Verified the `hi > lo` invariant holds for every
+  call site (both helper functions are only ever called with
+  `start_from = start + 1`, so any index returned is strictly greater than
+  `start`), meaning `_lines_for_pages(pages, lo, hi)`'s `range(lo, hi)` can never
+  go negative or out of bounds. `_ANY_APPENDIX_DIVIDER_RE` (the one new regex) is
+  an anchored literal-prefix match with no ambiguous quantifiers — no ReDoS.
+  `f"APPENDIX {letter}"` (pre-existing, unchanged) is only ever formatted with a
+  hardcoded single-character literal, never parsed PDF content — no format-string
+  injection.
+- **Framed the underlying data-integrity motivation against this repo's actual
+  trust boundary**: source PDFs are hand-curated GFL/EPA compliance filings from
+  a controlled Drive folder, not attacker-submitted documents, and this PR has no
+  downstream sink (no CSV writer, no publish step) yet — so a future
+  adversarially-crafted PDF manipulating page layout to fool this boundary
+  heuristic is a data-integrity concern for a future public dataset, not a
+  confidentiality/integrity-of-the-system security issue, and stays correctly out
+  of scope for this parser-only PR (flagged, alongside the CSV-formula-injection
+  item above, for whoever builds the named follow-on).
+- Also checked all three new doc files (this one included) for instruction-shaped
+  text aimed at manipulating an automated reviewer (prompt-injection-via-doc) —
+  found none; the "zero medium/high findings" language here is a genuine reported
+  finding, re-derived independently, not inherited on trust.
+
+## Round 3 note
+
+A round-3 code review (Step 5, third and final round under the review cap) found
+one genuine bug in the round-2 `_section_end` fix itself: it *preferred* the
+specifically-expected next appendix letter's divider over the nearest divider of
+any letter, which only closed the "expected letter entirely absent" case — an
+intervening different-letter divider closer than the expected one would still be
+skipped past, reopening the same class of bleed-through bug. Fixed by taking the
+**minimum** of both searches unconditionally (see ADR 033 for the full account and
+the empirical reproduction that caught it). This is a **correctness-only** change
+— same bounded-linear-scan shape, same `hi > lo` invariant, no new I/O, no new
+regex, no new sink — so it does not reopen either security verdict above; a third
+security pass was not run for that reason, consistent with how the round-1→round-2
+transition was handled (a fresh pass was run there because the actual *logic*
+being traced was new, not merely because a commit landed).
 
 ## Files reviewed
 
