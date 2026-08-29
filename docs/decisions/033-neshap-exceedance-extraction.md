@@ -105,7 +105,7 @@ ready rows), against three targets:
 
 ## Tests
 
-`tests/test_neshap_parser.py` — 43 hermetic tests operating on synthetic
+`tests/test_neshap_parser.py` — 45 hermetic tests operating on synthetic
 `[(text, page)]` / page-text lists (the same `L()` helper pattern as
 `tests/test_woi_parser.py`), no PDF opened at test time. A handful use
 pytest's `monkeypatch` fixture to stub the module's one fitz-touching
@@ -122,49 +122,64 @@ mismatch, the exceeded-is-per-row nuance, the Y-mapping not being hardcoded
 to the all-"N" case both real reports happen to show, the real H1 report's
 visual-inspection table repeating its column header across a page break) are
 encoded as literal synthetic fixtures in the test file instead.
-`pytest -q`: 1258 passed (1215 pre-existing + 43 new).
+`pytest -q`: 1260 passed (1215 pre-existing + 45 new).
 
-Two rounds of independent review (Step 5 of `overnight-coder.md`, a fresh
-diff-only subagent each round) plus a Step 6 security pass
+Three rounds of independent review (Step 5 of `overnight-coder.md`, a fresh
+diff-only subagent each round — the cap) plus two Step 6 security passes
 (`docs/security-reviews/security-review-2026-08-28-neshap-exceedance-extraction.md`
-— zero medium/high findings; note that file's own "Tooling note" on why an
-OWASP-tracing subagent stood in for the literal `/security-review` command)
-ran against this PR before merge; round 1 found 8 issues
-(silent divider-page failure on any leading page content, a silent-row-drop
+— zero medium/high findings both passes; note that file's own "Tooling note"
+on why an OWASP-tracing subagent stood in for the literal `/security-review`
+command) ran against this PR before merge. Round 1 found 8 issues (silent
+divider-page failure on any leading page content, a silent-row-drop
 adjacency limit, a regex-overlap question, no per-row validity gate, an
 overly-broad well-ID regex, a downwell-phrasing precision gap, a test-
-coverage gap on the PDF-facing entry points, and cosmetic nits) and round 2
+coverage gap on the PDF-facing entry points, and cosmetic nits). Round 2
 found 7 more against the round-1 fixes (a `plausible` property that was
 defined but never consumed, a lost asterisk-tolerance side effect of the
 `WELL_RE` tightening, a genuine data-integrity gap where a missed closing
 divider could let one appendix's parser bleed into the next appendix's rows
 because Appendix A's and Appendix F's date formats coincide, a stale test-
 count claim in this ADR, a plausible-sounding but empirically-unconfirmed
-multi-page-header concern, a missing test, and a cosmetic nit). All were
-resolved: genuine bugs fixed and re-verified against both real PDFs
-(including the divider-bleed gap, which is a real fix — `_section_end`/
-`_find_next_any_divider_page` below); two claims (the lost asterisk
-tolerance, the multi-page repeated-header risk) were independently
-re-checked against the real PDFs rather than taken on faith and found not to
-apply to either real report as it stands today, with a hermetic regression
-test added for the real repeated-header shape either way; the `plausible`
-property was kept as documented API surface for the named CSV follow-on
-(the same role `woi_table_parser.WOIReading.valid` plays via
-`per_well_summary`'s `valid_only`) rather than built out further, since this
-module has no equivalent aggregation function yet to wire it into.
+multi-page-header concern, a missing test, and a cosmetic nit). Round 3
+found one more, genuine and empirically reproduced against the round-2 fix
+itself: `_section_end` **preferred** the specifically-expected next letter's
+divider over the nearest one, which only actually helped when that letter
+was entirely absent — if the expected letter's divider existed but an
+INTERVENING different-letter divider sat closer, the round-2 version would
+skip past the intervening divider and reopen the exact bleed-through it was
+built to prevent. All findings across all three rounds were resolved: every
+genuine bug fixed and re-verified against both real PDFs (including the
+round-2 divider-bleed gap and the round-3 nearest-divider fix, both below);
+two round-2 claims (the lost asterisk tolerance, the multi-page
+repeated-header risk) were independently re-checked against the real PDFs
+rather than taken on faith and found not to apply to either real report as
+it stands today, with a hermetic regression test added for the real
+repeated-header shape either way; the `plausible` property was kept as
+documented API surface for the named CSV follow-on (the same role
+`woi_table_parser.WOIReading.valid` plays via `per_well_summary`'s
+`valid_only`) rather than built out further, since this module has no
+equivalent aggregation function yet to wire it into. Round 3's re-review
+(both a fresh code review and a fresh security pass) came back clean —
+zero medium/high findings, no further correctness issues — so this PR
+merged at the review cap rather than needing a 4th round.
 
-**`_section_end` / `_find_next_any_divider_page`** (added in round 2): the
-original `parse_exceedances`/`parse_enhanced_monitoring`/`parse_report` fell
-back to "scan to end of document" whenever a section's expected closing
-divider (Appendix B for A, Appendix G for F) wasn't found. Appendix A's
-pressure/temperature rows and Appendix F's H2-style enhanced-monitoring rows
-share the identical `MM/DD/YY HH:MM` date shape, so a missed Appendix B
-divider could have let Appendix A's parser run straight into Appendix F and
-mis-parse its rows as spurious pressure/temperature exceedance readings —
-silently *wrong* data, not just missing data. `_section_end` now falls back
-to the nearest LATER appendix divider of any letter before falling back to
-end-of-document, closing that gap without needing to hardcode every real
-report's exact appendix ordering.
+**`_section_end` / `_find_next_any_divider_page`** (added round 2, corrected
+round 3): the original `parse_exceedances`/`parse_enhanced_monitoring`/
+`parse_report` fell back to "scan to end of document" whenever a section's
+expected closing divider (Appendix B for A, Appendix G for F) wasn't found.
+Appendix A's pressure/temperature rows and Appendix F's H2-style
+enhanced-monitoring rows share the identical `MM/DD/YY HH:MM` date shape, so
+a missed Appendix B divider could have let Appendix A's parser run straight
+into Appendix F and mis-parse its rows as spurious pressure/temperature
+exceedance readings — silently *wrong* data, not just missing data. The
+round-2 fix fell back to the nearest LATER appendix divider of any letter
+only when the specifically-expected letter was entirely absent — which
+closed the "letter missing" case but not the "letter present, but not
+nearest" case (an intervening different-letter divider would still be
+skipped past). The round-3 fix takes the **minimum** of the two searches
+unconditionally — always the nearest divider, specific-letter or not —
+closing both cases without needing to hardcode every real report's exact
+appendix ordering.
 
 ## Consequences
 
