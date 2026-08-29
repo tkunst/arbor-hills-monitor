@@ -89,6 +89,16 @@ import fitz  # pymupdf
 # require one so an all-caps narrative/footnote word (e.g. a stray "AHEAD")
 # can't false-match as a well ID. Confirmed against every distinct well ID
 # in both real reports before tightening this (zero false negatives).
+# NOTE: unlike woi_table_parser.WELL_RE, this does NOT tolerate trailing
+# footnote asterisks (WOI's real specimens print them glued onto the well-ID
+# token itself, e.g. "AHW272R4**"). Confirmed by a document-wide regex scan
+# of both real NESHAP PDFs (every page, not just Appendix A/F) for any
+# "AH[A-Z0-9]+\*+" token: zero matches in either report — NESHAP's footnote
+# markers are always separate full-sentence lines (e.g. "*Higher operating
+# value (HOV) requested for well 263R5..."), never suffixed onto a well ID.
+# If a future report ever does suffix one, this regex would reject that row
+# rather than mis-tag it — the same "skip rather than guess" posture as the
+# rest of this module.
 WELL_RE = re.compile(r"^AH(?=[A-Z0-9]*\d)[A-Z0-9]+$")
 DT_RE_APPENDIX_A = re.compile(r"^\d{1,2}/\d{1,2}/\d{2}\s+\d{1,2}:\d{2}$")
 FLOAT_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
@@ -102,7 +112,7 @@ FLOAT_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 # be confused with.
 DURATION_RE = re.compile(r"^\*?<?\d+\+?$")
 
-PRESSURE_LIMIT_INWC = 0.0    # "H2O gauge pressure; exceedance = zero or positive.
+PRESSURE_LIMIT_INWC = 0.0    # in. H2O gauge pressure; exceedance = zero or positive.
 TEMPERATURE_LIMIT_F = 145.0  # Landfill NESHAP wellhead temperature standard.
 # HOV-approved wells (e.g. AHW272R4 at 180F) are NOT modeled here — this is
 # the one constant baseline the report itself states; see module docstring.
@@ -160,9 +170,15 @@ def _parse_appendix_a_lines(lines: list[tuple[str, int]]) -> list[ExceedanceRead
     a row can vanish with no signal beyond the total count coming up short.
     Neither real 2025 report exhibits this — both were verified to match the
     handoff's sanity-check counts exactly — but a future report with
-    different formatting could trip it silently. The `plausible` property
-    and `_find_divider_page`'s divider-page gate are the two available
-    integrity backstops; there is no per-row "did I skip something" signal."""
+    different formatting could trip it silently. There is no per-row "did I
+    skip something" signal. `_find_divider_page`'s divider-page gate IS
+    applied automatically by every PDF-facing entry point. `plausible` (on
+    `ExceedanceReading`/`EnhancedMonitoringReading`) is NOT auto-applied
+    anywhere in this module today — it's exposed as API surface for a future
+    caller (e.g. the named CSV-build follow-on) to filter on, the same way
+    `woi_table_parser.per_well_summary`'s `valid_only` consumes its sibling
+    `WOIReading.valid`; this module has no analogous aggregation function to
+    wire it into yet."""
     out: list[ExceedanceReading] = []
     mode: Optional[str] = None
     i, n = 0, len(lines)
@@ -433,6 +449,43 @@ def _find_divider_page(pages: list[str], letter: str, start_from: int = 0) -> Op
     return None
 
 
+_ANY_APPENDIX_DIVIDER_RE = re.compile(r"^APPENDIX [A-Z]\b")
+
+
+def _find_next_any_divider_page(pages: list[str], start_from: int) -> Optional[int]:
+    """Find the next 'APPENDIX <any letter>' divider page (0-indexed), same
+    short-page heuristic as _find_divider_page. Used as a SAFER closing
+    boundary than "scan to end of document" when the specific next-expected
+    letter's divider can't be found: Appendix A's temperature/pressure rows
+    and Appendix F's H2-style enhanced-monitoring rows share the exact same
+    MM/DD/YY HH:MM date shape, so if Appendix A's own closing divider (a
+    genuinely different appendix, normally B) were ever missed, the old
+    end-of-document fallback would let Appendix A's parser run straight into
+    Appendix F and mis-parse its rows as spurious pressure/temperature
+    exceedance readings — silently WRONG data, not just missing data.
+    Stopping at ANY later appendix divider (not only the one specifically
+    expected next) closes that gap without needing to know every real
+    report's exact appendix ordering in advance."""
+    for p in range(start_from, len(pages)):
+        nonblank = [ln.strip() for ln in pages[p].split("\n") if ln.strip()]
+        if len(nonblank) > _DIVIDER_PAGE_MAX_NONBLANK_LINES:
+            continue
+        if any(_ANY_APPENDIX_DIVIDER_RE.match(ln) for ln in nonblank):
+            return p
+    return None
+
+
+def _section_end(pages: list[str], start: int, expected_next_letter: str) -> int:
+    """Resolve the exclusive end-page index for a section starting at `start`
+    (a divider page found by _find_divider_page): the specifically-expected
+    next letter's divider if found, else ANY later appendix divider, else
+    end-of-document (only when this is genuinely the report's last appendix)."""
+    hi = _find_divider_page(pages, expected_next_letter, start_from=start + 1)
+    if hi is None:
+        hi = _find_next_any_divider_page(pages, start + 1)
+    return hi if hi is not None else len(pages)
+
+
 def _lines_for_pages(pages: list[str], lo: int, hi: int) -> list[tuple[str, int]]:
     """lo inclusive, hi exclusive (0-based page indices)."""
     out: list[tuple[str, int]] = []
@@ -450,8 +503,7 @@ def parse_exceedances(pdf_path: str) -> list[ExceedanceReading]:
     a = _find_divider_page(pages, "A")
     if a is None:
         return []
-    b = _find_divider_page(pages, "B", start_from=a + 1)
-    hi = b if b is not None else len(pages)
+    hi = _section_end(pages, a, "B")
     return _parse_appendix_a_lines(_lines_for_pages(pages, a, hi))
 
 
@@ -463,8 +515,7 @@ def parse_enhanced_monitoring(
     f = _find_divider_page(pages, "F")
     if f is None:
         return [], []
-    g = _find_divider_page(pages, "G", start_from=f + 1)
-    hi = g if g is not None else len(pages)
+    hi = _section_end(pages, f, "G")
     return _parse_appendix_f_lines(_lines_for_pages(pages, f, hi))
 
 
@@ -479,15 +530,13 @@ def parse_report(pdf_path: str) -> tuple[
     a = _find_divider_page(pages, "A")
     exceedances: list[ExceedanceReading] = []
     if a is not None:
-        b = _find_divider_page(pages, "B", start_from=a + 1)
         exceedances = _parse_appendix_a_lines(
-            _lines_for_pages(pages, a, b if b is not None else len(pages)))
+            _lines_for_pages(pages, a, _section_end(pages, a, "B")))
     enhanced: list[EnhancedMonitoringReading] = []
     visual: list[VisualInspection] = []
     f = _find_divider_page(pages, "F")
     if f is not None:
-        g = _find_divider_page(pages, "G", start_from=f + 1)
         enhanced, visual = _parse_appendix_f_lines(
-            _lines_for_pages(pages, f, g if g is not None else len(pages)))
+            _lines_for_pages(pages, f, _section_end(pages, f, "G")))
     metadata = parse_report_metadata(pages, enhanced)
     return exceedances, enhanced, visual, metadata

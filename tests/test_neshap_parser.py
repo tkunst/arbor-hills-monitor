@@ -200,6 +200,35 @@ def test_mode_switches_from_enhanced_to_visual_mid_stream():
     assert len(enh) == 1 and len(vis) == 1
 
 
+def test_appendix_f_reading_before_any_mode_marker_is_skipped():
+    # Mirrors test_reading_before_any_mode_marker_is_skipped for Appendix A:
+    # a well/date pair with no preceding "Methane"/"Staff Person" marker
+    # can't be classified -- skip rather than guess.
+    lines = L("AHW263R5", "07/01/25 10:11", "50.3", "0", "160")
+    enh, vis = n._parse_appendix_f_lines(lines)
+    assert enh == [] and vis == []
+
+
+def test_visual_table_survives_a_repeated_header_row_between_pages():
+    # The real 2025 H1 report's visual-inspection table spans two pages, and
+    # the column header repeats at the top of the second page -- confirmed by
+    # parsing the real PDF (9 rows, all "Avery Segur", none corrupted). This
+    # is the hermetic regression guard for that real shape: the repeated
+    # header sits strictly BETWEEN two complete rows, so it must be consumed
+    # by the outer loop's mode-marker/skip logic, never swept into the prior
+    # row's staff_tokens accumulation.
+    lines = L("Staff Person",
+              "AHWW328R", "03/05/25", "Avery Segur", "N", "N", "N",
+              # repeated header, as printed at the top of the real report's 2nd page
+              "Well ID", "Date & Time", "Staff Person", "Name",
+              "Smoke", "observed?", "(Y/N)", "Smoldering", "Ash",
+              "observed?", "(Y/N)", "Damage", "to well?", "(Y/N)",
+              "AHWW328R", "03/12/25", "Avery Segur", "N", "N", "N")
+    enh, vis = n._parse_appendix_f_lines(lines)
+    assert [v.staff_name for v in vis] == ["Avery Segur", "Avery Segur"]
+    assert [v.reading_date for v in vis] == ["03/05/25", "03/12/25"]
+
+
 # --- Divider-page finder: the real reports' own TOC is a trap ---------------
 
 TOC_PAGE = (
@@ -253,6 +282,60 @@ def test_lines_for_pages_respects_page_range_bounds():
     pages = ["AHEW0012\n08/14/25 11:28\n1.63", "AHW263R5\n07/01/25 10:11\n160"]
     lines = n._lines_for_pages(pages, 0, 1)
     assert lines == [("AHEW0012", 1), ("08/14/25 11:28", 1), ("1.63", 1)]
+
+
+# --- _section_end: safer-than-end-of-document closing boundary -------------
+#
+# Appendix A's pressure/temperature rows and Appendix F's H2-style enhanced-
+# monitoring rows share the identical MM/DD/YY HH:MM date shape. If Appendix
+# A's own closing divider (normally Appendix B) is ever missed, falling back
+# to "scan to end of document" would let Appendix A's parser run straight
+# into Appendix F and mis-parse its rows as spurious pressure/temperature
+# exceedance readings -- silently WRONG data, not just missing data. This is
+# a real gap a round-2 code review found in the original divider-fallback
+# design; _section_end / _find_next_any_divider_page close it.
+
+REAL_DIVIDER_F = " \nAPPENDIX F  \nENHANCED MONITORING RESULTS \n"
+
+
+def test_section_end_stops_at_the_specifically_expected_next_letter():
+    pages = [REAL_DIVIDER_A, "pressure table", REAL_DIVIDER_B, "downtime table"]
+    assert n._section_end(pages, 0, "B") == 2
+
+
+def test_section_end_falls_back_to_any_later_divider_when_the_expected_one_is_missing():
+    # Appendix B's divider is MISSING; Appendix F's is present further on.
+    # The old design would have returned len(pages) here, letting Appendix A
+    # bleed into Appendix F's table below. The fixed design must stop at F.
+    pages = [
+        REAL_DIVIDER_A,                                                 # 0
+        "(Pressure)\nAHEW0012\n08/14/25 11:28\n1.63",                   # 1: pressure table
+        REAL_DIVIDER_F,                                                 # 2: NOT "B" -- some other appendix's divider
+        "Methane\nAHW263R5\n07/01/25 10:11\n50.3\n0\n160\n120",         # 3: Appendix F's own table
+    ]
+    hi = n._section_end(pages, 0, "B")
+    assert hi == 2   # stops at the Appendix F divider, not len(pages) == 4
+    rows = n._parse_appendix_a_lines(n._lines_for_pages(pages, 0, hi))
+    assert [r.well_id for r in rows] == ["AHEW0012"]   # F's row never entered
+
+
+def test_section_end_falls_back_to_end_of_document_when_no_divider_exists_at_all():
+    # A genuinely-last appendix (real reports: Appendix F itself) has no
+    # closing divider of any letter -- true end-of-document IS correct here.
+    pages = [REAL_DIVIDER_F, "Methane\nAHW263R5\n07/01/25 10:11\n50.3\n0\n160"]
+    assert n._section_end(pages, 0, "G") == 2
+
+
+def test_find_next_any_divider_page_matches_any_letter_not_just_one():
+    pages = ["narrative", REAL_DIVIDER_B]
+    assert n._find_next_any_divider_page(pages, 0) == 1
+
+
+def test_find_next_any_divider_page_still_respects_the_short_page_gate():
+    # Same TOC trap as _find_divider_page -- the TOC's line count, not its
+    # content, is what must exclude it.
+    pages = [TOC_PAGE, REAL_DIVIDER_B]
+    assert n._find_next_any_divider_page(pages, 0) == 1
 
 
 # --- Report-level metadata: narrative regex + derived well roster ----------
