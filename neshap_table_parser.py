@@ -84,15 +84,37 @@ import fitz  # pymupdf
 
 # --- Appendix A (Wellfield Exceedance Reports) -----------------------------
 
-WELL_RE = re.compile(r"^AH[A-Z0-9]+$")
+# Every real well ID observed in both reports (Appendix A AND Appendix F)
+# carries at least one digit (AHEW0012, AHW272R4, AHC4W109, AHWWTS02, ...) —
+# require one so an all-caps narrative/footnote word (e.g. a stray "AHEAD")
+# can't false-match as a well ID. Confirmed against every distinct well ID
+# in both real reports before tightening this (zero false negatives).
+WELL_RE = re.compile(r"^AH(?=[A-Z0-9]*\d)[A-Z0-9]+$")
 DT_RE_APPENDIX_A = re.compile(r"^\d{1,2}/\d{1,2}/\d{2}\s+\d{1,2}:\d{2}$")
 FLOAT_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
+# Duration values seen in both real reports: "<1", a bare int ("1".."64"),
+# "NN+", and a footnote-flagged "*NN". FLOAT_RE and DURATION_RE both match a
+# bare small integer (e.g. "1") by design — that's not an ambiguity in
+# practice: a Duration cell is always immediately preceded by that row's own
+# Value (already consumed) and immediately followed by either the NEXT row's
+# Well ID (never digit-only — WELL_RE above requires an "AH" prefix) or the
+# end of the table, so there is no OTHER token shape a bare digit here could
+# be confused with.
 DURATION_RE = re.compile(r"^\*?<?\d+\+?$")
 
-PRESSURE_LIMIT_INWC = 0.0    # "H2O gauge pressure; exceedance = zero or positive
+PRESSURE_LIMIT_INWC = 0.0    # "H2O gauge pressure; exceedance = zero or positive.
 TEMPERATURE_LIMIT_F = 145.0  # Landfill NESHAP wellhead temperature standard.
 # HOV-approved wells (e.g. AHW272R4 at 180F) are NOT modeled here — this is
 # the one constant baseline the report itself states; see module docstring.
+
+# Loose physical-range sanity gates (mirror woi_table_parser.WOIReading.valid's
+# CH4+CO2+O2+Balance~=100 gate) — catch gross column misalignment, not a
+# precision check. Both real reports' readings comfortably clear these bounds
+# (observed pressure: -47.28..120.55 "H2O; observed temperature: 22.5..161.6F);
+# the margin is deliberately generous since these are a coarse defense against
+# misalignment, not a claim about what's physically plausible for this site.
+PRESSURE_PLAUSIBLE_RANGE_INWC = (-500.0, 500.0)
+TEMPERATURE_PLAUSIBLE_RANGE_F = (-50.0, 400.0)
 
 
 @dataclass
@@ -106,6 +128,15 @@ class ExceedanceReading:
     duration: Optional[str]      # raw duration token as printed, if present
     page: int
 
+    @property
+    def plausible(self) -> bool:
+        """Loose sanity gate against gross column misalignment — see the
+        module-level PRESSURE_PLAUSIBLE_RANGE_INWC / TEMPERATURE_PLAUSIBLE_RANGE_F
+        comment. Not a precision check."""
+        lo, hi = (PRESSURE_PLAUSIBLE_RANGE_INWC if self.parameter == "pressure"
+                   else TEMPERATURE_PLAUSIBLE_RANGE_F)
+        return lo <= self.value <= hi
+
 
 def _exceeded(parameter: str, value: float) -> bool:
     if parameter == "pressure":
@@ -117,7 +148,21 @@ def _parse_appendix_a_lines(lines: list[tuple[str, int]]) -> list[ExceedanceRead
     """Pure line state-machine over Appendix A's two same-shaped tables.
     `lines` is [(text, page_number)], already sliced to the Appendix A..B page
     range. Factored out so it is unit-testable without a PDF (mirrors
-    woi_table_parser._parse_lines)."""
+    woi_table_parser._parse_lines).
+
+    KNOWN LIMIT (shared with woi_table_parser._parse_lines, same design): a
+    well ID must be IMMEDIATELY followed by its date/time line, and a
+    reading's value must be IMMEDIATELY followed by (well ID, date/time)
+    to end one row and start the next. Any single unexpected line wedged in
+    between (a stray footnote marker, a page artifact) silently drops that
+    row rather than guessing around it — "skip rather than guess" is the
+    deliberate posture here (matching the sibling module), but it does mean
+    a row can vanish with no signal beyond the total count coming up short.
+    Neither real 2025 report exhibits this — both were verified to match the
+    handoff's sanity-check counts exactly — but a future report with
+    different formatting could trip it silently. The `plausible` property
+    and `_find_divider_page`'s divider-page gate are the two available
+    integrity backstops; there is no per-row "did I skip something" signal."""
     out: list[ExceedanceReading] = []
     mode: Optional[str] = None
     i, n = 0, len(lines)
@@ -128,10 +173,10 @@ def _parse_appendix_a_lines(lines: list[tuple[str, int]]) -> list[ExceedanceRead
             mode = "pressure"
         elif stripped == "(Temperature)":
             mode = "temperature"
-        if not WELL_RE.match(text):
+        if not WELL_RE.match(stripped):
             i += 1
             continue
-        if i + 1 >= n or not DT_RE_APPENDIX_A.match(lines[i + 1][0]):
+        if i + 1 >= n or not DT_RE_APPENDIX_A.match(lines[i + 1][0].strip()):
             i += 1
             continue
         if mode is None:
@@ -140,17 +185,17 @@ def _parse_appendix_a_lines(lines: list[tuple[str, int]]) -> list[ExceedanceRead
             # rather than guess a parameter.
             i += 1
             continue
-        well = text
-        reading_date = lines[i + 1][0]
+        well = stripped
+        reading_date = lines[i + 1][0].strip()
         j = i + 2
-        if j >= n or not FLOAT_RE.match(lines[j][0]):
+        if j >= n or not FLOAT_RE.match(lines[j][0].strip()):
             i += 1
             continue
         value = float(lines[j][0])
         j += 1
         duration = None
-        if j < n and DURATION_RE.match(lines[j][0]):
-            duration = lines[j][0]
+        if j < n and DURATION_RE.match(lines[j][0].strip()):
+            duration = lines[j][0].strip()
             j += 1
         out.append(ExceedanceReading(
             well_id=well, reading_date=reading_date, parameter=mode,
@@ -170,6 +215,12 @@ DT_RE_APPENDIX_F = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}(?:\s+\d{1,2}:\d{2})?$")
 
 _YN = {"Y": True, "N": False}
 
+# Loose sanity gate for EnhancedMonitoringReading.plausible: methane/oxygen are
+# percentages, gas temp uses the same wide physical range as Appendix A's
+# temperature gate above. Observed in both real reports: methane 0.0..57.0,
+# oxygen 0.0..21.8, gas temp 15.2..161.6F.
+_PERCENT_RANGE = (0.0, 100.0)
+
 
 @dataclass
 class EnhancedMonitoringReading:
@@ -180,6 +231,16 @@ class EnhancedMonitoringReading:
     gas_temp_f: float
     co_ppm: Optional[float]     # often blank in the source
     page: int
+
+    @property
+    def plausible(self) -> bool:
+        """Loose sanity gate against gross column misalignment — see
+        _PERCENT_RANGE / TEMPERATURE_PLAUSIBLE_RANGE_F. Not a precision check."""
+        lo_pct, hi_pct = _PERCENT_RANGE
+        lo_t, hi_t = TEMPERATURE_PLAUSIBLE_RANGE_F
+        return (lo_pct <= self.methane_pct <= hi_pct
+                and lo_pct <= self.oxygen_pct <= hi_pct
+                and lo_t <= self.gas_temp_f <= hi_t)
 
 
 @dataclass
@@ -198,7 +259,11 @@ def _parse_appendix_f_lines(
 ) -> tuple[list[EnhancedMonitoringReading], list[VisualInspection]]:
     """Pure line state-machine over Appendix F's two same-shaped tables.
     `lines` is [(text, page_number)], already sliced to the Appendix F..G page
-    range (or F..end-of-doc; there is no Appendix G in either real report)."""
+    range (or F..end-of-doc; there is no Appendix G in either real report).
+
+    KNOWN LIMIT: same "well ID must be immediately followed by its date" /
+    "skip rather than guess" posture as `_parse_appendix_a_lines` — see that
+    function's docstring. Applies here identically."""
     enhanced: list[EnhancedMonitoringReading] = []
     visual: list[VisualInspection] = []
     mode: Optional[str] = None
@@ -210,18 +275,18 @@ def _parse_appendix_f_lines(
             mode = "enhanced"
         elif stripped == "Staff Person":
             mode = "visual"
-        if not WELL_RE.match(text):
+        if not WELL_RE.match(stripped):
             i += 1
             continue
-        if i + 1 >= n or not DT_RE_APPENDIX_F.match(lines[i + 1][0]):
+        if i + 1 >= n or not DT_RE_APPENDIX_F.match(lines[i + 1][0].strip()):
             i += 1
             continue
-        well = text
-        reading_date = lines[i + 1][0]
+        well = stripped
+        reading_date = lines[i + 1][0].strip()
         j = i + 2
         if mode == "enhanced":
             nums: list[float] = []
-            while j < n and len(nums) < 4 and FLOAT_RE.match(lines[j][0]):
+            while j < n and len(nums) < 4 and FLOAT_RE.match(lines[j][0].strip()):
                 nums.append(float(lines[j][0]))
                 j += 1
             if len(nums) >= 3:  # Methane, Oxygen, Gas Temp required; CO optional
@@ -235,12 +300,13 @@ def _parse_appendix_f_lines(
         elif mode == "visual":
             staff_tokens: list[str] = []
             k = j
-            while k < n and lines[k][0] not in ("Y", "N") and not WELL_RE.match(lines[k][0]):
-                staff_tokens.append(lines[k][0])
+            while (k < n and lines[k][0].strip() not in ("Y", "N")
+                   and not WELL_RE.match(lines[k][0].strip())):
+                staff_tokens.append(lines[k][0].strip())
                 k += 1
             yn: list[str] = []
-            while k < n and len(yn) < 3 and lines[k][0] in ("Y", "N"):
-                yn.append(lines[k][0])
+            while k < n and len(yn) < 3 and lines[k][0].strip() in ("Y", "N"):
+                yn.append(lines[k][0].strip())
                 k += 1
             if len(yn) == 3:
                 visual.append(VisualInspection(
@@ -267,6 +333,21 @@ def _parse_appendix_f_lines(
 # True detection. See module docstring: unmatched -> None (unknown), not a guess.
 _RCA_NOT_REQUIRED_RE = re.compile(
     r"no root cause analysis forms?\s+(?:were|are)\s+required", re.IGNORECASE)
+# KNOWN PRECISION LIMIT: "downwell_monitoring_conducted" is asking a fact
+# question (did it happen), but this regex also accepts "...was/is required"
+# phrasing as evidence of False. Those are, strictly, two different claims —
+# "not required" is a statement about the compliance obligation, not a direct
+# statement that nothing was done. The two real reports happen to phrase the
+# same underlying situation differently (H1: "was conducted"; H2: "was
+# required") with no report ever separately claiming "not required, but we
+# did it anyway" — so both are treated as equivalent evidence here. A future
+# report phrased as "downwell monitoring was required but has not yet been
+# conducted" would NOT match this regex (the literal "no ... monitoring
+# was/is required" substring isn't present), so that active-gap case doesn't
+# get mis-read as "not conducted" — but a report that separately volunteers
+# monitoring beyond what's required, while still stating none was required,
+# would read as this regex's False when the truer answer is True/unknown.
+# No real report has shown that shape; if one does, this needs revisiting.
 _DOWNWELL_NOT_CONDUCTED_RE = re.compile(
     r"no down\s?well monitoring (?:was|is)\s+(?:conducted|required)", re.IGNORECASE)
 _TRANSMITTAL_DATE_RE = re.compile(r"([A-Z][a-z]+ \d{1,2},\s*\d{4})")
@@ -323,14 +404,31 @@ def _page_texts(pdf_path: str) -> list[str]:
         doc.close()
 
 
+# A real divider page in both reports has exactly 2 non-blank lines (e.g.
+# "APPENDIX A" / "WELLFIELD EXCEEDANCE REPORTS"); the real table-of-contents
+# page has 26. This threshold is a generous multiple of the observed divider
+# size, so it tolerates a couple of extra lines (a running header, a page
+# number) a future report's divider page might carry, while staying nowhere
+# near the TOC's actual line count.
+_DIVIDER_PAGE_MAX_NONBLANK_LINES = 6
+
+
 def _find_divider_page(pages: list[str], letter: str, start_from: int = 0) -> Optional[int]:
-    """Find the standalone 'APPENDIX <letter>' divider page (0-indexed). Must
-    check the PAGE's own leading text, not scan every line — the report's own
-    table of contents lists 'APPENDIX A' / 'APPENDIX B' back-to-back as
-    consecutive TOC lines, which would otherwise false-match as the divider
-    page (found via the real reports, both of which have this TOC)."""
+    """Find the 'APPENDIX <letter>' divider page (0-indexed): a SHORT page
+    (<= _DIVIDER_PAGE_MAX_NONBLANK_LINES non-blank lines) with a line that
+    starts with 'APPENDIX <letter>'. Both conditions matter — checking only
+    "does APPENDIX <letter> appear on this page" would false-match the
+    report's own table of contents, which lists 'APPENDIX A' / 'APPENDIX B'
+    back-to-back as consecutive TOC lines (found via the real reports, both
+    of which have this TOC); the line-scan (not just a whole-page-prefix
+    check) additionally tolerates a short leading line (e.g. a running header
+    or page number) ahead of the 'APPENDIX <letter>' line itself."""
+    marker = f"APPENDIX {letter}"
     for p in range(start_from, len(pages)):
-        if pages[p].strip().startswith(f"APPENDIX {letter}"):
+        nonblank = [ln.strip() for ln in pages[p].split("\n") if ln.strip()]
+        if len(nonblank) > _DIVIDER_PAGE_MAX_NONBLANK_LINES:
+            continue
+        if any(ln.startswith(marker) for ln in nonblank):
             return p
     return None
 
