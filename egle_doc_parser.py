@@ -506,7 +506,7 @@ def classify_note_metric(
     *,
     model: str,
     client=None,
-    max_tokens: int = 64,
+    max_tokens: int = 256,
 ) -> str:
     """Classify a SINGLE Measurements note into one metric from the ADR-034
     vocabulary, using the same model + structured-output mechanism + shared
@@ -514,9 +514,12 @@ def classify_note_metric(
     one vocabulary (MetricLiteral), never a fork. Used by the one-shot
     `other`-bucket backfill (backfill_metric_taxonomy.py).
 
-    Returns a metric string from METRIC_VALUES. Fail-safe: a truncated/empty model
-    response returns 'other' (leave the row as-is) rather than raising — one odd
-    note must never abort a whole backfill, and 'other' never corrupts data."""
+    Returns a metric string from METRIC_VALUES. A truncated/empty model response
+    (parsed_output is None) fails safe to 'other' — leave the row as-is; 'other'
+    never corrupts data. A genuine API error (network, rate-limit, auth) is NOT
+    swallowed: it propagates so a real outage fails loud rather than silently
+    turning every note into 'other'; the backfill's per-note cache means a re-run
+    resumes where it stopped."""
     import anthropic
     from pydantic import BaseModel
 
