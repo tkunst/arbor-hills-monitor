@@ -169,11 +169,15 @@ def render_report_md(
     gained = Counter(u["new"] for u in plan)
 
     L = []
-    L.append("# Metric taxonomy backfill — dry-run report (ADR 034)")
+    L.append(f"# Metric taxonomy backfill — {'apply' if applied else 'dry-run'} report (ADR 034)")
     L.append("")
     L.append(f"- Generated: {generated_at}")
     L.append(f"- Model: `{model}`")
     L.append(f"- Mode: {'APPLIED to the live Sheet' if applied else 'DRY-RUN (no Sheet writes)'}")
+    if applied:
+        L.append("- NOTE: under `--apply` these counts are the projection from the "
+                 "run's initial read; the authoritative per-row record of what was "
+                 "written is the JSON revert manifest.")
     L.append("")
     L.append("## Headline (the success signal)")
     L.append("")
@@ -265,26 +269,30 @@ def classify_notes(
         import egle_doc_parser
         classifier = egle_doc_parser.classify_note_metric
 
-    note_to_metric: dict[str, str] = {}
+    cache: dict[str, str] = {}
     if cache_path and os.path.exists(cache_path):
         with open(cache_path) as fh:
-            note_to_metric = json.load(fh)
+            cache = json.load(fh)
 
-    todo = [n for n in rep_units if n not in note_to_metric]
-    print(f"  {len(rep_units)} distinct notes; {len(note_to_metric)} cached; "
-          f"{len(todo)} to classify", file=sys.stderr)
+    todo = [n for n in rep_units if n not in cache]
+    print(f"  {len(rep_units)} distinct notes; "
+          f"{len(rep_units) - len(todo)} cached; {len(todo)} to classify",
+          file=sys.stderr)
     for i, note in enumerate(todo, start=1):
         if not note.strip():
-            note_to_metric[note] = "other"  # no note -> nothing to classify
+            cache[note] = "other"  # no note -> nothing to classify
         else:
-            note_to_metric[note] = classifier(
-                note, rep_units[note], model=model, client=client
-            )
+            cache[note] = classifier(note, rep_units[note], model=model, client=client)
         if cache_path and (i % 25 == 0 or i == len(todo)):
             with open(cache_path, "w") as fh:
-                json.dump(note_to_metric, fh)
+                json.dump(cache, fh)
             print(f"  classified {i}/{len(todo)}", file=sys.stderr)
-    return note_to_metric
+    # Return ONLY the notes requested this run (rep_units), NOT the full cache
+    # union. The cache file may hold classifications from a prior wider run; the
+    # scope of THIS run (and therefore of any --apply that follows) must be exactly
+    # the sample the caller asked for, or `--limit N --apply` against a pre-existing
+    # full cache would plan/write far more than N notes' worth of rows.
+    return {n: cache[n] for n in rep_units}
 
 
 def apply_backfill(service, sheet_id: str, note_to_metric: dict[str, str], *,
@@ -296,6 +304,15 @@ def apply_backfill(service, sheet_id: str, note_to_metric: dict[str, str], *,
     header, rows = read_measurements(service, sheet_id)
     other = select_other_rows(header, rows)
     plan = build_plan(other, note_to_metric)
+    # Defense-in-depth before writing the live Sheet: every value we're about to
+    # write MUST be in the approved vocabulary. Normal runs are enum-constrained
+    # already, but the note->metric cache is a persisted, hand-editable JSON — a
+    # stale cache after a future vocabulary change could otherwise write an
+    # out-of-vocab label into the public Metric column. Fail loud instead.
+    from egle_doc_parser import METRIC_VALUES
+    bad = sorted({u["new"] for u in plan if u["new"] not in METRIC_VALUES})
+    if bad:
+        raise ValueError(f"refusing to write metrics not in the vocabulary: {bad}")
     # Manifest BEFORE apply, from the fully-known plan — a crash mid-apply still
     # leaves a complete per-row record (a superset is safe: reverting a still-
     # `other` row back to `other` is a no-op).
@@ -305,8 +322,13 @@ def apply_backfill(service, sheet_id: str, note_to_metric: dict[str, str], *,
     return plan
 
 
-def apply_plan(service, sheet_id: str, header: list, plan: list[dict], batch: int = 500) -> None:
-    """Write only the Metric column (col C) for each planned row, in batches."""
+def apply_plan(service, sheet_id: str, header: list, plan: list[dict], batch: int = 20000) -> None:
+    """Write only the Metric column (col C) for each planned row. The default
+    batch is large enough that a realistic run (~5k rows, tiny single-cell value
+    ranges — well within the Sheets request-size limit) goes out as ONE
+    `values().batchUpdate`, which the API applies as a single operation: no
+    inter-batch window for a concurrent mid-sheet delete to shift later targets.
+    Chunking is kept only as a backstop for a pathologically large plan."""
     col = _col_letter(header.index("Metric"))
     data = [
         {"range": f"'{MEASUREMENTS_TAB}'!{col}{u['row']}", "values": [[u["new"]]]}
