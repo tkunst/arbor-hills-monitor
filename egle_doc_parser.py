@@ -29,9 +29,112 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Literal, Optional, get_args
 
 import fitz  # pymupdf
+
+# ---------------------------------------------------------------------------
+# Measurement metric vocabulary (ADR 034) — the SINGLE SOURCE OF TRUTH
+# ---------------------------------------------------------------------------
+# Every reading extracted into the Measurements tab carries a `metric` label.
+# Historically only five values existed (temperature / carbon_monoxide / oxygen /
+# methane / other), so every OTHER substance — hydrogen sulfide, PFAS, 14 metals,
+# NPDES wastewater parameters, NOx/SO2, operational events — collapsed into a
+# single `other` bucket (~5,100 rows, ~45% of the tab), un-chartable and
+# un-comparable against permit limits. ADR 034 expands the vocabulary to the
+# reviewed ~52-substance taxonomy (Trisha greenlit 2026-08-25).
+#
+# `MetricLiteral` IS THE ONE SOURCE OF TRUTH. The document classifier's
+# `Measurement` model annotates its `metric` field with it directly, and the
+# one-shot `other`-bucket backfill (backfill_metric_taxonomy.py) reuses the SAME
+# type via `METRIC_VALUES` (derived from it below with typing.get_args) — so the
+# two paths can never fork the vocabulary. The Literal is exactly what the
+# structured-output schema forces the model to emit.
+#
+# Classification principle (from the reviewed draft): the UNIT does NOT identify
+# the substance (`%` is used for methane, O2, CO2, gas composition, and
+# combustion efficiency alike). Classify by note text + context via the MODEL —
+# there is deliberately NO keyword ruleset (the NMOC-vs-"non-methane" substring
+# trap proved keyword rules brittle). The named traps are handled with brief
+# model guidance in _MEASUREMENTS_HELP, not code branches.
+MetricLiteral = Literal[
+    # --- Four original first-class metrics — PRESERVED EXACTLY (meaning unchanged).
+    #     `methane` = per-WELL methane readings; `temperature` = the gas-well
+    #     temperature series. Facility/adjusted variants get their own *_secondary
+    #     metrics below so these existing series are never corrupted.
+    "temperature",
+    "carbon_monoxide",
+    "oxygen",
+    "methane",
+    # --- Landfill gas / air quality
+    "hydrogen_sulfide",     # H2S (already produced as text by GFL air + Ridge Wood)
+    "methane_secondary",    # facility/adjusted CH4: FGPROJECT23, EURNGPLANT, "CH4 adjusted", gas-composition
+    "carbon_dioxide",
+    "hydrogen_gas",         # H2 (Drager tube, RNG-plant hydrogen)
+    "nmoc_voc",             # NMOC / non-methane organic compounds / VOC (never `methane`)
+    "nitrogen_oxides",      # NOx
+    "sulfur_dioxide",       # SO2
+    "hydrogen_chloride",    # HCl
+    "particulate_matter",
+    "surface_emissions",    # SEM penetration/exceedance readings (ppm)
+    "trs",                  # total reduced sulfur
+    "combustion_efficiency",
+    # --- Water quality: priority contaminants (own permit limits)
+    "pfas",                 # every PFAS congener + the "PFAS" aggregate
+    "arsenic",
+    "mercury",
+    "selenium",
+    # --- Water quality: other metals & inorganics
+    "nickel",
+    "chromium",
+    "lead",                 # the METAL; "lead" also appears inside "leachate" (trap)
+    "cadmium",
+    "zinc",
+    "copper",
+    "barium",
+    "boron",
+    "antimony",
+    "cyanide",
+    # --- Water quality: organics, biochemical, nutrient
+    "tss",                  # total suspended solids
+    "bod",                  # CBOD5 / BOD5
+    "cod",                  # chemical oxygen demand
+    "toc",                  # total organic carbon
+    "ammonia_nitrogen",     # ammonia / nitrate / nitrite / TKN / Total Nitrogen / Kjeldahl (kept LUMPED, ruling 2)
+    "phosphorus",
+    "btex_chlorinated_voc", # BETX mixture + toluene, xylene, trans-1,2-DCE, Hexane (benzene split out below)
+    "benzene",              # own MCL → own metric (ruling 1), NOT btex_chlorinated_voc
+    "pahs",                 # benzo(a)pyrene etc.
+    "ecoli_coliform",
+    # --- Water quality: physical parameters
+    "ph",
+    "dissolved_oxygen",
+    "flow_wastewater",
+    "chloride",
+    "fluoride",
+    "hardness",
+    "alkalinity",
+    "conductivity",
+    "tds",                  # total dissolved solids
+    "major_ions",           # calcium / magnesium / other major ions w/o permit limit (ruling 3)
+    # --- Temperature / ambient (NON-well readings only — effluent/pond/ambient)
+    "temperature_secondary",
+    # --- Operational / non-chemical readings
+    "event_status",         # operational events, flags, qualitative states
+    "well_operational",     # well-impairment counts
+    "operational_capacity", # rated/designed capacities, LandGEM output, RNG plant capacity
+    "pressure_vacuum",      # wellfield vacuum, forcemain pressure, backpressure
+    "wind_odor",            # wind/odor-complaint context readings
+    "exceedances_count",    # aggregated SEM exceedance counts
+    "qa_sample",            # DUPLICATE / FIELD BLANK / TOX lab-QA rows
+    # --- Real fallback: only genuinely-unplaceable readings land here.
+    "other",
+]
+
+# The runtime tuple form, derived from the Literal above so there is exactly ONE
+# place the vocabulary is spelled out. The backfill imports METRIC_VALUES to
+# validate/report; Pydantic uses MetricLiteral for the structured-output enum.
+METRIC_VALUES: tuple[str, ...] = get_args(MetricLiteral)
 
 # ---------------------------------------------------------------------------
 # Output contract — the Decode reuse surface
@@ -49,7 +152,10 @@ class ParsedDoc:
     ocr_applied: bool
     page_count: int
     # Structured readings extracted from the document. Each is a dict with keys:
-    #   metric  : "temperature" | "carbon_monoxide" | "oxygen" | "methane" | "other"
+    #   metric  : one of METRIC_VALUES (the ADR-034 ~52-substance vocabulary —
+    #             temperature / carbon_monoxide / oxygen / methane are the four
+    #             first-class metrics; everything else is a named substance/event
+    #             metric; `other` is the genuine-fallback bucket)
     #   value   : float
     #   unit    : str ("F", "ppm", "percent", ...)
     #   basis   : "measured" | "permitted_limit" | "unknown"  <-- CRITICAL
@@ -222,13 +328,36 @@ _SEVERITY_HELP = (
     "routine: everything else."
 )
 
+# Shared metric-classification guidance (ADR 034). Referenced by BOTH the
+# document classifier (_MEASUREMENTS_HELP, below) and the one-note classifier
+# (classify_note_metric, used by the `other`-bucket backfill) so the two paths
+# apply IDENTICAL rules — one source of truth for the traps, never a fork.
+_METRIC_CLASSIFY_GUIDANCE = (
+    "Classify by what the note/context says the substance IS — the UNIT does not "
+    "identify it ('%' is used for methane, O2, CO2, gas composition, and "
+    "combustion efficiency alike). The four gas-well first-class metrics are "
+    "temperature, carbon_monoxide, oxygen, methane (methane = a per-WELL CH4 "
+    "reading). Named-substance metrics exist for the common pollutants — e.g. "
+    "hydrogen_sulfide, pfas, arsenic, mercury, tss, bod, ammonia_nitrogen, ph, "
+    "phosphorus — plus operational buckets (event_status, operational_capacity, "
+    "pressure_vacuum). Use 'other' ONLY when the reading genuinely fits no named "
+    "metric. Known traps to get right: NMOC / 'non-methane organic compounds' / "
+    "VOC -> nmoc_voc, NEVER methane. Facility or adjusted methane (e.g. "
+    "'FGPROJECT23', 'EURNGPLANT', 'CH4 adjusted', 'CH4 gas composition') -> "
+    "methane_secondary, NOT methane (methane is reserved for per-well readings). "
+    "Non-well temperature (effluent, pond, ambient air) -> temperature_secondary, "
+    "NOT temperature. benzene has its own metric 'benzene' (own MCL) — do NOT put "
+    "it in btex_chlorinated_voc. 'lead' the metal -> lead, but the word 'lead' "
+    "inside 'leachate' is not the metal. calcium / magnesium / other major ions "
+    "with no permit limit -> major_ions."
+)
+
 _MEASUREMENTS_HELP = (
     "Extract every quantitative reading the document states, as structured "
     "measurements. For EACH reading set:\n"
-    "  - metric: temperature / carbon_monoxide / oxygen / methane. Use 'methane' "
-    "for a methane (CH4) reading. For any OTHER substance (e.g. benzene, hydrogen "
-    "sulfide, NMOC/non-methane organic compounds) use 'other' and put the "
-    "substance name in 'note'.\n"
+    "  - metric: the single best-fitting value from the allowed metric list. "
+    + _METRIC_CLASSIFY_GUIDANCE +
+    " Whatever the metric, ALSO put the substance/parameter name in 'note'.\n"
     "  - value: the number\n"
     "  - unit: F, ppm, percent, etc.\n"
     "  - basis: 'measured' for an actual observed reading; 'permitted_limit' "
@@ -289,7 +418,7 @@ def _classify_with_claude(
     from pydantic import BaseModel
 
     class Measurement(BaseModel):
-        metric: Literal["temperature", "carbon_monoxide", "oxygen", "methane", "other"]
+        metric: MetricLiteral  # the ADR-034 vocabulary — see METRIC_VALUES (single source of truth)
         value: float
         unit: str
         basis: Literal["measured", "permitted_limit", "unknown"]
@@ -355,6 +484,59 @@ def _classify_with_claude(
             )
         raise RuntimeError(f"Classification returned no parsed output (stop_reason={stop})")
     return parsed.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Single-note metric classifier (ADR 034) — reused by the `other`-bucket backfill
+# ---------------------------------------------------------------------------
+
+_NOTE_CLASSIFIER_INSTRUCTIONS = (
+    "You are labeling ONE environmental-measurement reading from the Arbor Hills "
+    "Landfill Measurements dataset. Given the reading's free-text note (and its "
+    "unit as weak context only), choose the single best-fitting metric from the "
+    "allowed list. " + _METRIC_CLASSIFY_GUIDANCE +
+    " If the note genuinely fits no named metric, choose 'other' — do not guess a "
+    "specific substance the note does not support."
+)
+
+
+def classify_note_metric(
+    note: str,
+    unit: Optional[str] = None,
+    *,
+    model: str,
+    client=None,
+    max_tokens: int = 64,
+) -> str:
+    """Classify a SINGLE Measurements note into one metric from the ADR-034
+    vocabulary, using the same model + structured-output mechanism + shared
+    guidance (_METRIC_CLASSIFY_GUIDANCE) as the document classifier — one brain,
+    one vocabulary (MetricLiteral), never a fork. Used by the one-shot
+    `other`-bucket backfill (backfill_metric_taxonomy.py).
+
+    Returns a metric string from METRIC_VALUES. Fail-safe: a truncated/empty model
+    response returns 'other' (leave the row as-is) rather than raising — one odd
+    note must never abort a whole backfill, and 'other' never corrupts data."""
+    import anthropic
+    from pydantic import BaseModel
+
+    class NoteMetric(BaseModel):
+        metric: MetricLiteral  # the ADR-034 vocabulary (single source of truth)
+
+    if client is None:
+        client = anthropic.Anthropic()
+
+    content = f"Note: {note!r}\nUnit: {unit!r}"
+    response = client.messages.parse(
+        model=model,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": f"{_NOTE_CLASSIFIER_INSTRUCTIONS}\n\n{content}"}],
+        output_format=NoteMetric,
+    )
+    parsed = response.parsed_output
+    if parsed is None:
+        return "other"
+    return parsed.metric
 
 
 # ---------------------------------------------------------------------------

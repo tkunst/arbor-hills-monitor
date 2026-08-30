@@ -63,12 +63,13 @@ DEFAULT_STATION_PREFIX = "MS-"
 DEFAULT_SENTINEL_H2S = 999.0
 DEFAULT_SENTINEL_CH4 = 99999.0
 
-# ADR-004 Measurement metric names. CH4 maps to the existing doc-classifier
-# "methane" metric; H2S has no metric in that Literal enum yet, so it takes an
-# honest new name — NOT "other", which would erase the pollutant identity (the
-# exact "dumping into other" the handoff warns against). Stored as text in the
-# Measurements tab (no schema break); the metric-taxonomy roadmap will formalize
-# it. See ADR 014.
+# ADR-004 Measurement metric names. Both are now first-class values in the
+# doc-classifier's `egle_doc_parser.METRIC_VALUES` vocabulary: CH4 -> "methane",
+# H2S -> "hydrogen_sulfide". H2S was formalized there by the metric taxonomy
+# (ADR 034) — this stream chose the honest "hydrogen_sulfide" name up front (NOT
+# "other"), so no rows changed when the enum caught up. Matching that exact
+# spelling here keeps this structured-API stream and the doc classifier on one
+# shared vocabulary. See ADR 014 + ADR 034.
 METRIC_H2S = "hydrogen_sulfide"
 METRIC_CH4 = "methane"
 
