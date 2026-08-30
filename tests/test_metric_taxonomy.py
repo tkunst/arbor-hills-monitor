@@ -465,3 +465,25 @@ def test_report_has_headline_residual_and_full_mapping():
     # full note->metric mapping present (reversible record)
     assert "`hydrogen sulfide` | `hydrogen_sulfide`" in md
     assert "`Total Arsenic` | `arsenic`" in md
+    # a full run (every note classified) has no "Not sampled" section
+    assert "Not sampled this run" not in md
+
+
+def test_report_separates_unsampled_from_residual_under_limit():
+    # Bounded --limit run: only "hydrogen sulfide" was classified; the other
+    # `other` notes were not sampled. They must appear as "Not sampled", NOT as
+    # residual (genuinely unplaceable).
+    rows = _rows()
+    other = b.select_other_rows(HEADER, rows)
+    partial = {"hydrogen sulfide": "hydrogen_sulfide"}   # only 1 of 3 notes classified
+    plan = b.build_plan(other, partial)
+    before = b.metric_distribution(HEADER, rows)
+    after = b.project_after(before, plan)
+    md = b.render_report_md(before, after, plan, partial, other,
+                            generated_at="now", model="m", applied=False)
+    assert "Not sampled this run" in md
+    # "Total Arsenic" / "Gas shortfall" were not classified -> not residual
+    resid = md.split("## Residual")[1].split("## ")[0]
+    assert "Total Arsenic" not in resid and "Gas shortfall" not in resid
+    # residual is empty here (nothing classified resolved to other)
+    assert "none — every classified" in resid

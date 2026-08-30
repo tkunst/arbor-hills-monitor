@@ -161,10 +161,16 @@ def render_report_md(
     before_other = before.get("other", 0)
     after_other = after.get("other", 0)
     moved = len(plan)
-    # rows the classifier left in `other` (genuinely unplaceable) — the residual
+    # Distinguish two kinds of still-`other` note, or a bounded (--limit) run
+    # misreads un-sampled notes as unplaceable:
+    #  - residual: CLASSIFIED this run and the model chose `other` (genuinely
+    #    unplaceable — the thing to eyeball);
+    #  - unsampled: never classified this run (only non-empty under --limit).
+    classified = set(note_to_metric)
     residual_notes = sorted(
-        {r["note"] for r in other if note_to_metric.get(r["note"], "other") == "other"}
+        {r["note"] for r in other if r["note"] in classified and note_to_metric[r["note"]] == "other"}
     )
+    unsampled_notes = sorted({r["note"] for r in other if r["note"] not in classified})
     # rows gained per new metric
     gained = Counter(u["new"] for u in plan)
 
@@ -207,8 +213,18 @@ def render_report_md(
         for n in residual_notes:
             L.append(f"- `{_md_inline(n)}`")
     else:
-        L.append("- _(none — every `other` note resolved to a named metric)_")
+        L.append("- _(none — every classified `other` note resolved to a named metric)_")
     L.append("")
+    if unsampled_notes:
+        # Only under a bounded --limit run: these notes were NOT classified this
+        # run, so they stay `other` for now — they are NOT unplaceable.
+        unsampled_rows = sum(1 for r in other if r["note"] in set(unsampled_notes))
+        L.append(f"## Not sampled this run ({len(unsampled_notes)} distinct notes, "
+                 f"{unsampled_rows} rows) — bounded `--limit` run")
+        L.append("")
+        L.append("These notes were outside this run's sample and remain `other` "
+                 "pending a full run. They are NOT part of the residual above.")
+        L.append("")
     L.append("## Full note → metric mapping (the reversible record)")
     L.append("")
     L.append("Every distinct note among the `other` rows and the metric it was "
@@ -284,8 +300,12 @@ def classify_notes(
         else:
             cache[note] = classifier(note, rep_units[note], model=model, client=client)
         if cache_path and (i % 25 == 0 or i == len(todo)):
-            with open(cache_path, "w") as fh:
+            # Atomic write (temp + replace) so a ^C mid-write can't corrupt the
+            # resume cache and force a full re-classify.
+            tmp = f"{cache_path}.tmp"
+            with open(tmp, "w") as fh:
                 json.dump(cache, fh)
+            os.replace(tmp, cache_path)
             print(f"  classified {i}/{len(todo)}", file=sys.stderr)
     # Return ONLY the notes requested this run (rep_units), NOT the full cache
     # union. The cache file may hold classifications from a prior wider run; the
@@ -359,8 +379,9 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="ADR-034 Measurements `other`-bucket backfill.")
     ap.add_argument("--apply", action="store_true",
                     help="Actually write the live Sheet (default: dry-run, no writes).")
-    ap.add_argument("--report", default="docs/backfill-reports/metric-taxonomy-dry-run-report.md",
-                    help="Markdown report output path (committed record).")
+    ap.add_argument("--report", default="docs/backfill-reports/metric-taxonomy-backfill-report.md",
+                    help="Markdown report output path (committed record; mode-neutral "
+                         "name — the report's own H1/Mode line says dry-run vs apply).")
     ap.add_argument("--cache", default="backfill_metric_taxonomy_cache.json",
                     help="Resumable note->metric cache (gitignored *.json).")
     ap.add_argument("--manifest", default="backfill_metric_taxonomy_manifest.json",
