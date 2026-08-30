@@ -111,25 +111,46 @@ a **separate human step**, distinct from merging the code.
 
 ## Verification (this is a live path — mocked-green is not enough)
 
-The hermetic suite (43 new tests) proves: the enum accepts the approved metrics
-and rejects unknowns; the structured-output schema carries all 59 values;
+The hermetic suite (49 tests) proves: the enum accepts the approved metrics and
+rejects unknowns; the structured-output schema carries all 59 values;
 `classify_note_metric` reuses the shared vocabulary + guidance and fail-safes to
 `other`; the forward path preserves basis and keeps per-well methane on
 `methane`; and the backfill's select/dedup/plan/project/apply/idempotency/
 reversibility/report logic is correct.
 
-Two gates need the **live production model** and are called out on the PR:
+Two gates need the **live production model**. The build session had no working
+Anthropic API key (the local `.env` key is a 10-char placeholder; the production
+key lives only in GitHub Secrets), so both were run 2026-08-30 with **Claude
+Haiku 4.5 via the Claude subscription** — the SAME production model, so no
+model-brain divergence. Results (full report:
+`docs/backfill-reports/metric-taxonomy-backfill-report.md`):
 
-- **Backfill dry-run over the real 5,127 `other` rows** → the before/after
-  headline (the success signal; a run that leaves `other` near 5,127 is a failed
-  build to investigate before merge).
-- **Forward real-specimen test** — one real NPDES-DMR/WOI document through
-  `parse_document` with the new enum, confirming named metrics + basis intact.
+- **Backfill dry-run over the real 5,127 `other` rows** (all 3,304 distinct notes
+  classified): **`other` 5,127 (45.2%) → 149 (1.3%), 4,978 rows reclassified.**
+  Trap checks clean on the live data: 0/24 NMOC notes → methane; 0/98 `leachate`
+  notes → lead; 7/7 facility/adjusted-methane notes → `methane_secondary`; 9/11
+  benzene-specific → `benzene`. The 141 residual `other` notes are genuinely
+  unplaceable (net heating values, flare exit velocities, groundwater velocity,
+  treatment additives, PCBs, balance gas/N₂, penalty rates — all outside the ~52
+  vocabulary). Every assigned value validated against `METRIC_VALUES` (0 invalid).
+- **Forward real-specimen test** — a real 123-page Arbor Hills air-emission
+  stack-test report (SRN N2688, currently produces `other` rows) run through the
+  production measurements-extraction spec: 33 readings, **0 invalid metrics, 0
+  invalid basis**. NOx→`nitrogen_oxides`, CO→`carbon_monoxide`, CO₂→
+  `carbon_dioxide`, and — the headline trap — NMOC→`nmoc_voc`, never `methane`.
+  The 4 permit ceilings correctly carry `basis=permitted_limit` vs 29 `measured`
+  stack-test values. Per-well `methane` was NOT corrupted (the fuel-CH₄ gas-
+  composition readings went to `other`, a conservative miss — arguably
+  `methane_secondary` — never wrongly into `methane`).
 
-At build time this session had **no working Anthropic key** (the local `.env`
-key is a 10-char placeholder; the production key lives only in GitHub Secrets),
-so these two live-model gates are run by a keyed session before merge. The schema
-itself is validated (the SDK accepted the 59-value enum and built the request).
+Method caveat: the classification ran via subscription subagents on the real note
+text with the same vocabulary + guidance, not the script's own `messages.parse`
+call (no API key), and 16 notes whose keys the subagents retyped with drifted
+unicode were recovered by normalized matching (12) + 4 obvious manual
+corrections. A real `--apply` re-runs through the API structured-output path
+(which hard-constrains the enum) and may differ on a few genuinely-ambiguous
+edge notes. The 59-value schema itself is separately validated (the SDK accepted
+it and built the request).
 
 ## Scope boundaries
 
