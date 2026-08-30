@@ -74,6 +74,7 @@ DOMAIN = {
     "retry_policy": "processing", "woi_table_parser": "processing",
     "woi_router": "processing",         # routes WOI Status Reports to woi_table_parser (ADR 005)
     "poison_doc_extractor": "processing",  # .msg/.docx -> synthesized PDF (ADR 011)
+    "backfill_metric_taxonomy": "processing",  # one-shot `other`-bucket reclassify — ADR 034
     # Persistence & notification
     "sheet_writer": "persistence", "drive_client": "persistence",
     "archive_client": "persistence", "email_alerts": "persistence",
