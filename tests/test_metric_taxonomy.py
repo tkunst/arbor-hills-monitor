@@ -277,6 +277,10 @@ def test_apply_plan_writes_only_metric_column():
     ranges = [d["range"] for d in data]
     assert ranges == ["'Measurements'!C2", "'Measurements'!C3", "'Measurements'!C6"]
     assert captured["bodies"][0]["valueInputOption"] == "RAW"
+    # Pin the WRITTEN VALUE, not just the range — writing note text or "other"
+    # into the Metric column would pass a range-only assertion but corrupt the tab.
+    assert [d["values"] for d in data] == [
+        [["hydrogen_sulfide"]], [["arsenic"]], [["hydrogen_sulfide"]]]
 
 
 def test_apply_plan_batches():
@@ -298,6 +302,69 @@ def test_col_letter():
     assert b._col_letter(0) == "A"
     assert b._col_letter(2) == "C"
     assert b._col_letter(26) == "AA"
+
+
+def test_top_notes_by_frequency_picks_highest_volume():
+    # A bounded (--limit) sample must classify the notes covering the MOST rows,
+    # not the first ones seen. "common" appears 3x, "rare" 1x -> limit 1 keeps
+    # "common".
+    other = [
+        {"row": 2, "note": "rare", "unit": "x"},
+        {"row": 3, "note": "common", "unit": "ppm"},
+        {"row": 4, "note": "common", "unit": "ppm"},
+        {"row": 5, "note": "common", "unit": "ppm"},
+    ]
+    rep = b.distinct_notes(other)
+    freq = b.note_frequencies(other)
+    assert freq["common"] == 3 and freq["rare"] == 1
+    top1 = b.top_notes_by_frequency(rep, freq, 1)
+    assert list(top1) == ["common"]
+    assert top1["common"] == "ppm"
+
+
+def test_md_inline_neutralizes_table_breakers():
+    out = b._md_inline("a|b`c\nd")
+    assert "|" not in out.replace("\\|", "")   # pipe escaped
+    assert "`" not in out                        # backtick removed
+    assert "\n" not in out                       # newline flattened
+
+
+def test_apply_backfill_rereads_and_targets_current_rows(tmp_path):
+    # TOCTOU guard: apply must write to the row numbers in the tab AS IT IS AT
+    # APPLY TIME, not a plan captured at an earlier read. Simulate a concurrent
+    # mid-sheet shift: at apply time the H2S `other` row is now at sheet row 4
+    # (not 2), so the write must target C4, not a stale C2.
+    fresh = [
+        HEADER,
+        ["", "", "methane", "1", "%", "measured", "", "d", "CH4", "", "F"],        # row 2
+        ["", "", "arsenic", "1", "ug/L", "measured", "", "d", "Total Arsenic", "", "F"],  # row 3 (already named)
+        ["", "", "other", "5", "ppm", "measured", "", "d", "hydrogen sulfide", "", "F"],  # row 4 (shifted)
+    ]
+    captured = {"ranges": []}
+
+    class Vals:
+        def get(self, spreadsheetId, range):
+            return SimpleNamespace(execute=lambda **kw: {"values": fresh})
+
+        def batchUpdate(self, spreadsheetId, body):
+            captured["ranges"] += [d["range"] for d in body["data"]]
+            return SimpleNamespace(execute=lambda **kw: {})
+
+    svc = SimpleNamespace(spreadsheets=lambda: SimpleNamespace(values=lambda: Vals()))
+    applied = b.apply_backfill(
+        svc, "SID", {"hydrogen sulfide": "hydrogen_sulfide", "Total Arsenic": "arsenic"},
+        manifest_path=str(tmp_path / "m.json"),
+        meta={"generated_at": "now", "model": "m"},
+    )
+    # Only the row that is STILL `other` at apply time is written, at its CURRENT
+    # position (C4) — the already-arsenic row 3 is not re-touched.
+    assert captured["ranges"] == ["'Measurements'!C4"]
+    assert applied == [{"row": 4, "old": "other", "new": "hydrogen_sulfide",
+                        "note": "hydrogen sulfide"}]
+    # Manifest written (before apply) with the applied plan.
+    import json as _json
+    with open(tmp_path / "m.json") as fh:
+        assert _json.load(fh)["updates"] == applied
 
 
 # ---------------------------------------------------------------------------

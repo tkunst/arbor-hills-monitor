@@ -66,6 +66,14 @@ def _cell(row: list, i: int) -> str:
     return row[i] if i < len(row) else ""
 
 
+def _md_inline(text: str) -> str:
+    """Sanitize a note for display inside a Markdown table code span: neutralize
+    the pipe (column sep), backtick (code-span delimiter) and any newline so one
+    odd note can't break the table. Display-only — never affects a Sheet write."""
+    return (text or "").replace("\\", "\\\\").replace("|", "\\|") \
+        .replace("`", "'").replace("\n", " ").replace("\r", " ")
+
+
 def _col_letter(idx0: int) -> str:
     """0-based column index -> A1 column letter (0 -> 'A', 2 -> 'C', 26 -> 'AA')."""
     n = idx0 + 1
@@ -96,6 +104,19 @@ def distinct_notes(other: list[dict]) -> dict[str, str]:
     for r in other:
         rep.setdefault(r["note"], r["unit"])
     return rep
+
+
+def note_frequencies(other: list[dict]) -> Counter:
+    """How many `other` rows carry each distinct note. Used to rank a bounded
+    (--limit) sample toward the highest-coverage notes, and to report coverage."""
+    return Counter(r["note"] for r in other)
+
+
+def top_notes_by_frequency(rep: dict[str, str], freq: Counter, n: int) -> dict[str, str]:
+    """The n most common notes (by row count), preserving rep's unit mapping.
+    A bounded sample of these covers the most rows per classification call."""
+    keep = [note for note, _ in freq.most_common(n)]
+    return {note: rep[note] for note in keep}
 
 
 def build_plan(other: list[dict], note_to_metric: dict[str, str]) -> list[dict]:
@@ -180,7 +201,7 @@ def render_report_md(
     L.append("")
     if residual_notes:
         for n in residual_notes:
-            L.append(f"- `{n}`")
+            L.append(f"- `{_md_inline(n)}`")
     else:
         L.append("- _(none — every `other` note resolved to a named metric)_")
     L.append("")
@@ -193,8 +214,7 @@ def render_report_md(
     L.append("| distinct note | assigned metric |")
     L.append("|---|---|")
     for note in sorted(note_to_metric):
-        safe = note.replace("|", "\\|")
-        L.append(f"| `{safe}` | `{note_to_metric[note]}` |")
+        L.append(f"| `{_md_inline(note)}` | `{note_to_metric[note]}` |")
     L.append("")
     return "\n".join(L)
 
@@ -209,12 +229,13 @@ def _load_dotenv() -> None:
     Never overrides an already-set variable."""
     if not os.path.exists(".env"):
         return
-    for line in open(".env"):
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        os.environ.setdefault(k, v.strip().strip('"').strip("'"))
+    with open(".env") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k, v.strip().strip('"').strip("'"))
 
 
 def read_measurements(service, sheet_id: str) -> tuple[list, list]:
@@ -264,6 +285,24 @@ def classify_notes(
                 json.dump(note_to_metric, fh)
             print(f"  classified {i}/{len(todo)}", file=sys.stderr)
     return note_to_metric
+
+
+def apply_backfill(service, sheet_id: str, note_to_metric: dict[str, str], *,
+                   manifest_path: str, meta: dict) -> list[dict]:
+    """Re-read the tab, re-derive the plan against CURRENT row numbers, write the
+    revert manifest, THEN apply. Split out of main() so the TOCTOU-safe re-read is
+    unit-testable. Classifications are reused from note_to_metric (already cached),
+    so the fresh read costs one Sheets call. Returns the applied plan."""
+    header, rows = read_measurements(service, sheet_id)
+    other = select_other_rows(header, rows)
+    plan = build_plan(other, note_to_metric)
+    # Manifest BEFORE apply, from the fully-known plan — a crash mid-apply still
+    # leaves a complete per-row record (a superset is safe: reverting a still-
+    # `other` row back to `other` is a no-op).
+    with open(manifest_path, "w") as fh:
+        json.dump({**meta, "updates": plan}, fh, indent=0)
+    apply_plan(service, sheet_id, header, plan)
+    return plan
 
 
 def apply_plan(service, sheet_id: str, header: list, plan: list[dict], batch: int = 500) -> None:
@@ -321,12 +360,16 @@ def main(argv=None) -> int:
     header, rows = read_measurements(service, sheet_id)
     other = select_other_rows(header, rows)
     rep = distinct_notes(other)
+    freq = note_frequencies(other)
     print(f"  {len(rows) - 1} data rows; {len(other)} are `other`; "
           f"{len(rep)} distinct notes.", file=sys.stderr)
 
     if args.limit:
-        rep = dict(list(rep.items())[: args.limit])
-        print(f"  --limit: classifying only {len(rep)} distinct notes.", file=sys.stderr)
+        rep = top_notes_by_frequency(rep, freq, args.limit)
+        covered = sum(freq[n] for n in rep)
+        pct = (covered / len(other) * 100) if other else 0
+        print(f"  --limit: the {len(rep)} highest-volume notes cover "
+              f"{covered}/{len(other)} `other` rows ({pct:.1f}%).", file=sys.stderr)
 
     note_to_metric = classify_notes(
         rep, model=model, client=client, cache_path=args.cache
@@ -358,12 +401,20 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return 0
 
-    print(f"\nAPPLYING {len(plan)} metric updates to the live Sheet…", file=sys.stderr)
-    apply_plan(service, sheet_id, header, plan)
-    with open(args.manifest, "w") as fh:
-        json.dump({"generated_at": generated_at, "model": model, "updates": plan}, fh, indent=0)
-    print(f"Done. Revert manifest: {args.manifest} "
-          f"(set those rows' Metric back to 'other' to revert).", file=sys.stderr)
+    # apply_backfill re-reads the tab immediately before writing and re-derives
+    # the plan against CURRENT row numbers — closing all but a small inter-batch
+    # window against a concurrent mid-sheet delete/insert (e.g. purge_doc_rows'
+    # deleteDimension on Measurements) that would otherwise shift the absolute
+    # rows captured at first read and send a write to the wrong cell.
+    print("\nRe-reading Measurements and applying against current rows…", file=sys.stderr)
+    applied = apply_backfill(
+        service, sheet_id, note_to_metric,
+        manifest_path=args.manifest,
+        meta={"generated_at": generated_at, "model": model},
+    )
+    print(f"Done. Applied {len(applied)} metric updates. Revert manifest: "
+          f"{args.manifest} (set those rows' Metric back to 'other' to revert).",
+          file=sys.stderr)
     return 0
 
 
