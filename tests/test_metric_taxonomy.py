@@ -390,6 +390,48 @@ def test_classify_notes_caches_and_resumes(tmp_path):
     assert out2 == out1 and calls == []
 
 
+def test_classify_notes_returns_only_requested_notes_not_full_cache(tmp_path):
+    # MEDIUM guard: a pre-existing cache may hold classifications from a wider
+    # prior run. classify_notes must return ONLY the notes requested THIS run, so
+    # a bounded (--limit) run's --apply plans/writes only its sample — never the
+    # whole cache. Here the cache has 3 notes; we request only 1.
+    cache = tmp_path / "cache.json"
+    import json as _json
+    with open(cache, "w") as fh:
+        _json.dump({"A": "arsenic", "B": "benzene", "C": "chloride"}, fh)
+
+    def clf(note, unit, *, model, client):
+        raise AssertionError("should not classify — all requested notes are cached")
+
+    out = b.classify_notes({"B": "ug/L"}, model="m", client=None,
+                           cache_path=str(cache), classifier=clf)
+    assert out == {"B": "benzene"}          # scoped to the request, NOT A/B/C
+    # And a plan built from it touches only B's rows, never A's or C's.
+    other = [{"row": 2, "note": "A", "unit": "x"},
+             {"row": 3, "note": "B", "unit": "ug/L"}]
+    assert b.build_plan(other, out) == [
+        {"row": 3, "old": "other", "new": "benzene", "note": "B"}]
+
+
+def test_apply_backfill_refuses_out_of_vocab_value(tmp_path):
+    # Defense-in-depth: a stale/hand-edited cache producing a non-vocabulary label
+    # must fail loud before any Sheet write, never write garbage to the tab.
+    fresh = [HEADER, ["", "", "other", "1", "x", "measured", "", "d", "weird", "", "F"]]
+
+    class Vals:
+        def get(self, spreadsheetId, range):
+            return SimpleNamespace(execute=lambda **kw: {"values": fresh})
+
+        def batchUpdate(self, spreadsheetId, body):
+            raise AssertionError("must not write when a value is out-of-vocabulary")
+
+    svc = SimpleNamespace(spreadsheets=lambda: SimpleNamespace(values=lambda: Vals()))
+    with pytest.raises(ValueError, match="not in the vocabulary"):
+        b.apply_backfill(svc, "SID", {"weird": "not_a_metric"},
+                         manifest_path=str(tmp_path / "m.json"),
+                         meta={"generated_at": "now", "model": "m"})
+
+
 def test_classify_notes_short_circuits_empty_note(tmp_path):
     called = []
 
