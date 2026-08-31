@@ -9,6 +9,7 @@ All figures are the operator's own EGLE-filed wellhead readings, mechanically ex
 tool makes no interpretive claims the data does not support.
 
 ## Data + method
+
 - **Readings:** the public wellfield dataset (WOI Status Reports + Gas-Extraction Exceedance
   filings), as-found readings only (ADJ duplicates excluded).
 - **Well locations (lineages):** successive redrill wells at one location are merged into a
@@ -20,6 +21,7 @@ tool makes no interpretive claims the data does not support.
 - **Well types:** Kovalchick Well Master List (Unknown where not covered).
 
 ## Controls
+
 Search (matches merged predecessor IDs); pick up to 8 individual wells (each its own color);
 On/Off slide toggles for the 2026 HOV-approved, Eastern Hot Core, Western Warm Field, and
 Flagged groups (plot a whole group in one color); a "Copy view link" permalink; light/dark
