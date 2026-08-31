@@ -136,3 +136,21 @@ footer.site-footer {
 .findings-nav {
   margin-top: 2rem;
 }
+
+/* Advocacy cross-link box: visually distinct from the data boxes so the
+   evidence/advocacy boundary is unmistakable. */
+.advocacy-note {
+  border-left: 4px solid var(--link);
+  background: rgba(10, 91, 140, 0.045);
+}
+@media (prefers-color-scheme: dark) {
+  .advocacy-note { background: rgba(127, 194, 232, 0.06); }
+}
+.advocacy-note p {
+  margin: 0.6rem 0 0.4rem;
+  font-size: 0.95rem;
+}
+.advocacy-note p.go {
+  margin-top: 0.9rem;
+  font-weight: 700;
+}

@@ -1,0 +1,942 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arbor Hills Wellfield Explorer</title>
+<meta name="description" content="An interactive explorer for the Arbor Hills Landfill wellfield: plot any well's EGLE-filed wellhead temperature, oxygen, and methane-to-carbon-dioxide ratio against the subsurface-temperature-event thresholds, well by well or by thermal cluster.">
+<!-- Social share preview (iMessage / Facebook / X / LinkedIn / Slack). Absolute image URL required. -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://arborhillsmonitor.org/wellfield-explorer/">
+<meta property="og:title" content="Arbor Hills Wellfield Explorer">
+<meta property="og:description" content="Plot any Arbor Hills well's EGLE-filed wellhead temperature, oxygen, and CH4:CO2 ratio against the subsurface-temperature-event thresholds, well by well or by thermal cluster.">
+<meta property="og:image" content="https://arborhillsmonitor.org/img/og-wellfield-explorer.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="720">
+<meta property="og:image:alt" content="Line charts of an Arbor Hills well's wellhead temperature, oxygen, and methane-to-carbon-dioxide ratio over time, with shaded threshold bands.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Arbor Hills Wellfield Explorer">
+<meta name="twitter:description" content="Plot any Arbor Hills well's EGLE-filed wellhead temperature, oxygen, and CH4:CO2 ratio against the subsurface-temperature-event thresholds, well by well or by thermal cluster.">
+<meta name="twitter:image" content="https://arborhillsmonitor.org/img/og-wellfield-explorer.jpg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --surface-2:      #f3f2ef;
+    --border:         #ddd9d0;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #8a887f;
+    --accent-bg:      #eef3fb;
+    --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+    --series-5: #e87ba4; --series-6: #008300; --series-7: #4a3aa7; --series-8: #e34948;
+    /* Status palette: fixed, never themed; distinct from the categorical series above. */
+    --status-good:     #0ca30c;
+    --status-critical: #d03b3b;
+    /* Cluster colors: match the live thermal map (east = hot core, west = warm field). */
+    --cluster-east: #e23d3d;
+    --cluster-west: #f0932b;
+    /* Toggleable roster group colors (not spatial clusters). */
+    --group-hov: #8b5cf6;
+    --group-flagged: #0891b2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1:      #16161a;
+      --surface-2:      #1f1f24;
+      --border:         #35343c;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #8f8e86;
+      --accent-bg:      #1c2536;
+      --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+      --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:      #16161a;
+    --surface-2:      #1f1f24;
+    --border:         #35343c;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #8f8e86;
+    --accent-bg:      #1c2536;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+    --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--surface-1);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--surface-1); z-index: 20;
+  }
+  header .head-text { min-width: 0; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 650; }
+  header p.sub { margin: 2px 0 0; color: var(--text-secondary); font-size: 12.5px; }
+  .head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+  #copylink, #theme-toggle {
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary);
+    border-radius: 6px; padding: 6px 12px; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+  }
+  #copylink:hover, #theme-toggle:hover { background: var(--accent-bg); }
+  #aside-toggle {
+    display: none;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary);
+    border-radius: 6px; padding: 6px 12px; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+  }
+  #aside-toggle:hover { background: var(--accent-bg); }
+  @media (max-width: 640px) {
+    header { flex-wrap: wrap; }
+    .head-actions { flex-wrap: wrap; justify-content: flex-start; width: 100%; }
+  }
+
+  .layout { display: grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 60px); }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+    #aside-toggle { display: inline-block; }   /* mobile drawer toggle */
+    aside { display: none; }
+    .layout.aside-shown aside { display: block; }
+  }
+
+  aside {
+    border-right: 1px solid var(--border);
+    padding: 14px; overflow-y: auto; max-height: calc(100vh - 60px);
+  }
+  main { padding: 16px 20px; min-width: 0; }
+
+  .selected-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; min-height: 20px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--border); border-radius: 999px; padding: 3px 8px 3px 6px;
+    font-size: 12px; background: var(--surface-2);
+  }
+  .chip .swatch { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .chip button {
+    border: none; background: none; color: var(--text-muted); cursor: pointer; font-size: 13px;
+    padding: 0; line-height: 1; margin-left: 2px;
+  }
+  .chip button:hover { color: var(--text-primary); }
+  .chip-empty { color: var(--text-muted); font-size: 12.5px; padding: 3px 0; }
+
+  #cap-note { font-size: 11.5px; color: var(--text-muted); margin: -6px 0 12px; }
+  #cap-note.full { color: var(--series-8); }
+
+  #search {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface-1); color: var(--text-primary); font-size: 13px; margin-bottom: 10px;
+  }
+
+  .group { margin-bottom: 6px; }
+  .group summary {
+    cursor: pointer; font-weight: 600; font-size: 12.5px; padding: 6px 4px;
+    color: var(--text-secondary); list-style: none; display: flex; align-items: center; gap: 6px;
+    border-radius: 5px;
+  }
+  .group summary:hover { background: var(--surface-2); }
+  .group summary::-webkit-details-marker { display: none; }
+  .group summary .chevron { transition: transform .15s; font-size: 10px; }
+  .group[open] summary .chevron { transform: rotate(90deg); }
+  .group summary .count { color: var(--text-muted); font-weight: 400; margin-left: auto; }
+  .group summary .grp-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .grp-dot.east { background: var(--cluster-east); }
+  .grp-dot.west { background: var(--cluster-west); }
+  .grp-dot.hov { background: var(--group-hov); }
+  .grp-dot.flagged { background: var(--group-flagged); }
+
+  .cluster-toggle { display: inline-flex; align-items: center; flex: none; }
+  .switch {
+    position: relative; display: inline-block; width: 34px; height: 18px; padding: 0; flex: none;
+    border: none; border-radius: 999px; background: var(--text-muted); cursor: pointer; transition: background .15s;
+  }
+  .switch:hover { filter: brightness(1.08); }
+  .switch .switch-knob {
+    position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.35); transition: left .15s;
+  }
+  .switch[aria-checked="true"] .switch-knob { left: 18px; }
+  #group-east .switch[aria-checked="true"]    { background: var(--cluster-east); }
+  #group-west .switch[aria-checked="true"]    { background: var(--cluster-west); }
+  #group-hottest .switch[aria-checked="true"] { background: var(--group-hov); }
+  #group-flagged .switch[aria-checked="true"] { background: var(--group-flagged); }
+
+  .well-row {
+    display: flex; align-items: flex-start; gap: 7px; padding: 5px 4px 5px 20px;
+    border-radius: 5px; cursor: pointer;
+  }
+  .well-row:hover { background: var(--surface-2); }
+  .well-row input[type=checkbox] { margin-top: 3px; flex: none; }
+  .well-row.disabled { opacity: 0.4; cursor: not-allowed; }
+  .well-row .well-main { min-width: 0; }
+  .well-row .well-id { font-weight: 600; font-size: 12.5px; font-family: ui-monospace, monospace; }
+  .well-row .well-desc {
+    color: var(--text-muted); font-size: 11px; margin-top: 1px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .well-row .well-n { color: var(--text-muted); font-size: 10.5px; }
+  .well-row .merged-badge {
+    font-size: 10px; color: var(--text-secondary); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 4px;
+  }
+
+  #description-panel {
+    border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px;
+    margin-bottom: 14px; background: var(--surface-2); font-size: 12.5px;
+  }
+  #description-panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--text-secondary); margin: 0 0 8px; }
+  #description-panel .desc-item { margin-bottom: 8px; }
+  #description-panel .desc-item:last-child { margin-bottom: 0; }
+  #description-panel .desc-item .well-id { font-family: ui-monospace, monospace; font-weight: 700; }
+  #description-panel .empty { color: var(--text-muted); }
+
+  .signature-panel {
+    border: 1px solid var(--border); border-radius: 8px; padding: 4px 14px; margin-bottom: 16px;
+  }
+  .signature-panel summary {
+    cursor: pointer; padding: 8px 0; font-weight: 600; font-size: 13px; list-style: none;
+  }
+  .signature-panel summary::-webkit-details-marker { display: none; }
+  .signature-panel summary::before { content: "▶ "; font-size: 10px; color: var(--text-muted); }
+  .signature-panel[open] summary::before { content: "▼ "; }
+  .signature-panel[open] summary { margin-bottom: 4px; }
+  .signature-intro {
+    font-style: italic; color: var(--text-secondary); font-size: 12.5px;
+    margin: 0 0 10px;
+  }
+  .signature-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 0 0 14px;
+  }
+  @media (max-width: 700px) { .signature-grid { grid-template-columns: 1fr; } }
+  .signature-card {
+    border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px;
+    background: var(--surface-1);
+  }
+  .signature-card h3 { margin: 0 0 8px; font-size: 13px; }
+  .sig-row { padding: 7px 0; }
+  .sig-row + .sig-row { border-top: 1px solid var(--border); }
+  .sig-row-head {
+    display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700;
+    letter-spacing: .03em; text-transform: uppercase; margin-bottom: 3px;
+  }
+  .sig-icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 16px; height: 16px; border-radius: 50%; color: #fff; font-size: 10px; flex: none;
+  }
+  .sig-row.healthy .sig-icon { background: var(--status-good); }
+  .sig-row.healthy .sig-row-head { color: var(--status-good); }
+  .sig-row.critical .sig-icon { background: var(--status-critical); }
+  .sig-row.critical .sig-row-head { color: var(--status-critical); }
+  .sig-range { font-size: 12.5px; font-weight: 600; margin-bottom: 3px; }
+  .sig-row p { margin: 0; font-size: 11.5px; color: var(--text-secondary); line-height: 1.4; }
+
+  #chart { width: 100%; }
+
+  details.table-view { margin-top: 16px; border: 1px solid var(--border); border-radius: 8px; }
+  details.table-view summary {
+    padding: 10px 14px; cursor: pointer; font-weight: 600; font-size: 13px;
+  }
+  .table-wrap { max-height: 420px; overflow: auto; border-top: 1px solid var(--border); }
+  table.data-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  table.data-table th, table.data-table td {
+    padding: 5px 10px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  table.data-table th:first-child, table.data-table td:first-child,
+  table.data-table th:nth-child(2), table.data-table td:nth-child(2) { text-align: left; }
+  table.data-table th { position: sticky; top: 0; background: var(--surface-2); }
+  table.data-table td.well-cell { font-family: ui-monospace, monospace; }
+
+  footer { padding: 20px; color: var(--text-muted); font-size: 11.5px; border-top: 1px solid var(--border); }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="head-text">
+    <h1>Arbor Hills Wellfield Explorer</h1>
+    <p class="sub" id="header-sub">Loading…</p>
+  </div>
+  <div class="head-actions">
+    <button id="aside-toggle" type="button">☰ Wells</button>
+    <button id="copylink" type="button">🔗 Copy view link</button>
+    <button id="theme-toggle" type="button">🌓 Toggle theme</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="selected-chips" id="selected-chips"></div>
+    <div id="cap-note"></div>
+
+    <input type="text" id="search" placeholder="Search well ID (matches merged predecessors too)…" autocomplete="off">
+
+    <details class="group" id="group-hottest" open>
+      <summary><span class="chevron">▶</span> <span class="grp-dot hov"></span> 2026 HOV-approved Wells <span class="count"></span>
+        <span class="cluster-toggle">
+          <button type="button" class="switch" role="switch" aria-checked="false" data-cluster="hottest" aria-label="Toggle all 2026 HOV-approved wells"><span class="switch-knob"></span></button>
+        </span>
+      </summary>
+      <div class="well-list" data-group="hottest"></div>
+    </details>
+
+    <details class="group" id="group-east" open>
+      <summary><span class="chevron">▶</span> <span class="grp-dot east"></span> Eastern Hot Core <span class="count"></span>
+        <span class="cluster-toggle">
+          <button type="button" class="switch" role="switch" aria-checked="false" data-cluster="east" aria-label="Toggle all Eastern Hot Core wells"><span class="switch-knob"></span></button>
+        </span>
+      </summary>
+      <div class="well-list" data-group="east"></div>
+    </details>
+
+    <details class="group" id="group-west" open>
+      <summary><span class="chevron">▶</span> <span class="grp-dot west"></span> Western Warm Field <span class="count"></span>
+        <span class="cluster-toggle">
+          <button type="button" class="switch" role="switch" aria-checked="false" data-cluster="west" aria-label="Toggle all Western Warm Field wells"><span class="switch-knob"></span></button>
+        </span>
+      </summary>
+      <div class="well-list" data-group="west"></div>
+    </details>
+
+    <details class="group" id="group-flagged">
+      <summary><span class="chevron">▶</span> <span class="grp-dot flagged"></span> Flagged Wells (Operator SSO Cluster) <span class="count"></span>
+        <span class="cluster-toggle">
+          <button type="button" class="switch" role="switch" aria-checked="false" data-cluster="flagged" aria-label="Toggle all Flagged wells"><span class="switch-knob"></span></button>
+        </span>
+      </summary>
+      <div class="well-list" data-group="flagged"></div>
+    </details>
+
+    <details class="group" id="group-all">
+      <summary><span class="chevron">▶</span> All wells <span class="count"></span></summary>
+      <div class="well-list" data-group="all"></div>
+    </details>
+  </aside>
+
+  <main>
+    <div id="description-panel">
+      <h2>Selected Wells</h2>
+      <div id="description-body"></div>
+    </div>
+
+    <details class="signature-panel" open>
+      <summary>What a healthy vs. a developing SET Event looks like, for these three measures</summary>
+      <p class="signature-intro">As a SET (Subsurface Elevated Temperature) Event develops, the wellhead
+        signature for these three measures shifts in a predictable direction, away from healthy anaerobic
+        decomposition. Shaded bands on the charts below mark the same thresholds.</p>
+      <div class="signature-grid">
+      <div class="signature-card">
+        <h3>Temperature</h3>
+        <div class="sig-row healthy">
+          <div class="sig-row-head"><span class="sig-icon">●</span>Normal</div>
+          <div class="sig-range">Below 131°F</div>
+          <p>Typical operating range for healthy anaerobic decomposition.</p>
+        </div>
+        <div class="sig-row critical">
+          <div class="sig-row-head"><span class="sig-icon">↑</span>Rises</div>
+          <p>Methanogenesis slows once temperatures pass 131°F and is severely curtailed above 160°F.
+            Desirable microbial activity halts near 170°F. At 160°F and above, site infrastructure is
+            also at risk: PVC/HDPE piping, geosynthetic liners, and gas/leachate collection systems can
+            soften or melt.</p>
+        </div>
+      </div>
+      <div class="signature-card">
+        <h3>Oxygen (O₂)</h3>
+        <div class="sig-row healthy">
+          <div class="sig-row-head"><span class="sig-icon">●</span>Normal</div>
+          <div class="sig-range">Under 2%</div>
+          <p>Should sit near zero at a healthy wellhead.</p>
+        </div>
+        <div class="sig-row critical">
+          <div class="sig-row-head"><span class="sig-icon">↑</span>Rises</div>
+          <p>Detectable O₂ above baseline signals air intrusion feeding the reaction, the top SET Event
+            trigger.</p>
+        </div>
+      </div>
+      <div class="signature-card">
+        <h3>CH₄:CO₂ Ratio</h3>
+        <div class="sig-row healthy">
+          <div class="sig-row-head"><span class="sig-icon">●</span>Normal</div>
+          <div class="sig-range">Roughly 1.0 or higher</div>
+          <p>Methane and carbon dioxide track together in stable landfill gas.</p>
+        </div>
+        <div class="sig-row critical">
+          <div class="sig-row-head"><span class="sig-icon">↓</span>Falls</div>
+          <p>The ratio collapses well below 1.0 as methanogenesis slows while thermal oxidation keeps
+            CO₂ elevated, a clearer signal than either gas alone. Below 0.6 is a warning, below 0.2 is
+            a smoldering signature.</p>
+        </div>
+      </div>
+      </div>
+    </details>
+
+    <div id="chart"></div>
+
+    <details class="table-view">
+      <summary>Table view (accessibility fallback, selected wells' raw readings)</summary>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Well</th><th>Date</th><th>Temp (°F)</th><th>O₂ (%)</th><th>CH₄:CO₂</th></tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+    </details>
+  </main>
+</div>
+
+<footer>
+  Source: <code id="source-csv-name"></code> · as-found readings only (ADJ duplicates excluded) ·
+  generated <span id="generated-date"></span> · <span id="merge-note"></span>
+  <br><br>
+  <strong>How the clusters are defined.</strong> Cluster membership (Eastern Hot Core /
+  Western Warm Field) matches the
+  <a href="../thermal-map/">interactive thermal map</a>:
+  wells that reached 131&deg;F or higher are grouped so that a well joins a cluster when it sits
+  within 400&nbsp;feet of any other well already in it (single-linkage clustering). At 400&nbsp;feet,
+  wells that are genuine neighbors group together (the two hottest wells sit about 370&nbsp;feet
+  apart) while the eastern and western clusters stay distinct. The split is not sensitive to that
+  exact distance: re-run at 100, 200, and 400&nbsp;feet, using two independent well-coordinate
+  sources, and separately for each year from 2021 to 2026, the same two-cluster result (an eastern
+  hot core and a western warm field) held throughout.
+  Well-picker descriptions are computed from this dataset.
+</footer>
+
+<script src="plotly-2.35.2.min.js"></script>
+<script src="data.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  const MAX_SELECTED = 8;          // palette cap for INDIVIDUAL (own-color) picks only
+  const PALETTE_SLOTS = 8;
+  const TOGGLE_GROUPS = ["east", "west", "hottest", "flagged"];  // groups with an On/Off toggle + one color
+  const GROUP_LABEL = {
+    east: "Eastern Hot Core", west: "Western Warm Field",
+    hottest: "2026 HOV-approved Wells", flagged: "Flagged Wells",
+  };
+  const GROUP_VAR = { east: "--cluster-east", west: "--cluster-west", hottest: "--group-hov", flagged: "--group-flagged" };
+  function groupColor(gk) {
+    return getComputedStyle(document.documentElement).getPropertyValue(GROUP_VAR[gk]).trim();
+  }
+
+  const data = WELLFIELD_DATA;
+  const wells = data.wells;
+  const groups = data.groups;
+  const descriptions = data.descriptions;
+  const allWellIds = Object.keys(wells).sort();
+
+  document.getElementById("header-sub").textContent =
+    `${data.well_count.toLocaleString()} well locations · pick up to ${MAX_SELECTED} individually, or toggle a whole group`;
+  document.getElementById("source-csv-name").textContent = data.source_csv;
+  document.getElementById("generated-date").textContent = data.generated;
+  document.getElementById("merge-note").textContent =
+    `${data.raw_well_count.toLocaleString()} wells shown as ${data.well_count.toLocaleString()} locations ` +
+    `(successive redrill wells at one location merged into one continuous series). `;
+
+  // ---------- theme ----------
+  const themeBtn = document.getElementById("theme-toggle");
+  function currentTheme() {
+    const attr = document.documentElement.getAttribute("data-theme");
+    if (attr) return attr;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  themeBtn.addEventListener("click", function () {
+    const next = currentTheme() === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    render(); writeHash();
+  });
+
+  // ---------- selection state ----------
+  let selected = [];                       // ordered ids currently plotted
+  let activeGroups = new Set();            // toggle-group keys whose On/Off toggle is ON
+
+  const groupSets = {};
+  TOGGLE_GROUPS.forEach(function (gk) { groupSets[gk] = new Set(groups[gk].wells); });
+  // The highest-precedence active toggle-group a well belongs to (TOGGLE_GROUPS order),
+  // or null. A well in several active groups is drawn once, in that group's color.
+  function activeGroupOf(id) {
+    for (const gk of TOGGLE_GROUPS) { if (activeGroups.has(gk) && groupSets[gk].has(id)) return gk; }
+    return null;
+  }
+  function inActiveGroup(id) { return activeGroupOf(id) !== null; }
+  function isSelected(id) { return selected.indexOf(id) !== -1; }
+
+  // ---------- per-well palette slots (individual, non-cluster picks only) ----------
+  const colorSlots = new Array(PALETTE_SLOTS).fill(null);
+  const wellSlot = {};
+  function assignSlot(id) {
+    if (wellSlot[id] !== undefined) return;
+    const i = colorSlots.indexOf(null);
+    if (i === -1) return;
+    colorSlots[i] = id; wellSlot[id] = i;
+  }
+  function releaseSlot(id) {
+    const i = wellSlot[id];
+    if (i !== undefined) { colorSlots[i] = null; delete wellSlot[id]; }
+  }
+  function slotColor(i) {
+    return getComputedStyle(document.documentElement).getPropertyValue(`--series-${i + 1}`).trim();
+  }
+  function slotsUsed() { return Object.keys(wellSlot).length; }
+  function individualRoom() { return slotsUsed() < MAX_SELECTED; }
+  function colorOf(id) {
+    const gk = activeGroupOf(id);
+    if (gk) return groupColor(gk);
+    const i = wellSlot[id];
+    return i === undefined ? "#999999" : slotColor(i);
+  }
+
+  // ---------- selection operations ----------
+  function toggleWell(id) {
+    const i = selected.indexOf(id);
+    if (i !== -1) {
+      selected.splice(i, 1);
+      releaseSlot(id);
+    } else if (inActiveGroup(id)) {
+      selected.push(id);                   // re-add to an active group, group-colored, no slot
+    } else {
+      if (!individualRoom()) return;       // capped (individual picks only)
+      assignSlot(id);
+      selected.push(id);
+    }
+    render(); writeHash();
+  }
+
+  function setGroup(gk, on) {
+    if (on) {
+      activeGroups.add(gk);
+      groups[gk].wells.forEach(function (id) {
+        releaseSlot(id);                   // was individually colored, now group-colored
+        if (!isSelected(id)) selected.push(id);
+      });
+    } else {
+      activeGroups.delete(gk);
+      const members = groupSets[gk];
+      selected = selected.filter(function (id) {
+        if (members.has(id) && !inActiveGroup(id)) { releaseSlot(id); return false; }
+        return true;
+      });
+    }
+    render(); writeHash();
+  }
+
+  // ---------- description lookup ----------
+  function tagsOf(id) {
+    const tags = [];
+    if (groups.hottest.wells.indexOf(id) !== -1) tags.push("HOV-approved");
+    if (groups.flagged.wells.indexOf(id) !== -1) tags.push("Flagged");
+    if (groups.east.wells.indexOf(id) !== -1) tags.push("Eastern Hot Core");
+    if (groups.west.wells.indexOf(id) !== -1) tags.push("Western Warm Field");
+    return tags;
+  }
+  function descriptionOf(id) {
+    const tags = tagsOf(id);
+    return { text: descriptions[id] || "No description available.", group: tags.length ? tags.join(", ") : null };
+  }
+
+  // ---------- search (matches lineage id OR any merged member id) ----------
+  function matchesFilter(id, f) {
+    if (!f) return true;
+    if (id.toLowerCase().indexOf(f) !== -1) return true;
+    const m = wells[id].m;
+    return m ? m.some(function (x) { return x.toLowerCase().indexOf(f) !== -1; }) : false;
+  }
+
+  // ---------- picker rendering ----------
+  function wellRowHTML(id) {
+    const w = wells[id];
+    const desc = descriptionOf(id).text;
+    const checked = isSelected(id) ? "checked" : "";
+    const disabled = (!isSelected(id) && !inActiveGroup(id) && !individualRoom()) ? "disabled" : "";
+    const merged = w.m ? `<span class="merged-badge">${w.m.length} wells</span>` : "";
+    return (
+      `<label class="well-row${disabled ? " disabled" : ""}" data-well="${id}">` +
+        `<input type="checkbox" ${checked} ${disabled} data-well-checkbox="${id}">` +
+        `<span class="well-main">` +
+          `<span class="well-id">${id}</span> <span class="well-n">(n=${w.n})</span>${merged}<br>` +
+          `<span class="well-desc">${desc}</span>` +
+        `</span>` +
+      `</label>`
+    );
+  }
+
+  function renderGroupList(container, ids, filterText) {
+    const filtered = filterText ? ids.filter(function (id) { return matchesFilter(id, filterText); }) : ids;
+    container.innerHTML = filtered.map(wellRowHTML).join("");
+  }
+
+  function renderPicker() {
+    const filterText = document.getElementById("search").value.trim().toLowerCase();
+
+    renderGroupList(document.querySelector('[data-group="hottest"]'), groups.hottest.wells, filterText);
+    renderGroupList(document.querySelector('[data-group="east"]'), groups.east.wells, filterText);
+    renderGroupList(document.querySelector('[data-group="west"]'), groups.west.wells, filterText);
+    renderGroupList(document.querySelector('[data-group="flagged"]'), groups.flagged.wells, filterText);
+    renderGroupList(document.querySelector('[data-group="all"]'), allWellIds, filterText);
+
+    document.querySelector("#group-hottest .count").textContent = `(${groups.hottest.wells.length})`;
+    document.querySelector("#group-east .count").textContent = `(${groups.east.wells.length})`;
+    document.querySelector("#group-west .count").textContent = `(${groups.west.wells.length})`;
+    document.querySelector("#group-flagged .count").textContent = `(${groups.flagged.wells.length})`;
+    document.querySelector("#group-all .count").textContent = `(${allWellIds.length})`;
+
+    // reflect active-group state on the slide switches
+    document.querySelectorAll(".switch").forEach(function (b) {
+      b.setAttribute("aria-checked", activeGroups.has(b.dataset.cluster) ? "true" : "false");
+    });
+
+    if (filterText) document.querySelectorAll("details.group").forEach(function (d) { d.open = true; });
+
+    document.querySelectorAll("[data-well-checkbox]").forEach(function (cb) {
+      cb.addEventListener("change", function () { toggleWell(cb.getAttribute("data-well-checkbox")); });
+    });
+
+    const capNote = document.getElementById("cap-note");
+    const used = slotsUsed();
+    let txt = `${used} of ${MAX_SELECTED} individual wells selected`;
+    const act = [...activeGroups].map(function (gk) { return GROUP_LABEL[gk]; });
+    if (act.length) txt += ` · ${act.join(" + ")} on (all wells plotted)`;
+    if (used >= MAX_SELECTED) txt += `. Remove one to add another individual well.`;
+    capNote.textContent = txt;
+    capNote.classList.toggle("full", used >= MAX_SELECTED);
+  }
+
+  // ---------- chips ----------
+  function renderChips() {
+    const el = document.getElementById("selected-chips");
+    if (selected.length === 0) {
+      el.innerHTML = '<span class="chip-empty">No wells selected yet.</span>';
+      return;
+    }
+    // one chip per active group (collapsed) + one per individual pick
+    const parts = [];
+    TOGGLE_GROUPS.forEach(function (gk) {
+      if (activeGroups.has(gk)) {
+        const n = selected.filter(function (id) { return activeGroupOf(id) === gk; }).length;
+        parts.push(
+          `<span class="chip">` +
+            `<span class="swatch" style="background:${groupColor(gk)}"></span>${GROUP_LABEL[gk]} (${n})` +
+            `<button type="button" data-remove-cluster="${gk}" aria-label="Remove ${GROUP_LABEL[gk]}">×</button>` +
+          `</span>`
+        );
+      }
+    });
+    selected.filter(function (id) { return !inActiveGroup(id); }).forEach(function (id) {
+      parts.push(
+        `<span class="chip">` +
+          `<span class="swatch" style="background:${colorOf(id)}"></span>${id}` +
+          `<button type="button" data-remove="${id}" aria-label="Remove ${id}">×</button>` +
+        `</span>`
+      );
+    });
+    el.innerHTML = parts.join("");
+    el.querySelectorAll("[data-remove]").forEach(function (btn) {
+      btn.addEventListener("click", function () { toggleWell(btn.getAttribute("data-remove")); });
+    });
+    el.querySelectorAll("[data-remove-cluster]").forEach(function (btn) {
+      btn.addEventListener("click", function () { setGroup(btn.getAttribute("data-remove-cluster"), false); });
+    });
+  }
+
+  // ---------- description panel ----------
+  function renderDescriptionPanel() {
+    const body = document.getElementById("description-body");
+    const indiv = selected.filter(function (id) { return !inActiveGroup(id); });
+    if (selected.length === 0) {
+      body.innerHTML = "";
+      return;
+    }
+    const parts = [];
+    TOGGLE_GROUPS.forEach(function (gk) {
+      if (activeGroups.has(gk)) {
+        const n = selected.filter(function (id) { return activeGroupOf(id) === gk; }).length;
+        parts.push(
+          `<div class="desc-item">` +
+            `<span class="well-id" style="color:${groupColor(gk)}">${GROUP_LABEL[gk]}</span> ` +
+            `<span style="color:var(--text-muted)">(${n} wells plotted in one color; expand the group at left to remove individual wells)</span>` +
+          `</div>`
+        );
+      }
+    });
+    indiv.forEach(function (id) {
+      const d = descriptionOf(id);
+      const tag = d.group ? ` <span style="color:var(--text-muted)">(${d.group})</span>` : "";
+      parts.push(
+        `<div class="desc-item">` +
+          `<span class="well-id" style="color:${colorOf(id)}">${id}</span>${tag}<br>` +
+          `<span>${d.text}</span>` +
+        `</div>`
+      );
+    });
+    body.innerHTML = parts.join("");
+  }
+
+  // ---------- chart ----------
+  function buildTraces() {
+    const traces = [];
+    selected.forEach(function (id) {
+      const w = wells[id];
+      const color = colorOf(id);
+      const gk = activeGroupOf(id);
+      const common = {
+        x: w.d, name: id, legendgroup: gk ? ("group-" + gk) : id, hoverlabel: { namelength: -1 },
+        line: { width: gk ? 1.2 : 2, color: color }, marker: { size: gk ? 2.5 : 4, color: color },
+        mode: "lines+markers", connectgaps: false, opacity: gk ? 0.72 : 1,
+      };
+      traces.push(Object.assign({}, common, { y: w.t, xaxis: "x", yaxis: "y", showlegend: !gk }));
+      traces.push(Object.assign({}, common, { y: w.o2, xaxis: "x2", yaxis: "y2", showlegend: false }));
+      traces.push(Object.assign({}, common, { y: w.r, xaxis: "x3", yaxis: "y3", showlegend: false }));
+    });
+    // one legend entry per active group (dummy trace; toggles the whole group)
+    TOGGLE_GROUPS.forEach(function (gk) {
+      if (!activeGroups.has(gk)) return;
+      const n = selected.filter(function (id) { return activeGroupOf(id) === gk; }).length;
+      traces.push({
+        x: [null], y: [null], xaxis: "x", yaxis: "y", mode: "lines",
+        name: `${GROUP_LABEL[gk]} (${n} wells)`, legendgroup: "group-" + gk, showlegend: true,
+        line: { color: groupColor(gk), width: 3 }, hoverinfo: "skip",
+      });
+    });
+    return traces;
+  }
+
+  function axisStyle(gridcolor, tickcolor) {
+    return { gridcolor: gridcolor, zerolinecolor: gridcolor, tickcolor: tickcolor,
+             linecolor: gridcolor, showline: true };
+  }
+
+  // ---------- reference bands (status context, not data) ----------
+  // Temperature: yellow 131-145, orange 145-160, red >160 (red only drawn when a
+  // selected well actually reaches >=160). O2: green below 2%, red at/above 2%.
+  // CH4:CO2 ratio: yellow 0.6-1.0 (warning), orange 0.2-0.6 (elevated), red <0.2
+  // (smoldering); above 1.0 left unshaded (healthy). Bands are transparent and
+  // sit below the data so a well's own series stays legible; large caps fill the
+  // whole visible region without dragging the auto-range (shapes don't autorange).
+  function bandFill(hue, dark) {
+    // hue: "yellow" | "orange" | "red" | "green"
+    const a = dark ? { yellow: 0.16, orange: 0.17, red: 0.18, green: 0.15 }
+                   : { yellow: 0.15, orange: 0.15, red: 0.15, green: 0.13 };
+    const rgb = { yellow: "235,190,0", orange: "235,120,40", red: "210,50,50", green: "20,155,70" };
+    return `rgba(${rgb[hue]},${a[hue]})`;
+  }
+
+  function refShapesAndAnnotations(dark, tR, oR, rR, showRed) {
+    const textColor = dark ? "#b7b6ad" : "#6f6e68";
+    const bg = dark ? "rgba(22,22,26,0.7)" : "rgba(252,252,251,0.7)";
+    const shapes = [];
+    const annotations = [];
+
+    // Bands are clipped to the panel's own fixed data range (see renderChartAndTable),
+    // so they fill the visible area without dragging the axis. Plotly rect shapes DO
+    // participate in autorange, so an unclipped band to 1000 would stretch the axis.
+    function band(axisY, xdom, lo, hi, hue, range) {
+      const y0 = Math.max(lo, range[0]), y1 = Math.min(hi, range[1]);
+      if (y0 >= y1) return;
+      shapes.push({ type: "rect", layer: "below", xref: xdom, x0: 0, x1: 1,
+        yref: axisY, y0: y0, y1: y1, fillcolor: bandFill(hue, dark), line: { width: 0 } });
+    }
+    function label(axisY, xdom, v, text, range) {
+      if (v < range[0] || v > range[1]) return;
+      annotations.push({ xref: xdom, x: 1, xanchor: "right", yref: axisY, y: v, yanchor: "bottom",
+        text: text, showarrow: false, font: { size: 10, color: textColor }, bgcolor: bg, borderpad: 2 });
+    }
+
+    // temperature (y / x domain)
+    band("y", "x domain", 131, 145, "yellow", tR);
+    band("y", "x domain", 145, 160, "orange", tR);
+    if (showRed) band("y", "x domain", 160, 100000, "red", tR);
+    label("y", "x domain", 131, "131°F", tR); label("y", "x domain", 145, "145°F", tR); label("y", "x domain", 160, "160°F", tR);
+
+    // oxygen (y2 / x2 domain)
+    band("y2", "x2 domain", -100000, 2, "green", oR);
+    band("y2", "x2 domain", 2, 100000, "red", oR);
+    label("y2", "x2 domain", 2, "2% O₂", oR);
+
+    // ratio (y3 / x3 domain)
+    band("y3", "x3 domain", -100000, 0.2, "red", rR);
+    band("y3", "x3 domain", 0.2, 0.6, "orange", rR);
+    band("y3", "x3 domain", 0.6, 1.0, "yellow", rR);
+    label("y3", "x3 domain", 0.2, "0.2", rR); label("y3", "x3 domain", 0.6, "0.6", rR); label("y3", "x3 domain", 1.0, "1.0 ratio", rR);
+
+    return { shapes: shapes, annotations: annotations };
+  }
+
+  function render() {
+    renderChips();
+    renderPicker();
+    renderDescriptionPanel();
+    renderChartAndTable();
+  }
+
+  function renderChartAndTable() {
+    const dark = currentTheme() === "dark";
+    const paper = dark ? "#16161a" : "#fcfcfb";
+    const font = dark ? "#c3c2b7" : "#52514e";
+    const grid = dark ? "#2b2a31" : "#e7e4dc";
+
+    const traces = buildTraces();
+
+    // Fixed per-panel y-ranges from the selected data (cluster unions can be big,
+    // so compute via loop, not spread). Threshold bands are clipped to these, so
+    // they fill each panel without stretching its axis.
+    function minMaxOf(key) {
+      let lo = Infinity, hi = -Infinity;
+      selected.forEach(function (id) {
+        const arr = wells[id][key];
+        for (let i = 0; i < arr.length; i++) { const v = arr[i]; if (v != null) { if (v < lo) lo = v; if (v > hi) hi = v; } }
+      });
+      return lo === Infinity ? null : [lo, hi];
+    }
+    function padRange(mm, fallback) {
+      if (!mm) return fallback;
+      let lo = mm[0], hi = mm[1];
+      if (lo === hi) { lo -= 1; hi += 1; }
+      const pad = (hi - lo) * 0.06;
+      return [lo - pad, hi + pad];
+    }
+    const tmm = minMaxOf("t");
+    const tR = padRange(tmm, [100, 180]);
+    const oR = padRange(minMaxOf("o2"), [0, 21]);
+    // Ratio: keep the diagnostic bands (0.2/0.6/1.0) readable. The ratio has rare
+    // near-zero-CO2 artifact spikes (hundreds) that would flatten the whole panel,
+    // so clamp the window to [0, ~2.5]; extreme values clip at the top (hover still
+    // shows the true reading). Above ~1.0 is healthy, so little of interest is lost.
+    let rR = padRange(minMaxOf("r"), [0, 1.5]);
+    rR = [0, Math.min(Math.max(rR[1], 1.2), 2.5)];
+    // red temperature band only when a selected well reaches >=160
+    const showRed = !!(tmm && tmm[1] >= 160);
+
+    // big hover boxes get unwieldy once a whole cluster is on
+    const manyLines = activeGroups.size > 0 || selected.length > 8;
+
+    const layout = {
+      paper_bgcolor: paper, plot_bgcolor: paper,
+      font: { color: font, size: 12 },
+      margin: { l: 60, r: 20, t: 10, b: 60 },
+      hovermode: manyLines ? "closest" : "x unified",
+      legend: { orientation: "h", y: 1.06, x: 0, groupclick: "togglegroup" },
+
+      xaxis:  Object.assign(axisStyle(grid, font), { anchor: "y",  domain: [0, 1], matches: "x3" }),
+      yaxis:  Object.assign(axisStyle(grid, font), { anchor: "x",  domain: [0.70, 1.00], range: tR, autorange: false, title: { text: "Wellhead Temp (°F)" } }),
+
+      xaxis2: Object.assign(axisStyle(grid, font), { anchor: "y2", domain: [0, 1], matches: "x3" }),
+      yaxis2: Object.assign(axisStyle(grid, font), { anchor: "x2", domain: [0.37, 0.63], range: oR, autorange: false, title: { text: "O₂ (%)" } }),
+
+      xaxis3: Object.assign(axisStyle(grid, font), {
+        anchor: "y3", domain: [0, 1],
+        rangeslider: { visible: true, thickness: 0.06, bgcolor: paper, bordercolor: grid },
+      }),
+      yaxis3: Object.assign(axisStyle(grid, font), { anchor: "x3", domain: [0, 0.26], range: rR, autorange: false, title: { text: "CH₄:CO₂ ratio" } }),
+
+      height: 780,
+    };
+
+    const refs = refShapesAndAnnotations(dark, tR, oR, rR, showRed);
+    layout.shapes = refs.shapes;
+    layout.annotations = refs.annotations;
+
+    Plotly.react("chart", traces, layout, { responsive: true, displaylogo: false });
+
+    // table view: capped for sanity when a big cluster is on
+    const tbody = document.getElementById("table-body");
+    const MAX_ROWS = 4000;
+    let rows = [];
+    let truncated = false;
+    for (const id of selected) {
+      const w = wells[id];
+      for (let i = 0; i < w.d.length; i++) {
+        if (rows.length >= MAX_ROWS) { truncated = true; break; }
+        rows.push(
+          `<tr><td class="well-cell" style="color:${colorOf(id)}">${id}</td><td>${w.d[i]}</td>` +
+          `<td>${w.t[i] === null ? "" : w.t[i]}</td>` +
+          `<td>${w.o2[i] === null ? "" : w.o2[i]}</td>` +
+          `<td>${w.r[i] === null ? "" : w.r[i]}</td></tr>`
+        );
+      }
+      if (truncated) break;
+    }
+    if (truncated) rows.push(`<tr><td colspan="5" style="color:var(--text-muted)">Showing first ${MAX_ROWS} rows; narrow the selection to see the rest.</td></tr>`);
+    tbody.innerHTML = rows.length
+      ? rows.join("")
+      : '<tr><td colspan="5" style="color:var(--text-muted)">No wells selected.</td></tr>';
+  }
+
+  // ---------- shareable view link (permalink) ----------
+  function readHash() {
+    const o = {};
+    location.hash.replace(/^#/, "").split("&").forEach(function (kv) {
+      const i = kv.indexOf("="); if (i > 0) o[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1));
+    });
+    return o;
+  }
+  function writeHash() {
+    const parts = [];
+    const indiv = selected.filter(function (id) { return !inActiveGroup(id); });
+    if (indiv.length) parts.push("w=" + encodeURIComponent(indiv.join(",")));
+    if (activeGroups.size) parts.push("g=" + [...activeGroups].join(","));
+    const attr = document.documentElement.getAttribute("data-theme");
+    if (attr) parts.push("theme=" + attr);
+    history.replaceState(null, "", parts.length ? "#" + parts.join("&") : location.pathname + location.search);
+  }
+  function fallbackCopy(t) {
+    const ta = document.createElement("textarea"); ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); } catch (e) {} document.body.removeChild(ta);
+  }
+  function copyLink() {
+    writeHash();
+    const url = location.href;
+    const btn = document.getElementById("copylink");
+    function done() { if (btn) { const o = btn.textContent; btn.textContent = "✓ Copied!"; setTimeout(function () { btn.textContent = o; }, 1200); } }
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(url).then(done, function () { fallbackCopy(url); done(); });
+    else { fallbackCopy(url); done(); }
+  }
+
+  // ---------- seed from hash (groups first, then individuals), else headline well ----------
+  (function seed() {
+    const H = readHash();
+    if (H.theme === "dark" || H.theme === "light") document.documentElement.setAttribute("data-theme", H.theme);
+    if (H.g) H.g.split(",").forEach(function (gk) {
+      if (TOGGLE_GROUPS.indexOf(gk) !== -1) {
+        activeGroups.add(gk);
+        groups[gk].wells.forEach(function (id) { if (!isSelected(id)) selected.push(id); });
+      }
+    });
+    if (H.w) H.w.split(",").forEach(function (id) {
+      if (wells[id] && !isSelected(id) && !inActiveGroup(id) && individualRoom()) { assignSlot(id); selected.push(id); }
+    });
+    if (selected.length === 0 && wells["AHW272R4"]) { selected.push("AHW272R4"); assignSlot("AHW272R4"); }
+  })();
+
+  // ---------- wiring ----------
+  document.getElementById("search").addEventListener("input", function () { renderPicker(); });
+  document.getElementById("copylink").addEventListener("click", copyLink);
+  document.getElementById("aside-toggle").addEventListener("click", function () {
+    document.querySelector(".layout").classList.toggle("aside-shown");
+  });
+  document.querySelectorAll(".switch").forEach(function (b) {
+    b.addEventListener("click", function (e) {
+      e.preventDefault(); e.stopPropagation();
+      const gk = b.dataset.cluster;
+      setGroup(gk, !activeGroups.has(gk));
+    });
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
