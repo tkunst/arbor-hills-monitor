@@ -9,15 +9,33 @@ Hills Landfill (SRN N2688). It backfills the ~754 existing documents and
 watches for new ones, classifies each against a risk register (R1–R8), keeps a
 full-text-searchable PDF archive + a Google Sheet case file, and sends alerts.
 
-**Editorial posture (Trisha's direction, 2026-08-21):** the monitor is a
-neutral, provenance-agnostic data-scientist newsletter — not the voice or an
-arm of any advocacy organization. It takes data from any source with clear
-provenance (EGLE, the operator, township/county records, community groups
-alike) and labels each item by source. Do not attribute the project itself to,
-or describe it as built for, any single advocacy group in public-facing text
-(README, this file, code comments, the public Sheet, email/digest content).
-See `documents/arbor-hills/arbor-hills-voice-guide.md` in Lotext for the full
-voice guide.
+**Editorial posture — UPDATED (Trisha's direction, 2026-08-30): "accuracy over
+posturing."** Strict neutrality is no longer absolute. The brand is *accuracy*,
+not the *appearance* of neutrality, and the two layers are held to different
+bars:
+
+- **The automated data layer** — the alerts, the Sunday digest, the public
+  case-file Sheet, the findings feed, anything the pipeline emits without a human
+  in the loop — stays rigorously factual and **source-labeled** (EGLE, the
+  operator, township/county records, community groups alike, each labeled by
+  source). This is the machine whose whole value is being unarguable; keep it
+  provenance-agnostic and never overstate. Source-labeling here is *accuracy*,
+  not neutrality, so it stays regardless of the posture change.
+- **The editorial / visualization layer** — the pages Trisha authors (the
+  thermal map, analysis pages, briefs, hosted visualizations) — MAY carry a
+  clear community-concern **point of view**, *provided every checkable claim
+  holds up to the refutation gate* (Trisha's blind-refutation process) and every
+  number says where it came from. A viewpoint page with one sloppy or overstated
+  claim is the real failure mode; a sourced viewpoint is fine.
+
+This supersedes the strict-neutrality rule below for authored/editorial content,
+but not the data layer. See `documents/arbor-hills/arbor-hills-voice-guide.md` in
+Lotext for the voice guide (update pending to match this ruling).
+
+*(Prior direction, 2026-08-21, kept for history — now relaxed per above:) the
+monitor is a neutral, provenance-agnostic data-scientist newsletter — not the
+voice or an arm of any advocacy organization; do not attribute the project to,
+or describe it as built for, any single advocacy group in public-facing text.*
 
 All EGLE data is public regulatory data. **Tier 0** project (solo dev, no PII,
 external users but no sensitive data). Public repo.

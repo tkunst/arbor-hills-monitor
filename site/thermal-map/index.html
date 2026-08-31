@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--
+  MAINTENANCE NOTE: a button-free copy of this map lives at ../thermal-map-embed/
+  for iframe embedding (e.g. an external blog). The DATA files (spatial-data.js,
+  parcels.js) are SHARED between the two pages, so data rebuilds propagate to both
+  automatically -- no double update. BUT the presentation code in THIS file (the
+  inline <style> and the map <script> below) is DUPLICATED in
+  thermal-map-embed/index.html. If you change this file's styling or map logic,
+  mirror the change into thermal-map-embed/index.html. (Only the header/CTA differs.)
+-->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arbor Hills: Two-Cluster Thermal Map</title>
+<meta name="description" content="An interactive map of the Arbor Hills Landfill's elevated-temperature wells, showing two persistent thermal clusters: an eastern hot core and a western warm field.">
+<!-- Social share preview (iMessage / Facebook / X / LinkedIn / Slack). Absolute image URL required. -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://arborhillsmonitor.org/thermal-map/">
+<meta property="og:title" content="Arbor Hills: Two-Cluster Thermal Map">
+<meta property="og:description" content="An interactive map of the Arbor Hills Landfill's elevated-temperature wells, showing two persistent thermal clusters: an eastern hot core and a western warm field.">
+<meta property="og:image" content="https://arborhillsmonitor.org/img/og-thermal-map.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="720">
+<meta property="og:image:alt" content="Map of the Arbor Hills Landfill showing two persistent thermal clusters: an eastern hot core and a western warm field.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Arbor Hills: Two-Cluster Thermal Map">
+<meta name="twitter:description" content="An interactive map of the Arbor Hills Landfill's elevated-temperature wells, showing two persistent thermal clusters: an eastern hot core and a western warm field.">
+<meta name="twitter:image" content="https://arborhillsmonitor.org/img/og-thermal-map.jpg">
+<link rel="stylesheet" href="leaflet.css">
+<style>
+  :root{
+    --bg:#0f1419; --panel:#1a2230; --ink:#e8edf4; --muted:#9fb0c3; --line:#2b3648;
+    --east:#e23d3d; --west:#f0932b; --ctx:#5b6b7f; --accent:#4aa3df; --good:#2ecc71;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{display:flex;flex-direction:column;height:100vh;background:var(--bg);color:var(--ink);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+  header{padding:12px 20px 9px;border-bottom:1px solid var(--line);flex:0 0 auto;display:flex;align-items:center;gap:16px}
+  .head-text{flex:1 1 auto;min-width:0}
+  .cta{flex:0 0 auto;background:#157a3a;color:#fff;font-weight:700;font-size:14px;text-decoration:none;
+    padding:10px 16px;border-radius:8px;white-space:nowrap;box-shadow:0 1px 8px rgba(0,0,0,.4);line-height:1}
+  .cta:hover{background:#1a9247}
+  h1{margin:0;font-size:19px}
+  .sub{color:var(--muted);font-size:13px;margin-top:3px;max-width:940px}
+  .controls{display:flex;flex-wrap:wrap;gap:8px 16px;padding:9px 20px;border-bottom:1px solid var(--line);
+    align-items:center;background:var(--panel);flex:0 0 auto}
+  .ctl{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+  .seg button{background:transparent;color:var(--muted);border:0;padding:5px 11px;font-size:13px;cursor:pointer}
+  .seg button.on{background:var(--accent);color:#04121e;font-weight:600}
+  #copylink{background:transparent;color:var(--accent);border:1px solid var(--line);border-radius:7px;padding:5px 11px;font-size:13px;cursor:pointer}
+  #copylink:hover{border-color:var(--accent)}
+  #panelToggle{background:transparent;color:var(--accent);border:1px solid var(--line);border-radius:7px;padding:5px 11px;font-size:13px;cursor:pointer;display:none}
+  #panelToggle:hover{border-color:var(--accent)}
+  #panelToggle.on{background:var(--accent);color:#04121e;font-weight:600}
+  input[type=range]{width:230px;accent-color:var(--accent)}
+  #yearlab{min-width:66px;font-weight:600;color:var(--ink)}
+  .wrap{flex:1 1 auto;display:flex;min-height:0}
+  #map{flex:1 1 auto;min-width:0;background:#0b0f14}
+  aside{width:320px;flex:0 0 320px;border-left:1px solid var(--line);padding:16px;overflow:auto;background:var(--panel)}
+  .stat{background:#121a26;border:1px solid var(--line);border-radius:9px;padding:12px;margin-bottom:12px}
+  .stat h3{margin:0 0 8px;font-size:13px;letter-spacing:.02em;text-transform:uppercase;color:var(--muted)}
+  .big{font-size:26px;font-weight:700}
+  .row{display:flex;justify-content:space-between;align-items:baseline;margin:4px 0}
+  .pill{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:6px;vertical-align:middle}
+  .east{color:var(--east)} .west{color:var(--west)}
+  .dot-east{background:var(--east)} .dot-west{background:var(--west)} .dot-ctx{background:var(--ctx)}
+  .largest{font-size:12px;font-weight:600}
+  .legend{font-size:12.5px;color:var(--muted)}
+  .legend div{margin:5px 0}
+  .note{font-size:12px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px;margin-top:6px}
+  a{color:var(--accent)}
+  /* leaflet dark tweaks + centroid labels */
+  .leaflet-container{background:#0b0f14}
+  /* mute the OSM street basemap so the brown landfill + land-use colors stop
+     competing with the well markers (satellite is left untouched) */
+  .leaflet-container.muted-base .leaflet-tile-pane{filter:saturate(0.5) brightness(0.82) contrast(1.05)}
+  .centroid-label{background:rgba(10,14,20,.82);border:0;color:#fff;font-weight:700;font-size:12px;
+    padding:1px 6px;border-radius:5px;box-shadow:none;white-space:nowrap}
+  .centroid-label.east{color:#ff8a8a}.centroid-label.west{color:#ffc078}
+  .leaflet-tooltip.centroid-label::before{display:none}
+  .sep-label{background:rgba(10,14,20,.8);color:#dfe8f2;border:0;font-size:11px;padding:1px 5px;border-radius:4px}
+  .leaflet-tooltip.sep-label::before{display:none}
+  .school-label{background:rgba(10,14,20,.82);border:0;color:#f0932b;font-weight:700;font-size:12px;padding:1px 6px;border-radius:5px;white-space:nowrap;text-align:center;line-height:1.25}
+  .school-arrow{background:rgba(10,14,20,.82);color:#f0932b;font-weight:700;font-size:12px;padding:2px 8px;border-radius:6px;white-space:nowrap;box-shadow:0 0 0 1px rgba(240,147,43,.55);display:inline-block}
+  .school-arrow .ar{font-size:17px;line-height:1;vertical-align:-2px}
+  .monitor-label{background:rgba(10,14,20,.82);border:0;color:#7fd1ff;font-weight:700;font-size:12px;padding:1px 6px;border-radius:5px;white-space:nowrap}
+  .leaflet-tooltip.monitor-label::before{display:none}
+  .leaflet-tooltip.school-label::before{display:none}
+  /* mobile: stack the CTA below the heading (and above the map);
+     collapse the sidebar into an off-canvas panel toggled by #panelToggle */
+  @media (max-width:640px){
+    header{flex-direction:column;align-items:stretch;gap:10px}
+    .cta{text-align:center}
+    .wrap{position:relative}
+    aside{position:absolute;top:0;right:0;bottom:0;width:min(320px,86vw);
+      transform:translateX(100%);transition:transform .25s ease;z-index:1200;
+      box-shadow:-6px 0 20px rgba(0,0,0,.55)}
+    aside.open{transform:translateX(0)}
+    #panelToggle{display:inline-block}
+  }
+</style>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" href="/favicon.ico" sizes="any">
+</head>
+<body>
+<header>
+  <div class="head-text">
+  <h1>Arbor Hills: two persistent thermal clusters</h1>
+  <div class="sub">The operator's own EGLE-filed wellhead readings show the elevated-temperature wells (&ge;131&deg;F) falling into two persistent clusters: <b class="east">an eastern hot core</b> and <b class="west">a western warm field</b>.
+  Their nearest wells now sit about 460&nbsp;ft apart, a gap the growing <b class="west">western field</b> narrows after 2023 while the <b class="east">eastern core</b> stays the larger and hotter.</div>
+  </div>
+</header>
+
+<div class="controls">
+  <div class="ctl">Year
+    <input type="range" id="year" min="0" max="6" step="1" value="0">
+    <span id="yearlab">Overall</span>
+  </div>
+  <div class="ctl">Threshold
+    <span class="seg" id="thr">
+      <button data-thr="131" class="on">131&deg;F</button>
+      <button data-thr="145">145&deg;F</button>
+    </span>
+  </div>
+  <div class="ctl">Basemap
+    <span class="seg" id="base">
+      <button data-base="sat" class="on">Satellite</button>
+      <button data-base="street">Street</button>
+    </span>
+  </div>
+  <div class="ctl">Other wells
+    <span class="seg" id="ctx">
+      <button data-ctx="on">On</button>
+      <button data-ctx="off" class="on">Off</button>
+    </span>
+  </div>
+  <div class="ctl">Expansion parcel
+    <span class="seg" id="exp">
+      <button data-exp="on" class="on">On</button>
+      <button data-exp="off">Off</button>
+    </span>
+  </div>
+  <div class="ctl" style="margin-left:auto"><button id="panelToggle">Details</button> <button id="copylink">🔗 Copy view link</button></div>
+</div>
+
+<div class="wrap">
+  <div id="map"></div>
+  <aside>
+    <div class="stat">
+      <h3 id="scope">Overall (all years)</h3>
+      <div class="row"><span><span class="pill dot-east"></span>Eastern hot core</span>
+        <span class="big east" id="eN">–</span></div>
+      <div class="row"><span><span class="pill dot-west"></span>Western warm field</span>
+        <span class="big west" id="wN">–</span></div>
+      <div class="row"><span>Edge-to-edge gap</span><span id="sep">–</span></div>
+    </div>
+    <div class="stat">
+      <h3>Hottest in view</h3>
+      <div id="top" style="font-size:13px"></div>
+    </div>
+    <div class="stat legend">
+      <h3>Legend</h3>
+      <div><span class="pill dot-east"></span>Eastern cluster (hot core)</div>
+      <div><span class="pill dot-west"></span>Western cluster (warm field)</div>
+      <div><span class="pill dot-ctx"></span>Other located wells (context)</div>
+      <div><span class="pill" style="background:#7fd1ff"></span>perimeter air monitor</div>
+      <div>Marker size ∝ peak temperature. A few retired wells sit at their redrill successor's location (noted in hover).</div>
+      <div><b>Threshold</b> shows only wells at/above 131 or 145°F (by peak-ever in Overall, or that-year's max in a given year). The <b>ever-hot</b> footer count keeps its definition: reached ≥131°F in any year.</div>
+    </div>
+    <div class="note" id="foot"></div>
+  </aside>
+</div>
+
+<script src="leaflet.js"></script>
+<script src="spatial-data.js"></script>
+<script src="parcels.js"></script>
+<script>
+const D = SPATIAL_DATA;
+const YEARS = ["Overall","2021","2022","2023","2024","2025","2026"];
+// Run B = actual coordinates + rebore approximation (more located wells in 2021: 15 vs 9;
+// the two-cluster finding holds in both runs).
+const RUN = D.runB;
+let base = "sat", showCtx = false, showExp = true, thr = 131;
+
+// a well's temperature for the current period: peak-ever (Overall) or that-year's max
+function wellVal(w, yi){ return yi===0 ? w.peak : (w.years[YEARS[yi]] ?? -1); }
+function centroidOf(ws){ return [ws.reduce((a,w)=>a+w.lat,0)/ws.length, ws.reduce((a,w)=>a+w.lon,0)/ws.length]; }
+function feetBetween(a, b){ const R=20925524.9, r=Math.PI/180;
+  const la1=a[0]*r, la2=b[0]*r, dla=(b[0]-a[0])*r, dlo=(b[1]-a[1])*r;
+  const h=Math.sin(dla/2)**2 + Math.cos(la1)*Math.cos(la2)*Math.sin(dlo/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h)); }
+
+// ---- shareable view state in the URL hash (permalink) ----
+function readHash(){ const o={}; location.hash.replace(/^#/,"").split("&").forEach(kv=>{const i=kv.indexOf("=");if(i>0)o[kv.slice(0,i)]=decodeURIComponent(kv.slice(i+1));}); return o; }
+const H = readHash();
+if(+H.t===145) thr=145;
+if(H.b==="street") base="street";
+if(H.ctx!=null) showCtx=(H.ctx==="1");
+if(H.exp==="0") showExp=false;
+const yi0 = (H.y!=null && +H.y>=0 && +H.y<=6) ? +H.y : 0;
+function setSeg(id,val){ document.querySelectorAll("#"+id+" button").forEach(b=>{const k=Object.keys(b.dataset)[0]; b.classList.toggle("on", b.dataset[k]===String(val));}); }
+document.getElementById("year").value = yi0;
+document.getElementById("yearlab").textContent = YEARS[yi0];
+setSeg("thr", thr); setSeg("base", base); setSeg("ctx", showCtx?"on":"off"); setSeg("exp", showExp?"on":"off");
+function writeHash(){ const c=map.getCenter();
+  history.replaceState(null,"","#y="+(+document.getElementById("year").value)+"&t="+thr+"&b="+base
+    +"&ctx="+(showCtx?1:0)+"&exp="+(showExp?1:0)+"&c="+c.lat.toFixed(5)+","+c.lng.toFixed(5)+"&z="+map.getZoom()); }
+function fallbackCopy(t){ const ta=document.createElement("textarea"); ta.value=t; ta.style.position="fixed"; ta.style.opacity="0"; document.body.appendChild(ta); ta.select(); try{document.execCommand("copy");}catch(e){} document.body.removeChild(ta); }
+function copyLink(){ writeHash(); const url=location.href;
+  if(navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(url).catch(()=>fallbackCopy(url)); else fallbackCopy(url);
+  const b=document.getElementById("copylink"); if(b){ const o=b.textContent; b.textContent="Copied!"; setTimeout(()=>b.textContent=o,1200); } }
+
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+const ESRI_LBL = "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}";
+const OSM = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+
+function radFor(peak){ if(peak==null||peak<0) return 3.5; return Math.max(4, Math.min(15, 4+(peak-120)*0.26)); }
+
+// map + base layers
+const ctr = [(RUN.east_centroid[0]+RUN.west_centroid[0])/2, (RUN.east_centroid[1]+RUN.west_centroid[1])/2];
+let initCenter = ctr, initZoom = 16;
+if(H.c && H.z){ const p=H.c.split(",").map(Number); if(p.length===2 && isFinite(p[0]) && isFinite(p[1])){ initCenter=[p[0],p[1]]; initZoom=+H.z; } }
+const map = L.map("map", {center:initCenter, zoom:initZoom, zoomControl:true, attributionControl:true});
+const satLayer = L.layerGroup([
+  L.tileLayer(ESRI, {maxZoom:20, attribution:"Imagery © Esri, Maxar"}),
+  L.tileLayer(ESRI_LBL, {maxZoom:20, opacity:0.9})
+]);
+const streetLayer = L.tileLayer(OSM, {maxZoom:19, attribution:"© OpenStreetMap"});
+satLayer.addTo(map);
+if(base==="street"){ map.removeLayer(satLayer); streetLayer.addTo(map); map.getContainer().classList.add("muted-base"); }
+map.on("moveend zoomend", writeHash);
+
+const overlay = L.layerGroup().addTo(map);
+
+function tip(m, html){ m.bindTooltip(html, {direction:"top", offset:[0,-2], sticky:true}); return m; }
+
+function build(){
+  const yi = +document.getElementById("year").value;
+  const yr = YEARS[yi];
+  const overall = yi===0;
+
+  // wells at/above the chosen threshold for the current period (peak-ever, or that-year's max)
+  const shown = RUN.wells.filter(w => (w.cluster==="east"||w.cluster==="west") && wellVal(w,yi) >= thr);
+  const eastWells = shown.filter(w=>w.cluster==="east");
+  const westWells = shown.filter(w=>w.cluster==="west");
+  const eC = eastWells.length ? centroidOf(eastWells) : null;  // cluster-label anchors only
+  const wC = westWells.length ? centroidOf(westWells) : null;
+  // edge-to-edge gap: the nearest east well to the nearest west well
+  let gap = null, gapPair = null;
+  if(eastWells.length && westWells.length){
+    for(const e of eastWells) for(const w of westWells){
+      const d = feetBetween([e.lat,e.lon],[w.lat,w.lon]);
+      if(gap===null || d<gap){ gap=d; gapPair=[[e.lat,e.lon],[w.lat,w.lon]]; }
+    }
+    gap = Math.round(gap);
+  }
+  const eN = eastWells.length, wN = westWells.length;
+
+  overlay.clearLayers();
+  // real Section-13 current-landfill parcels (Washtenaw County GIS): GFL-owned + Salem-Township-owned
+  L.polygon(PARCELS.gfl.ring, {color:"#22e0ef",weight:3,opacity:0.95,fillColor:"#22e0ef",fillOpacity:0.07})
+    .bindTooltip(`GFL-owned parcel, ${PARCELS.gfl.acres} ac`,{sticky:true}).addTo(overlay);
+  L.polygon(PARCELS.salem.ring, {color:"#e05cc8",weight:2,opacity:0.95,fillColor:"#e05cc8",fillOpacity:0.07})
+    .bindTooltip(`Salem Township-owned parcel, ${PARCELS.salem.acres} ac`,{sticky:true}).addTo(overlay);
+  // Section-12 proposed-expansion parcel (GFL-owned), dashed = not yet built
+  if(showExp){
+    L.polygon(PARCELS.expansion.ring, {color:"#ffd24a",weight:2.5,opacity:0.95,dashArray:"7 6",fillColor:"#caa020",fillOpacity:0.22})
+      .bindTooltip(`Expansion parcel: GFL-owned land, Section 12, ${PARCELS.expansion.acres} ac`,{sticky:true}).addTo(overlay);
+  }
+  // schools (orange markup); Ridge Wood dashed = roughly hand-drawn (approx.)
+  Object.values(SCHOOLS).forEach(s=>{
+    const label = s.name + (s.note?`<br>(${s.note})`:"");
+    L.polygon(s.ring, {color:"#f0932b",weight:2,opacity:0.95,dashArray:s.approx?"6 5":null,
+      fillColor:"#f0932b",fillOpacity:0.4})
+      .bindTooltip(label, {className:"school-label",permanent:true,direction:"center"}).addTo(overlay);
+  });
+  // orientation arrows just outside the property (E + W edges), pointing toward each school
+  // placed just OUTSIDE the parcel (W edge -83.56504, E edge -83.54967); anchored so each
+  // box extends away from the parcel (west box grows west, east box grows east)
+  [{lat:42.4030, lon:-83.5662, dir:"west"}, {lat:42.4045, lon:-83.5488, dir:"east"}].forEach(a=>{
+    const html = a.dir==="west" ? '<span class="ar">&#8592;</span>&nbsp;Elementary School'
+                                 : 'Elementary School&nbsp;<span class="ar">&#8594;</span>';
+    L.marker([a.lat,a.lon], {interactive:false, keyboard:false,
+      icon:L.divIcon({className:"school-arrow", html, iconSize:[150,22],
+                      iconAnchor:[a.dir==="west"?150:0, 11]})}).addTo(overlay);
+  });
+  // context wells (non-cluster located wells); toggleable, a bit more opaque
+  if(showCtx){
+    D.context.forEach(w=>{
+      tip(L.circleMarker([w.lat,w.lon],{radius:3.5,color:"#0e1a27",weight:1,opacity:0.85,
+        fillColor:"#c7d6e6",fillOpacity:0.75}), `${w.id}<br>peak ${w.peak==null?"n/a":w.peak+"°F"}`).addTo(overlay);
+    });
+  }
+  // perimeter monitors
+  D.perimeter.forEach(p=>{
+    tip(L.circleMarker([p.lat,p.lon],{radius:6,color:"#7fd1ff",weight:1.5,
+      fillColor:"#7fd1ff",fillOpacity:0.5}), `${p.station}: perimeter air monitor`).addTo(overlay);
+  });
+  // Ridge Wood Elementary H2S air monitor; coordinate read from Google Maps imagery
+  // (the small equipment enclosure on the school property, east of the parking lot)
+  tip(L.circleMarker([42.406585, -83.532022], {radius:6, color:"#7fd1ff", weight:1.5,
+    fillColor:"#7fd1ff", fillOpacity:0.5}), "Ridge Wood: school air monitor").addTo(overlay);
+  // hot wells. Label the temperature to match the view: in Overall show the
+  // peak-ever value and the year it peaked; in a year view show THAT year's
+  // reading with that year, so the temperature and the year always agree.
+  function drawHot(wells,color){
+    wells.forEach(w=>{
+      const yrs = Object.keys(w.years);
+      let pk = yrs.length ? yrs.reduce((a,b)=> w.years[b]>w.years[a] ? b : a) : null;
+      if(pk && w.years[pk] !== w.peak) pk = null;   // peak came from an unlisted year → don't assert one
+      const temp = overall ? `peak ${w.peak}°F${pk?` (${pk})`:""}`
+                           : `${w.years[yr]}°F · ${yr}`;
+      tip(L.circleMarker([w.lat,w.lon],{radius:radFor(w.peak),color:"#0b0f14",weight:0.8,
+        fillColor:color,fillOpacity:0.9}),
+        `<b>${w.id}</b><br>${temp}${w.exact?"":"<br><i>position approx (rebore)</i>"}`).addTo(overlay);
+    });
+  }
+  drawHot(westWells,"#f0932b");
+  drawHot(eastWells,"#e23d3d");
+  // edge-to-edge connector: nearest east well <-> nearest west well
+  if(gapPair){
+    const line = L.polyline(gapPair,
+      {color:"#ffffff",weight:1.5,opacity:0.85,dashArray:"4 5",interactive:true}).addTo(overlay);
+    line.bindTooltip(gap+" ft apart (nearest wells)",{className:"sep-label",permanent:true,direction:"center"});
+  }
+  // cluster name labels (text only, near the cluster centre). Nudge each label
+  // vertically away from the distance box (sitting on the connector midpoint) so
+  // the two never cover it. The box is wide but short, so a vertical clear is the
+  // reliable one; pushing in the away-from-box direction only ever grows the gap,
+  // so they stay clear of it at any zoom.
+  const boxMid = gapPair ? [(gapPair[0][0]+gapPair[1][0])/2, (gapPair[0][1]+gapPair[1][1])/2] : null;
+  function vNudge(c, fallback){          // fallback: -1 = up, +1 = down when level with the box
+    if(!c || !boxMid) return [0,0];
+    const dy = map.latLngToLayerPoint(L.latLng(c[0],c[1])).y
+             - map.latLngToLayerPoint(L.latLng(boxMid[0],boxMid[1])).y;
+    const dir = Math.abs(dy) < 1 ? fallback : Math.sign(dy);
+    return [0, dir * 28];               // 28px > half the box + half the label
+  }
+  function clusterLabel(c,cls,label,off){ if(!c) return;
+    const m = L.circleMarker([c[0],c[1]],{radius:0.1,opacity:0,fillOpacity:0,interactive:false}).addTo(overlay);
+    m.bindTooltip(label,{className:"centroid-label "+cls,permanent:true,direction:"center",offset:off});
+  }
+  clusterLabel(eC,"east","East core", vNudge(eC,-1));   // level ties: East core goes up
+  clusterLabel(wC,"west","West field", vNudge(wC,+1));  // level ties: West field goes down
+
+  // side panel
+  document.getElementById("scope").textContent = overall ? `Overall: wells ≥${thr}°F ever` : `${yr}: wells ≥${thr}°F that year`;
+  document.getElementById("eN").textContent = eN;
+  document.getElementById("wN").textContent = wN;
+  document.getElementById("sep").textContent = gap ? gap+" ft" : "n/a";
+  const pool = [...eastWells.map(w=>({...w,side:"E"})), ...westWells.map(w=>({...w,side:"W"}))]
+    .sort((a,b)=>b.peak-a.peak).slice(0,6);
+  document.getElementById("top").innerHTML = pool.map(w=>
+    `<div class="row"><span><span class="pill dot-${w.side==="E"?"east":"west"}"></span>${w.id}</span>`
+    +`<span>${w.peak}°F</span></div>`).join("") || "<span style='color:var(--muted)'>none</span>";
+  document.getElementById("foot").innerHTML =
+    `${RUN.n_placed}/${RUN.n_hot} ever-hot wells placed · ${D.context.length} other located wells for context.`
+    +` Clusters: single-linkage at 400 ft. Coordinates: operator tuning table ∪ Well Master List. Generated ${D.generated}.`;
+}
+
+// controls
+document.getElementById("year").addEventListener("input", e=>{
+  document.getElementById("yearlab").textContent = YEARS[+e.target.value]; build(); writeHash(); });
+document.querySelectorAll("#base button").forEach(b=>b.addEventListener("click",()=>{
+  document.querySelectorAll("#base button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); base=b.dataset.base;
+  if(base==="sat"){ map.removeLayer(streetLayer); satLayer.addTo(map); }
+  else { map.removeLayer(satLayer); streetLayer.addTo(map); }
+  map.getContainer().classList.toggle("muted-base", base==="street"); writeHash();
+}));
+document.querySelectorAll("#ctx button").forEach(b=>b.addEventListener("click",()=>{
+  document.querySelectorAll("#ctx button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); showCtx=(b.dataset.ctx==="on"); build(); writeHash(); }));
+document.querySelectorAll("#exp button").forEach(b=>b.addEventListener("click",()=>{
+  document.querySelectorAll("#exp button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); showExp=(b.dataset.exp==="on"); build(); writeHash(); }));
+document.querySelectorAll("#thr button").forEach(b=>b.addEventListener("click",()=>{
+  document.querySelectorAll("#thr button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on"); thr=+b.dataset.thr; build(); writeHash(); }));
+document.getElementById("copylink").addEventListener("click", copyLink);
+const asidePanel = document.querySelector("aside"), panelToggle = document.getElementById("panelToggle");
+panelToggle.addEventListener("click", ()=>{
+  const open = asidePanel.classList.toggle("open");
+  panelToggle.classList.toggle("on", open);
+  panelToggle.textContent = open ? "Hide details" : "Details";
+});
+
+build();
+writeHash();
+setTimeout(()=>map.invalidateSize(), 200);
+</script>
+</body>
+</html>
