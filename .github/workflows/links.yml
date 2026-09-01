@@ -4,20 +4,46 @@ on:
   pull_request:
     paths:
       - "**/*.md"
+      - "site/**/*.html"
+      - .github/lychee.toml
+      - .github/workflows/links.yml
   push:
     branches: [main]
     paths:
       - "**/*.md"
+      - "site/**/*.html"
 
 jobs:
   lychee:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: lycheeverse/lychee-action@v2
+
+      # Markdown: internal + external links (unchanged behaviour).
+      - name: Markdown links
+        uses: lycheeverse/lychee-action@v2
         with:
           args: >-
             --no-progress
             --config .github/lychee.toml
             './**/*.md'
+          fail: true
+
+      # Site HTML: INTERNAL links only. External links on the site — especially
+      # the ~1,700-page generated public-records feed pointing at nSITE / EGLE /
+      # Drive — would make this (potentially required) check flaky on external
+      # rot/rate-limits, so we exclude http(s) and root-absolute links
+      # (base-dependent, e.g. /favicon.svg) and validate the relative
+      # cross-page/asset links that actually break when pages are restructured.
+      # --root-dir lets lychee form root-relative links so the exclude can drop
+      # them instead of hard-erroring at resolution.
+      - name: Site HTML internal links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --no-progress
+            --root-dir ${{ github.workspace }}
+            --config .github/lychee.toml
+            --exclude '^https?://|^/'
+            './site/**/*.html'
           fail: true
