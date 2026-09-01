@@ -20,19 +20,43 @@
 
 <h2>Open for comment</h2>
 <div class="findings-list">
-<article class="finding">
-<p class="finding-meta">EGLE public notice &middot; Comment closes 2026-09-09 (in 8 days)</p>
+<article class="finding" data-close="2026-09-09">
+<p class="finding-meta">EGLE public notice &middot; Comment closes September 9, 2026<span class="pc-countdown"></span></p>
 <h3><a href="https://mienviro.michigan.gov/ncore/external/publicnotice/info/-1797947627965436698/details">Arbor Hills Energy, LLC</a></h3>
 <p class="finding-kdp">This facility is also named in EGLE&#x27;s statewide Renewable Operating Permit (air permit) public notice.</p>
 </article>
-<article class="finding">
-<p class="finding-meta">EGLE public notice &middot; Comment closes 2026-09-15 (in 14 days)</p>
+<article class="finding" data-close="2026-09-15">
+<p class="finding-meta">EGLE public notice &middot; Comment closes September 15, 2026<span class="pc-countdown"></span></p>
 <h3><a href="https://mienviro.michigan.gov/ncore/external/publicnotice/info/4041710289914188617/details">Arbor Hills Landfill (Land &amp; Water Interface)</a></h3>
 </article>
 </div>
 
+<script>
+(function () {
+  var now = new Date();
+  var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var arts = document.querySelectorAll('article.finding[data-close]');
+  for (var i = 0; i < arts.length; i++) {
+    var p = arts[i].getAttribute('data-close').split('-');
+    if (p.length !== 3) continue;
+    var close = new Date(+p[0], +p[1] - 1, +p[2]);
+    var days = Math.round((close - today) / 86400000);
+    var span = arts[i].querySelector('.pc-countdown');
+    if (!span || days < 0) continue;
+    span.textContent = days === 0
+      ? ' (closes today)'
+      : ' (in ' + days + ' day' + (days === 1 ? '' : 's') + ')';
+    if (days <= 7) {
+      var flag = document.createElement('strong');
+      flag.textContent = ' (closing soon)';
+      span.appendChild(flag);
+    }
+  }
+})();
+</script>
+
 <footer class="site-footer">
-<p>Generated 2026-09-01 16:54 UTC from Michigan EGLE's public notices. This is an informational summary, not a legal notice; always confirm the deadline and details on EGLE's own portal before relying on them. An independent project. All source data is public regulatory filings from Michigan EGLE.</p>
+<p>Generated 2026-09-01 17:08 UTC from Michigan EGLE's public notices. This is an informational summary, not a legal notice; always confirm the deadline and details on EGLE's own portal before relying on them. An independent project. All source data is public regulatory filings from Michigan EGLE.</p>
 </footer>
 
 </div>

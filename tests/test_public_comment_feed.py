@@ -102,32 +102,50 @@ def test_recently_closed_trims_old_windows():
 
 # --- deadline meta / render entry -----------------------------------------
 
-def test_deadline_meta_closing_soon_marker():
-    meta = pcf._deadline_meta(_entry(end_date="2026-09-05"), TODAY)
-    assert "in 4 days" in meta
-    assert "closing soon" in meta
+def test_deadline_meta_static_has_absolute_date_not_countdown():
+    # Static text carries ONLY the absolute date; "in N days" / "closing soon"
+    # are added client-side, never baked into the committed HTML.
+    meta = pcf._deadline_meta(_entry(end_date="2026-09-05"))
+    assert meta == "Comment closes September 5, 2026"
+    assert "(in " not in meta and "closing soon" not in meta
 
 
-def test_deadline_meta_not_flagged_when_far_out():
-    meta = pcf._deadline_meta(_entry(end_date="2026-09-30"), TODAY)
-    assert "closing soon" not in meta
+def test_deadline_meta_closed_and_undated():
+    assert pcf._deadline_meta(_entry(end_date="2026-08-25"), closed=True) == \
+        "Comment closed August 25, 2026"
+    assert "see the notice" in pcf._deadline_meta(_entry(end_date=""))
 
 
-def test_deadline_meta_today_and_undated():
-    assert "closes today" in pcf._deadline_meta(_entry(end_date=TODAY), TODAY)
-    assert "see the notice" in pcf._deadline_meta(_entry(end_date=""), TODAY)
+def test_human_date():
+    assert pcf._human_date("2026-09-15") == "September 15, 2026"
+    assert pcf._human_date("") == ""
+
+
+def test_render_entry_open_has_countdown_hook_but_no_baked_countdown():
+    out = pcf.render_entry(_entry(end_date="2026-09-15"))
+    assert 'data-close="2026-09-15"' in out
+    assert '<span class="pc-countdown"></span>' in out
+    assert "(in " not in out          # countdown is NOT baked into static HTML
+    assert "closing soon" not in out
+
+
+def test_render_entry_closed_has_no_countdown_hook():
+    out = pcf.render_entry(_entry(end_date="2026-08-25"), closed=True)
+    assert "data-close" not in out
+    assert "pc-countdown" not in out
+    assert "Comment closed August 25, 2026" in out
 
 
 def test_render_entry_links_and_escapes():
     e = _entry(facility="A & B <Landfill>", end_date="2026-09-15",
                link="https://example.gov/notice")
-    out = pcf.render_entry(e, TODAY)
+    out = pcf.render_entry(e)
     assert '<a href="https://example.gov/notice">' in out
     assert "A &amp; B &lt;Landfill&gt;" in out
 
 
 def test_render_entry_no_link_when_not_http():
-    out = pcf.render_entry(_entry(link="javascript:alert(1)"), TODAY)
+    out = pcf.render_entry(_entry(link="javascript:alert(1)"))
     assert "<a href" not in out
     assert "javascript:alert(1)" not in out
 
@@ -140,27 +158,41 @@ def test_render_page_counts_open_and_has_sections():
         _entry(start_date="2026-08-01", end_date="2026-08-25"),
     ]
     b = pcf.bucket_entries(entries, TODAY)
-    html = pcf.render_page(b, "2026-09-01 15:00 UTC", TODAY)
+    html = pcf.render_page(b, "2026-09-01 15:00 UTC")
     assert "1 open for comment now" in html
     assert "Open for comment" in html
     assert "Recently closed" in html
     assert "not a legal notice" in html
     assert 'href="../style.css"' in html
+    assert "pc-countdown" in html   # the client-side countdown hook
+    assert "<script>" in html       # progressive-enhancement script present
 
 
 def test_render_page_empty_state():
     b = pcf.bucket_entries([], TODAY)
-    html = pcf.render_page(b, "2026-09-01 15:00 UTC", TODAY)
+    html = pcf.render_page(b, "2026-09-01 15:00 UTC")
     assert "0 open for comment now" in html
     assert "No comment periods are open right now." in html
 
 
 def test_render_page_surfaces_errors():
     b = pcf.bucket_entries([_entry()], TODAY)
-    html = pcf.render_page(b, "2026-09-01 15:00 UTC", TODAY,
+    html = pcf.render_page(b, "2026-09-01 15:00 UTC",
                            errors=["Could not check Foo (FOO): boom"])
     assert "may be incomplete" in html
     assert "Could not check Foo (FOO): boom" in html
+
+
+def test_page_is_byte_stable_across_days_when_nothing_changes():
+    # THE anti-churn guarantee: with a fixed generated_at, the committed HTML for
+    # an unchanged, still-open notice must be identical on different days -- else
+    # the workflow's diff-quiet guard would commit + redeploy every single day as
+    # the countdown ticked. The countdown is client-side precisely to hold this.
+    entries = [_entry(end_date="2026-09-30")]  # far out; still open on both days
+    gen = "2026-09-01 12:00 UTC"
+    h1 = pcf.render_page(pcf.bucket_entries(entries, "2026-09-01"), gen)
+    h2 = pcf.render_page(pcf.bucket_entries(entries, "2026-09-08"), gen)
+    assert h1 == h2
 
 
 # --- statewide ROP notice parsing -----------------------------------------

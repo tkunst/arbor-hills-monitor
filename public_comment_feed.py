@@ -171,39 +171,52 @@ def _esc(v) -> str:
     return html.escape(str(v or ""), quote=True)
 
 
-def _deadline_meta(entry: dict, today: str) -> str:
-    """The human-readable deadline line for one entry."""
+def _human_date(iso: str) -> str:
+    """'2026-09-15' -> 'September 15, 2026'; the input returned unchanged if it
+    can't be parsed. Built without strftime('%-d') so it's platform-portable."""
+    d = _parse_iso(iso)
+    return f"{d.strftime('%B')} {d.day}, {d.year}" if d else (iso or "")
+
+
+def _deadline_meta(entry: dict, closed: bool = False) -> str:
+    """The STATIC deadline text baked into the committed HTML. It carries ONLY
+    the absolute date, never a "in N days" countdown or a "closing soon" flag --
+    those are computed client-side (see the countdown script in render_page), so
+    the committed bytes change only when a notice actually changes, not every day
+    as a countdown ticks down. That is what keeps the workflow's diff-quiet guard
+    meaningful (a daily-changing countdown would make every run a commit)."""
     end = (entry.get("end_date") or "").strip()
     if not end:
         return "Comment period open (see the notice for the exact deadline)"
-    n = days_between(end, today)
-    if n is None:
-        return f"Comment closes {_esc(end)}"
-    if n < 0:
-        return f"Comment closed {_esc(end)}"
-    if n == 0:
-        return f"Comment closes today ({_esc(end)})"
-    label = f"Comment closes {_esc(end)} (in {n} day{'s' if n != 1 else ''})"
-    if n <= CLOSING_SOON_DAYS:
-        label += " -- closing soon"
-    return label
+    verb = "closed" if closed else "closes"
+    return f"Comment {verb} {_esc(_human_date(end))}"
 
 
-def render_entry(entry: dict, today: str) -> str:
+def render_entry(entry: dict, closed: bool = False) -> str:
     """One comment period as an HTML <article>, reusing the site's .finding
-    styling so this page matches the Public Records feed."""
+    styling so this page matches the Public Records feed. For an OPEN entry with
+    a known close date, the <article> carries a `data-close` ISO date and an
+    empty `.pc-countdown` span that the page's client-side script fills with a
+    "in N days" / "closing soon" hint at view time. Those hints are deliberately
+    absent from the committed HTML (see _deadline_meta)."""
     facility = _esc(entry.get("facility") or "(facility)")
     kind = _esc(entry.get("kind") or "")
     link = entry.get("link") or ""
     link = _esc(link) if link.startswith(("http://", "https://")) else ""
     note = _esc(entry.get("note") or "")
 
-    meta_bits = [b for b in (kind, _deadline_meta(entry, today)) if b]
-    meta = " &middot; ".join(meta_bits)
+    end_iso = (entry.get("end_date") or "").strip()
+    has_countdown = bool(end_iso) and not closed and _parse_iso(end_iso) is not None
 
-    parts = ['<article class="finding">']
-    if meta:
-        parts.append(f'<p class="finding-meta">{meta}</p>')
+    meta = _deadline_meta(entry, closed)
+    if kind:
+        meta = f"{kind} &middot; {meta}"
+    if has_countdown:
+        meta += '<span class="pc-countdown"></span>'
+
+    open_tag = (f'<article class="finding" data-close="{_esc(end_iso)}">'
+                if has_countdown else '<article class="finding">')
+    parts = [open_tag, f'<p class="finding-meta">{meta}</p>']
     if link:
         parts.append(f'<h3><a href="{link}">{facility}</a></h3>')
     else:
@@ -214,24 +227,58 @@ def render_entry(entry: dict, today: str) -> str:
     return "\n".join(parts)
 
 
-def _render_section(title: str, entries: list[dict], today: str,
+def _render_section(title: str, entries: list[dict], closed: bool = False,
                     empty_msg: str | None = None) -> str:
     if not entries and empty_msg is None:
         return ""
-    body = ("\n".join(render_entry(e, today) for e in entries)
+    body = ("\n".join(render_entry(e, closed) for e in entries)
             or f"<p>{_esc(empty_msg)}</p>")
     return (f'<h2>{_esc(title)}</h2>\n'
             f'<div class="findings-list">\n{body}\n</div>')
 
 
-def render_page(buckets: dict[str, list[dict]], generated_at: str, today: str,
+# Client-side progressive enhancement: turn each open entry's absolute close date
+# into a "in N days" / "closing soon" hint at VIEW time. Kept out of the static
+# HTML on purpose so the committed page is byte-stable day to day (see
+# _deadline_meta). No external dependencies; the absolute date still shows with
+# JavaScript disabled.
+_COUNTDOWN_SCRIPT = """<script>
+(function () {
+  var now = new Date();
+  var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var arts = document.querySelectorAll('article.finding[data-close]');
+  for (var i = 0; i < arts.length; i++) {
+    var p = arts[i].getAttribute('data-close').split('-');
+    if (p.length !== 3) continue;
+    var close = new Date(+p[0], +p[1] - 1, +p[2]);
+    var days = Math.round((close - today) / 86400000);
+    var span = arts[i].querySelector('.pc-countdown');
+    if (!span || days < 0) continue;
+    span.textContent = days === 0
+      ? ' (closes today)'
+      : ' (in ' + days + ' day' + (days === 1 ? '' : 's') + ')';
+    if (days <= 7) {
+      var flag = document.createElement('strong');
+      flag.textContent = ' (closing soon)';
+      span.appendChild(flag);
+    }
+  }
+})();
+</script>"""
+
+
+def render_page(buckets: dict[str, list[dict]], generated_at: str,
                 errors: list[str] | None = None) -> str:
     """Full static HTML for site/public-comment/index.html.
 
-    `generated_at` is a UTC timestamp string; it is the ONLY line that changes
-    on an otherwise-identical rerun, and the workflow's diff-quiet guard is
-    keyed to it (see .github/workflows/public-comment.yml) -- if this wording
-    or format changes, update that guard's regex in the same commit."""
+    `generated_at` is a UTC timestamp string; because the per-entry countdown is
+    computed client-side (not baked in), this footer timestamp is the ONLY line
+    that changes on an otherwise-identical rerun, and the workflow's diff-quiet
+    guard is keyed to it (see .github/workflows/public-comment.yml) -- if this
+    wording or format changes, update that guard's regex in the same commit.
+    Which bucket an entry lands in still depends on the date, but that only
+    changes when a period actually opens or closes -- a real event worth a
+    commit."""
     errors = errors or []
     open_ = buckets.get("open", [])
     n_open = len(open_)
@@ -257,14 +304,14 @@ def render_page(buckets: dict[str, list[dict]], generated_at: str, today: str,
 
     sections = [
         _render_section(
-            "Open for comment", open_, today,
+            "Open for comment", open_,
             empty_msg="No comment periods are open right now.",
         ),
     ]
     if buckets.get("upcoming"):
-        sections.append(_render_section("Opening soon", buckets["upcoming"], today))
+        sections.append(_render_section("Opening soon", buckets["upcoming"]))
     if buckets.get("closed"):
-        sections.append(_render_section("Recently closed", buckets["closed"], today))
+        sections.append(_render_section("Recently closed", buckets["closed"], closed=True))
     body = "\n\n".join(s for s in sections if s)
 
     return f"""<!doctype html>
@@ -287,6 +334,8 @@ def render_page(buckets: dict[str, list[dict]], generated_at: str, today: str,
 {intro}<p class="findings-count">{n_open} open for comment now</p>
 
 {err_block}{body}
+
+{_COUNTDOWN_SCRIPT}
 
 <footer class="site-footer">
 <p>Generated {_esc(generated_at)} from Michigan EGLE's public notices. This is an informational summary, not a legal notice; always confirm the deadline and details on EGLE's own portal before relying on them. An independent project. All source data is public regulatory filings from Michigan EGLE.</p>

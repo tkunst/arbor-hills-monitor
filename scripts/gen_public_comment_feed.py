@@ -181,7 +181,7 @@ def main() -> None:
     today = (now_utc.astimezone(_ET) if _ET else now_utc).date().isoformat()
 
     buckets = pcf.bucket_entries(entries, today)
-    page = pcf.render_page(buckets, generated_at, today, errors)
+    page = pcf.render_page(buckets, generated_at, errors)
 
     os.makedirs(OUT_DIR, exist_ok=True)
     with open(os.path.join(OUT_DIR, "index.html"), "w", encoding="utf-8") as f:
