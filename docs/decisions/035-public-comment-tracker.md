@@ -137,10 +137,13 @@ reads its own committed page for the prior document count). Each run:
   period shows **"Pending (awaiting EGLE decision)"** until its disposition is
   known.
 
-`what` and `outcome` are preserved across runs, so they can be hand-curated in
-the page's embedded state block (e.g. `what: "Wetland 1 PFAS JPA"`, or a
-manually-recorded outcome like "Permit denied") without a later run overwriting
-them.
+`outcome` is preserved across runs, so a manually-recorded outcome (e.g. "Permit
+denied") is not overwritten. `what` is re-derived each run: a per-facility label
+in `gen_public_comment_feed.FACILITY_WHAT` (e.g. `WRD` -> "Wetlands application",
+since the public-notice API doesn't return the application type), overridden by
+the ROP label when the statewide notice confirms a facility's notice is a ROP.
+Dates render as compact M/D/YYYY and table headers wrap so the columns stay
+narrow (no horizontal scrollbar).
 
 **Outcome is deliberately not scraped for non-ROP permits.** EGLE issues or
 denies a wetland/JPA permit as a later, separate action that is not reliably

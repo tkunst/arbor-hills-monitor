@@ -101,9 +101,10 @@ def test_us_date_to_iso():
     assert pcf._us_date_to_iso("not a date") is None
 
 
-def test_human_date():
-    assert pcf._human_date("2026-09-15") == "September 15, 2026"
-    assert pcf._human_date("") == ""
+def test_short_date():
+    assert pcf._short_date("2026-09-15") == "9/15/2026"
+    assert pcf._short_date("2026-08-10") == "8/10/2026"
+    assert pcf._short_date("") == ""
 
 
 # --- sorting + link cell ---------------------------------------------------
@@ -148,8 +149,8 @@ def test_open_table_columns_and_dated_row():
         assert f"<th>{col}</th>" in out
     assert 'data-close="2026-09-09"' in out            # countdown hook
     assert '<span class="pc-countdown"></span>' in out
-    assert "September 10, 2026" in out or "August 10, 2026" in out
-    assert "September 9, 2026" in out                  # absolute close date shown
+    assert "8/10/2026" in out                           # opened, M/D/YYYY
+    assert "9/9/2026" in out                            # close date shown, M/D/YYYY
     assert "(in " not in out and "closing soon" not in out   # not baked in
     assert '<a href="https://mienviro.michigan.gov/x">View notice</a>' in out
 
@@ -256,15 +257,16 @@ def test_update_state_idempotent_on_unchanged_run():
     assert state["notice:1"] == snapshot
 
 
-def test_curated_what_and_outcome_preserved_across_runs():
+def test_outcome_preserved_but_what_rederived_across_runs():
+    # outcome is curatable (preserved); what is auto-derived (recomputed).
     state = {"notice:1": {"key": "notice:1", "facility": "F", "srn": "WRD",
-                          "what": "Wetland 1 PFAS JPA", "opened": "x",
+                          "what": "Some old label", "opened": "x",
                           "closes": "2026-09-15", "link": "https://x",
                           "source": "notice", "outcome": "Permit denied",
                           "closed": False}}
-    pcf.update_state(state, [_entry()], {"WRD"}, True, set(), TODAY)
-    assert state["notice:1"]["what"] == "Wetland 1 PFAS JPA"   # not clobbered by default
-    assert state["notice:1"]["outcome"] == "Permit denied"
+    pcf.update_state(state, [_entry()], {"WRD"}, True, set(), TODAY)  # incoming what
+    assert state["notice:1"]["what"] == "EGLE public notice"   # re-derived from input
+    assert state["notice:1"]["outcome"] == "Permit denied"     # outcome preserved
 
 
 # --- embedded self-persisting state ---------------------------------------

@@ -159,11 +159,12 @@ def _esc(v) -> str:
     return html.escape(str(v or ""), quote=True)
 
 
-def _human_date(iso: str) -> str:
-    """'2026-09-15' -> 'September 15, 2026'; the input returned unchanged if it
-    can't be parsed. Built without strftime('%-d') so it's platform-portable."""
+def _short_date(iso: str) -> str:
+    """'2026-09-15' -> '9/15/2026' (M/D/YYYY, no leading zeros). Kept compact so
+    the date columns stay narrow enough to avoid a horizontal scrollbar; the
+    input is returned unchanged if it can't be parsed."""
     d = _parse_iso(iso)
-    return f"{d.strftime('%B')} {d.day}, {d.year}" if d else (iso or "")
+    return f"{d.month}/{d.day}/{d.year}" if d else (iso or "")
 
 
 def sort_open(entries: list[dict]) -> list[dict]:
@@ -191,10 +192,11 @@ def update_state(state: dict, open_entries: list[dict], fetched_srns: set,
     was actually checked this run, so a transient fetch error can't false-close
     it) is also closed -- that path covers undated periods the date test can't
     decide. Finally, a closed ROP period's Outcome is filled once its SRN reaches
-    the statewide notice's FINAL/issued list. `what` and `outcome` are preserved
-    from any existing record, so hand-curated labels/outcomes stick. The
-    `closed` flag flips exactly once (on the real close date), so this is
-    churn-safe. Returns (open_for_render, closed_for_render)."""
+    the statewide notice's FINAL/issued list. `outcome` is preserved from any
+    existing record (so a hand-set outcome sticks); `what` is re-derived each run
+    from the wrapper's label logic, so label improvements propagate. The `closed`
+    flag flips exactly once (on the real close date), so this is churn-safe.
+    Returns (open_for_render, closed_for_render)."""
     today_d = _parse_iso(today)
     open_keys = {e["key"] for e in open_entries}
     for e in open_entries:
@@ -205,7 +207,7 @@ def update_state(state: dict, open_entries: list[dict], fetched_srns: set,
             "key": e["key"],
             "facility": e.get("facility", ""),
             "srn": e.get("srn", ""),
-            "what": rec.get("what") or e.get("what", ""),   # keep a curated label
+            "what": e.get("what", ""),        # re-derived each run (see the wrapper)
             "opened": e.get("opened", ""),
             "closes": e.get("closes", ""),
             "link": e.get("link", ""),
@@ -298,7 +300,9 @@ _TABLE_STYLE = """<style>
   font-size: 0.9rem; }
 .pc-table th, .pc-table td { text-align: left; padding: 0.55rem 0.7rem;
   border-bottom: 1px solid var(--border); vertical-align: top; }
-.pc-table th { font-weight: 700; color: var(--muted); white-space: nowrap; }
+/* Headers wrap (so a long label like "Public comment opened" doesn't force the
+   date column wide); the short M/D/YYYY dates themselves don't wrap. */
+.pc-table th { font-weight: 700; color: var(--muted); }
 .pc-table td:first-child { font-weight: 600; }
 .pc-countdown { color: var(--muted); }
 </style>"""
@@ -344,11 +348,11 @@ def render_open_table(entries: list[dict]) -> str:
         closes_iso = (e.get("closes") or "").strip()
         dated = _parse_iso(closes_iso) is not None
         opened = e.get("opened") or ""
-        opened_cell = _esc(_human_date(opened)) if opened.strip() else "n/a"
+        opened_cell = _esc(_short_date(opened)) if opened.strip() else "n/a"
         if dated:
-            closes_cell = f'{_esc(_human_date(closes_iso))}<span class="pc-countdown"></span>'
+            closes_cell = f'{_esc(_short_date(closes_iso))}<span class="pc-countdown"></span>'
         elif closes_iso:
-            closes_cell = _esc(_human_date(closes_iso))
+            closes_cell = _esc(_short_date(closes_iso))
         else:
             closes_cell = "See notice"
         tr = f'<tr data-close="{_esc(closes_iso)}">' if dated else "<tr>"

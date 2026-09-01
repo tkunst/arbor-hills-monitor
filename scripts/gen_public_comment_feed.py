@@ -20,9 +20,9 @@ upserts the currently-open periods, marks any that dropped out (and were actuall
 checked this run) as closed, and fills a closed ROP period's Outcome as "issued"
 when it reaches the statewide notice's FINAL section. The Open table renders the
 currently-open periods; the Closed table renders the remembered closed ones.
-`what` and `outcome` are preserved across runs, so they can be hand-curated in
-the page's embedded state block (e.g. "Wetland 1 PFAS JPA") without being
-overwritten.
+`outcome` is preserved across runs (so a hand-set outcome sticks); `what` is
+re-derived each run from FACILITY_WHAT / the ROP cross-reference, so a label
+change propagates on the next run.
 
 Usage: python3 scripts/gen_public_comment_feed.py
 Run by .github/workflows/public-comment.yml on a schedule; the workflow commits
@@ -59,6 +59,18 @@ OUT_DIR = os.path.join(REPO_ROOT, "site", "public-comment")
 
 NOTICE_LABEL = "EGLE public notice"
 ROP_LABEL = "Air Renewable Operating Permit (ROP) renewal"
+
+# The public-notice API doesn't return the application TYPE (its `coverage` is
+# just "Facility Location"), so a per-facility "What" label makes the table
+# read better than the generic NOTICE_LABEL. Keyed by SRN: the WRD profile is
+# EGLE's Land & Water Interface / Joint Permit Application program, i.e. the
+# wetland & water permits (the PFAS-pond and expansion-mitigation JPAs). A
+# notice confirmed as a ROP via the statewide notice overrides this with
+# ROP_LABEL. Add a facility here to give its notices a friendlier label; adjust
+# the WRD wording if a non-wetland water permit ever appears under it.
+FACILITY_WHAT = {
+    "WRD": "Wetlands application",
+}
 
 
 def _load_sites() -> list[dict]:
@@ -123,7 +135,7 @@ def collect_open(session):
                 "key": f"notice:{nid}",
                 "facility": name,
                 "srn": srn,
-                "what": NOTICE_LABEL,
+                "what": FACILITY_WHAT.get(srn, NOTICE_LABEL),
                 "opened": n.get("start_date", ""),
                 "closes": n.get("end_date", ""),
                 "link": pcf.comment_link(nid),
