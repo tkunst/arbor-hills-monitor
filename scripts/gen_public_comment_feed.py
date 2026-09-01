@@ -38,6 +38,12 @@ import os
 import sys
 from datetime import datetime, timezone
 
+try:
+    from zoneinfo import ZoneInfo
+    _ET = ZoneInfo("America/Detroit")   # EGLE is in Michigan; close dates are ET
+except Exception:  # pragma: no cover - zoneinfo ships with py3.12
+    _ET = None
+
 # Repo root on path so `import nsite_client` etc. resolve when run as
 # `python3 scripts/gen_public_comment_feed.py` (same idiom as the sibling
 # gen_findings_feed.py / term_search.py).
@@ -185,11 +191,14 @@ def main() -> None:
     session = nsite_client.make_session()
     open_entries, errors, fetched_srns, rop_fetched, rop_final_srns = collect_open(session)
 
+    now_utc = datetime.now(timezone.utc)
+    today = (now_utc.astimezone(_ET) if _ET else now_utc).date().isoformat()
+
     state = load_prior_state()
     open_render, closed_render = pcf.update_state(
-        state, open_entries, fetched_srns, rop_fetched, rop_final_srns)
+        state, open_entries, fetched_srns, rop_fetched, rop_final_srns, today)
 
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    generated_at = now_utc.strftime("%Y-%m-%d %H:%M UTC")
     page = pcf.render_page(open_render, closed_render, generated_at, errors)
 
     os.makedirs(OUT_DIR, exist_ok=True)

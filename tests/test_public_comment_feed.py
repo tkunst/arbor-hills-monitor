@@ -186,6 +186,9 @@ def test_closed_table_columns_and_outcome_default():
 
 # --- update_state (pure state machine) ------------------------------------
 
+TODAY = "2026-09-01"
+
+
 def _entry(key="notice:1", srn="WRD", closes="2026-09-15", source="notice",
            what="EGLE public notice"):
     return {"key": key, "facility": "F", "srn": srn, "what": what,
@@ -195,23 +198,41 @@ def _entry(key="notice:1", srn="WRD", closes="2026-09-15", source="notice",
 
 def test_new_open_period_added_not_closed():
     state = {}
-    o, c = pcf.update_state(state, [_entry()], {"WRD"}, True, set())
+    o, c = pcf.update_state(state, [_entry()], {"WRD"}, True, set(), TODAY)
     assert len(o) == 1 and c == []
     assert state["notice:1"]["closed"] is False
 
 
+def test_period_closed_when_deadline_passed_even_if_still_listed():
+    # Still returned by the feed, but its deadline is in the past -> Closed. This
+    # is the core "move to Closed once it closes" behavior; feed-presence alone
+    # would leave it wrongly in Open across the boundary.
+    state = {}
+    o, c = pcf.update_state(state, [_entry(closes="2026-08-30")], {"WRD"}, True,
+                            set(), TODAY)
+    assert o == [] and len(c) == 1
+    assert state["notice:1"]["closed"] is True
+
+
+def test_period_open_when_deadline_not_passed():
+    state = {}
+    o, c = pcf.update_state(state, [_entry(closes="2026-09-15")], {"WRD"}, True,
+                            set(), TODAY)
+    assert len(o) == 1 and c == []
+
+
 def test_period_marked_closed_when_it_drops_out_and_was_checked():
     state = {}
-    pcf.update_state(state, [_entry()], {"WRD"}, True, set())     # seen open
-    o, c = pcf.update_state(state, [], {"WRD"}, True, set())      # gone; WRD checked
+    pcf.update_state(state, [_entry()], {"WRD"}, True, set(), TODAY)     # seen open
+    o, c = pcf.update_state(state, [], {"WRD"}, True, set(), TODAY)      # gone; checked
     assert o == [] and len(c) == 1
     assert state["notice:1"]["closed"] is True
 
 
 def test_transient_fetch_miss_does_not_false_close():
     state = {}
-    pcf.update_state(state, [_entry()], {"WRD"}, True, set())
-    _, c = pcf.update_state(state, [], set(), True, set())        # WRD NOT fetched
+    pcf.update_state(state, [_entry()], {"WRD"}, True, set(), TODAY)
+    _, c = pcf.update_state(state, [], set(), True, set(), TODAY)        # WRD NOT fetched
     assert c == [] and state["notice:1"]["closed"] is False
 
 
@@ -219,19 +240,19 @@ def test_rop_outcome_autofilled_when_in_final():
     state = {}
     r = _entry(key="rop:P1488", srn="P1488", source="rop", closes="2026-08-19",
                what="Air ROP renewal")
-    pcf.update_state(state, [r], set(), True, set())             # seen open (rop)
-    pcf.update_state(state, [], set(), True, {"P1488"})          # closed + now issued
+    pcf.update_state(state, [r], set(), True, set(), "2026-08-01")   # seen open (rop)
+    pcf.update_state(state, [], set(), True, {"P1488"}, TODAY)       # closed + now issued
     assert state["rop:P1488"]["closed"] is True
     assert state["rop:P1488"]["outcome"] == pcf.ISSUED_OUTCOME
 
 
 def test_update_state_idempotent_on_unchanged_run():
     # A run where nothing changed must leave each record identical, so the
-    # serialized state file is byte-stable and the diff-quiet guard stays quiet.
+    # embedded state block is byte-stable and the diff-quiet guard stays quiet.
     state = {}
-    pcf.update_state(state, [_entry()], {"WRD"}, True, set())
+    pcf.update_state(state, [_entry()], {"WRD"}, True, set(), TODAY)
     snapshot = dict(state["notice:1"])
-    pcf.update_state(state, [_entry()], {"WRD"}, True, set())
+    pcf.update_state(state, [_entry()], {"WRD"}, True, set(), TODAY)
     assert state["notice:1"] == snapshot
 
 
@@ -241,7 +262,7 @@ def test_curated_what_and_outcome_preserved_across_runs():
                           "closes": "2026-09-15", "link": "https://x",
                           "source": "notice", "outcome": "Permit denied",
                           "closed": False}}
-    pcf.update_state(state, [_entry()], {"WRD"}, True, set())
+    pcf.update_state(state, [_entry()], {"WRD"}, True, set(), TODAY)
     assert state["notice:1"]["what"] == "Wetland 1 PFAS JPA"   # not clobbered by default
     assert state["notice:1"]["outcome"] == "Permit denied"
 
@@ -271,6 +292,19 @@ def test_parse_state_block_empty_when_absent_or_malformed():
     assert pcf.parse_state_block("<html>no block here</html>") == {}
     assert pcf.parse_state_block(
         '<script type="application/json" id="pc-state">{bad json</script>') == {}
+
+
+def test_state_block_escapes_angle_brackets_and_survives_script_tag():
+    # A "<" (or a literal "</script>") in a free-text field must not terminate
+    # the embedded block early; it's JSON-escaped and reads back intact.
+    recs = [{"key": "notice:1", "facility": "A</script>B & <x>", "srn": "WRD",
+             "what": "weird", "opened": "", "closes": "2026-09-15", "link": "",
+             "source": "notice", "outcome": "", "closed": False}]
+    block = pcf.render_state_block(recs)
+    assert block.count("</script>") == 1     # only the real closing tag
+    assert "\\u003c" in block                 # the "<" was escaped
+    recovered = pcf.parse_state_block(f"<html>{block}</html>")
+    assert recovered["notice:1"]["facility"] == "A</script>B & <x>"
 
 
 def test_state_block_is_order_independent():

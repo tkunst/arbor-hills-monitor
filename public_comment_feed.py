@@ -180,19 +180,27 @@ def sort_closed(entries: list[dict]) -> list[dict]:
 
 
 def update_state(state: dict, open_entries: list[dict], fetched_srns: set,
-                 rop_fetched: bool, rop_final_srns: set):
+                 rop_fetched: bool, rop_final_srns: set, today: str):
     """Pure state-transition for the persisted comment-period record.
 
     `state` is {key: record}, mutated in place. Upserts each currently-open
-    period; marks a period closed when it has dropped out of the open set AND its
-    source was actually checked this run (so a transient fetch error can't
-    false-close it); and fills a closed ROP period's Outcome once its SRN reaches
+    period, and marks it **closed once its deadline has passed** (`end_date <
+    today`) -- the deadline, not mere feed-presence, is what the Open/Closed split
+    means, and EGLE can leave a notice in its feed a little past the close date.
+    A period that has instead dropped out of the feed entirely (and whose source
+    was actually checked this run, so a transient fetch error can't false-close
+    it) is also closed -- that path covers undated periods the date test can't
+    decide. Finally, a closed ROP period's Outcome is filled once its SRN reaches
     the statewide notice's FINAL/issued list. `what` and `outcome` are preserved
-    from any existing record, so hand-curated labels/outcomes in the JSON stick.
-    Returns (open_for_render, closed_for_render)."""
+    from any existing record, so hand-curated labels/outcomes stick. The
+    `closed` flag flips exactly once (on the real close date), so this is
+    churn-safe. Returns (open_for_render, closed_for_render)."""
+    today_d = _parse_iso(today)
     open_keys = {e["key"] for e in open_entries}
     for e in open_entries:
         rec = state.get(e["key"], {})
+        end_d = _parse_iso(e.get("closes", ""))
+        ended = today_d is not None and end_d is not None and end_d < today_d
         state[e["key"]] = {
             "key": e["key"],
             "facility": e.get("facility", ""),
@@ -203,7 +211,7 @@ def update_state(state: dict, open_entries: list[dict], fetched_srns: set,
             "link": e.get("link", ""),
             "source": e.get("source", ""),
             "outcome": rec.get("outcome", ""),              # keep a curated outcome
-            "closed": False,
+            "closed": ended,      # past its deadline -> Closed even if still listed
         }
     for key, rec in state.items():
         if key in open_keys:
@@ -217,7 +225,8 @@ def update_state(state: dict, open_entries: list[dict], fetched_srns: set,
             if rec.get("closed") and not rec.get("outcome") and rec.get("srn") in rop_final_srns:
                 rec["outcome"] = ISSUED_OUTCOME
 
-    open_for_render = [state[e["key"]] for e in open_entries]
+    open_for_render = [state[e["key"]] for e in open_entries
+                       if not state[e["key"]]["closed"]]
     closed_for_render = [r for r in state.values() if r.get("closed")]
     return open_for_render, closed_for_render
 
@@ -251,6 +260,11 @@ def render_state_block(records: list[dict]) -> str:
     clean.sort(key=lambda r: r["key"])
     payload = json.dumps({"periods": clean}, ensure_ascii=False, sort_keys=True,
                          indent=0)
+    # json.dumps does NOT escape "<", so a "<" or "</script>" in any free-text
+    # field (e.g. a hand-curated `what`) would terminate the block early and
+    # break both the page and the next run's parse. Escaping "<" prevents that;
+    # JSON.parse reads < back as "<".
+    payload = payload.replace("<", "\\u003c")
     return f'<script type="application/json" id="{_STATE_ID}">\n{payload}\n</script>'
 
 
