@@ -1,0 +1,60 @@
+name: public-comment
+
+# Regenerates the public "Open Public Comment Periods" page
+# (site/public-comment/) from EGLE's LIVE public notices and commits any REAL
+# change back to main. Unlike findings-feed.yml this needs NO secrets: it reads
+# only EGLE's public, unauthenticated notice endpoints (nsite_client +
+# rop_client), no Sheets/Drive. pages.yml redeploys on the resulting commit via
+# its workflow_run trigger (a GITHUB_TOKEN push doesn't retrigger its own
+# `push` trigger). A run where nothing changed makes no commit -- see the
+# diff-quiet guard below. A missed run just means the page is stale by a day,
+# never wrong, and the page itself says "confirm on EGLE's portal".
+on:
+  schedule:
+    - cron: "0 12 * * *"   # after daily.yml (11:00 UTC) and findings-feed (11:30 UTC)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: public-comment
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Regenerate the Public Comment Periods page
+        run: python scripts/gen_public_comment_feed.py
+      - name: Commit and push if the page changed
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add site/public-comment
+          # The page footer's "Generated <timestamp>" line changes every run even
+          # when nothing else did, so a bare `git diff --cached --quiet` would
+          # commit daily. -I ignores that one line, so only a REAL change counts:
+          # a period opened/closed, a deadline moved, an outcome set. (The page's
+          # embedded state block and the per-row countdown carry NO volatile
+          # fields, so an unchanged period leaves the page byte-identical apart
+          # from the timestamp and stays quiet.) If the "Generated" wording
+          # changes in public_comment_feed.render_page, update this regex here.
+          if git diff --cached --quiet -I'^<p>Generated .* from Michigan EGLE'; then
+            echo "No change to the Public Comment Periods page (beyond the timestamp)."
+            git restore --staged --worktree site/public-comment
+          else
+            git commit -m "chore(public-comment): regenerate the Public Comment Periods page"
+            git push
+          fi

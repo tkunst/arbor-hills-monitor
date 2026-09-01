@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Public Comment Periods &middot; Arbor Hills Monitor</title>
+<meta name="description" content="Michigan EGLE public-comment periods for the Arbor Hills Landfill complex -- open now with deadlines, and closed with outcomes.">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<style>
+.pc-scroll { overflow-x: auto; margin: 1.25rem 0 2rem; }
+.pc-table { border-collapse: collapse; width: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.9rem; }
+.pc-table th, .pc-table td { text-align: left; padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--border); vertical-align: top; }
+/* Headers wrap (so a long label like "Public comment opened" doesn't force the
+   date column wide); the short M/D/YYYY dates themselves don't wrap. */
+.pc-table th { font-weight: 700; color: var(--muted); }
+.pc-table td:first-child { font-weight: 600; }
+.pc-countdown { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p><a href="../index.html">&larr; Arbor Hills Monitor</a></p>
+
+<h1>Public Comment Periods</h1>
+<p>Applications and permit actions for the Arbor Hills facilities that are open for public comment at Michigan EGLE, with their deadlines. Each row links to the official EGLE notice, where you can read the filing and submit a comment. When a comment period closes it moves to the Closed table below. This page updates automatically from EGLE's public notices.</p>
+<p class="findings-count">2 open for comment now</p>
+
+<h2>Open for comment</h2>
+<div class="pc-scroll"><table class="pc-table"><thead><tr><th>Facility</th><th>What</th><th>Public comment opened</th><th>Public comment closes</th><th>Link</th></tr></thead><tbody><tr data-close="2026-09-09"><td>Arbor Hills Energy, LLC</td><td>Air Renewable Operating Permit (ROP) renewal</td><td>8/10/2026</td><td>9/9/2026<span class="pc-countdown"></span></td><td><a href="https://mienviro.michigan.gov/ncore/external/publicnotice/info/-1797947627965436698/details">View notice</a></td></tr><tr data-close="2026-09-15"><td>Arbor Hills Landfill (Land &amp; Water Interface)</td><td>Wetlands application</td><td>8/26/2026</td><td>9/15/2026<span class="pc-countdown"></span></td><td><a href="https://mienviro.michigan.gov/ncore/external/publicnotice/info/4041710289914188617/details">View notice</a></td></tr></tbody></table></div>
+
+<h2>Closed public comments</h2>
+<p>None yet. When a comment period closes it moves here, with the permit outcome once EGLE decides.</p>
+
+<script type="application/json" id="pc-state">
+{
+"periods": [
+{
+"closed": false,
+"closes": "2026-09-09",
+"facility": "Arbor Hills Energy, LLC",
+"key": "notice:-1797947627965436698",
+"link": "https://mienviro.michigan.gov/ncore/external/publicnotice/info/-1797947627965436698/details",
+"opened": "2026-08-10",
+"outcome": "",
+"source": "notice",
+"srn": "N1504",
+"what": "Air Renewable Operating Permit (ROP) renewal"
+},
+{
+"closed": false,
+"closes": "2026-09-15",
+"facility": "Arbor Hills Landfill (Land & Water Interface)",
+"key": "notice:4041710289914188617",
+"link": "https://mienviro.michigan.gov/ncore/external/publicnotice/info/4041710289914188617/details",
+"opened": "2026-08-26",
+"outcome": "",
+"source": "notice",
+"srn": "WRD",
+"what": "Wetlands application"
+}
+]
+}
+</script>
+
+<script>
+(function () {
+  var now = new Date();
+  var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var rows = document.querySelectorAll('tr[data-close]');
+  for (var i = 0; i < rows.length; i++) {
+    var p = rows[i].getAttribute('data-close').split('-');
+    if (p.length !== 3) continue;
+    var close = new Date(+p[0], +p[1] - 1, +p[2]);
+    var days = Math.round((close - today) / 86400000);
+    var span = rows[i].querySelector('.pc-countdown');
+    if (!span || days < 0) continue;
+    span.textContent = days === 0
+      ? ' (closes today)'
+      : ' (in ' + days + ' day' + (days === 1 ? '' : 's') + ')';
+    if (days <= 7) {
+      var f = document.createElement('strong');
+      f.textContent = ' (closing soon)';
+      span.appendChild(f);
+    }
+  }
+})();
+</script>
+
+<footer class="site-footer">
+<p>Generated 2026-09-01 18:31 UTC from Michigan EGLE's public notices. This is an informational summary, not a legal notice; always confirm the deadline and details on EGLE's own portal before relying on them. An independent project. All source data is public regulatory filings from Michigan EGLE.</p>
+</footer>
+
+</div>
+</body>
+</html>
