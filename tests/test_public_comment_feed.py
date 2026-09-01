@@ -1,29 +1,9 @@
-"""Unit tests for public_comment_feed.py (the pure render/bucket logic for the
-Open Public Comment Periods page). No network, no Sheets -- mirrors
-test_findings_feed.py's split between pure-render tests here and the I/O wrapper
-elsewhere."""
+"""Unit tests for public_comment_feed.py -- pure render + state-transition logic
+for the Public Comment Periods page. No network, no filesystem (the I/O wrapper
+scripts/gen_public_comment_feed.py handles fetching + the JSON state file)."""
 from __future__ import annotations
 
 import public_comment_feed as pcf
-
-
-TODAY = "2026-09-01"
-
-
-def _entry(**kw):
-    base = {
-        "facility": "Test Facility",
-        "srn": "TEST",
-        "kind": "EGLE public notice",
-        "notice_id": "123",
-        "coverage": "Facility Location",
-        "start_date": "2026-08-01",
-        "end_date": "2026-09-15",
-        "link": pcf.comment_link("123"),
-        "source": "notice",
-    }
-    base.update(kw)
-    return base
 
 
 # --- comment_link ----------------------------------------------------------
@@ -36,9 +16,8 @@ def test_comment_link_builds_details_url():
 
 
 def test_comment_link_preserves_negative_ids():
-    # EGLE uses signed 64-bit ids; the details page takes the sign verbatim.
-    link = pcf.comment_link("-1797947627965436698")
-    assert link.endswith("/info/-1797947627965436698/details")
+    assert pcf.comment_link("-1797947627965436698").endswith(
+        "/info/-1797947627965436698/details")
 
 
 def test_comment_link_empty_when_no_id():
@@ -46,160 +25,11 @@ def test_comment_link_empty_when_no_id():
     assert pcf.comment_link(None) == ""
 
 
-# --- days_between ----------------------------------------------------------
-
-def test_days_between_future_zero_and_past():
-    assert pcf.days_between("2026-09-15", TODAY) == 14
-    assert pcf.days_between("2026-09-01", TODAY) == 0
-    assert pcf.days_between("2026-08-30", TODAY) == -2
-
-
-def test_days_between_none_on_bad_or_missing_dates():
-    assert pcf.days_between("", TODAY) is None
-    assert pcf.days_between("not-a-date", TODAY) is None
-    assert pcf.days_between("2026-09-15", "") is None
-
-
-# --- bucket_entries --------------------------------------------------------
-
-def test_bucket_splits_open_upcoming_closed():
-    entries = [
-        _entry(end_date="2026-09-15"),                       # open
-        _entry(start_date="2026-09-20", end_date="2026-10-01"),  # upcoming
-        _entry(start_date="2026-08-01", end_date="2026-08-20"),  # recently closed
-    ]
-    b = pcf.bucket_entries(entries, TODAY)
-    assert len(b["open"]) == 1
-    assert len(b["upcoming"]) == 1
-    assert len(b["closed"]) == 1
-
-
-def test_open_sorted_soonest_deadline_first_undated_last():
-    entries = [
-        _entry(notice_id="late", end_date="2026-09-30"),
-        _entry(notice_id="none", end_date="", source="rop", link=pcf.ROP_NOTICE_URL),
-        _entry(notice_id="soon", end_date="2026-09-05"),
-    ]
-    b = pcf.bucket_entries(entries, TODAY)
-    order = [e["notice_id"] for e in b["open"]]
-    assert order == ["soon", "late", "none"]
-
-
-def test_undated_entry_counts_as_open():
-    b = pcf.bucket_entries([_entry(end_date="", start_date="")], TODAY)
-    assert len(b["open"]) == 1
-
-
-def test_recently_closed_trims_old_windows():
-    entries = [
-        _entry(end_date="2026-08-25"),                       # 7 days ago -> shown
-        _entry(end_date="2026-01-01"),                       # >90 days -> dropped
-    ]
-    b = pcf.bucket_entries(entries, TODAY)
-    assert len(b["closed"]) == 1
-    assert b["closed"][0]["end_date"] == "2026-08-25"
-
-
-# --- deadline meta / render entry -----------------------------------------
-
-def test_deadline_meta_static_has_absolute_date_not_countdown():
-    # Static text carries ONLY the absolute date; "in N days" / "closing soon"
-    # are added client-side, never baked into the committed HTML.
-    meta = pcf._deadline_meta(_entry(end_date="2026-09-05"))
-    assert meta == "Comment closes September 5, 2026"
-    assert "(in " not in meta and "closing soon" not in meta
-
-
-def test_deadline_meta_closed_and_undated():
-    assert pcf._deadline_meta(_entry(end_date="2026-08-25"), closed=True) == \
-        "Comment closed August 25, 2026"
-    assert "see the notice" in pcf._deadline_meta(_entry(end_date=""))
-
-
-def test_human_date():
-    assert pcf._human_date("2026-09-15") == "September 15, 2026"
-    assert pcf._human_date("") == ""
-
-
-def test_render_entry_open_has_countdown_hook_but_no_baked_countdown():
-    out = pcf.render_entry(_entry(end_date="2026-09-15"))
-    assert 'data-close="2026-09-15"' in out
-    assert '<span class="pc-countdown"></span>' in out
-    assert "(in " not in out          # countdown is NOT baked into static HTML
-    assert "closing soon" not in out
-
-
-def test_render_entry_closed_has_no_countdown_hook():
-    out = pcf.render_entry(_entry(end_date="2026-08-25"), closed=True)
-    assert "data-close" not in out
-    assert "pc-countdown" not in out
-    assert "Comment closed August 25, 2026" in out
-
-
-def test_render_entry_links_and_escapes():
-    e = _entry(facility="A & B <Landfill>", end_date="2026-09-15",
-               link="https://example.gov/notice")
-    out = pcf.render_entry(e)
-    assert '<a href="https://example.gov/notice">' in out
-    assert "A &amp; B &lt;Landfill&gt;" in out
-
-
-def test_render_entry_no_link_when_not_http():
-    out = pcf.render_entry(_entry(link="javascript:alert(1)"))
-    assert "<a href" not in out
-    assert "javascript:alert(1)" not in out
-
-
-# --- render_page -----------------------------------------------------------
-
-def test_render_page_counts_open_and_has_sections():
-    entries = [
-        _entry(end_date="2026-09-09"),
-        _entry(start_date="2026-08-01", end_date="2026-08-25"),
-    ]
-    b = pcf.bucket_entries(entries, TODAY)
-    html = pcf.render_page(b, "2026-09-01 15:00 UTC")
-    assert "1 open for comment now" in html
-    assert "Open for comment" in html
-    assert "Recently closed" in html
-    assert "not a legal notice" in html
-    assert 'href="../style.css"' in html
-    assert "pc-countdown" in html   # the client-side countdown hook
-    assert "<script>" in html       # progressive-enhancement script present
-
-
-def test_render_page_empty_state():
-    b = pcf.bucket_entries([], TODAY)
-    html = pcf.render_page(b, "2026-09-01 15:00 UTC")
-    assert "0 open for comment now" in html
-    assert "No comment periods are open right now." in html
-
-
-def test_render_page_surfaces_errors():
-    b = pcf.bucket_entries([_entry()], TODAY)
-    html = pcf.render_page(b, "2026-09-01 15:00 UTC",
-                           errors=["Could not check Foo (FOO): boom"])
-    assert "may be incomplete" in html
-    assert "Could not check Foo (FOO): boom" in html
-
-
-def test_page_is_byte_stable_across_days_when_nothing_changes():
-    # THE anti-churn guarantee: with a fixed generated_at, the committed HTML for
-    # an unchanged, still-open notice must be identical on different days -- else
-    # the workflow's diff-quiet guard would commit + redeploy every single day as
-    # the countdown ticked. The countdown is client-side precisely to hold this.
-    entries = [_entry(end_date="2026-09-30")]  # far out; still open on both days
-    gen = "2026-09-01 12:00 UTC"
-    h1 = pcf.render_page(pcf.bucket_entries(entries, "2026-09-01"), gen)
-    h2 = pcf.render_page(pcf.bucket_entries(entries, "2026-09-08"), gen)
-    assert h1 == h2
-
-
 # --- statewide ROP notice parsing -----------------------------------------
 
-# Mirrors the real EGLE statewide ROP notice: a TOC (with dot-leaders + page
-# numbers), then a 30-DAY PUBLIC COMMENT section (open), a 45-DAY EPA REVIEW
-# section (comment ENDED), and a FINAL section. The en-dash before "SRN" is the
+# Mirrors the real EGLE statewide ROP notice: a TOC (dot-leaders + page numbers),
+# then a 30-DAY PUBLIC COMMENT section (open), a 45-DAY EPA REVIEW section
+# (comment ENDED), and a FINAL section (issued). The en-dash before "SRN" is the
 # character EGLE actually uses.
 ROP_NOTICE_SAMPLE = """Title V Renewable Operating Permit (ROP)
 Public Notice Documents
@@ -229,14 +59,13 @@ A proposed ROP renewal (EPA review began 08-24-2026 and ends 10-08-2026).
 
 FINAL TITLE V / ROP PERMITS
 Information is included in chronological order.
-Some Other LLC – SRN: Z9999
+Waste Facility LLC – SRN: Z9999
 """
 
 
 def test_rop_parse_returns_only_30day_facilities():
     got = pcf.parse_rop_30day_comment(ROP_NOTICE_SAMPLE, ("N2688", "N1504", "P1488"))
-    # N1504 is open (30-day); P1488 is in EPA-review (comment ended) so excluded;
-    # N2688 is absent entirely.
+    # N1504 open (30-day); P1488 in EPA-review (ended) so excluded; N2688 absent.
     assert got == {"N1504": "2026-09-09"}
 
 
@@ -252,6 +81,11 @@ def test_rop_section_excludes_other_sections():
     assert "Z9999" not in sec   # FINAL section
 
 
+def test_rop_final_reports_only_issued_section():
+    got = pcf.parse_rop_final(ROP_NOTICE_SAMPLE, ("N1504", "P1488", "Z9999"))
+    assert got == {"Z9999"}     # only the FINAL/issued facility
+
+
 def test_rop_parse_empty_when_no_section():
     assert pcf.parse_rop_30day_comment("no headers at all here", ("N1504",)) == {}
 
@@ -265,3 +99,229 @@ def test_rop_parse_undated_when_no_from_until_phrase():
 def test_us_date_to_iso():
     assert pcf._us_date_to_iso("September 9, 2026") == "2026-09-09"
     assert pcf._us_date_to_iso("not a date") is None
+
+
+def test_human_date():
+    assert pcf._human_date("2026-09-15") == "September 15, 2026"
+    assert pcf._human_date("") == ""
+
+
+# --- sorting + link cell ---------------------------------------------------
+
+def test_sort_open_soonest_first_undated_last():
+    entries = [{"closes": "2026-09-30", "id": "late"},
+               {"closes": "", "id": "none"},
+               {"closes": "2026-09-05", "id": "soon"}]
+    assert [e["id"] for e in pcf.sort_open(entries)] == ["soon", "late", "none"]
+
+
+def test_sort_closed_most_recent_first():
+    entries = [{"closes": "2026-07-01", "id": "old"},
+               {"closes": "2026-08-30", "id": "new"}]
+    assert [e["id"] for e in pcf.sort_closed(entries)] == ["new", "old"]
+
+
+def test_link_cell():
+    assert 'href="https://x.gov/n"' in pcf._link_cell("https://x.gov/n")
+    assert pcf._link_cell("javascript:alert(1)") == "n/a"
+    assert pcf._link_cell("") == "n/a"
+
+
+# --- open table ------------------------------------------------------------
+
+def _open(**kw):
+    base = {"facility": "Arbor Hills Energy", "what": "Air ROP renewal",
+            "opened": "2026-08-10", "closes": "2026-09-09",
+            "link": "https://mienviro.michigan.gov/x"}
+    base.update(kw)
+    return base
+
+
+def test_open_table_empty_state():
+    assert "No comment periods are open right now." in pcf.render_open_table([])
+
+
+def test_open_table_columns_and_dated_row():
+    out = pcf.render_open_table([_open()])
+    for col in ("Facility", "What", "Public comment opened",
+                "Public comment closes", "Link"):
+        assert f"<th>{col}</th>" in out
+    assert 'data-close="2026-09-09"' in out            # countdown hook
+    assert '<span class="pc-countdown"></span>' in out
+    assert "September 10, 2026" in out or "August 10, 2026" in out
+    assert "September 9, 2026" in out                  # absolute close date shown
+    assert "(in " not in out and "closing soon" not in out   # not baked in
+    assert '<a href="https://mienviro.michigan.gov/x">View notice</a>' in out
+
+
+def test_open_table_undated_and_blank_opened():
+    out = pcf.render_open_table([_open(opened="", closes="", link=pcf.ROP_NOTICE_URL)])
+    assert "See notice" in out
+    assert "data-close" not in out   # no countdown hook without a date
+    assert "n/a" in out              # blank opened -> n/a
+
+
+def test_open_table_escapes_facility():
+    out = pcf.render_open_table([_open(facility="A & B <L>")])
+    assert "A &amp; B &lt;L&gt;" in out
+
+
+# --- closed table ----------------------------------------------------------
+
+def test_closed_table_empty_state():
+    assert "None yet." in pcf.render_closed_table([])
+
+
+def test_closed_table_columns_and_outcome_default():
+    out = pcf.render_closed_table([
+        {"facility": "F1", "what": "ROP renewal", "link": "https://x", "outcome": ""},
+        {"facility": "F2", "what": "JPA", "link": "https://y",
+         "outcome": "Renewable Operating Permit renewal issued"},
+    ])
+    for col in ("Facility", "What", "Link", "Outcome"):
+        assert f"<th>{col}</th>" in out
+    assert pcf.PENDING_OUTCOME in out                                  # empty -> pending
+    assert "Renewable Operating Permit renewal issued" in out          # set outcome shown
+
+
+# --- update_state (pure state machine) ------------------------------------
+
+def _entry(key="notice:1", srn="WRD", closes="2026-09-15", source="notice",
+           what="EGLE public notice"):
+    return {"key": key, "facility": "F", "srn": srn, "what": what,
+            "opened": "2026-08-26", "closes": closes,
+            "link": "https://mienviro/x", "source": source}
+
+
+def test_new_open_period_added_not_closed():
+    state = {}
+    o, c = pcf.update_state(state, [_entry()], {"WRD"}, True, set())
+    assert len(o) == 1 and c == []
+    assert state["notice:1"]["closed"] is False
+
+
+def test_period_marked_closed_when_it_drops_out_and_was_checked():
+    state = {}
+    pcf.update_state(state, [_entry()], {"WRD"}, True, set())     # seen open
+    o, c = pcf.update_state(state, [], {"WRD"}, True, set())      # gone; WRD checked
+    assert o == [] and len(c) == 1
+    assert state["notice:1"]["closed"] is True
+
+
+def test_transient_fetch_miss_does_not_false_close():
+    state = {}
+    pcf.update_state(state, [_entry()], {"WRD"}, True, set())
+    _, c = pcf.update_state(state, [], set(), True, set())        # WRD NOT fetched
+    assert c == [] and state["notice:1"]["closed"] is False
+
+
+def test_rop_outcome_autofilled_when_in_final():
+    state = {}
+    r = _entry(key="rop:P1488", srn="P1488", source="rop", closes="2026-08-19",
+               what="Air ROP renewal")
+    pcf.update_state(state, [r], set(), True, set())             # seen open (rop)
+    pcf.update_state(state, [], set(), True, {"P1488"})          # closed + now issued
+    assert state["rop:P1488"]["closed"] is True
+    assert state["rop:P1488"]["outcome"] == pcf.ISSUED_OUTCOME
+
+
+def test_update_state_idempotent_on_unchanged_run():
+    # A run where nothing changed must leave each record identical, so the
+    # serialized state file is byte-stable and the diff-quiet guard stays quiet.
+    state = {}
+    pcf.update_state(state, [_entry()], {"WRD"}, True, set())
+    snapshot = dict(state["notice:1"])
+    pcf.update_state(state, [_entry()], {"WRD"}, True, set())
+    assert state["notice:1"] == snapshot
+
+
+def test_curated_what_and_outcome_preserved_across_runs():
+    state = {"notice:1": {"key": "notice:1", "facility": "F", "srn": "WRD",
+                          "what": "Wetland 1 PFAS JPA", "opened": "x",
+                          "closes": "2026-09-15", "link": "https://x",
+                          "source": "notice", "outcome": "Permit denied",
+                          "closed": False}}
+    pcf.update_state(state, [_entry()], {"WRD"}, True, set())
+    assert state["notice:1"]["what"] == "Wetland 1 PFAS JPA"   # not clobbered by default
+    assert state["notice:1"]["outcome"] == "Permit denied"
+
+
+# --- embedded self-persisting state ---------------------------------------
+
+def test_state_block_roundtrip():
+    records = [
+        {"key": "notice:1", "facility": "F1", "srn": "WRD",
+         "what": "EGLE public notice", "opened": "2026-08-26",
+         "closes": "2026-09-15", "link": "https://x", "source": "notice",
+         "outcome": "", "closed": False},
+        {"key": "rop:P1488", "facility": "Emerald", "srn": "P1488",
+         "what": "Air ROP renewal", "opened": "", "closes": "2026-08-19",
+         "link": pcf.ROP_NOTICE_URL, "source": "rop",
+         "outcome": pcf.ISSUED_OUTCOME, "closed": True},
+    ]
+    block = pcf.render_state_block(records)
+    assert 'type="application/json"' in block and 'id="pc-state"' in block
+    recovered = pcf.parse_state_block(f"<html>{block}</html>")
+    assert set(recovered) == {"notice:1", "rop:P1488"}
+    assert recovered["rop:P1488"]["closed"] is True
+    assert recovered["rop:P1488"]["outcome"] == pcf.ISSUED_OUTCOME
+
+
+def test_parse_state_block_empty_when_absent_or_malformed():
+    assert pcf.parse_state_block("<html>no block here</html>") == {}
+    assert pcf.parse_state_block(
+        '<script type="application/json" id="pc-state">{bad json</script>') == {}
+
+
+def test_state_block_is_order_independent():
+    r1 = {"key": "a:1", "facility": "A", "srn": "A", "what": "x", "opened": "",
+          "closes": "2026-09-01", "link": "", "source": "notice",
+          "outcome": "", "closed": False}
+    r2 = {"key": "b:2", "facility": "B", "srn": "B", "what": "y", "opened": "",
+          "closes": "2026-09-02", "link": "", "source": "notice",
+          "outcome": "", "closed": True}
+    assert pcf.render_state_block([r1, r2]) == pcf.render_state_block([r2, r1])
+
+
+def test_render_page_embeds_recoverable_state():
+    open_e = [{"key": "notice:1", "facility": "F", "srn": "WRD", "what": "w",
+               "opened": "2026-08-26", "closes": "2026-09-15", "link": "https://x",
+               "source": "notice", "outcome": "", "closed": False}]
+    html = pcf.render_page(open_e, [], "2026-09-01 12:00 UTC")
+    recovered = pcf.parse_state_block(html)
+    assert "notice:1" in recovered   # the next run can read state back
+
+
+# --- render_page -----------------------------------------------------------
+
+def test_render_page_structure():
+    open_e = [{"facility": "Arbor Hills Energy", "what": "Air ROP renewal",
+               "opened": "2026-08-10", "closes": "2026-09-09", "link": "https://x"}]
+    html = pcf.render_page(open_e, [], "2026-09-01 12:00 UTC")
+    assert "1 open for comment now" in html
+    assert "<h2>Open for comment</h2>" in html
+    assert "<h2>Closed public comments</h2>" in html
+    assert "pc-table" in html and "<script>" in html
+    assert "not a legal notice" in html
+    assert 'href="../style.css"' in html and "/favicon.svg" in html
+
+
+def test_render_page_surfaces_errors():
+    html = pcf.render_page([], [], "2026-09-01 12:00 UTC",
+                           errors=["Could not check Foo (FOO): boom"])
+    assert "0 open for comment now" in html
+    assert "may be incomplete" in html
+    assert "Could not check Foo (FOO): boom" in html
+
+
+def test_render_page_deterministic_same_inputs():
+    # Same inputs -> identical bytes (no hidden per-call variation baked in). The
+    # no-baked-countdown guarantee is checked at the table level
+    # (test_open_table_columns_and_dated_row); here the page legitimately embeds
+    # the countdown SCRIPT, whose literal contains "(in ", so that check belongs
+    # on the table output, not the whole page.
+    open_e = [{"facility": "F", "what": "w", "opened": "2026-08-01",
+               "closes": "2026-09-30", "link": "https://x"}]
+    a = pcf.render_page(open_e, [], "2026-09-01 12:00 UTC")
+    b = pcf.render_page(open_e, [], "2026-09-01 12:00 UTC")
+    assert a == b

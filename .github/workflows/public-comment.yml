@@ -43,17 +43,18 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add site/public-comment
-          # The footer's "Generated <timestamp>" line changes on every run even
-          # when the open-comment set is byte-identical, so a bare
-          # `git diff --cached --quiet` would commit every single day. -I
-          # ignores a changed line matching this regex, so only a REAL content
-          # change (a period opened/closed, a deadline moved) counts. If this
-          # line's wording changes in public_comment_feed.render_page, update
-          # this regex in the same commit.
+          # The page footer's "Generated <timestamp>" line changes every run even
+          # when nothing else did, so a bare `git diff --cached --quiet` would
+          # commit daily. -I ignores that one line, so only a REAL change counts:
+          # a period opened/closed, a deadline moved, an outcome set. (The page's
+          # embedded state block and the per-row countdown carry NO volatile
+          # fields, so an unchanged period leaves the page byte-identical apart
+          # from the timestamp and stays quiet.) If the "Generated" wording
+          # changes in public_comment_feed.render_page, update this regex here.
           if git diff --cached --quiet -I'^<p>Generated .* from Michigan EGLE'; then
             echo "No change to the Public Comment Periods page (beyond the timestamp)."
             git restore --staged --worktree site/public-comment
           else
-            git commit -m "chore(public-comment): regenerate the Open Public Comment Periods page"
+            git commit -m "chore(public-comment): regenerate the Public Comment Periods page"
             git push
           fi
