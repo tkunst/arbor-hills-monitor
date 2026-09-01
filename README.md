@@ -18,6 +18,16 @@ Every item in the case file is labeled by source so a reader can verify it
 independently; the monitor itself does not speak for, or take direction from,
 any advocacy organization.
 
+This neutral, records-and-data Monitor is one of two related sites the same
+resident maintains; the separate advocacy site (Better Arbor Hills) holds public
+comments and policy proposals. They follow different content standards on
+purpose, and content must stay on the correct side of that line. Before adding
+or reviewing any site page or copy, read **`docs/editorial-standards-two-sites.md`**.
+One place this shows up concretely: the **Public Comment Periods** page
+(`site/public-comment/`, ADR 035) lists *which* comment periods are open and
+when they close (records), and links to the official EGLE notice; the
+encouragement to comment lives on the advocacy site, not here.
+
 ## What it does
 
 1. **Backfill** (nightly, self-terminating): processes the existing documents
