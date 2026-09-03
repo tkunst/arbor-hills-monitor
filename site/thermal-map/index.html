@@ -89,12 +89,32 @@
   .monitor-label{background:rgba(10,14,20,.82);border:0;color:#7fd1ff;font-weight:700;font-size:12px;padding:1px 6px;border-radius:5px;white-space:nowrap}
   .leaflet-tooltip.monitor-label::before{display:none}
   .leaflet-tooltip.school-label::before{display:none}
-  /* mobile: stack the CTA below the heading (and above the map);
-     collapse the sidebar into an off-canvas panel toggled by #panelToggle */
+  /* collapsible-intro trigger (mobile only) + transparent controls wrapper.
+     .ctl-toggles is display:contents by default, so on desktop its children are
+     hoisted straight into .controls and the layout is byte-identical to before. */
+  .sub-toggle{display:none;background:transparent;border:0;padding:0;margin-top:6px;
+    color:var(--accent);font:600 13px/1.3 inherit;cursor:pointer}
+  .ctl-toggles{display:contents}
+  /* mobile: shrink the header, collapse the intro paragraph behind a tap, and lay the
+     controls out as a full-width Year slider + one swipeable strip of toggles; the map
+     (not the chrome) then owns the screen. Sidebar collapses off-canvas as before. */
   @media (max-width:640px){
-    header{flex-direction:column;align-items:stretch;gap:10px}
+    header{flex-direction:column;align-items:stretch;gap:8px;padding:10px 14px 8px}
     .cta{text-align:center}
-    .wrap{position:relative}
+    h1{font-size:16px;line-height:1.25}
+    .sub-toggle{display:inline-block}
+    .sub{display:none;margin-top:6px;font-size:12.5px}
+    .sub.open{display:block}
+    .controls{flex-direction:column;align-items:stretch;gap:8px;padding:8px 14px}
+    .ctl-year{gap:10px}
+    .ctl-year input[type=range]{flex:1 1 auto;width:auto}
+    .ctl-toggles{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:8px 14px;align-items:center;
+      min-width:0;max-width:100%;
+      -webkit-overflow-scrolling:touch;scrollbar-width:none;padding-bottom:2px}
+    .ctl-toggles::-webkit-scrollbar{display:none}
+    .ctl-toggles .ctl{flex:0 0 auto;white-space:nowrap}
+    .ctl-actions{margin-left:0 !important}
+    .wrap{position:relative;overflow:hidden}
     aside{position:absolute;top:0;right:0;bottom:0;width:min(320px,86vw);
       transform:translateX(100%);transition:transform .25s ease;z-index:1200;
       box-shadow:-6px 0 20px rgba(0,0,0,.55)}
@@ -109,16 +129,18 @@
 <header>
   <div class="head-text">
   <h1>Arbor Hills: two persistent thermal clusters</h1>
-  <div class="sub">The operator's own EGLE-filed wellhead readings show the elevated-temperature wells (&ge;131&deg;F) falling into two persistent clusters: <b class="east">an eastern hot core</b> and <b class="west">a western warm field</b>.
+  <button type="button" class="sub-toggle" id="subToggle" aria-expanded="false" aria-controls="sub">What this map shows &#9662;</button>
+  <div class="sub" id="sub">The operator's own EGLE-filed wellhead readings show the elevated-temperature wells (&ge;131&deg;F) falling into two persistent clusters: <b class="east">an eastern hot core</b> and <b class="west">a western warm field</b>.
   Their nearest wells now sit about 460&nbsp;ft apart, a gap the growing <b class="west">western field</b> narrows after 2023 while the <b class="east">eastern core</b> stays the larger and hotter.</div>
   </div>
 </header>
 
 <div class="controls">
-  <div class="ctl">Year
+  <div class="ctl ctl-year">Year
     <input type="range" id="year" min="0" max="6" step="1" value="0">
     <span id="yearlab">Overall</span>
   </div>
+  <div class="ctl-toggles">
   <div class="ctl">Threshold
     <span class="seg" id="thr">
       <button data-thr="131" class="on">131&deg;F</button>
@@ -143,7 +165,8 @@
       <button data-exp="off">Off</button>
     </span>
   </div>
-  <div class="ctl" style="margin-left:auto"><button id="panelToggle">Details</button> <button id="copylink">🔗 Copy view link</button></div>
+  <div class="ctl ctl-actions" style="margin-left:auto"><button id="panelToggle">Details</button> <button id="copylink">🔗 Copy view link</button></div>
+  </div>
 </div>
 
 <div class="wrap">
@@ -387,6 +410,17 @@ panelToggle.addEventListener("click", ()=>{
   panelToggle.classList.toggle("on", open);
   panelToggle.textContent = open ? "Hide details" : "Details";
 });
+// mobile intro disclosure: expanding/collapsing it changes the header height, which
+// resizes the map box — Leaflet only auto-detects window resizes, so tell it to recompute.
+const subToggle = document.getElementById("subToggle"), subEl = document.getElementById("sub");
+if(subToggle && subEl){
+  subToggle.addEventListener("click", ()=>{
+    const open = subEl.classList.toggle("open");
+    subToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    subToggle.innerHTML = open ? "Hide &#9652;" : "What this map shows &#9662;";
+    requestAnimationFrame(()=>map.invalidateSize());
+  });
+}
 
 build();
 writeHash();
