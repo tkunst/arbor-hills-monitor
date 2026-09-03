@@ -19,7 +19,7 @@ independently; the monitor itself does not speak for, or take direction from,
 any advocacy organization.
 
 This neutral, records-and-data Monitor is one of two related sites the same
-resident maintains; the separate advocacy site (Better Arbor Hills) holds public
+resident maintains; the separate advocacy site holds public
 comments and policy proposals. They follow different content standards on
 purpose, and content must stay on the correct side of that line. Before adding
 or reviewing any site page or copy, read **`docs/editorial-standards-two-sites.md`**.

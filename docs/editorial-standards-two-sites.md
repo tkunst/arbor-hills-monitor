@@ -17,7 +17,7 @@ Blue. Sourced records, data, and fact-based reporting drawn from Michigan EGLE's
 public filing systems. Fact-based, and it never asks the reader to take an action
 (see the bright line below).
 
-**Better Arbor Hills** (advocacy; currently `tkunst.github.io/better-arbor-hills`,
+**The advocacy site** (currently `tkunst.github.io/better-arbor-hills`,
 intended future home `advocacy.arborhillsmonitor.org`)
 Orange. Public comments, policy proposals, evidence briefs, and advocacy. These
 express the author's views.
@@ -30,7 +30,7 @@ every page, not only the homepages:
 
 - **Blue** (`#2f7fb3`, the hills-and-signal-dot mark) means you are on the
   **Monitor**: records and data.
-- **Orange** means you are on **Better Arbor Hills**: advocacy and policy.
+- **Orange** means you are on the **advocacy site**: advocacy and policy.
 
 A visitor should be able to tell which kind of site they are on before they read
 a word, from the tab color alone. Preserve the favicon, header, and link colors
@@ -84,12 +84,8 @@ Both sites should carry, in an About or footer context, a plain disclosure to th
 effect of:
 
 > Both sites are maintained by Trisha Kunst for different purposes. Arbor Hills
-> Monitor presents sourced records, data, and fact-based reporting. Better Arbor
-> Hills contains public comments, policy proposals, and advocacy.
-
-The orange site's About page should also note that **Better Arbor Hills is not
-affiliated with Better Washtenaw** (a separate organization with a similar name).
-That note does not need to appear on every page.
+> Monitor presents sourced records, data, and fact-based reporting. The advocacy
+> site contains public comments, policy proposals, and advocacy.
 
 ## For builders and reviewers
 
