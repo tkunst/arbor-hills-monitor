@@ -421,7 +421,11 @@ pytest -q               # hermetic: synthetic PDFs, all APIs mocked, no secrets
    `GOAUTH_MMPC_FOLDER_ID` secret is set and `mmpc_archive.enabled: true` is on
    `main`, so Mirror D auto-downloads every MMPC Agenda/Minutes PDF from
    CivicClerk (see `docs/decisions/010`). The older "go check the minutes page"
-   reminder email was retired — see `docs/decisions/013`.
+   reminder email was retired — see `docs/decisions/013`. A NEW sibling,
+   `civicclerk_archiver.py`, does the same for DPW + Board of Commissioners
+   into their own Drive folders — **not yet activated**
+   (`civicclerk_archive.enabled: false`); see `docs/decisions/037` for the
+   2-step activation (create the 2 Drive folders, set 2 secrets).
 5. **Set the real alert recipients** in `config.yml`.
 6. **Branch protection** on `main` (require the CI checks).
 7. **Verify Sheet-backed state against the real API first** (no Anthropic call,

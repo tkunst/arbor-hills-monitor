@@ -51,6 +51,19 @@ external users but no sensitive data). Public repo.
 - `mmpc_client.py` — CivicClerk JSON API: enumerate + fetch MMPC event PDFs.
 - `mmpc_archiver.py` — Mirror D: auto-archive MMPC Agenda/Minutes PDFs (ADR 010).
   (The old in-watcher "go check the minutes" reminder was retired; see ADR 013.)
+- `civicclerk_archiver.py` — a NEW sibling to Mirror D (ADR 037, added
+  2026-09-04): auto-archives DPW (categoryId 68) + Board of Commissioners
+  (26/27) Agenda/Minutes/Other PDFs into Trisha's Drive, same building blocks
+  as Mirror D (`mmpc_client.fetch_mmpc_files`/`download_file`,
+  `archive_client.upload_pdf`) but driven from a config-list of
+  `{category_id, folder_env, group}` mirrors instead of one hardcoded
+  category/folder — so DPW and BOC land in separate Drive folders (BOC's two
+  categories share one). `mmpc_archiver.py` itself is completely untouched.
+  A mirror with no folder secret set is skipped (not fatal); a mirror's fetch
+  failure is isolated from the others. Dedup is ONE shared set/tab across all
+  mirrors (`CivicClerk Archived Files`) since CivicClerk file IDs are a single
+  global sequence, not per-category. Gated on `civicclerk_archive.enabled`
+  (new external-write capability; ships `false`).
 - `archiver.py` — the durable nSITE PDF → Drive mirror (ADR 007). Two entry
   points: `mirror_one_now()`, called INLINE from watcher.py/backfill.py at
   write time (ADR 007 addendum, 2026-08-23) so a same-day Sheet row/alert can
