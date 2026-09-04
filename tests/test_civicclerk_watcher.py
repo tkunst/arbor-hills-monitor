@@ -564,6 +564,7 @@ def test_keyword_match_on_changed_event_elevates_the_alert(monkeypatch):
     assert cw.run() == 0    # changed: agenda posted
     rows = _rows(fake)
     assert len(rows) == 2 and rows[1][5] == "changed"
+    assert "KEYWORD MATCH" in rows[1][8]   # durable row, not just the email
     assert len(sent) == 1
     subj, body, recipients = sent[0]
     assert subj.startswith("[Arbor Hills ALERT]")
@@ -580,6 +581,7 @@ def test_routine_changed_event_keeps_the_ordinary_subject(monkeypatch):
     assert cw.run() == 0
     assert len(sent) == 1
     assert sent[0][0].startswith("[Meeting watch]")   # NOT elevated
+    assert "KEYWORD MATCH" not in _rows(fake)[1][8]
 
 
 def test_keyword_scan_disabled_never_downloads(monkeypatch):

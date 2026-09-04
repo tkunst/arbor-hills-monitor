@@ -18,6 +18,15 @@ on:
 permissions:
   contents: read
 
+# Shares meeting-watch.yml's concurrency group — both write to the same
+# append-only Meeting Watch tab (CLAUDE.md's "Workflows use a concurrency
+# group so two runs never race the state file" invariant); a manually-
+# dispatched backfill running at the same moment as the twice-daily
+# scheduled watch must not race it.
+concurrency:
+  group: meeting-watch
+  cancel-in-progress: false
+
 jobs:
   backfill:
     runs-on: ubuntu-latest
