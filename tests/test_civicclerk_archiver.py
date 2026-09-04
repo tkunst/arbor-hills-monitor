@@ -174,3 +174,64 @@ def test_one_file_upload_failure_does_not_abort_the_batch(monkeypatch):
     assert ca.run() == 0
     assert attempted == ["168.pdf", "468.pdf"]   # both attempted...
     assert len(_rows(fake)) == 1                 # ...but only the 2nd succeeded/recorded
+
+
+def test_malformed_mirror_entry_is_skipped_and_surfaced(monkeypatch):
+    cfg = {"civicclerk_archive": {"enabled": True, "mirrors": [
+        {"folder_env": "GOAUTH_DPW_FOLDER_ID"},           # missing category_id
+        {"category_id": 68},                              # missing folder_env
+        {"category_id": 68, "folder_env": "GOAUTH_DPW_FOLDER_ID", "group": "Board of Public Works"},
+    ]}}
+    fake, uploaded = _wire(monkeypatch, cfg, lambda cid: [_flat(500 + cid, cid)])
+    monkeypatch.setenv("GOAUTH_DPW_FOLDER_ID", "dpw-folder")
+    assert ca.run() == 1                          # the 2 malformed entries surface as non-zero...
+    assert [f for f, _ in uploaded] == ["568.pdf"]  # ...but the 1 well-formed entry still ran
+
+
+def test_no_mirror_provisioned_skips_sheets_and_drive_setup_entirely(monkeypatch):
+    # civicclerk_archive.enabled: true but neither folder secret set yet — the
+    # expected state mid-activation per ADR 037. Must not touch Sheets/Drive
+    # at all, not just skip archiving after creating an empty tab.
+    fake, uploaded = _wire(monkeypatch, CFG, lambda cid: [_flat(600 + cid, cid)])
+    assert ca.run() == 0
+    assert uploaded == []
+    assert sw.TAB_CIVICCLERK_ARCHIVE not in fake._values._tabs
+
+
+def test_same_file_id_from_two_mirror_entries_in_one_run_is_uploaded_once(monkeypatch):
+    # A defensive case, not something CivicClerk's real ID space should ever
+    # produce (categories are disjoint) — but proves the in-run `already.add()`
+    # guard (civicclerk_archiver.py) actually does something, not just that
+    # distinct file IDs per category happen to never collide.
+    fake, uploaded = _wire(monkeypatch, CFG, lambda cid: [_flat(777, cid, ftype="Agenda")])
+    monkeypatch.setenv("GOAUTH_DPW_FOLDER_ID", "dpw-folder")
+    monkeypatch.setenv("GOAUTH_BOC_FOLDER_ID", "boc-folder")
+    assert ca.run() == 0
+    assert len(uploaded) == 1          # only the FIRST mirror to see file_id 777 uploads it
+    assert len(_rows(fake)) == 1
+
+
+def test_temp_file_is_cleaned_up_after_a_successful_upload(monkeypatch, tmp_path):
+    fake = FakeSheets()
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.setenv("GOAUTH_CLIENT_ID", "cid")
+    monkeypatch.setenv("GOAUTH_CLIENT_SECRET", "csecret")
+    monkeypatch.setenv("GOAUTH_REFRESH_TOKEN", "rtoken")
+    monkeypatch.setenv("GOAUTH_DPW_FOLDER_ID", "dpw-folder")
+    monkeypatch.setattr(ca, "load_config", lambda: CFG)
+    monkeypatch.setattr(ca.dc, "sheets_service", lambda: fake)
+    monkeypatch.setattr(ca.mc, "fetch_mmpc_files",
+                        lambda session, category_id: [_flat(868, category_id)] if category_id == 68 else [])
+    monkeypatch.setattr(ca.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    def _download(session, file_id, dest):
+        with open(dest, "wb") as f:
+            f.write(b"%PDF-fake")
+        return dest
+
+    monkeypatch.setattr(ca.mc, "download_file", _download)
+    monkeypatch.setattr(ca.ac, "upload_pdf", lambda drive, local, name, folder: "https://drive.example/x")
+    monkeypatch.setattr(ca.ac, "oauth_drive_service", lambda: object())
+
+    assert ca.run() == 0
+    assert list(tmp_path.iterdir()) == []  # the downloaded temp PDF was removed after upload

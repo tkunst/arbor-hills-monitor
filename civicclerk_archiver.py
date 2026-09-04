@@ -89,6 +89,22 @@ def run() -> int:
               "archiving disabled (no-op). See scripts/oauth_setup.py + docs/decisions/037.")
         return 0
 
+    # Cheap up-front check: if NO mirror is actually usable yet (e.g. only
+    # civicclerk_archive.enabled was flipped on, before either folder secret
+    # exists — the expected state during staged DPW/BOC activation per ADR
+    # 037), skip touching Sheets/Drive at all rather than creating an empty
+    # tab and refreshing the OAuth token for a run that will archive nothing.
+    # mmpc_archiver.py's single-mirror _should_run() does the equivalent via
+    # its one ac.is_configured() check; this is the multi-mirror version.
+    def _mirror_is_provisioned(m: dict) -> bool:
+        env = (m or {}).get("folder_env")
+        return bool(env and os.environ.get(env))
+
+    if not any(_mirror_is_provisioned(m) for m in mirrors):
+        print("[civicclerk-archive] enabled, but no mirror's folder secret is "
+              "set yet — nothing to archive (no-op).")
+        return 0
+
     sheet_id = os.environ["GSHEET_ID"]
     sheets = dc.sheets_service()
     sw.ensure_civicclerk_archive_tabs(sheets, sheet_id)
@@ -114,7 +130,12 @@ def run() -> int:
         folder_env = (mirror or {}).get("folder_env")
         group = (mirror or {}).get("group") or f"category {category_id}"
         if category_id is None or not folder_env:
+            # Unlike a not-yet-provisioned folder secret (expected, benign —
+            # see below), a malformed config entry never self-heals on its
+            # own, so it's treated the same as a fetch failure: surfaced,
+            # not silently swallowed as exit 0.
             print(f"[civicclerk-archive] skipping malformed mirror entry: {mirror!r}")
+            exit_code = 1
             continue
         folder = os.environ.get(folder_env)
         if not folder:
