@@ -93,12 +93,36 @@ external users but no sensitive data). Public repo.
   marker in column O (fail-safe: unreadable/failed-write → more alerting, never
   suppression). Empty `watch_alert_recipients` = display-only (rollback lever).
   See ADR 014's 2026-07-21 addendum.
-- `civicclerk_watcher.py` — Stream F: twice-daily change-watch on a hand-picked
-  list of MMPC + Washtenaw County BOC meeting events (via `mmpc_client.fetch_event`).
-  Snapshots each event's title/date/status/document-set into the `Meeting Watch`
-  tab and alerts (Trisha only) on any change. Cadence is a pure function per event
-  (`is_due_today`): MMPC every run; BOC weekly + daily in the 3 days before a
-  meeting. Alert-only (no Drive). Gated on `civicclerk_watch.enabled`. See ADR 015.
+- `civicclerk_watcher.py` — Stream F: twice-daily change-watch on MMPC +
+  Washtenaw County BOC meeting events (hand-picked, via `mmpc_client.fetch_event`)
+  plus the Board of Public Works/DPA (categoryId 68, AUTO-DISCOVERED via the new
+  `mmpc_client.fetch_category_events` — the county doesn't reliably pre-create
+  future DPA event stubs the way MMPC/BOC do, so a hand-picked list can't cover
+  "the moment it's agendized"; `discoverable_events` bounds each run to recent +
+  future meetings only, `discover_since_days`). Snapshots each event's
+  title/date/status/document-set into the `Meeting Watch` tab and alerts (Trisha
+  only) on any change. Cadence is a pure function per event (`is_due_today`):
+  MMPC/DPA every run; BOC weekly + daily in the 3 days before a meeting.
+  **Keyword scan (ADR 036, added 2026-09-03):** gated on
+  `civicclerk_watch.keyword_scan.enabled`, every new/changed Agenda/Minutes file
+  on a due-checked event (any group) is downloaded (`mmpc_client
+  .download_file_bytes`) and its text scanned (`find_keyword_hits` — case-
+  insensitive, word-boundary, hyphen/whitespace/line-wrap tolerant) against a
+  configured keyword list (Arbor Hills / GFL / plan amendment / siting /
+  consistency determination / etc., closing the gap where an expansion item is
+  agendized on a county body without ever touching EGLE's nSITE system, which
+  every other stream depends on). A hit elevates the alert's subject + body and
+  overrides an otherwise-silent first-sighting baseline. Two keywords
+  ("consistency", "siting") are deliberately short/broad and will false-positive
+  on ordinary county business — kept anyway, fail-open by explicit direction;
+  every alert names its matched keyword + a short excerpt for fast triage. A
+  one-time `run_historical_backfill` (invoked via the temporary
+  `scripts/oneoff_meeting_watch_keyword_backfill.py` +
+  `.github/workflows/oneoff-meeting-watch-keyword-backfill.yml`, both deleted
+  after use) swept the prior 12 months across all four categories, emailed one
+  summary report, and silently seeded baselines so the live watch never
+  re-alerts on that history. Alert-only (no Drive). Gated on
+  `civicclerk_watch.enabled`. See ADR 015 + ADR 036.
 - `ridgewood_client.py` — Stream G: fetch + parse Barr Engineering's monthly Ridge
   Wood Elementary H2S reports. Scrapes the `Files/*.pdf` report links off the public
   page (never constructs a URL), parses `YYYY-MM`, extracts text via fitz, and runs a

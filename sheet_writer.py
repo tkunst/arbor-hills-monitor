@@ -1366,6 +1366,17 @@ def last_meeting_snapshot(service, sheet_id: str, event_id) -> tuple[str, str] |
     return snap_hash, snap_json
 
 
+def meeting_watch_group_has_rows(service, sheet_id: str, group: str) -> bool:
+    """Whether ANY row (baseline or changed) already exists for `group` (col B).
+    Used only on the rare path where a category_id auto-discover group's whole-
+    category fetch fails (ADR 015 addendum) — distinguishes 'this group has never
+    successfully run before' (loud, activation-time block, same as a hand-picked
+    event's first-ever fetch failure) from 'this group is already established and
+    this is a transient blip' (skip-and-warn, baselines preserved)."""
+    return any(len(r) > 1 and r[1] == group
+               for r in _tab_rows(service, sheet_id, TAB_MEETING_WATCH, "A2:B"))
+
+
 def append_meeting_watch_row(
     service, sheet_id: str, date: str, group: str, meeting: str, event_id, url: str,
     change: str, snapshot_hash: str, n_files: int, note: str, checked_at: str,

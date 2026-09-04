@@ -72,15 +72,23 @@ encouragement to comment lives on the advocacy site, not here.
    unseen. Enabled 2026-07-15; see
    `docs/decisions/014-gfl-perimeter-air-stream-e.md`.
 8. **CivicClerk meeting-change watch (Stream F)** (twice daily —
-   `civicclerk_watch.enabled: true`): watches a hand-picked list of MMPC and
-   Washtenaw County Board-of-Commissioners meeting events for **any** change —
-   title, date/time, publish status, cancellation, or its agenda/minutes/other
-   document set — and emails a change alert (recipients scoped to Trisha, not the
-   advocacy list). Complements Mirror D, which only *mirrors* MMPC PDFs and is
-   blind to a meeting being moved/cancelled and covers no BOC meetings. Cadence is
-   decided in code per event (MMPC every run; BOC weekly + daily in the 3 days
-   before each meeting). First run baselines silently; see
-   `docs/decisions/015-civicclerk-meeting-watch.md`.
+   `civicclerk_watch.enabled: true`): watches MMPC and Washtenaw County
+   Board-of-Commissioners meeting events (hand-picked) plus the Board of Public
+   Works/DPA (categoryId 68, auto-discovered — no future event stubs to
+   hand-pick) for **any** change — title, date/time, publish status,
+   cancellation, or its agenda/minutes/other document set — and emails a change
+   alert (recipients scoped to Trisha, not the advocacy list). Complements
+   Mirror D, which only *mirrors* MMPC PDFs and is blind to a meeting being
+   moved/cancelled and covers no BOC/DPA meetings. Cadence is decided in code
+   per event (MMPC/DPA every run; BOC weekly + daily in the 3 days before each
+   meeting). First run baselines silently. A **keyword scan**
+   (`civicclerk_watch.keyword_scan.enabled: true`) reads the actual
+   Agenda/Minutes TEXT of every new/changed file across all three groups and
+   elevates the alert on a match (e.g. "Arbor Hills", "plan amendment", "GFL",
+   "siting") — closing the county-side gap where an expansion item is
+   agendized without ever touching EGLE's nSITE system. See
+   `docs/decisions/015-civicclerk-meeting-watch.md` and
+   `docs/decisions/036-civicclerk-dpa-keyword-watch.md`.
 9. **Ridge Wood Elementary H2S (Stream G)** (daily, optional —
    `ridgewood.enabled: true`): mirrors + extracts Barr Engineering's monthly,
    QA'd H2S data reports for the monitor at Ridge Wood Elementary School (run
