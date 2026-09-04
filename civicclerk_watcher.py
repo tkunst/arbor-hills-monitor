@@ -23,17 +23,38 @@ WHAT IT DOES each run (per watched event that is DUE today — see is_due_today)
     changed (row first = durable record; email best-effort),
   - hash unchanged → no-op.
 
-VANISH vs. ERROR (ADR 015, mirrors the fail-safe elsewhere in this repo):
+VANISH vs. ERROR (ADR 015, mirrors the fail-safe elsewhere in this repo) — for a
+HAND-PICKED event (an `events:` list entry):
   - a network/HTTP/JSON error (MMPCFetchError) is TRANSIENT → skip-and-warn if a
     baseline exists (a blip must never diff into a false alert); LOUD exit 1 if
     NO baseline exists yet (activation-time block surfaces instead of no-oping
     forever, same as pfas_watcher),
   - a SUCCESSFUL fetch that returns no event (200 + empty) for a previously-seen
     meeting is a REAL change (cancelled / removed / renumbered) → alert.
+  This guarantee is WEAKER for an AUTO-DISCOVER group (`category_id`, ADR 036):
+  an event that ages out of `discover_since_days`, or is genuinely deleted
+  outright (not just flagged `isDeleted`, which the snapshot hash already
+  catches normally) rather than merely cancelled, simply stops appearing in
+  `discoverable_events` — this watch loses track of it silently, with no
+  "vanished" alert. Accepted residual risk; see ADR 036.
 
 CADENCE is a pure function of config + today, not the cron: one workflow fires
-twice daily; each event decides whether it's due (MMPC every run; BOC weekly plus
-daily in the 3 days before the meeting). See is_due_today.
+twice daily; each event decides whether it's due (MMPC/DPA every run; BOC weekly
+plus daily in the 3 days before the meeting). See is_due_today.
+
+CATEGORY AUTO-DISCOVER (ADR 036): a group may set `category_id` instead of a
+hand-picked `events:` list — one paginated `mmpc_client.fetch_category_events`
+call replaces the per-event `fetch_event` lookups, and every event on/after
+`today - discover_since_days` is diffed exactly like a hand-picked entry (same
+snapshot/hash/tab). Added for categoryId 68 (the DPA), which doesn't reliably
+pre-create future event stubs the way MMPC/BOC do.
+
+KEYWORD SCAN (ADR 036): gated on civicclerk_watch.keyword_scan.enabled, every
+Agenda/Minutes file that's new or changed on a due-checked event (any group) is
+downloaded and its text scanned (find_keyword_hits) against a configured list —
+closing the gap where a GFL plan-amendment/siting/consistency-determination item
+is agendized on a county body without ever touching EGLE's nSITE system. A hit
+elevates the alert and overrides an otherwise-silent first-sighting baseline.
 
 GATED on civicclerk_watch.enabled. Recipients are civicclerk_watch.recipients
 (Trisha only) — NOT the shared alert_recipients list. Runs on its own schedule
@@ -552,6 +573,13 @@ def run() -> int:
             old_files = old_snap.get("files") or []
             to_scan = files_to_scan(old_files, snap_files) if kw_enabled else []
             hits = scan_files_for_keywords(session, to_scan, keywords) if to_scan else []
+            if hits:
+                # Fold the match into the DURABLE row's Note, not just the
+                # best-effort email — same as the baseline branch above. Without
+                # this, a keyword hit on a change is only ever recoverable from
+                # an ephemeral Actions log if the email send happens to fail.
+                kws = ", ".join(sorted({h["keyword"] for h in hits}))
+                note = f"{note} — KEYWORD MATCH: {kws}"
             sw.append_meeting_watch_row(
                 sheets, sheet_id, today.isoformat(), gname, label, event_id, url,
                 "changed", new_hash, n_files, note, _now(), snap_json)

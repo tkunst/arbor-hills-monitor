@@ -3,7 +3,12 @@
 *Status: built — 2026-09-03. Ships `civicclerk_watch.enabled: true` (already
 live) and `civicclerk_watch.keyword_scan.enabled: true`. The new DPA group and
 the keyword scan both baseline/scan silently on their first pass — see
-Activation below for the false-positive-rate evidence this shipped on.*
+Activation below for the real-specimen false-positive-rate evidence this
+shipped on (84 events / 161 files / 32 hit-carrying meetings, ~16% pure
+noise). The one-time 12-month backfill's actual Sheet-write + email run
+happens post-merge (see Decision 4's "Why the backfill needed to run via
+workflow_dispatch" — GitHub won't dispatch a workflow that only exists on a
+branch).*
 
 ## Context
 
@@ -208,6 +213,17 @@ confirmed before writing any code. `email_alerts.send_email` no-ops (returns
 rows but could never actually deliver Trisha's report. Real SMTP secrets
 exist only in GitHub Actions, hence the one-off workflow.
 
+**A second, platform-level constraint discovered mid-build:** GitHub Actions
+will not dispatch a `workflow_dispatch` workflow that exists only on a
+feature branch — `gh workflow run <name> --ref <branch>` 404s until the
+workflow FILE is present on the repo's default branch, even though
+`--ref` can target any branch for the *checkout* once it IS dispatchable.
+So the real, production backfill run (writing baseline rows to the live
+Sheet, sending Trisha's actual email) can only happen once this PR is
+merged — it cannot serve as this PR's own pre-merge real-specimen
+verification. The Activation section's dry-run (same scan code, read-only,
+no Sheet/email side effects) fills that gap instead.
+
 ## Coverage disclosure (FOIA gap)
 
 This watch — the live one and the backfill alike — covers **AGENDIZED items
@@ -228,23 +244,67 @@ county."
 | An event outright REMOVED (not just flagged) from an auto-discover category is never flagged "vanished" | manageable, disclosed | none currently — silent | accepted; see Decision 1's residual-risk paragraph |
 | Backfill double-baselines an event the live watch already tracks, corrupting its real hash history | show-stopper if it happened | a live run reads a spurious "changed" against a backfill-authored snapshot | `last_meeting_snapshot` checked before every backfill write; unit-tested (`test_backfill_skips_baseline_for_already_known_event_but_still_reports`) |
 | Backfill can't actually reach Trisha's inbox from a local/dev run | manageable | `ea.send_email` returns `False`; printed in the run log | confirmed local SMTP creds are placeholders BEFORE building; backfill ships as a `workflow_dispatch` job with real Actions secrets, not a local script |
+| A keyword hit on a "changed" event was only visible in the best-effort email, not the durable Sheet row (a send failure would erase it from the record) | show-stopper if unmitigated — found by independent Step-5 review | the durable row's Note column vs. what the email said | fixed: the "changed" branch now folds the match into `note` before the row is written, matching the baseline branch's existing behaviour; regression-tested |
+| `fetch_category_events`'s own pagination/loop-guard/error-handling had no direct test — only exercised indirectly through mocked `civicclerk_watcher` flows | manageable — found by independent Step-5 review | a regression there would pass CI silently | fixed: 6 direct tests added mirroring `fetch_mmpc_files`'s existing coverage exactly (single page, nextLink paging, loop guard, HTTP error, unparseable JSON), plus one specific to why this function exists (an empty-`publishedFiles` event, invisible to `fetch_mmpc_files`, still comes through) |
 
 ## Activation
 
 `civicclerk_watch.enabled` was already `true` (ADR 015) — this is an
 extension to an already-live path, not a new poller, so it does NOT ship
 `enabled: false` by default the way a brand-new source would. Per the
-overnight-coder procedure's live-path rule, the mandatory real-specimen
-verification for this change **is** the 12-month backfill itself: run
-against the real CivicClerk API, its keyword-hit volume (and specifically the
-`"consistency"`/`"siting"` false-positive rate) was reviewed BEFORE finalizing
-`keyword_scan.enabled`'s shipped default — see the closing PR comment for the
-actual numbers from that run.
+overnight-coder procedure's live-path rule, this change needed real-specimen
+verification before an autonomous merge could be justified — and GitHub
+Actions' `workflow_dispatch` will not run a workflow that only exists on a
+branch (it requires the workflow file to be on the default branch even when
+targeting a different `--ref`), so the ACTUAL one-off backfill run (real
+Sheet writes, real email) had to wait until after merge. To get the
+verification evidence before that, the identical SCAN logic
+(`fetch_category_events` → `discoverable_events` → `files_to_scan` →
+`scan_files_for_keywords` → `find_keyword_hits`) was run read-only against
+the live CivicClerk API in a throwaway local script — same code path, same
+keyword list, no Sheet writes, no email send.
 
-To pause the keyword scan without touching the underlying (already-proven)
-meeting-change watch: `civicclerk_watch.keyword_scan.enabled: false`. To pause
-the DPA group specifically without touching MMPC/BOC: remove its entry from
-`civicclerk_watch.groups`.
+**Real result (run 2026-09-03, all 4 categories, 12-month window):** 84
+events, 161 Agenda/Minutes files, 0 download failures. 32/84 meetings (38%)
+matched at least one keyword. Per-keyword hit counts: `Arbor Hills` 24,
+`GFL` 17, `consistency` 16, `landfill expansion` 11, `plan amendment` 10,
+`siting` 9, `Six Mile` 1 — and zero hits for `amend the plan`,
+`consistency determination`, `letter of consistency`,
+`materials management plan amendment`, `Good Neighbor Plan`, `251 acre`,
+`92 acre` (the more precise phrases simply haven't come up yet; if they ever
+do, they're exactly the signal this watch exists to catch).
+
+Reading the actual excerpts: the bare `"consistency"` keyword is almost
+entirely noise as feared (Treasurer investment policy, youth-justice
+program outcomes, tutoring-program quality — none about Arbor Hills).
+`"siting"` is a genuine mix — several hits ARE the real signal (MMPC's own
+"Siting Process Discussion"/"Siting Process & Requirements Discussion"
+agenda items), alongside one unrelated "Renewable Energy Siting" county
+contract. `"plan amendment"` also produces a false-positive class not
+anticipated when the keyword list was drafted: an unrelated, recurring
+"Broadway Park Redevelopment Brownfield Plan Amendment" BOC item. Of the 32
+hit-carrying meetings, only about 5 (~16%) are PURE noise — every keyword
+hit in that meeting is unrelated to Arbor Hills; the remaining ~84% carry at
+least one genuinely on-target hit (`Arbor Hills`/`GFL`/`landfill expansion`
+mentioned in real public comment or a real MMPC siting item), even when a
+noisy keyword like `consistency` also rides along in the same meeting. This
+is a one-time historical sweep across 12 months of ALREADY-published
+documents; the ONGOING live watch only re-evaluates each document once, as
+it's newly posted, so day-to-day alert volume going forward will be far
+below this backfill's one-shot total.
+
+**Decision: ship `keyword_scan.enabled: true`, keywords unchanged, exactly
+as directed.** A ~16% pure-noise rate, with every alert self-triaging (named
+keyword + excerpt) in 2 seconds, is a real but manageable cost against
+catching the thing this watch exists for — an MMPC "Siting Process
+Discussion" item, or a BOC agenda item that mentions the landfill by name,
+neither of which would ever reach EGLE's nSITE system. If the noise proves
+worse in practice than this sample suggests, `keyword_scan.enabled: false`
+is a one-line rollback that doesn't touch the underlying (already-proven)
+meeting-change watch.
+
+To pause the DPA group specifically without touching MMPC/BOC: remove its
+entry from `civicclerk_watch.groups`.
 
 ## Consequences
 

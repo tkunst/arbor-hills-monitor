@@ -114,6 +114,73 @@ def test_fetch_raises_on_unparseable_json():
 
 
 # ---------------------------------------------------------------------------
+# fetch_category_events — the raw-event (unflattened) counterpart to
+# fetch_mmpc_files, added for the DPA auto-discover group + the 12-month
+# backfill (ADR 036). Own tests, not just exercised indirectly through
+# civicclerk_watcher's mocked flows, so a pagination/loop-guard regression in
+# THIS function's own copy of the fetch logic can't slip through unnoticed.
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_category_events_returns_raw_events_unflattened():
+    url = f"{mc._BASE}/Events?$filter=categoryId%20eq%2068"
+    ev = _event(1885, "2018-01-17T00:00:00Z", [_file(4259, "Agenda"), _file(4260, "Minutes")])
+    ev["isPublished"] = "Published"
+    body = {"value": [ev]}
+    sess = _Session({url: _Resp(body)})
+    events = mc.fetch_category_events(sess, category_id=68)
+    assert len(events) == 1
+    assert events[0]["id"] == 1885
+    assert events[0]["isPublished"] == "Published"
+    assert len(events[0]["publishedFiles"]) == 2   # unflattened — not one row per file
+
+
+def test_fetch_category_events_includes_events_with_no_files():
+    # UNLIKE fetch_mmpc_files (which only emits a row per FILE and so silently
+    # drops a zero-file event), an empty-stub event with no publishedFiles yet
+    # must still come through — this is exactly the case that makes DPA
+    # auto-discovery work: a future meeting stub with nothing posted yet.
+    url = f"{mc._BASE}/Events?$filter=categoryId%20eq%2068"
+    body = {"value": [_event(4023, "2026-09-16T00:00:00Z", [])]}
+    sess = _Session({url: _Resp(body)})
+    events = mc.fetch_category_events(sess, category_id=68)
+    assert len(events) == 1 and events[0]["id"] == 4023
+
+
+def test_fetch_category_events_follows_odata_next_link():
+    url1 = f"{mc._BASE}/Events?$filter=categoryId%20eq%2068"
+    url2 = f"{mc._BASE}/Events?$filter=categoryId%20eq%2068&$skip=100"
+    page1 = {"value": [_event(1, "2025-01-01T00:00:00Z", [])], "@odata.nextLink": url2}
+    page2 = {"value": [_event(2, "2025-02-01T00:00:00Z", [])]}
+    sess = _Session({url1: _Resp(page1), url2: _Resp(page2)})
+    events = mc.fetch_category_events(sess, category_id=68)
+    assert [e["id"] for e in events] == [1, 2]
+    assert sess.calls == [url1, url2]
+
+
+def test_fetch_category_events_raises_on_next_link_loop():
+    url = f"{mc._BASE}/Events?$filter=categoryId%20eq%2068"
+    body = {"value": [], "@odata.nextLink": url}
+    sess = _Session({url: _Resp(body)})
+    with pytest.raises(mc.MMPCFetchError, match="loop"):
+        mc.fetch_category_events(sess, category_id=68)
+
+
+def test_fetch_category_events_raises_on_http_error():
+    url = f"{mc._BASE}/Events?$filter=categoryId%20eq%2068"
+    sess = _Session({url: _Resp(status=500)})
+    with pytest.raises(mc.MMPCFetchError, match="500"):
+        mc.fetch_category_events(sess, category_id=68)
+
+
+def test_fetch_category_events_raises_on_unparseable_json():
+    url = f"{mc._BASE}/Events?$filter=categoryId%20eq%2068"
+    sess = _Session({url: _Resp(json_body=None)})
+    with pytest.raises(mc.MMPCFetchError, match="unparseable"):
+        mc.fetch_category_events(sess, category_id=68)
+
+
+# ---------------------------------------------------------------------------
 # download_file
 # ---------------------------------------------------------------------------
 
