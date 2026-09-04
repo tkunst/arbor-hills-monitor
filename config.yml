@@ -432,15 +432,19 @@ civicclerk_watch:
       - "Six Mile"
       - "Eggermont"
   groups:
-    # MMPC — the Materials Management Planning Committee (category 72). Oct/Nov
-    # have NO portal page (the committee isn't meeting then), so only these three
-    # exist to watch. Checked every run (2x/day) — the siting arc is high-stakes.
+    # MMPC — the Materials Management Planning Committee (category 72). AUTO-DISCOVER
+    # mode (Trisha 2026-09-04): the county DOES add MMPC meetings mid-year — 2025 ran
+    # monthly incl. Oct 8 + Nov 12, plus a Sep 18 special meeting — so the old
+    # hand-picked event list (4005/4006/4007) would MISS a newly-posted Oct/Nov or
+    # special siting meeting whose event id it can't know in advance. Enumerating
+    # category 72 each run (same mode as the DPW group below) catches any new event by
+    # id and baselines it silently on first sighting. Checked every run (2x/day) — the
+    # siting arc is high-stakes. (Verified 2026-09-04: the cat-72 API returns 4006/4007
+    # plus every future event, so discovery sees new meetings the moment they post.)
     - name: "MMPC"
       cadence: every_run
-      events:
-        - {id: 4005, event_date: "2026-08-19", label: "MMPC — Aug 19, 2026 (siting requirements approval)"}
-        - {id: 4006, event_date: "2026-09-09", label: "MMPC — Sep 9, 2026"}
-        - {id: 4007, event_date: "2026-12-09", label: "MMPC — Dec 9, 2026 (siting vote)"}
+      category_id: 72
+      discover_since_days: 400
     # Washtenaw County Board of Commissioners — Working Session (category 27,
     # 5:30 PM) + Board Meeting (category 26, 7:00 PM). Less critical → weekly, but
     # daily in the 3 days before each meeting. Every date below HAS a live portal
