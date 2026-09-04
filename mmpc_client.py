@@ -98,6 +98,49 @@ def fetch_mmpc_files(session: requests.Session, category_id: int = 72) -> list[d
     return out
 
 
+def fetch_category_events(session: requests.Session, category_id: int) -> list[dict]:
+    """Return every RAW event dict (unflattened — full `publishedFiles`, plus
+    `eventName`/`eventDate`/`isPublished`/`eventNotice`/`isDeleted`, i.e. everything
+    `civicclerk_watcher.event_snapshot()` needs) for one category. Same endpoint,
+    pagination, and error handling as fetch_mmpc_files() above — deliberately a
+    SEPARATE loop rather than a shared refactor, so this addition can't regress
+    fetch_mmpc_files()'s tested behaviour (Mirror D / mmpc_archiver.py depend on it).
+
+    Used by civicclerk_watcher.py's category_id AUTO-DISCOVER group mode (ADR 015's
+    addendum) — unlike a hand-picked `events:` list, this lets a watch cover a
+    category whose future event IDs don't exist yet on the portal (confirmed live
+    for categoryId 68, the Board of Public Works/DPA: no event stub exists past the
+    meeting that already happened, so a hand-picked list can never see next month's
+    meeting until this enumerates the category fresh each run) — and by the one-time
+    12-month historical keyword backfill, which needs full event objects across all
+    four watched categories, not just fileIds.
+
+    Raises MMPCFetchError on any HTTP/JSON failure, including partway through
+    paging — same "never mistake a truncated fetch for an empty category" contract
+    as fetch_mmpc_files()."""
+    quoted = urllib.parse.quote(f"categoryId eq {category_id}")
+    url = f"{_BASE}/Events?$filter={quoted}"
+    out: list[dict] = []
+    seen_urls = set()
+    while url:
+        if url in seen_urls:
+            raise MMPCFetchError(f"@odata.nextLink loop detected at {url}")
+        seen_urls.add(url)
+        try:
+            r = session.get(url, timeout=30)
+        except requests.RequestException as e:
+            raise MMPCFetchError(f"GET {url} failed: {e}") from e
+        if r.status_code != 200:
+            raise MMPCFetchError(f"GET {url} -> HTTP {r.status_code}")
+        try:
+            payload = r.json()
+        except ValueError as e:
+            raise MMPCFetchError(f"GET {url} -> unparseable JSON: {e}") from e
+        out.extend(payload.get("value", []))
+        url = payload.get("@odata.nextLink") or None
+    return out
+
+
 def fetch_event(session: requests.Session, event_id) -> dict | None:
     """Fetch ONE CivicClerk event by its numeric id, returning the raw event dict
     (including its `publishedFiles` array), or None when the API returns HTTP 200
@@ -128,9 +171,14 @@ def fetch_event(session: requests.Session, event_id) -> dict | None:
     return values[0] if values else None
 
 
-def download_file(session: requests.Session, file_id, dest_path: str, timeout: int = 60) -> str:
-    """Download one document's PDF bytes to dest_path. Returns dest_path; raises
-    MMPCFetchError on HTTP error or an empty/non-PDF body."""
+def download_file_bytes(session: requests.Session, file_id, timeout: int = 60) -> bytes:
+    """Fetch one document's raw PDF bytes IN MEMORY (no disk write) via the same
+    GetMeetingFileStream endpoint download_file() uses. Raises MMPCFetchError on
+    HTTP error or an empty/non-PDF body — the %PDF magic-byte check only confirms
+    the header; civicclerk_watcher.extract_pdf_text() catches a truncated/corrupt
+    body downstream. Used by the keyword-scan feature (ADR 015 addendum), which
+    only needs the text layer, never a Drive upload — mmpc_archiver.py's Mirror D
+    keeps using download_file() below, unchanged."""
     url = f"{_BASE}/Meetings/GetMeetingFileStream(fileId={file_id},plainText=false)"
     try:
         r = session.get(url, timeout=timeout)
@@ -141,6 +189,13 @@ def download_file(session: requests.Session, file_id, dest_path: str, timeout: i
     content = r.content
     if not content or not content.startswith(b"%PDF"):
         raise MMPCFetchError(f"download fileId={file_id} -> not a PDF ({len(content)} bytes)")
+    return content
+
+
+def download_file(session: requests.Session, file_id, dest_path: str, timeout: int = 60) -> str:
+    """Download one document's PDF bytes to dest_path. Returns dest_path; raises
+    MMPCFetchError on HTTP error or an empty/non-PDF body."""
+    content = download_file_bytes(session, file_id, timeout=timeout)
     with open(dest_path, "wb") as out:
         out.write(content)
     return dest_path

@@ -367,6 +367,42 @@ civicclerk_watch:
   enabled: true
   recipients:
     - arbor-hills@trishakunst.com          # Trisha only (not the advocacy list)
+  # KEYWORD SCAN (ADR 036, added 2026-09-03) — closes the county-side gap: a GFL
+  # plan-amendment, siting application, MMP consistency-determination, or "Good
+  # Neighbor Plan" agenda item can be agendized on a CivicClerk meeting with
+  # nothing ever touching EGLE's nSITE system, which every other watcher in this
+  # repo depends on. When enabled, every Agenda/Minutes file that is NEW or
+  # CHANGED on a due-checked event (across every group below, hand-picked or
+  # auto-discover) is downloaded and its text scanned against `keywords` — a hit
+  # elevates that event's alert (subject + a prominent excerpt block naming the
+  # matched keyword and the file), and even overrides an otherwise-silent FIRST
+  # sighting of a brand-new meeting whose agenda already carries a hit.
+  # DELIBERATELY FAIL-OPEN: two entries ("consistency", "siting") are short and
+  # will match ordinary county business unrelated to Arbor Hills (verified
+  # empirically before shipping — see ADR 036's false-positive-rate note) —
+  # kept anyway, exactly as directed, because a keyword scan that misses a real
+  # hit is worse than one that occasionally over-fires; every alert names its
+  # matched keyword + a short excerpt so a false positive is a two-second read.
+  # Coverage is AGENDIZED items only — a raw paper/UPS county filing that never
+  # reaches a public meeting agenda is outside what any web-based watch can see
+  # (a FOIA gap; see ADR 036).
+  keyword_scan:
+    enabled: true
+    keywords:
+      - "Arbor Hills"
+      - "plan amendment"
+      - "amend the plan"
+      - "consistency"
+      - "consistency determination"
+      - "letter of consistency"
+      - "siting"
+      - "GFL"
+      - "landfill expansion"
+      - "Good Neighbor Plan"
+      - "materials management plan amendment"
+      - "251 acre"
+      - "92 acre"
+      - "Six Mile"
   groups:
     # MMPC — the Materials Management Planning Committee (category 72). Oct/Nov
     # have NO portal page (the committee isn't meeting then), so only these three
@@ -401,6 +437,24 @@ civicclerk_watch:
         - {id: 3967, event_date: "2026-11-18", label: "BOC Working Session — Nov 18, 2026"}
         - {id: 3955, event_date: "2026-11-18", label: "BOC Meeting — Nov 18, 2026"}
         - {id: 3944, event_date: "2026-12-02", label: "BOC Meeting — Dec 2, 2026"}
+    # Washtenaw County Board of Public Works / DPA (category 68) — added
+    # 2026-09-03 to close the county-side gap: GFL's landfill-expansion siting
+    # arc can be agendized here (drain/easement, road, or public-works items
+    # tied to the expansion) without ever touching EGLE's nSITE system, which
+    # every other watcher in this repo depends on. UNLIKE MMPC/BOC above, the
+    # county does NOT pre-create future DPA event stubs (confirmed live
+    # 2026-09-03: nothing exists past the meeting that already happened), so a
+    # hand-picked events: list can never see next month's meeting before this
+    # watch's own check discovers it. This group uses AUTO-DISCOVER mode
+    # (category_id, no events: list) instead — civicclerk_watcher.py fetches
+    # the whole category each due run and diffs by event id, same as a
+    # hand-picked event. discover_since_days bounds the fetch to recent +
+    # future meetings; the DPA's full history is covered once by the one-time
+    # 12-month keyword backfill (see ADR 036), not re-baselined every run.
+    - name: "Washtenaw County Board of Public Works (DPA)"
+      cadence: every_run
+      category_id: 68
+      discover_since_days: 400
 
 # --- Ridge Wood Elementary H2S monthly reports (Stream G, ADR 016, added 2026-07-14) ---
 # OFF BY DEFAULT. Barr Engineering (the same consultant behind Stream E) runs an H2S
