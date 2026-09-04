@@ -14,6 +14,10 @@ on:
         description: "Name of the Drive folder to create"
         type: string
         required: true
+      parent_folder_id:
+        description: "Optional: create directly under this existing Drive folder ID (omit to create at root, then move by hand)"
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -38,4 +42,5 @@ jobs:
           GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
           GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}
           FOLDER_NAME: ${{ inputs.folder_name }}
+          PARENT_FOLDER_ID: ${{ inputs.parent_folder_id }}
         run: python scripts/create_oauth_folder.py

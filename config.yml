@@ -160,6 +160,33 @@ mmpc_archive:
   enabled: true                     # activated 2026-07-11 (Trisha) — secret set + merged; see ADR 010
   category_id: 72
 
+# --- CivicClerk DPW + BOC Drive archive (ADR 037, added 2026-09-04) ---
+# OFF BY DEFAULT — a new external-write capability (Trisha activates once the
+# Drive folders + secrets below exist). A SIBLING to Mirror D above, not an
+# extension of it: mmpc_archive/mmpc_archiver.py stay untouched. Mirrors DPW
+# (categoryId 68) and Board of Commissioners (26 Meeting + 27 Working Session)
+# agenda/minutes/other PDFs the same way Mirror D mirrors MMPC's — into
+# Trisha's Drive, one folder per mirror entry below. DPW gets its own folder;
+# BOC's two categories share one folder (treating BOC as one body, matching
+# how Trisha described the ask — correct this split if that's wrong).
+#
+# ACTIVATION:
+#   1. create the 2 destination folders (scripts/create_oauth_folder.py, or the
+#      `create-oauth-folder` workflow, with `parent_folder_id` set to Trisha's
+#      given parent so they land directly in the right place),
+#   2. set GOAUTH_DPW_FOLDER_ID / GOAUTH_BOC_FOLDER_ID as GitHub secrets
+#      (the shared GOAUTH_CLIENT_ID/SECRET/REFRESH_TOKEN already exist — same
+#      OAuth account Mirror D uses),
+#   3. set `enabled: true` here and commit.
+# A mirror whose folder secret isn't set yet is skipped, not a hard failure —
+# DPW and BOC can be activated independently as each folder gets provisioned.
+civicclerk_archive:
+  enabled: false
+  mirrors:
+    - {category_id: 68, folder_env: "GOAUTH_DPW_FOLDER_ID", group: "Board of Public Works"}
+    - {category_id: 26, folder_env: "GOAUTH_BOC_FOLDER_ID", group: "Board of Commissioners"}
+    - {category_id: 27, folder_env: "GOAUTH_BOC_FOLDER_ID", group: "Board of Commissioners"}
+
 # --- PFAS page-watch (ADR 012, added 2026-07-12) ---
 # OFF BY DEFAULT. A lightweight content-hash watch on EGLE's PFAS-investigation
 # page(s) for Arbor Hills — prose EGLE edits in place when the investigation

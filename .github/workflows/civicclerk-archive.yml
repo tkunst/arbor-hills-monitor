@@ -1,0 +1,55 @@
+name: civicclerk-archive
+
+# ADR 037: mirrors DPW (categoryId 68) + Board of Commissioners (26/27)
+# agenda/minutes/other PDFs into Trisha's Drive — a NEW sibling to Mirror D
+# (mmpc-archive.yml, category 72 only), not an extension of it.
+#
+# Safe to leave scheduled from day one: if civicclerk_archive.enabled isn't
+# set yet, the job is a quiet no-op — see civicclerk_archiver.py's
+# _should_run(). Even once enabled, a mirror whose folder secret isn't set
+# yet is skipped individually, not a hard failure.
+#
+# Scheduled right after mmpc-archive.yml (10:00 UTC) and before daily.yml/
+# meeting-watch.yml (11:00 UTC) — a free slot, thematically grouped with the
+# other archive job.
+on:
+  schedule:
+    - cron: "30 10 * * *"   # ~5:30am ET (10:30 UTC). DST drift of +/-1h is acceptable.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: civicclerk-archive
+  cancel-in-progress: false
+
+jobs:
+  civicclerk-archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Archive new DPW + BOC documents
+        env:
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}
+          GOAUTH_DPW_FOLDER_ID: ${{ secrets.GOAUTH_DPW_FOLDER_ID }}
+          GOAUTH_BOC_FOLDER_ID: ${{ secrets.GOAUTH_BOC_FOLDER_ID }}
+        run: python civicclerk_archiver.py

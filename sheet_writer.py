@@ -128,6 +128,12 @@ TAB_WDS_SEEN = "_wds_seen"
 # as the WDS tabs above, so the Sheet gains no empty tab until mmpc_archive is
 # actually enabled/run.
 TAB_MMPC_ARCHIVE = "MMPC Archived Files"
+# CivicClerk multi-mirror archive (ADR 037) — a NEW sibling to Mirror D, covering
+# DPW (categoryId 68) + Board of Commissioners (26/27) into their own Drive
+# folders. Same on-demand tab-creation policy; deliberately a SEPARATE tab from
+# MMPC Archived Files (not a shared one) — mmpc_archiver.py/Mirror D is
+# untouched by this addition.
+TAB_CIVICCLERK_ARCHIVE = "CivicClerk Archived Files"
 # PFAS page-watch (ADR 012) — same on-demand policy: no tab until the watch runs.
 # This tab is BOTH the human-readable change log AND the watch's state: the most
 # recent row per URL holds the last content hash + normalized text, so change
@@ -333,6 +339,14 @@ WDS_SEEN_HEADERS = [
 MMPC_ARCHIVE_HEADERS = [
     "File ID", "Meeting Date", "Type", "Document Name",
     "Event ID", "Archive Link", "Archived At",
+]
+
+# CivicClerk multi-mirror archive (ADR 037). Same shape as MMPC_ARCHIVE_HEADERS
+# plus "Group" — this tab spans multiple categories/folders (DPW, BOC), unlike
+# MMPC's single-category tab, so which mirror produced a row is real provenance.
+CIVICCLERK_ARCHIVE_HEADERS = [
+    "File ID", "Meeting Date", "Type", "Document Name",
+    "Event ID", "Group", "Archive Link", "Archived At",
 ]
 # PFAS page-watch (ADR 012). One row per observed state of a watched page —
 # "baseline" (first sighting, silent) or "changed" (fires an alert). The last
@@ -1259,6 +1273,49 @@ def mmpc_archived_file_ids(service, sheet_id: str) -> set:
     exist yet (first run, before ensure_mmpc_tabs() has created it), so no
     extra handling is needed here."""
     return {str(r[0]) for r in _tab_rows(service, sheet_id, TAB_MMPC_ARCHIVE, "A2:A") if r and r[0]}
+
+
+def ensure_civicclerk_archive_tabs(service, sheet_id: str) -> None:
+    """Create the CivicClerk Archived Files tab if missing and reconcile its
+    header row on every run (same self-healing policy as ensure_mmpc_tabs()).
+    Called only from civicclerk_archiver.py, so the tab doesn't appear until
+    that archiver actually runs. This is a SEPARATE tab from MMPC Archived
+    Files — a new sibling mirror (ADR 037), not an extension of Mirror D."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_CIVICCLERK_ARCHIVE not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_CIVICCLERK_ARCHIVE}}}]},
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    _set_header(service, sheet_id, TAB_CIVICCLERK_ARCHIVE, CIVICCLERK_ARCHIVE_HEADERS)
+
+
+def civicclerk_archived_file_ids(service, sheet_id: str) -> set:
+    """The set of CivicClerk File IDs already mirrored to Drive by
+    civicclerk_archiver.py (col A of CivicClerk Archived Files, as strings —
+    same string-normalization reasoning as mmpc_archived_file_ids()). File IDs
+    are a single global sequence across every CivicClerk category, so ONE set
+    (not partitioned per mirror/category) is the correct dedup scope — a file
+    already archived under one mirror entry is never re-fetched under another."""
+    return {str(r[0]) for r in _tab_rows(service, sheet_id, TAB_CIVICCLERK_ARCHIVE, "A2:A") if r and r[0]}
+
+
+def append_civicclerk_archive_row(
+    service, sheet_id: str, file_id, date: str, doc_type: str, name: str,
+    event_id, group: str, archive_link: str, archived_at: str,
+) -> None:
+    """Append one CivicClerk Archived Files row. Same crash-safe ordering as
+    append_mmpc_archive_row: the Drive upload happens FIRST (durable copy),
+    this row SECOND — a crash between them just re-uploads next run
+    (idempotent per archive_client.find_in_folder's caveat; the real dedup
+    check is civicclerk_archived_file_ids() reading this tab, not the Drive
+    listing). `group` records which mirror (Board of Public Works / Board of
+    Commissioners) produced this row — this tab covers multiple categories,
+    unlike MMPC Archived Files, so that provenance matters here."""
+    append_rows(service, sheet_id, TAB_CIVICCLERK_ARCHIVE, [[
+        file_id, date, doc_type, name, event_id, group, archive_link, archived_at,
+    ]])
 
 
 def append_mmpc_archive_row(

@@ -14,6 +14,16 @@ available), or locally with those three env vars set. Read-only w.r.t. all data:
 it creates one empty folder and prints its id, nothing else.
 
     FOLDER_NAME="Arbor Hills GFL Air Exhibit" python scripts/create_oauth_folder.py
+
+Optionally set PARENT_FOLDER_ID to create the new folder directly INSIDE an
+existing folder (e.g. a parent Trisha already created and gave the ID for)
+instead of at Drive root — this works even though that parent wasn't created
+by this OAuth app: drive.file scope permits creating a new file/folder as a
+child of an existing folder ID, the same mechanism archive_client.upload_file
+already relies on to upload into Trisha's hand-created MMPC folder. Omitting
+it keeps the original root-level behavior (manual move-under-parent after).
+
+    FOLDER_NAME="DPW" PARENT_FOLDER_ID="1hqh...J897" python scripts/create_oauth_folder.py
 """
 import os
 import sys
@@ -29,6 +39,7 @@ def main() -> int:
         print("Usage: FOLDER_NAME='...' python scripts/create_oauth_folder.py "
               "(or pass the name as the first argument)")
         return 2
+    parent_id = os.environ.get("PARENT_FOLDER_ID") or (sys.argv[2] if len(sys.argv) > 2 else "")
     missing = [k for k in ("GOAUTH_CLIENT_ID", "GOAUTH_CLIENT_SECRET",
                            "GOAUTH_REFRESH_TOKEN") if not os.environ.get(k)]
     if missing:
@@ -37,26 +48,28 @@ def main() -> int:
         return 2
 
     drive = ac.oauth_drive_service()
-    folder = (
-        drive.files()
-        .create(
-            body={"name": name, "mimeType": "application/vnd.google-apps.folder"},
-            fields="id",
-        )
-        .execute()
-    )
+    body = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
+    if parent_id:
+        body["parents"] = [parent_id]
+    folder = drive.files().create(body=body, fields="id").execute()
     fid = folder["id"]
 
     print("=" * 68)
     print(f"CREATED app-only Drive folder: {name}")
     print(f"FOLDER_ID: {fid}")
+    if parent_id:
+        print(f"Created directly under parent: {parent_id}")
     print("")
     print("Next: store this as the folder-ID secret, e.g.")
     print(f"  gh secret set GOAUTH_GFL_AIR_FOLDER_ID    ->  {fid}")
     print("")
-    print("Then in Drive, move the new folder under your public-records parent and")
-    print("share 'Anyone with the link -> Viewer' (already-public data). The app")
-    print("tracks the folder by this stable ID, so moving/renaming never breaks it.")
+    if not parent_id:
+        print("Then in Drive, move the new folder under your public-records parent and")
+        print("share 'Anyone with the link -> Viewer' (already-public data). The app")
+        print("tracks the folder by this stable ID, so moving/renaming never breaks it.")
+    else:
+        print("Already placed under the given parent — just share 'Anyone with the")
+        print("link -> Viewer' if it should be publicly visible like the rest.")
     print("=" * 68)
     return 0
 
