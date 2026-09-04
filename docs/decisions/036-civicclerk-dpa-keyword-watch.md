@@ -126,7 +126,18 @@ keyword_scan:
     - "consistency determination" | "letter of consistency" | "siting" | "GFL"
     - "landfill expansion" | "Good Neighbor Plan"
     - "materials management plan amendment" | "251 acre" | "92 acre" | "Six Mile"
+    - "Eggermont"
 ```
+
+`"Eggermont"` (Theo Eggermont, Washtenaw County's Director of Public Works) was
+added 2026-09-04, after the historical backfill's own evidence showed both real
+DPW hits (`GFL`, `siting`) came from his standing Director's Report — he
+reports on GFL/landfill status at, apparently, every DPW meeting. Trisha
+directed it added after reviewing that evidence. Same fail-open posture as
+`"consistency"`/`"siting"`: broader than a pure Arbor-Hills-only signal (it
+will likely match most/all DPW meetings' minutes, not just the ones with
+landfill content), kept anyway because the two real hits to date both trace
+back to him specifically.
 
 On every due-checked event, across every group (hand-picked or auto-discover
 alike), `files_to_scan(old_files, new_files)` (pure) identifies the

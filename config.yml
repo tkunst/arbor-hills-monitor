@@ -403,6 +403,7 @@ civicclerk_watch:
       - "251 acre"
       - "92 acre"
       - "Six Mile"
+      - "Eggermont"
   groups:
     # MMPC — the Materials Management Planning Committee (category 72). Oct/Nov
     # have NO portal page (the committee isn't meeting then), so only these three
