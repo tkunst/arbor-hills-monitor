@@ -353,7 +353,7 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
             "first. The list runs back to the earliest record on file and "
             "updates automatically as new documents come in. Most are EGLE "
             "filings; hand-curated public records from other sources are "
-            "labeled with their source.</p>\n"
+            "labeled with their source where known.</p>\n"
         )
         title = "Public Records &middot; Arbor Hills Monitor"
     else:
