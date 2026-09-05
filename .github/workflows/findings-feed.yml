@@ -52,12 +52,11 @@ jobs:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
         run: python scripts/check_handcurated_sources.py
       - name: Publish-safety gate (personal names / internal markers)
-        # HARD GATE: a personal name or internal marker in a PUBLISHED
-        # hand-curated field (title / source_public) fails this step, so the
-        # "Commit and push" step below never runs and nothing deploys. Names in
-        # the pre-existing auto feed are warn-only (see check_publish_safety.py).
-        env:
-          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+        # HARD GATE: scans the JUST-GENERATED HTML (the exact bytes about to be
+        # committed). A personal name or name-shaped token in a PUBLISHED
+        # hand-curated field fails this step, so the "Commit and push" step below
+        # never runs and nothing deploys. Names in the pre-existing auto feed are
+        # warn-only (see check_publish_safety.py). Reads only files -- no creds.
         run: python scripts/check_publish_safety.py
       - name: Commit and push if the feed changed
         run: |

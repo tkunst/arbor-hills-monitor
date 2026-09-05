@@ -207,16 +207,6 @@ HANDCURATED_FIELDS = [
     "folded_into_public", "source_public",
 ]
 
-# The Hand-Curated columns the public feed is ALLOWED to publish. `source`
-# (internal, may carry personal names) and `note` (internal working annotation:
-# folder names, process notes, strategy) are deliberately NOT here -- see
-# parse_handcurated_rows. Enforced by test_handcurated_never_publishes_internal_
-# fields so a future edit can't quietly widen it.
-HANDCURATED_PUBLIC_FIELDS = frozenset(
-    {"curated_filename", "title", "doc_date", "facility", "doc_type", "risks",
-     "origin_url", "drive_link", "added_at", "folded_into_public", "source_public"}
-)
-
 
 def parse_handcurated_rows(raw_rows: list[list]) -> list[dict]:
     """Hand-Curated Files rows -> the same FEED_FIELDS-shaped dicts
