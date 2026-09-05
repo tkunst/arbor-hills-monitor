@@ -204,28 +204,40 @@ def merge_and_sort(new_rows: list[list], historical_rows: list[list]) -> list[di
 HANDCURATED_FIELDS = [
     "curated_filename", "title", "source", "doc_date", "facility",
     "doc_type", "risks", "origin_url", "note", "drive_link", "added_at",
-    "folded_into_public",
+    "folded_into_public", "source_public",
 ]
+
+# The Hand-Curated columns the public feed is ALLOWED to publish. `source`
+# (internal, may carry personal names) and `note` (internal working annotation:
+# folder names, process notes, strategy) are deliberately NOT here -- see
+# parse_handcurated_rows. Enforced by test_handcurated_never_publishes_internal_
+# fields so a future edit can't quietly widen it.
+HANDCURATED_PUBLIC_FIELDS = frozenset(
+    {"curated_filename", "title", "doc_date", "facility", "doc_type", "risks",
+     "origin_url", "drive_link", "added_at", "folded_into_public", "source_public"}
+)
 
 
 def parse_handcurated_rows(raw_rows: list[list]) -> list[dict]:
     """Hand-Curated Files rows -> the same FEED_FIELDS-shaped dicts
     parse_feed_rows() produces for the auto tabs, so both merge into one
     sortable/renderable list. Mapping: doc_date -> date_filed, title ->
-    document_name, doc_type -> type, risks -> risks, note -> summary
-    (falls back to title when note is blank), drive_link -> link,
-    facility -> facility. severity and key_data_point have no Hand-Curated
-    equivalent -- left blank, which render_entry already tolerates (several
-    auto rows are blank there too). Pads a short row the same way
-    parse_feed_rows does, and skips a blank row entirely.
+    document_name, doc_type -> type, risks -> risks, drive_link -> link,
+    facility -> facility, source_public -> source. severity, key_data_point and
+    summary have no published Hand-Curated equivalent -- left blank (the title
+    is the description). Pads a short row the same way parse_feed_rows does, and
+    skips a blank row entirely.
 
-    Carries one field the auto tabs have no equivalent for: `source` (the
-    issuing/holding body -- GFL, the operator, a township/county, a community
-    group, an EGLE records request, ...). render_entry surfaces it as a
-    "Source: ..." tag ONLY on rows that have it, so the public data-layer feed
-    stays source-labeled once these non-EGLE records appear alongside EGLE
-    filings (CLAUDE.md's "accuracy over posturing" data-layer rule). Auto/EGLE
-    rows carry no `source` key at all, so nothing changes for them."""
+    PUBLIC-SAFETY BY CONSTRUCTION: the published `source` comes from the
+    redacted external `source_public` column, NEVER the internal `source`
+    (which may carry personal names). `summary` is deliberately NOT taken from
+    `note` -- `note` is an internal annotation (working-folder names,
+    'Trisha-directed', strategy) and is never published. So the internal
+    `source`/`note` columns are read positionally to keep column alignment but
+    are dropped, never placed in the output dict a renderer sees. render_entry
+    surfaces `source` (i.e. source_public) as a "Source: ..." tag, or
+    "Source: not stated" when source_public is blank; auto/EGLE rows carry no
+    `source` key at all, so nothing changes for them."""
     out = []
     for r in raw_rows:
         if not r:
@@ -238,11 +250,11 @@ def parse_handcurated_rows(raw_rows: list[list]) -> list[dict]:
             "type": hc["doc_type"],
             "risks": hc["risks"],
             "severity": "",
-            "summary": hc["note"] or hc["title"],
+            "summary": "",
             "key_data_point": "",
             "link": hc["drive_link"],
             "facility": hc["facility"],
-            "source": hc["source"],
+            "source": hc["source_public"],
         })
     return out
 

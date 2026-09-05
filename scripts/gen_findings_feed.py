@@ -75,11 +75,12 @@ def main() -> None:
 
     new_rows = _tab_values(service, sheet_id, sheet_writer.TAB_NEW)
     historical_rows = _tab_values(service, sheet_id, sheet_writer.TAB_HISTORICAL)
-    # Hand-Curated Files has 12 columns (A:L) -- wider than the default "A2:I"
-    # (New/Historical Documents' 9-column FEED_HEADERS width), so the range
-    # must be given explicitly or drive_link/added_at/folded_into_public
-    # (columns J-L) get silently truncated off every row.
-    handcurated_rows = _tab_values(service, sheet_id, sheet_writer.TAB_HANDCURATED, "A2:L")
+    # Hand-Curated Files has 13 columns (A:M) -- wider than the default "A2:I"
+    # (New/Historical Documents' 9-column FEED_HEADERS width), so the range must
+    # be given explicitly or columns get silently truncated. Column M is
+    # `source_public` -- the redacted external source the feed publishes; the
+    # internal `source` (col C, may carry names) is never published.
+    handcurated_rows = _tab_values(service, sheet_id, sheet_writer.TAB_HANDCURATED, "A2:M")
     rows = findings_feed.merge_and_sort(new_rows, historical_rows)
     # The nSITE link errors for a human clicking it in a browser (see
     # findings_feed.resolve_display_link's docstring) -- swap in the durable

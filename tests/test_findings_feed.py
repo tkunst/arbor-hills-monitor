@@ -334,12 +334,16 @@ def _hc_row(filename="2026-08-21-arbor-hills-gfl-120-day-gccs-extension-request.
             doc_date="2026-08-21", facility="N2688", doc_type="procedural", risks="R4, R8",
             origin_url="", note="Provided by EGLE AQD in response to a records request.",
             drive_link="https://drive.google.com/file/d/1ia9-7tJeKUUuJ8cBfw5R0YkCzmrq7Kqx/view",
-            added_at="2026-09-02T00:51:57", folded_into_public="no"):
-    # Same column order as sheet_writer.TAB_HANDCURATED (docs/hand-curated-
-    # intake-design.md): curated_filename, title, source, doc_date, facility,
-    # doc_type, risks, origin_url, note, drive_link, added_at, folded_into_public.
+            added_at="2026-09-02T00:51:57", folded_into_public="no", source_public=None):
+    # Same column order as sheet_writer.TAB_HANDCURATED: curated_filename, title,
+    # source(internal), doc_date, facility, doc_type, risks, origin_url, note,
+    # drive_link, added_at, folded_into_public, source_public(external/redacted).
+    # source_public defaults to `source` so a test that only sets `source` still
+    # exercises the PUBLISHED source; set it explicitly to test the split.
+    if source_public is None:
+        source_public = source
     return [filename, title, source, doc_date, facility, doc_type, risks,
-            origin_url, note, drive_link, added_at, folded_into_public]
+            origin_url, note, drive_link, added_at, folded_into_public, source_public]
 
 
 def test_parse_handcurated_rows_maps_all_nine_feed_fields():
@@ -352,16 +356,30 @@ def test_parse_handcurated_rows_maps_all_nine_feed_fields():
     assert row["type"] == "procedural"
     assert row["risks"] == "R4, R8"
     assert row["severity"] == ""
-    assert row["summary"] == "Provided by EGLE AQD in response to a records request."
+    # note is NOT published as summary (it is internal); title is the description.
+    assert row["summary"] == ""
     assert row["key_data_point"] == ""
     assert row["link"] == "https://drive.google.com/file/d/1ia9-7tJeKUUuJ8cBfw5R0YkCzmrq7Kqx/view"
     assert row["facility"] == "N2688"
+    # published source is source_public (defaulted to the source value here).
     assert row["source"] == "GFL / Arbor Hills Landfill, Inc."
 
 
-def test_parse_handcurated_rows_summary_falls_back_to_title_when_note_blank():
-    row = ff.parse_handcurated_rows([_hc_row(title="Site Photo", note="")])[0]
-    assert row["summary"] == "Site Photo"
+def test_handcurated_never_publishes_internal_source_or_note():
+    # The safety property this whole design rests on: the feed publishes the
+    # redacted external source_public and NEVER the internal `source` (may carry
+    # a personal name) or the internal `note` (working-folder names, strategy).
+    hc = ff.parse_handcurated_rows([_hc_row(
+        source="EGLE AQD (Diane Kavanaugh Vetort)",   # internal, has a name
+        source_public="EGLE AQD",                      # redacted public label
+        note="Hand-curated 2026-07-24, Trisha-directed; found in full-circle folder",
+    )])[0]
+    out = ff.render_entry(hc)
+    assert "Source: EGLE AQD" in out
+    assert "Vetort" not in out          # internal source name never published
+    assert "Trisha" not in out          # internal note never published
+    assert "full-circle" not in out
+    assert hc["summary"] == ""          # note not used as a summary paragraph
 
 
 def test_parse_handcurated_rows_skips_blank_rows():
@@ -369,12 +387,14 @@ def test_parse_handcurated_rows_skips_blank_rows():
 
 
 def test_parse_handcurated_rows_pads_short_rows():
-    short = ["file.pdf", "Title", "Source"]  # only 3 of 12 columns
+    short = ["file.pdf", "Title", "Source-internal"]  # only 3 of 13 columns
     rows = ff.parse_handcurated_rows([short])
+    # source_public (col M) is absent -> blank; the internal `source` in col C is
+    # never published, so the output source is "", not "Source-internal".
     assert rows == [{
         "date_filed": "", "document_name": "Title", "type": "", "risks": "",
-        "severity": "", "summary": "Title", "key_data_point": "", "link": "",
-        "facility": "", "source": "Source",
+        "severity": "", "summary": "", "key_data_point": "", "link": "",
+        "facility": "", "source": "",
     }]
 
 
@@ -427,20 +447,22 @@ def test_render_entry_shows_source_tag_for_handcurated_only():
 
 
 def test_render_entry_escapes_handcurated_source():
-    # `source` is human-typed into a Sheet cell -- untrusted, so it must be
+    # source_public is human-typed into a Sheet cell -- untrusted, so it must be
     # HTML-escaped like every other field before reaching the meta line.
-    hc = ff.parse_handcurated_rows([_hc_row(source='<script>x</script>')])[0]
+    hc = ff.parse_handcurated_rows([_hc_row(source_public='<script>x</script>')])[0]
     out = ff.render_entry(hc)
     assert "<script>x</script>" not in out
     assert "&lt;script&gt;" in out
 
 
-def test_render_entry_blank_source_shows_not_stated():
-    # A Hand-Curated row with a blank source renders a VISIBLE "Source: not
-    # stated" placeholder -- never silently drops the tag, so a missing source
-    # is visible on the page and catchable by the source-quality check.
-    hc = ff.parse_handcurated_rows([_hc_row(source="")])[0]
-    assert "Source: not stated" in ff.render_entry(hc)
+def test_render_entry_blank_source_public_shows_not_stated():
+    # A blank source_public renders a VISIBLE "Source: not stated" placeholder --
+    # never silently drops the tag, AND never falls back to the internal source,
+    # so even a name in the internal source column is not shown.
+    hc = ff.parse_handcurated_rows([_hc_row(source="EGLE (Kovalchick)", source_public="")])[0]
+    out = ff.render_entry(hc)
+    assert "Source: not stated" in out
+    assert "Kovalchick" not in out
     # ...but an AUTO row (no `source` key at all) still shows no Source tag.
     auto = ff.parse_feed_rows([_row(name="Auto Doc")])[0]
     assert "Source:" not in ff.render_entry(auto)

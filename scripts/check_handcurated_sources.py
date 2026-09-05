@@ -2,12 +2,14 @@
 """check_handcurated_sources.py -- a NON-BLOCKING, non-silent source-quality
 report for the Hand-Curated Files tab.
 
-Every hand-curated record that reaches the public Public Records feed carries a
-`source` (issuing/holding body) that renders as a "Source: ..." tag. A row with
-a BLANK source renders the visible placeholder "Source: not stated" instead of
-silently dropping the tag (see findings_feed.render_entry). This script reports
-which hand-curated rows currently have a blank/whitespace source so Trisha can
-fill them in -- it is deliberately NON-BLOCKING: it always exits 0 and never
+Every hand-curated record that reaches the public Public Records feed publishes
+a redacted external `source_public` (issuing/holding body) that renders as a
+"Source: ..." tag. A row with a BLANK `source_public` renders the visible
+placeholder "Source: not stated" instead of silently dropping the tag (see
+findings_feed.render_entry) -- the feed never falls back to the internal
+`source` column, which may carry personal names. This script reports which
+hand-curated rows currently have a blank/whitespace `source_public` so Trisha
+can fill them in -- it is deliberately NON-BLOCKING: it always exits 0 and never
 fails the feed regeneration. It only *reports* (GitHub Actions ::warning::
 annotations + a plain summary), never gates.
 
@@ -58,7 +60,7 @@ def main() -> int:
     rows = (
         service.spreadsheets()
         .values()
-        .get(spreadsheetId=sheet_id, range=f"'{sheet_writer.TAB_HANDCURATED}'!A2:L")
+        .get(spreadsheetId=sheet_id, range=f"'{sheet_writer.TAB_HANDCURATED}'!A2:M")
         .execute(num_retries=drive_client.GOOGLE_API_NUM_RETRIES)
     ).get("values", [])
 

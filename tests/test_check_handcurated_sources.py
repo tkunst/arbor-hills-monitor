@@ -13,12 +13,13 @@ chs = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(chs)
 
 
-def _hc(source, title="Doc", doc_date="2026-09-05"):
-    # Hand-Curated column order (sheet_writer.TAB_HANDCURATED): curated_filename,
-    # title, source, doc_date, facility, doc_type, risks, origin_url, note,
-    # drive_link, added_at, folded_into_public.
-    return ["f.pdf", title, source, doc_date, "N2688", "procedural",
-            "", "", "note", "https://drive.google.com/x", "2026-09-05T00:00:00", "no"]
+def _hc(source_public, title="Doc", doc_date="2026-09-05"):
+    # Hand-Curated column order (sheet_writer.TAB_HANDCURATED), 13 cols. The
+    # PUBLISHED source is col M (source_public) -- what this check inspects; the
+    # internal source (col C) is irrelevant here and never published.
+    return ["f.pdf", title, "internal-source", doc_date, "N2688", "procedural",
+            "", "", "note", "https://drive.google.com/x", "2026-09-05T00:00:00",
+            "no", source_public]
 
 
 def test_flags_blank_and_whitespace_source_only():
