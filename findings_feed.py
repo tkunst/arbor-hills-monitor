@@ -176,13 +176,80 @@ def parse_feed_rows(raw_rows: list[list]) -> list[dict]:
     return out
 
 
-def merge_and_sort(new_rows: list[list], historical_rows: list[list]) -> list[dict]:
-    """New Documents + Historical Documents, newest Date Filed first. Date
-    Filed is always ISO (YYYY-MM-DD), so a plain string sort is correct.
-    Python's sort is stable, so two rows sharing a date keep their relative
-    order (new-tab rows before historical-tab rows, matching input order)."""
-    rows = parse_feed_rows(new_rows) + parse_feed_rows(historical_rows)
+def _sort_newest_first(rows: list[dict]) -> list[dict]:
+    """Newest Date Filed first. Date Filed is normally ISO (YYYY-MM-DD); a
+    handful of Hand-Curated Files rows only know a partial ISO-prefixed date
+    (e.g. "2022-03") -- a plain string sort still orders those correctly
+    relative to full dates (a shorter string that's a prefix of a longer one
+    sorts before it in Python), and never raises regardless of format. A
+    NON-ISO date_filed (e.g. "3/15/2021"), were one ever entered, would sort
+    by lexicographic accident rather than raise -- silently misplaced, not
+    crashed. Hand-Curated Files has no format validation on doc_date today
+    (a manually-populated column, unlike the auto tabs' pipeline-guaranteed
+    ISO dates); all real rows as of this writing are ISO-prefixed. Python's
+    sort is stable, so rows sharing an identical date_filed keep their
+    relative input order."""
     return sorted(rows, key=lambda r: r["date_filed"], reverse=True)
+
+
+def merge_and_sort(new_rows: list[list], historical_rows: list[list]) -> list[dict]:
+    """New Documents + Historical Documents, newest Date Filed first."""
+    return _sort_newest_first(parse_feed_rows(new_rows) + parse_feed_rows(historical_rows))
+
+
+# Hand-Curated Files tab columns (docs/hand-curated-intake-design.md) -- a
+# SEPARATE schema from New/Historical Documents' FEED_HEADERS, since these
+# rows are entered by a human, not the classifier pipeline. See
+# sheet_writer.TAB_HANDCURATED's docstring comment for the tab's origin.
+HANDCURATED_FIELDS = [
+    "curated_filename", "title", "source", "doc_date", "facility",
+    "doc_type", "risks", "origin_url", "note", "drive_link", "added_at",
+    "folded_into_public",
+]
+
+
+def parse_handcurated_rows(raw_rows: list[list]) -> list[dict]:
+    """Hand-Curated Files rows -> the same FEED_FIELDS-shaped dicts
+    parse_feed_rows() produces for the auto tabs, so both merge into one
+    sortable/renderable list. Mapping: doc_date -> date_filed, title ->
+    document_name, doc_type -> type, risks -> risks, note -> summary
+    (falls back to title when note is blank), drive_link -> link,
+    facility -> facility. severity and key_data_point have no Hand-Curated
+    equivalent -- left blank, which render_entry already tolerates (several
+    auto rows are blank there too). Pads a short row the same way
+    parse_feed_rows does, and skips a blank row entirely."""
+    out = []
+    for r in raw_rows:
+        if not r:
+            continue
+        padded = list(r) + [""] * (len(HANDCURATED_FIELDS) - len(r))
+        hc = dict(zip(HANDCURATED_FIELDS, padded))
+        out.append({
+            "date_filed": hc["doc_date"],
+            "document_name": hc["title"],
+            "type": hc["doc_type"],
+            "risks": hc["risks"],
+            "severity": "",
+            "summary": hc["note"] or hc["title"],
+            "key_data_point": "",
+            "link": hc["drive_link"],
+            "facility": hc["facility"],
+        })
+    return out
+
+
+def merge_handcurated(rows: list[dict], handcurated_rows: list[list]) -> list[dict]:
+    """Merge Hand-Curated Files rows into an already-built feed list (typically
+    merge_and_sort()'s output, optionally after resolve_display_links()),
+    re-sorting the combined set newest-first. A separate merge step from
+    merge_and_sort -- not folded into it -- because Hand-Curated Files uses an
+    entirely different column schema (see parse_handcurated_rows). Some
+    Hand-Curated records describe a document also present in the auto tabs
+    under a generic classification (the intake design's ANNOTATION mode);
+    this can double-list that document once auto, once curated. That is
+    accepted, not de-duplicated -- see docs/hand-curated-intake-design.md and
+    the overnight-coder handoff for this feature's Decision 3."""
+    return _sort_newest_first(rows + parse_handcurated_rows(handcurated_rows))
 
 
 def paginate(rows: list[dict], page_size: int = PAGE_SIZE) -> list[list[dict]]:
@@ -211,14 +278,19 @@ def render_entry(row: dict) -> str:
     doc_type = _esc(row.get("type"))
     severity = _esc(row.get("severity"))
     facility = _esc(facility_display(row.get("facility") or ""))
-    # Every producer of `link` in this codebase builds it from a fixed nSITE
-    # base URL + a numeric doc_id (see nsite_client.native_download_url) —
-    # never classifier or free-text output — so this isn't a live injection
-    # path today. Still worth a scheme check as defense in depth: an http(s)
-    # link renders as a clickable href, anything else renders as plain text
-    # instead of ever reaching an <a href="..."> attribute. By the time a row
-    # reaches here `link` may already be a Drive archive-mirror URL, not the
-    # original nSITE one — see resolve_display_link; both are https.
+    # Every auto-tab producer of `link` builds it from a fixed nSITE base URL
+    # + a numeric doc_id (see nsite_client.native_download_url) -- never
+    # classifier or free-text output. Hand-Curated Files' `drive_link` is
+    # different: it's typed by a human directly into a Sheet cell (see
+    # parse_handcurated_rows), so `link` IS genuinely untrusted free-text on
+    # that path. The scheme check below is this row's actual defense against
+    # that input, not just defense in depth for a path that doesn't exist: an
+    # http(s) link renders as a clickable href (still HTML-escaped by _esc,
+    # so an attribute-breakout attempt fails closed too), anything else
+    # (javascript:, data:, malformed text) renders as plain text instead of
+    # ever reaching an <a href="..."> attribute. By the time a row reaches
+    # here `link` may already be a Drive archive-mirror URL, not the
+    # original nSITE one -- see resolve_display_link; both are https.
     raw_link = row.get("link") or ""
     link = _esc(raw_link) if raw_link.startswith(("http://", "https://")) else ""
     summary = _esc(row.get("summary"))

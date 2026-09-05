@@ -325,3 +325,85 @@ def test_build_pages_empty_feed_renders_single_page():
     pages = ff.build_pages([], generated_at="2026-08-21 12:00 UTC")
     assert set(pages.keys()) == {"index.html"}
     assert "No documents found." in pages["index.html"]
+
+
+# --- Hand-Curated Files -----------------------------------------------------
+
+def _hc_row(filename="2026-08-21-arbor-hills-gfl-120-day-gccs-extension-request.pdf",
+            title="GFL 120-day GCCS extension request", source="GFL / Arbor Hills Landfill, Inc.",
+            doc_date="2026-08-21", facility="N2688", doc_type="procedural", risks="R4, R8",
+            origin_url="", note="Provided by EGLE AQD in response to a records request.",
+            drive_link="https://drive.google.com/file/d/1ia9-7tJeKUUuJ8cBfw5R0YkCzmrq7Kqx/view",
+            added_at="2026-09-02T00:51:57", folded_into_public="no"):
+    # Same column order as sheet_writer.TAB_HANDCURATED (docs/hand-curated-
+    # intake-design.md): curated_filename, title, source, doc_date, facility,
+    # doc_type, risks, origin_url, note, drive_link, added_at, folded_into_public.
+    return [filename, title, source, doc_date, facility, doc_type, risks,
+            origin_url, note, drive_link, added_at, folded_into_public]
+
+
+def test_parse_handcurated_rows_maps_all_nine_feed_fields():
+    row = ff.parse_handcurated_rows([_hc_row()])[0]
+    assert set(row.keys()) == set(ff.FEED_FIELDS)
+    assert row["date_filed"] == "2026-08-21"
+    assert row["document_name"] == "GFL 120-day GCCS extension request"
+    assert row["type"] == "procedural"
+    assert row["risks"] == "R4, R8"
+    assert row["severity"] == ""
+    assert row["summary"] == "Provided by EGLE AQD in response to a records request."
+    assert row["key_data_point"] == ""
+    assert row["link"] == "https://drive.google.com/file/d/1ia9-7tJeKUUuJ8cBfw5R0YkCzmrq7Kqx/view"
+    assert row["facility"] == "N2688"
+
+
+def test_parse_handcurated_rows_summary_falls_back_to_title_when_note_blank():
+    row = ff.parse_handcurated_rows([_hc_row(title="Site Photo", note="")])[0]
+    assert row["summary"] == "Site Photo"
+
+
+def test_parse_handcurated_rows_skips_blank_rows():
+    assert ff.parse_handcurated_rows([[], _hc_row()]) == ff.parse_handcurated_rows([_hc_row()])
+
+
+def test_parse_handcurated_rows_pads_short_rows():
+    short = ["file.pdf", "Title", "Source"]  # only 3 of 12 columns
+    rows = ff.parse_handcurated_rows([short])
+    assert rows == [{
+        "date_filed": "", "document_name": "Title", "type": "", "risks": "",
+        "severity": "", "summary": "Title", "key_data_point": "", "link": "",
+        "facility": "",
+    }]
+
+
+def test_merge_handcurated_partial_date_row_sorts_without_raising():
+    # At least one real Hand-Curated row only knows a partial doc_date
+    # (e.g. "2022-03") -- must not crash the newest-first sort.
+    rows = ff.merge_and_sort([_row(date="2026-08-10", name="FromNew")], [])
+    combined = ff.merge_handcurated(rows, [_hc_row(doc_date="2022-03", title="Partial Date Doc")])
+    assert [r["document_name"] for r in combined] == ["FromNew", "Partial Date Doc"]
+
+
+def test_merge_handcurated_blank_facility_and_severity_row_renders():
+    rows = ff.merge_handcurated([], [_hc_row(facility="", title="No Facility Doc")])
+    out = ff.render_entry(rows[0])
+    assert "No Facility Doc" in out
+    assert "None" not in out
+
+
+def test_merge_handcurated_combined_count_equals_old_plus_handcurated():
+    old_rows = ff.merge_and_sort(
+        [_row(date="2026-08-10", name="A")],
+        [_row(date="2020-01-01", name="B"), _row(date="1996-06-14", name="C")],
+    )
+    handcurated = [_hc_row(doc_date=f"2021-0{i}", title=f"HC {i}") for i in range(1, 4)]
+    combined = ff.merge_handcurated(old_rows, handcurated)
+    assert len(combined) == len(old_rows) + len(handcurated)
+
+
+def test_merge_handcurated_newest_gfl_letter_sorts_near_the_top():
+    # The real specimen this feature was built for: a 2026-08-21 hand-curated
+    # letter should sort ahead of older auto-tab documents.
+    rows = ff.merge_and_sort([], [_row(date="2020-01-01", name="Old Auto Doc")])
+    combined = ff.merge_handcurated(rows, [_hc_row()])
+    assert combined[0]["document_name"] == "GFL 120-day GCCS extension request"
+    assert combined[0]["link"] == "https://drive.google.com/file/d/1ia9-7tJeKUUuJ8cBfw5R0YkCzmrq7Kqx/view"

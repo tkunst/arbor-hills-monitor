@@ -28,8 +28,13 @@ that *shouldn't* be public can leak onto a publicly-shared surface.
   monitor's other public Drive subfolders (the EGLE document mirror, the
   MMPC minutes archive, etc.), same parent. **Built 2026-07-23.**
 - **Sheet:** `Hand-Curated Files` tab, columns:
-  `curated_filename | title | source | doc_date | facility | doc_type | risks | origin_url | note | drive_link | added_at`.
-  **Built 2026-07-23.**
+  `curated_filename | title | source | doc_date | facility | doc_type | risks | origin_url | note | drive_link | added_at | folded_into_public`.
+  **Built 2026-07-23.** `folded_into_public` was added later (see
+  `docs/sessions/session-2026-07-23-hand-curated-intake-manual-precedent.md`)
+  to record which public advocacy page, if any, a curated record has been
+  folded into -- not part of this design's original 11-column plan below,
+  kept here so this doc matches the tab's actual live schema (12 columns,
+  A:L).
 
 **Why a separate surface, not folded into the existing archive tabs/folder:**
 
@@ -137,11 +142,16 @@ generic auto-classification.
 
 ## New `Hand-Curated Files` tab schema
 
-`curated_filename | title | source | doc_date | facility | doc_type | risks | origin_url | note | drive_link | added_at`
+`curated_filename | title | source | doc_date | facility | doc_type | risks | origin_url | note | drive_link | added_at | folded_into_public`
 
 - `curated_filename` = the manifest `file:` value → the dedup key.
 - `drive_link` = the link `ac.upload_pdf` returns (UPLOAD mode) or
   `already_public_url` verbatim (ANNOTATION mode).
+- `folded_into_public` = added after this design's original 11-column plan
+  (see the note above) -- the public advocacy page path a curated record has
+  been folded into, or blank/`no` if none. Not produced by anything described
+  in this doc's "Code to add" section below; set by hand in some rows to
+  date.
 - `added_at` = an ISO timestamp, same convention the other archivers use.
 
 ## Code to add (mirrors existing patterns — minimal new surface)
