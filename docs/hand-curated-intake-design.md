@@ -28,13 +28,37 @@ that *shouldn't* be public can leak onto a publicly-shared surface.
   monitor's other public Drive subfolders (the EGLE document mirror, the
   MMPC minutes archive, etc.), same parent. **Built 2026-07-23.**
 - **Sheet:** `Hand-Curated Files` tab, columns:
-  `curated_filename | title | source | doc_date | facility | doc_type | risks | origin_url | note | drive_link | added_at | folded_into_public`.
+  `curated_filename | title | source | doc_date | facility | doc_type | risks | origin_url | note | drive_link | added_at | folded_into_public | source_public`.
   **Built 2026-07-23.** `folded_into_public` was added later (see
   `docs/sessions/session-2026-07-23-hand-curated-intake-manual-precedent.md`)
   to record which public advocacy page, if any, a curated record has been
   folded into -- not part of this design's original 11-column plan below,
-  kept here so this doc matches the tab's actual live schema (12 columns,
-  A:L).
+  kept here so this doc matches the tab's actual live schema. `source_public`
+  (column M) was added 2026-09-05 when these records began publishing on the
+  public Public Records feed (ADR 038); the live schema is now 13 columns
+  (A:M).
+
+**Public feed / privacy split (ADR 038, 2026-09-05).** These records now
+publish on the public Public Records feed (`site/public-records/`). What
+publishes is strictly limited, so an internal name or working note can never
+reach the page:
+
+- **`source_public` (col M) is what the feed publishes** as each record's
+  `Source:` tag -- a REDACTED external label (drop personal names, keep
+  org/role/date). The internal **`source` (col C)** keeps the names for the
+  record and is NEVER published. A blank `source_public` renders
+  "Source: not stated" (never falls back to the internal source).
+- **`note` (col I) is NEVER published.** It is an internal annotation
+  (where-found, working-folder names, strategy); the feed drops it entirely
+  (the `title` is the public description).
+- **`title` (col B) publishes verbatim**, so it must carry no personal name.
+  The dedupe-curate intake process runs `name_check.py` on the title and
+  redacts until clean before appending a row.
+- **Publish gate.** `scripts/check_publish_safety.py` (wired into
+  `findings-feed.yml`) scans the generated HTML and BLOCKS the deploy if a
+  personal name or name-shaped token appears in a published hand-curated field
+  (`title`/`source_public`). It is a no-LLM backstop (denylist + name-shape
+  heuristic); human redaction of the published fields is the primary control.
 
 **Why a separate surface, not folded into the existing archive tabs/folder:**
 
@@ -142,7 +166,7 @@ generic auto-classification.
 
 ## New `Hand-Curated Files` tab schema
 
-`curated_filename | title | source | doc_date | facility | doc_type | risks | origin_url | note | drive_link | added_at | folded_into_public`
+`curated_filename | title | source | doc_date | facility | doc_type | risks | origin_url | note | drive_link | added_at | folded_into_public | source_public`
 
 - `curated_filename` = the manifest `file:` value → the dedup key.
 - `drive_link` = the link `ac.upload_pdf` returns (UPLOAD mode) or
