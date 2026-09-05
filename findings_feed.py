@@ -305,12 +305,18 @@ def render_entry(row: dict) -> str:
     summary = _esc(row.get("summary"))
     kdp = _esc(row.get("key_data_point"))
     # `source` (issuing/holding body) is present only on Hand-Curated rows
-    # (see parse_handcurated_rows); auto/EGLE rows have no such key, so this is
-    # blank for them and the tag never appears. Surfacing it keeps the public
+    # (see parse_handcurated_rows) -- auto/EGLE rows have no `source` key at
+    # all, so they never show a Source tag. Surfacing it keeps the public
     # data-layer feed source-labeled now that non-EGLE records (GFL, township,
-    # county, community groups) sit alongside EGLE filings.
-    source = _esc(row.get("source"))
-    source_bit = f"Source: {source}" if source else ""
+    # county, community groups) sit alongside EGLE filings. A Hand-Curated row
+    # with a BLANK source renders "Source: not stated" rather than silently
+    # dropping the tag -- a missing source stays visible on the page (and is
+    # reported by scripts/check_handcurated_sources.py), never quietly hidden.
+    if "source" in row:
+        src = _esc(row.get("source"))
+        source_bit = f"Source: {src}" if src else "Source: not stated"
+    else:
+        source_bit = ""
 
     meta = " &middot; ".join(b for b in (date, facility, doc_type, severity, source_bit) if b)
 
@@ -353,7 +359,7 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
             "first. The list runs back to the earliest record on file and "
             "updates automatically as new documents come in. Most are EGLE "
             "filings; hand-curated public records from other sources are "
-            "labeled with their source where known.</p>\n"
+            "labeled with their source.</p>\n"
         )
         title = "Public Records &middot; Arbor Hills Monitor"
     else:

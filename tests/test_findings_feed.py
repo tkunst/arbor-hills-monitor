@@ -435,7 +435,12 @@ def test_render_entry_escapes_handcurated_source():
     assert "&lt;script&gt;" in out
 
 
-def test_render_entry_blank_source_shows_no_tag():
-    # A Hand-Curated row with a blank source must not render a bare "Source:".
+def test_render_entry_blank_source_shows_not_stated():
+    # A Hand-Curated row with a blank source renders a VISIBLE "Source: not
+    # stated" placeholder -- never silently drops the tag, so a missing source
+    # is visible on the page and catchable by the source-quality check.
     hc = ff.parse_handcurated_rows([_hc_row(source="")])[0]
-    assert "Source:" not in ff.render_entry(hc)
+    assert "Source: not stated" in ff.render_entry(hc)
+    # ...but an AUTO row (no `source` key at all) still shows no Source tag.
+    auto = ff.parse_feed_rows([_row(name="Auto Doc")])[0]
+    assert "Source:" not in ff.render_entry(auto)
