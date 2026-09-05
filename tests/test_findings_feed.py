@@ -344,7 +344,9 @@ def _hc_row(filename="2026-08-21-arbor-hills-gfl-120-day-gccs-extension-request.
 
 def test_parse_handcurated_rows_maps_all_nine_feed_fields():
     row = ff.parse_handcurated_rows([_hc_row()])[0]
-    assert set(row.keys()) == set(ff.FEED_FIELDS)
+    # The 9 FEED_FIELDS keys the auto tabs produce, plus `source` -- the one
+    # field Hand-Curated carries that the auto tabs have no equivalent for.
+    assert set(row.keys()) == set(ff.FEED_FIELDS) | {"source"}
     assert row["date_filed"] == "2026-08-21"
     assert row["document_name"] == "GFL 120-day GCCS extension request"
     assert row["type"] == "procedural"
@@ -354,6 +356,7 @@ def test_parse_handcurated_rows_maps_all_nine_feed_fields():
     assert row["key_data_point"] == ""
     assert row["link"] == "https://drive.google.com/file/d/1ia9-7tJeKUUuJ8cBfw5R0YkCzmrq7Kqx/view"
     assert row["facility"] == "N2688"
+    assert row["source"] == "GFL / Arbor Hills Landfill, Inc."
 
 
 def test_parse_handcurated_rows_summary_falls_back_to_title_when_note_blank():
@@ -371,7 +374,7 @@ def test_parse_handcurated_rows_pads_short_rows():
     assert rows == [{
         "date_filed": "", "document_name": "Title", "type": "", "risks": "",
         "severity": "", "summary": "Title", "key_data_point": "", "link": "",
-        "facility": "",
+        "facility": "", "source": "Source",
     }]
 
 
@@ -407,3 +410,32 @@ def test_merge_handcurated_newest_gfl_letter_sorts_near_the_top():
     combined = ff.merge_handcurated(rows, [_hc_row()])
     assert combined[0]["document_name"] == "GFL 120-day GCCS extension request"
     assert combined[0]["link"] == "https://drive.google.com/file/d/1ia9-7tJeKUUuJ8cBfw5R0YkCzmrq7Kqx/view"
+
+
+def test_render_entry_shows_source_tag_for_handcurated_only():
+    # A Hand-Curated row's `source` (issuing/holding body) is surfaced as a
+    # "Source: ..." meta tag so the public data-layer feed stays source-labeled
+    # once non-EGLE records appear. An auto/EGLE row has no `source` key, so the
+    # tag never appears for it -- the auto feed is unchanged.
+    hc = ff.parse_handcurated_rows([_hc_row(source="Charter Township of Salem")])[0]
+    hc_html = ff.render_entry(hc)
+    assert "Source: Charter Township of Salem" in hc_html
+
+    auto = ff.parse_feed_rows([_row(name="Auto Doc")])[0]
+    auto_html = ff.render_entry(auto)
+    assert "Source:" not in auto_html
+
+
+def test_render_entry_escapes_handcurated_source():
+    # `source` is human-typed into a Sheet cell -- untrusted, so it must be
+    # HTML-escaped like every other field before reaching the meta line.
+    hc = ff.parse_handcurated_rows([_hc_row(source='<script>x</script>')])[0]
+    out = ff.render_entry(hc)
+    assert "<script>x</script>" not in out
+    assert "&lt;script&gt;" in out
+
+
+def test_render_entry_blank_source_shows_no_tag():
+    # A Hand-Curated row with a blank source must not render a bare "Source:".
+    hc = ff.parse_handcurated_rows([_hc_row(source="")])[0]
+    assert "Source:" not in ff.render_entry(hc)

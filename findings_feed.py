@@ -217,7 +217,15 @@ def parse_handcurated_rows(raw_rows: list[list]) -> list[dict]:
     facility -> facility. severity and key_data_point have no Hand-Curated
     equivalent -- left blank, which render_entry already tolerates (several
     auto rows are blank there too). Pads a short row the same way
-    parse_feed_rows does, and skips a blank row entirely."""
+    parse_feed_rows does, and skips a blank row entirely.
+
+    Carries one field the auto tabs have no equivalent for: `source` (the
+    issuing/holding body -- GFL, the operator, a township/county, a community
+    group, an EGLE records request, ...). render_entry surfaces it as a
+    "Source: ..." tag ONLY on rows that have it, so the public data-layer feed
+    stays source-labeled once these non-EGLE records appear alongside EGLE
+    filings (CLAUDE.md's "accuracy over posturing" data-layer rule). Auto/EGLE
+    rows carry no `source` key at all, so nothing changes for them."""
     out = []
     for r in raw_rows:
         if not r:
@@ -234,6 +242,7 @@ def parse_handcurated_rows(raw_rows: list[list]) -> list[dict]:
             "key_data_point": "",
             "link": hc["drive_link"],
             "facility": hc["facility"],
+            "source": hc["source"],
         })
     return out
 
@@ -295,8 +304,15 @@ def render_entry(row: dict) -> str:
     link = _esc(raw_link) if raw_link.startswith(("http://", "https://")) else ""
     summary = _esc(row.get("summary"))
     kdp = _esc(row.get("key_data_point"))
+    # `source` (issuing/holding body) is present only on Hand-Curated rows
+    # (see parse_handcurated_rows); auto/EGLE rows have no such key, so this is
+    # blank for them and the tag never appears. Surfacing it keeps the public
+    # data-layer feed source-labeled now that non-EGLE records (GFL, township,
+    # county, community groups) sit alongside EGLE filings.
+    source = _esc(row.get("source"))
+    source_bit = f"Source: {source}" if source else ""
 
-    meta = " &middot; ".join(b for b in (date, facility, doc_type, severity) if b)
+    meta = " &middot; ".join(b for b in (date, facility, doc_type, severity, source_bit) if b)
 
     parts = ['<article class="finding">']
     if meta:
@@ -334,9 +350,10 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
     if page_num == 1:
         intro = (
             "<p>Every document the monitor has read for these facilities, newest "
-            "first. The list runs back to the earliest record in the state's "
-            "filing system and updates automatically as new documents come "
-            "in.</p>\n"
+            "first. The list runs back to the earliest record on file and "
+            "updates automatically as new documents come in. Most are EGLE "
+            "filings; hand-curated public records from other sources are "
+            "labeled with their source.</p>\n"
         )
         title = "Public Records &middot; Arbor Hills Monitor"
     else:
@@ -355,7 +372,7 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
-<meta name="description" content="Every document the Arbor Hills Monitor has read from Michigan EGLE's public filing systems, newest first.">
+<meta name="description" content="Every public regulatory record the Arbor Hills Monitor has collected for these facilities, newest first.">
 <link rel="stylesheet" href="../style.css">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
@@ -375,7 +392,7 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
 <p class="findings-nav">{nav}</p>
 
 <footer class="site-footer">
-<p>Generated {_esc(generated_at)} from the monitor's case file. An independent project. All source data is public regulatory filings from Michigan EGLE.</p>
+<p>Generated {_esc(generated_at)} from the monitor's case file. An independent project. All source data is public regulatory records from Michigan EGLE and other public sources.</p>
 </footer>
 
 </div>
