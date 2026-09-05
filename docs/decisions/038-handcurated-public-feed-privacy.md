@@ -68,6 +68,20 @@ project (tracked separately), deliberately not coupled to shipping this feature.
 - **A denylist needs upkeep.** A newly-encountered person must be added to
   `name_check.KNOWN_NAMES`; an org/term the heuristic mis-flags goes in
   `ORG_ALLOWLIST`. Both are plain lists.
+- **Gate blast radius.** A hard-block on any one hand-curated field fails the
+  whole `findings-feed.yml` run, so the ENTIRE feed (auto rows included) stops
+  updating until the flagged field is reworded or `ORG_ALLOWLIST` is extended --
+  a feed stale by a day, never a wrong publish. The 71 existing rows are
+  verified heuristic-clean, so it does not fire today. The gate's first run
+  INSIDE GitHub Actions is post-merge (it lives in `findings-feed.yml`, not the
+  PR's CI check set); its local real-specimen run passed (exit 0 on the actual
+  artifact), and any problem in Actions surfaces as a failed regen, not a bad
+  publish.
+- **Internal `source`/`note` (with names) still live on `GSHEET_ID`**, which
+  CLAUDE.md calls operator-visible. This PR keeps them OFF the public feed but
+  does not move them off that Sheet; whether those internal columns belong on
+  `GSHEET_ID_PRIVATE` is a separate open question (tracked with the
+  `coder:auto-feed-name-redaction` follow-on).
 - **The auto-feed name exposure stays live** until the separate cleanup lands;
   deploying this PR does not change it (warn-only by decision 4).
 - **Deploy remains Trisha's step** (public GitHub Pages / privacy pre-push
