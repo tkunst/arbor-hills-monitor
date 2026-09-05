@@ -106,6 +106,16 @@ TAB_ARCHIVE = "Archived PDFs"
 TAB_COMPLIANCE_DEADLINES = "Compliance Deadlines"
 TAB_STATE = "_state"
 TAB_META = "_meta"
+# Hand-Curated Files (docs/hand-curated-intake-design.md) -- human-vouched
+# public records the nSITE/WDS pollers cannot reach on their own (e.g. a
+# letter EGLE never posted public on MiEnviro). Columns: curated_filename,
+# title, source, doc_date, facility, doc_type, risks, origin_url, note,
+# drive_link, added_at, folded_into_public. Populated by a manual/future
+# publish flow, not by anything in this repo yet -- same on-demand treatment
+# as TAB_MMPC_ARCHIVE/TAB_WOI_SUMMARY above: deliberately NOT in
+# _TAB_HEADERS, so no code here ever creates or reconciles this tab's header
+# row; findings-feed reads it read-only to surface these records publicly.
+TAB_HANDCURATED = "Hand-Curated Files"
 # Stream C (WDS solid-waste) case-file tabs — structurally parallel to the
 # nSITE New/Historical/Evidence tabs above. Deliberately NOT in _TAB_HEADERS:
 # ensure_tabs() must not create them, so the public-visible Sheet gains no
