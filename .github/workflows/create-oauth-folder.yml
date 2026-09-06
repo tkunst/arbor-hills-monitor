@@ -18,6 +18,14 @@ on:
         description: "Optional: create directly under this existing Drive folder ID (omit to create at root, then move by hand)"
         type: string
         required: false
+      identity:
+        description: "Which OAuth identity creates the folder: 'default' (the original shared GOAUTH_* creds) or 'kunst' (the kunst.trisha GOAUTH_*_KUNST migration creds — the migration target)"
+        type: choice
+        required: false
+        default: "default"
+        options:
+          - "default"
+          - "kunst"
 
 permissions:
   contents: read
@@ -38,9 +46,11 @@ jobs:
           pip install -r requirements.txt
       - name: Create the folder
         env:
-          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID }}
-          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
-          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}
+          # Pick the OAuth identity: 'kunst' -> the kunst.trisha migration creds
+          # (GOAUTH_*_KUNST), anything else -> the original shared GOAUTH_* creds.
+          GOAUTH_CLIENT_ID: ${{ inputs.identity == 'kunst' && secrets.GOAUTH_CLIENT_ID_KUNST || secrets.GOAUTH_CLIENT_ID }}
+          GOAUTH_CLIENT_SECRET: ${{ inputs.identity == 'kunst' && secrets.GOAUTH_CLIENT_SECRET_KUNST || secrets.GOAUTH_CLIENT_SECRET }}
+          GOAUTH_REFRESH_TOKEN: ${{ inputs.identity == 'kunst' && secrets.GOAUTH_REFRESH_TOKEN_KUNST || secrets.GOAUTH_REFRESH_TOKEN }}
           FOLDER_NAME: ${{ inputs.folder_name }}
           PARENT_FOLDER_ID: ${{ inputs.parent_folder_id }}
         run: python scripts/create_oauth_folder.py
