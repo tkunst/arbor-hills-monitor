@@ -17,8 +17,7 @@ Blue. Sourced records, data, and fact-based reporting drawn from Michigan EGLE's
 public filing systems. Fact-based, and it never asks the reader to take an action
 (see the bright line below).
 
-**The advocacy site** (currently `tkunst.github.io/better-arbor-hills`,
-intended future home `advocacy.arborhillsmonitor.org`)
+**The advocacy site** (`policy.arborhillsmonitor.org`)
 Orange. Public comments, policy proposals, evidence briefs, and advocacy. These
 express the author's views.
 
