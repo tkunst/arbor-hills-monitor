@@ -46,8 +46,11 @@ jobs:
       - name: Archive new MMPC documents
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
-          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID }}
-          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET }}
-          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN }}
+          # Drive account migration (2026-09-06): repointed to the kunst.trisha
+          # OAuth identity (GOAUTH_*_KUNST); GOAUTH_MMPC_FOLDER_ID now points at the
+          # kunst-owned MMPC-meeting-minutes copy. Mirrors the archive.yml cutover.
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID_KUNST }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET_KUNST }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN_KUNST }}
           GOAUTH_MMPC_FOLDER_ID: ${{ secrets.GOAUTH_MMPC_FOLDER_ID }}
         run: python mmpc_archiver.py
