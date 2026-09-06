@@ -181,7 +181,7 @@ mmpc_archive:
 # A mirror whose folder secret isn't set yet is skipped, not a hard failure —
 # DPW and BOC can be activated independently as each folder gets provisioned.
 civicclerk_archive:
-  enabled: false
+  enabled: true                     # activated 2026-09-06 (Trisha) — DPW + BOC folders created fresh under the kunst.trisha _KUNST identity + GOAUTH_DPW/BOC_FOLDER_ID set; workflow creds on _KUNST. See ADR 037.
   mirrors:
     - {category_id: 68, folder_env: "GOAUTH_DPW_FOLDER_ID", group: "Board of Public Works"}
     - {category_id: 26, folder_env: "GOAUTH_BOC_FOLDER_ID", group: "Board of Commissioners"}
