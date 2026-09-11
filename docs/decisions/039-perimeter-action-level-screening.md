@@ -146,8 +146,13 @@ One append-only row per **closed** episode: station, gas, threshold, opened/peak
 against (does GFL's ¶6.3 Perimeter Action Level Log + quarterly RCA report show an RCA +
 prevent-recurrence correction for each?). Open-episode visibility comes from the GFL Air
 snapshot tab + the OPEN email + the column-O state map; the log holds closed episodes.
-The **Sheet row is written BEFORE the state entry** (the repo's crash-safe invariant: a
-kill re-writes the row, never drops it).
+The episode-log **row is written BEFORE the state entry** (repo ordering). Note the
+OBJECTID cursor is committed *upstream* (in `run()`, before the episode engine),
+independent of the column-O state — so this is NOT a true atomic retry the way the
+doc-ingestion path is (these readings aren't re-fetched next run). On a rare Sheets-write
+**double** fault it degrades toward a duplicate/slightly-wrong close row, or (an open-only
+run that recovers before the next daily run) a lost durable log row — never a false
+`[URGENT]`, never lost measurements. See Residual 1.
 
 ### 6. State store, timezone, coordinates
 
@@ -191,8 +196,13 @@ Replayed the historical feed through `process_episodes`:
 
 ## Residuals / follow-ons (flagged, NOT fixed here)
 
-1. **Best-effort OPEN email** (§7) — a transient SMTP failure at open-time loses that
-   OPEN alert; the CLOSEOUT + durable log row still capture it.
+1. **Best-effort delivery + non-atomic log write** (§5, §7) — (a) a transient SMTP
+   failure at open-time loses that OPEN alert (the CLOSEOUT + durable log row still
+   capture the episode; no retry, matching the exceedance email); (b) because the
+   cursor commits upstream of the column-O state, a rare Sheets-write **double** fault
+   degrades toward a duplicate/slightly-wrong close row, or an unlogged episode in the
+   open-only-then-recovers-before-next-run case — never a false `[URGENT]`, never lost
+   measurements.
 2. **Pre-existing, out of scope:** the untouched EXCEEDANCE tier treats a `CH4=999`
    `TEST` reading as ≥500 ppm → a potential false `[URGENT]` to the full list. Not
    introduced here (this ADR protects the exceedance tier); the `is_no_data`

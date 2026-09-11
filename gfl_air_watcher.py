@@ -131,12 +131,13 @@ def alert_lines(readings: list[dict], thresholds: dict, sentinels: dict | None,
     reading appears. Together they set the email urgency: [URGENT] > [GFL air watch] >
     [GFL air anomaly]. Pure.
 
-    `include_watch=False` (coder:gfl-air-thresholds) drops watch-severity readings
-    from THIS combined pass entirely — used once `gfl_air.watch_alert_recipients` is
-    configured, so the CH4 watch tier is emailed exactly once, via the separate
-    dedicated/deduped watch_alert_stations() path below, never also folded into this
-    full-list exceedance/anomaly email. Default True preserves the original
-    single-channel behavior (the rollback lever when watch_alert_recipients is empty).
+    `include_watch=False` drops watch-severity readings from THIS combined pass
+    entirely. run() ALWAYS passes False now (ADR 039): the action-level (watch) tier
+    is owned by the consolidated per-(station,gas) episode engine
+    (_run_action_level_episodes) and its dedicated SCREENING/CLOSEOUT emails, never
+    folded into this full-list exceedance/anomaly email — so the H2S 30 ppb / CH4
+    40 ppm leads can't blast the whole distribution list. The default True is retained
+    only for the pure-unit-test callers of this helper.
 
     When `h2s_averaged` is True the INSTANTANEOUS H2S action-level tier is dropped from
     THIS (per-reading) alert path — the H2S exceedance alert is driven instead by the
@@ -174,9 +175,9 @@ def alert_lines(readings: list[dict], thresholds: dict, sentinels: dict | None,
             if include_watch:
                 has_watch = True
                 lines.append(f"watch       {st} {when}: " + "; ".join(reasons))
-            # else: suppressed here on purpose — a dedicated, deduped watch email
-            # covers it instead (watch_alert_stations() below), so it isn't emailed
-            # twice (once to the full list here, once to watch_alert_recipients).
+            # else: suppressed here on purpose — the consolidated action-level
+            # screening engine (_run_action_level_episodes) owns the watch tier, so it
+            # isn't also folded into this full-list exceedance/anomaly email.
         elif sev == "anomaly" and alert_on_sentinel:
             lines.append(f"anomaly     {st} {when}: " + "; ".join(reasons))
     return lines, has_exceedance, has_watch
@@ -366,21 +367,35 @@ def _iso_to_epoch_ms(iso_utc: str):
         return None
 
 
+# A reported reading whose ET date is at least this many days before today is a
+# backfill / catch-up, not the normal daily cycle. The poll runs ONCE daily (~8am ET)
+# and its batch covers the prior ~24h, so an excursion that opened YESTERDAY evening
+# is still part of the current cycle and must read LIVE — only genuinely old data (a
+# 2022/2023 event replayed, or a multi-day catch-up) is HISTORICAL. Keying on "before
+# today" instead would wrongly stamp the common case (a ~18-hour-old, current
+# excursion detected at the next morning's run) as "NOT A LIVE INCIDENT."
+_HISTORICAL_AFTER_DAYS = 2
+
+
 def is_historical(isos, now_utc: datetime) -> bool:
-    """True iff the newest reported reading (by ET calendar date) is from BEFORE today
-    in ET — i.e. this is a backfill / replay of older hours, not the current
-    monitoring cycle. Fires the '[HISTORICAL SCREENING ALERT — NOT A LIVE INCIDENT]'
-    subject so a 2022/2023 event arriving in 2026 can never masquerade as live. A
-    normal daily run (newest reading = today, feed posts hourly) is LIVE; anything
-    unparseable is treated as NOT historical (fail toward the plain live subject
-    rather than mislabeling a live incident). Pure — now_utc injected for testing."""
-    today = None
-    if _ET is not None:
-        today = now_utc.astimezone(_ET).date()
-    dates = sorted({d for d in (et_date(i) for i in isos) if d})
-    if not dates or today is None:
+    """True iff the newest reported reading is a BACKFILL / catch-up — its ET date is
+    >= _HISTORICAL_AFTER_DAYS days before today (ET) — rather than the current daily
+    cycle. Fires the '[HISTORICAL SCREENING ALERT — NOT A LIVE INCIDENT]' subject so a
+    2022/2023 event replayed in 2026 can never masquerade as live, WITHOUT mislabeling
+    a normal yesterday-evening excursion (which reads LIVE). Anything unparseable is
+    treated as NOT historical (fail toward the plain live subject rather than denying
+    the liveness of a current incident). Pure — now_utc injected for testing."""
+    if _ET is None:
         return False
-    return dates[-1] < today.isoformat()
+    today = now_utc.astimezone(_ET).date()
+    dates = sorted({d for d in (et_date(i) for i in isos) if d})
+    if not dates:
+        return False
+    try:
+        newest = datetime.strptime(dates[-1], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return False
+    return (today - newest).days >= _HISTORICAL_AFTER_DAYS
 
 
 # ---------------------------------------------------------------------------
@@ -657,11 +672,13 @@ def _screening_disclaimer_lines() -> list[str]:
         "Consent Judgment action level applicable to Arbor Hills Landfill, Inc. "
         "(\"AHL\") is a LEAD for EGLE to obtain and examine AHL's nonpublic records; "
         "verification against the required 15-minute rolling-average data is "
-        "necessary. This hourly-reading proxy for the CJ's 15-minute rolling action "
-        "level likely UNDERCOUNTS true CJ exceedances; GFL's own continuous monitor "
-        "and its ¶6.3 Perimeter Action Level Log are the authoritative 15-minute "
-        "record. It does NOT establish that AHL exceeded, or failed to correct, "
-        "anything.\n",
+        "necessary. An hourly series cannot reproduce the CJ's 15-minute rolling "
+        "average, so it is NOT the official CJ exceedance count and likely undercounts "
+        "brief between-sample excursions (whether any single hourly value over- or "
+        "under-states a given 15-minute window depends on the hourly basis, which the "
+        "source does not document). The operator's continuous perimeter monitor and "
+        "AHL's ¶6.3 Perimeter Action Level Log are the authoritative 15-minute record. "
+        "This does NOT establish that AHL exceeded, or failed to correct, anything.\n",
     ]
 
 
@@ -1392,12 +1409,20 @@ def _open_episode_from_state(key: str, ep: dict) -> dict:
 
 def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds,
                                sentinels, prefix, link, watch_recipients, cfg_gfl) -> None:
-    """Advance the per-(station,gas) episode state on this poll's readings, persist it
-    (crash-safe: the durable log ROW is written BEFORE the state entry, per the repo
-    invariant), and send AT MOST one consolidated SCREENING (open) email and one
-    CLOSEOUT (close) email. Coords + ±2h context are best-effort; a failure there
-    degrades the email but never blocks it. Emails are best-effort (like the
-    exceedance email) — the episode STATE is the committed system of record."""
+    """Advance the per-(station,gas) episode state on this poll's readings, write the
+    durable episode-log ROW before the state entry (repo ordering), and send AT MOST
+    one consolidated SCREENING (open) email and one CLOSEOUT (close) email. Coords +
+    ±2h context are best-effort; a failure there degrades the email but never blocks
+    it. Emails are best-effort (like the exceedance email).
+
+    ⚠️ Crash-safety caveat: the OBJECTID cursor is committed UPSTREAM (write_gfl_air
+    _summary in run(), before this function), independent of the column-O episode
+    state here — so these readings are NOT re-fetched next run. The row-before-state
+    ordering therefore does NOT give an atomic retry the way the doc-ingestion path
+    does; on a rare Sheets-write DOUBLE fault it degrades toward a duplicate /
+    slightly-wrong close row or (open-only + recovers-before-next-run) a lost durable
+    log row — never a false [URGENT], never lost measurements. Documented as ADR 039's
+    accepted residual."""
     # Prior open-episode state — fail-safe toward re-alerting on an unreadable cell.
     try:
         prev_state = sw.gfl_air_episode_state(sheets, sheet_id)
@@ -1441,16 +1466,22 @@ def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds
             sw.append_rows(sheets, sheet_id, sw.TAB_PERIMETER_EPISODES,
                            perimeter_episode_rows(result.closed, retrieved_iso))
             print(f"[gfl-air]   logged {len(result.closed)} closed episode(s).")
-        except Exception as e:  # noqa: BLE001 — a log-write failure must not lose the
-            print(f"[gfl-air]   episode-log write FAILED (state NOT advanced so it "  # state->row order
-                  f"retries next run): {e}")
-            return  # leave state unwritten so the close (row+state) retries atomically
+        except Exception as e:  # noqa: BLE001 — prefer a later duplicate/wrong close row
+            print(f"[gfl-air]   episode-log write FAILED (state NOT advanced): {e}")
+            # Leave state unwritten so the just-closed episode stays OPEN in column O.
+            # The cursor already advanced upstream, so these readings won't re-run; the
+            # episode instead re-closes on a FUTURE below-benchmark reading (a later,
+            # longer-duration close row) rather than being dropped from the log here.
+            return
 
-    # Persist the advanced state (committed system of record).
+    # Persist the advanced state. (If this write fails on an open-only run, the OPEN
+    # email below still fires; the episode is re-derived next run only if it is STILL
+    # above then — an episode that opened near the batch edge and recovered before the
+    # next daily run would go unlogged. Rare Sheets-write fault; ADR 039 residual.)
     try:
         sw.set_gfl_air_episode_state(sheets, sheet_id, result.state)
-    except Exception as e:  # noqa: BLE001
-        print(f"[gfl-air]   episode-state write FAILED (will re-derive next run): {e}")
+    except Exception as e:  # noqa: BLE001 — best-effort; see the caveat above
+        print(f"[gfl-air]   episode-state write FAILED: {e}")
 
     # SCREENING (open) email — one consolidated email listing all monitors + the
     # newly-detected + continuing episodes. Best-effort.
