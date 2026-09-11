@@ -1275,3 +1275,47 @@ urgent:
 temperature_thresholds:
   epa_gas_operating_f: 131       # EPA gas-well operating limit (watch)
   mact_f: 145                    # MACT limit (urgent)
+
+# --- CAN-SPAM unsubscribe for the multi-recipient alert emails (ADR 040) ---
+# Applied at the single send choke point (email_alerts.send_email), so ALL
+# multi-recipient streams inherit it: the same-day [URGENT] alerts, the Sunday
+# digest, and the GFL-air perimeter WATCH email (plus any other multi-recipient
+# send). Mechanism is a List-Unsubscribe *mailto* + a compliant footer — the send
+# path is plain SMTP and there is no web backend (static GitHub Pages), so
+# RFC-8058 one-click is not available.
+#
+# ARMING: the apparatus is armed ONLY when BOTH `mailto` and `postal_address`
+# below are set. There is deliberately NO enabled flag — "postal address
+# configured" IS the switch. Until armed, a non-owner (third-party) recipient is
+# HELD (not sent) rather than sent a non-compliant message; Trisha's own addresses
+# (owner_addresses + the MONITOR_OWNER_EMAILS secret) are always sent and never
+# carry a footer.
+#
+# OPEN DECISIONS for Trisha (see ADR 040 / the PR — do NOT ship these guessed):
+#   - postal_address: REQUIRED by CAN-SPAM. A PO box is fine. Ships EMPTY on
+#     purpose so nothing goes out with an invented address — fill it to go live.
+#   - opt-out granularity: v1 is GLOBAL (unsubscribe = all monitor mail);
+#     per-stream opt-out is a documented follow-on.
+#   - capture: v1 is a mailto to a monitored inbox + MANUAL triage into the
+#     UNSUBSCRIBED_EMAILS secret; an auto-reader is a documented follow-on.
+unsubscribe:
+  # The opt-out mailbox. A @trishakunst.com alias (Cloudflare catch-all → Gmail)
+  # is public-safe to print. Half of the arming condition.
+  mailto: unsubscribe@trishakunst.com
+  # CAN-SPAM's required physical postal address. Trisha's decision — a PO box is
+  # fine. EMPTY = apparatus NOT armed (third parties held, owner still emailed).
+  postal_address: ""
+  # Clear sender identity printed in the footer (neutral, per the data-layer
+  # posture — this is the monitor, not any advocacy org).
+  sender_identity: "Arbor Hills Landfill Monitor"
+  # Why the recipient is getting the email (CAN-SPAM footer line). Optional.
+  receiving_reason: "You are receiving this because you subscribed to Arbor Hills Landfill Monitor email alerts."
+  # Trisha's OWN addresses — never suppressed, never held, never footered. The
+  # non-sensitive catch-all lives here (it is already public in alert_recipients);
+  # PRIVATE addresses (proton / gmail) go in the MONITOR_OWNER_EMAILS *secret*,
+  # not here. List EVERY owner address that appears on ANY recipient list.
+  owner_addresses:
+    - arbor-hills@trishakunst.com
+  # NOTE: the SUPPRESSION LIST is intentionally NOT here — opted-out third-party
+  # addresses are PII and this repo + the case-file Sheet are PUBLIC. They live in
+  # the UNSUBSCRIBED_EMAILS secret (comma/semicolon list), read at send time.

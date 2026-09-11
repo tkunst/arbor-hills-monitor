@@ -61,6 +61,10 @@ jobs:
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
           GFL_AIR_WATCH_RECIPIENTS_EXTRA: ${{ secrets.GFL_AIR_WATCH_RECIPIENTS_EXTRA }}
+          # CAN-SPAM unsubscribe (ADR 040): the shared suppression list + the
+          # never-suppressible owner list, honored at email_alerts.send_email.
+          UNSUBSCRIBED_EMAILS: ${{ secrets.UNSUBSCRIBED_EMAILS }}
+          MONITOR_OWNER_EMAILS: ${{ secrets.MONITOR_OWNER_EMAILS }}
           # Drive account migration (2026-09-06): repointed to the kunst.trisha
           # OAuth identity (GOAUTH_*_KUNST); GOAUTH_GFL_AIR_FOLDER_ID now points at
           # the kunst-owned GFL Air Exhibit copy. Mirrors the archive.yml cutover.
