@@ -763,6 +763,45 @@ def _benchmark_definition_lines() -> list[str]:
     ]
 
 
+# The fixed benchmark-reference block (numbers + regime framing pulled verbatim from
+# the canonical SET-report B1 symptom master table; do not re-derive). Item 187's
+# email-text upgrade: state each level's regulatory regime SEPARATELY, distinguish the
+# CJ enforceable levels from the EGLE ITSL health-screening levels, and frame the
+# 500 ppm CH4 level as a SURFACE (on-the-waste-mass) SEM standard vs. the perimeter
+# fenceline where these monitors sit. Shared verbatim by both consolidated emails.
+def _benchmark_reference_lines() -> list[str]:
+    return [
+        "BENCHMARK REFERENCE — what each level is, and WHERE it is measured "
+        "(so a perimeter reading is read against the right standard):",
+        "  • Perimeter H2S 30 ppb (15-min rolling) — the Consent Judgment's OWN "
+        "enforceable Perimeter H2S Action Level (¶def T); this screening compares "
+        "against it. It is DISTINCT FROM and far below the EGLE Air-Toxics ITSL "
+        "health-screening levels for H2S — 72 ppb (24-hr avg, = 100 µg/m³) and 750 ppb "
+        "(15-min acute) — which are a health benchmark, NOT the CJ trigger.",
+        "  • Perimeter CH4 40 ppm (15-min rolling) — the CJ Perimeter Methane Action "
+        "Level (¶def U); an early-warning tripwire (~0.08% of methane's lower "
+        "explosive limit). Methane has no EGLE Air-Toxics screening level — its "
+        "concerns are flammability + the surface SEM line below.",
+        "  • CH4 500 ppm — a SURFACE standard, NOT a perimeter one: the federal NESHAP "
+        "MACT Subpart AAAA corrective-action level (40 CFR 63.1958(d)) + NSPS Subpart "
+        "WWW + Michigan Part 115, measured with a probe ~5-10 cm ABOVE the active "
+        "waste surface, ON the landfill (the CJ ¶5.4 layers its own RCA duty on top). "
+        "MS-1..MS-6 are PERIMETER FENCELINE monitors at the site's property boundary "
+        "(coordinates above), far from that active waste surface, where landfill gas is "
+        "heavily diluted by atmospheric dispersion — so a fenceline reading anywhere "
+        "near 500 ppm would be extraordinary and signals gas escaping/migrating in "
+        "volume, regardless of whether a fenceline 500 ppm is itself a violation. (The "
+        "monitor's separate EXCEEDANCE alert still fires at CH4 500 ppm.)",
+        "  • Surface H2S 122 ppb — the CJ surface H2S Action Level (¶def O, Jerome "
+        "meter at 5-10 cm); a surface, not a perimeter, level.",
+        "  Applicable regimes: Arbor Hills is subject to NSPS Subpart WWW (40 CFR 60) + "
+        "NESHAP MACT Subpart AAAA (40 CFR 63) per its ROP (MI-ROP-N2688-2011a), the "
+        "site-specific Consent Judgment No. 2020-0593-CE, and Michigan Part 115. The "
+        "perimeter action levels above are Consent-Judgment terms.",
+        "",
+    ]
+
+
 def _subject(historical: bool, verb: str, gases, stations, isos) -> str:
     tag = ("[HISTORICAL SCREENING ALERT — NOT A LIVE INCIDENT]" if historical
            else "[SCREENING ALERT]")
@@ -887,6 +926,7 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
                         f"{et_label(c.get('peak_at',''))}")
     body.append("")
 
+    body += _benchmark_reference_lines()
     body += _cj_implications_lines(gases)
     body.append("")
     body.append(f"Live dashboard: {link}")
@@ -947,6 +987,7 @@ def format_closeout_email(closed: list[dict], *, link: str,
                             f"~5-15% flammable range and warrants immediate safety "
                             f"assessment.")
     body.append("")
+    body += _benchmark_reference_lines()
     body += _cj_implications_lines(gases)
     body.append("")
     body.append("The durable record of each episode (start / peak / return / duration) "

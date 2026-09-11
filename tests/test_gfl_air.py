@@ -1100,6 +1100,35 @@ def test_closeout_email_start_peak_return_duration():
     assert "does NOT establish that AHL corrected anything" in body
 
 
+def test_emails_carry_the_benchmark_reference_block():
+    # Item 187 (alert-email-text upgrade): both consolidated emails state each level's
+    # regulatory regime SEPARATELY, distinguish the CJ enforceable levels from the EGLE
+    # ITSL health-screening levels, and frame 500 ppm as a SURFACE (not perimeter)
+    # standard with the perimeter-fenceline distance context. Numbers verbatim from the
+    # canonical B1 master table.
+    opened = [_opened("MS-2", "h2s", 78.0, DAY0)]
+    _, sbody = gw.format_screening_email(opened, [], [], WT, link="L",
+                                         retrieved_iso="2026-09-11T13:00:00Z")
+    closed = [gw._close_record(
+        "MS-2", "h2s",
+        {"event_id": "E", "threshold": 30.0, "opened_at": gc.reading_iso({"Date": DAY0}),
+         "opened_value": 78.0, "peak_value": 78.0, "peak_at": gc.reading_iso({"Date": DAY0}),
+         "n_over": 1}, gc.reading_iso({"Date": DAY0 + 3600_000}), 10.0)]
+    _, cbody = gw.format_closeout_email(closed, link="L", retrieved_iso="2026-09-11T13:00:00Z")
+    for body in (sbody, cbody):
+        assert "BENCHMARK REFERENCE" in body
+        # CJ enforceable H2S vs the EGLE ITSL health-screening levels, cited separately
+        assert "72 ppb (24-hr avg" in body and "750 ppb (15-min acute)" in body
+        assert "ITSL health-screening levels" in body and "NOT the CJ trigger" in body
+        # 500 ppm framed as a SURFACE standard with its regimes, not a perimeter one
+        assert "SURFACE standard, NOT a perimeter one" in body
+        assert ("NESHAP MACT Subpart AAAA" in body and "NSPS Subpart WWW" in body
+                and "Michigan Part 115" in body)
+        assert "PERIMETER FENCELINE monitors" in body and "extraordinary" in body
+        # surface H2S 122 ppb (¶def O) + the applicable-regimes/ROP line
+        assert "122 ppb" in body and "¶def O" in body and "MI-ROP-N2688-2011a" in body
+
+
 def test_is_historical_pure():
     now = datetime(2026, 7, 14, 18, 0, tzinfo=timezone.utc)    # 2 PM ET, 2026-07-14
     assert gw.is_historical(["2026-06-19T01:00Z"], now) is True         # weeks old -> historical
