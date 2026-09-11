@@ -11,6 +11,12 @@
   <url><loc>https://arborhillsmonitor.org/unanswered-questions/</loc></url>
   <url><loc>https://arborhillsmonitor.org/proposed-protections/</loc></url>
   <url><loc>https://arborhillsmonitor.org/2022-event/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/faq/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/data/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/data/wellfield/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/data/wellhead-h2s/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/data/perimeter-air/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/data/flagged-wells/</loc></url>
   <!--
     The paginated public-records archive (/public-records/page-2.html …) is
     reachable via internal links from /public-records/ and is regenerated daily

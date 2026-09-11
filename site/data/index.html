@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Datasets &middot; Arbor Hills Monitor</title>
+<meta name="description" content="Open, reproducible datasets on the Arbor Hills Landfill in Salem Township, Michigan: wellfield gas and temperature, the 2026 wellhead hydrogen-sulfide survey, perimeter fence-line air monitoring, and flagged elevated-temperature wells. Each with source PDFs and build scripts. Free to download.">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="canonical" href="https://arborhillsmonitor.org/data/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://arborhillsmonitor.org/data/">
+<meta property="og:site_name" content="Arbor Hills Monitor">
+<meta property="og:title" content="Datasets · Arbor Hills Monitor">
+<meta property="og:description" content="Open, reproducible datasets on the Arbor Hills Landfill: wellfield gas and temperature, wellhead hydrogen sulfide, perimeter air, and flagged wells — with source PDFs and build scripts.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Datasets · Arbor Hills Monitor">
+<meta name="twitter:description" content="Open, reproducible datasets on the Arbor Hills Landfill, with source PDFs and build scripts.">
+<style>
+  .backlink { font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .lede { font-size: 1.05rem; }
+  .ds { margin: 0 0 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border); }
+  .ds:first-of-type { border-top: none; padding-top: 0.5rem; }
+  .ds h2 { font-size: 1.1rem; margin: 0 0 0.35rem; }
+  .ds h2 a { color: #1a63c9; text-decoration: none; }
+  .ds h2 a:hover { text-decoration: underline; }
+  .ds p { margin: 0 0 0.35rem; }
+  .ds .span { font-size: 0.85rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="backlink"><a href="../">&larr; Arbor Hills Monitor</a></p>
+
+<header class="site-header">
+<h1>Datasets</h1>
+<p class="tagline">Open, reproducible datasets on the Arbor Hills Landfill in Salem Township, Washtenaw County, Michigan. Each one is built from public regulatory records and published with its source files and the scripts that produced it, so any figure can be checked back to where it came from. All free to download.</p>
+</header>
+
+<div class="ds">
+<h2><a href="wellfield/">Wellfield gas &amp; temperature dataset (2021&ndash;2026)</a></h2>
+<p>Every EGLE-filed wellhead reading &mdash; temperature, methane, oxygen, carbon monoxide, and gas ratios &mdash; well by well, with source PDFs and build scripts.</p>
+<p class="span">2021&ndash;2026 &middot; CSV &middot; operator EGLE filings (SRN N2688)</p>
+</div>
+
+<div class="ds">
+<h2><a href="wellhead-h2s/">Wellhead hydrogen-sulfide survey (2026)</a></h2>
+<p>The operator's own per-well wellhead hydrogen-sulfide readings from its 2026 annual survey, all 506 wells, with the source PDF and a reproducible parser.</p>
+<p class="span">2026 &middot; CSV &middot; operator annual survey (SRN N2688)</p>
+</div>
+
+<div class="ds">
+<h2><a href="perimeter-air/">Perimeter air-monitoring dataset (May 2022&ndash;Sept 2026)</a></h2>
+<p>Fence-line methane and hydrogen-sulfide readings from the six-station perimeter network, with a raw snapshot bundled for offline reproducibility.</p>
+<p class="span">May 2022&ndash;Sept 2026 &middot; CSV &middot; GFL public perimeter feed (Barr Engineering)</p>
+</div>
+
+<div class="ds">
+<h2><a href="flagged-wells/">Flagged wells: elevated-temperature reading history</a></h2>
+<p>A smaller, curated subset of the wellfield dataset &mdash; the elevated-temperature reading history for the flagged wells.</p>
+<p class="span">Curated subset &middot; CSV &middot; operator EGLE filings (SRN N2688)</p>
+</div>
+
+<div class="data-links">
+<h2>Related</h2>
+<ul>
+<li><a href="../faq/">Frequently asked questions</a> &mdash; plain, source-labeled answers about the landfill.</li>
+<li><a href="../public-records/">Public records</a> &mdash; every EGLE document the monitor has read.</li>
+<li><a href="https://github.com/tkunst/arbor-hills-monitor">The monitor's pipeline and code</a>, open source on GitHub.</li>
+</ul>
+</div>
+
+<footer class="site-footer">
+<p>An independent project. All source data is public regulatory records from Michigan EGLE and other public sources, presented without alteration.</p>
+</footer>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "DataCatalog",
+  "name": "Arbor Hills Monitor datasets",
+  "url": "https://arborhillsmonitor.org/data/",
+  "description": "Open, reproducible datasets on the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan), built from public regulatory records.",
+  "publisher": {"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},
+  "dataset": [
+    {"@type":"Dataset","name":"Arbor Hills Landfill wellfield gas and temperature dataset (2021-2026)","url":"https://arborhillsmonitor.org/data/wellfield/"},
+    {"@type":"Dataset","name":"Arbor Hills Landfill wellhead hydrogen-sulfide survey (2026)","url":"https://arborhillsmonitor.org/data/wellhead-h2s/"},
+    {"@type":"Dataset","name":"Arbor Hills Landfill perimeter air-monitoring dataset (May 2022-September 2026)","url":"https://arborhillsmonitor.org/data/perimeter-air/"},
+    {"@type":"Dataset","name":"Arbor Hills Landfill flagged wells: elevated-temperature reading history","url":"https://arborhillsmonitor.org/data/flagged-wells/"}
+  ]
+}
+</script>
+
+</body>
+</html>

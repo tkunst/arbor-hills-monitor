@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dataset: Arbor Hills Landfill wellfield gas &amp; temperature (2021&ndash;2026)</title>
+<meta name="description" content="An open dataset of every EGLE-filed wellhead reading at the Arbor Hills Landfill — temperature, methane, oxygen, carbon monoxide and gas ratios, well by well, 2021 to 2026 — with source PDFs and reproducible build scripts. Free to download.">
+<link rel="stylesheet" href="../../style.css">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="canonical" href="https://arborhillsmonitor.org/data/wellfield/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://arborhillsmonitor.org/data/wellfield/">
+<meta property="og:site_name" content="Arbor Hills Monitor">
+<meta property="og:title" content="Dataset: Arbor Hills Landfill wellfield gas & temperature (2021–2026)">
+<meta property="og:description" content="Every EGLE-filed wellhead reading at the Arbor Hills Landfill — temperature, methane, oxygen, CO, gas ratios — well by well, 2021 to 2026, with source PDFs and build scripts. Open data.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Dataset: Arbor Hills Landfill wellfield gas & temperature">
+<meta name="twitter:description" content="Every EGLE-filed wellhead reading, well by well, 2021–2026, with source PDFs and reproducible build scripts.">
+<style>
+  .backlink { font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .lede { font-size: 1.05rem; }
+  .meta-grid { width: 100%; border-collapse: collapse; margin: 1.25rem 0 1.75rem; font-size: 0.92rem; }
+  .meta-grid th, .meta-grid td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .meta-grid th { width: 34%; font-weight: 600; color: var(--muted); }
+  .get { display: inline-block; margin: 0.5rem 0 0; padding: 0.6rem 1rem; border: 1px solid var(--border); border-radius: 6px; text-decoration: none; font-weight: 600; }
+  a { color: #1a63c9; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="backlink"><a href="../">&larr; Datasets</a> &middot; <a href="../../">Arbor Hills Monitor</a></p>
+
+<header class="site-header">
+<h1>Wellfield gas &amp; temperature dataset</h1>
+<p class="tagline">Every EGLE-filed wellhead reading at the Arbor Hills Landfill &mdash; temperature, methane, oxygen, carbon monoxide, and gas ratios &mdash; well by well, 2021 to 2026. An open, reproducible dataset with the source PDFs and the build scripts that produced it.</p>
+</header>
+
+<p class="lede">This is the reading-level record behind the monitor's <a href="../../thermal-map/">thermal map</a> and <a href="../../wellfield-explorer/">wellfield explorer</a>. It is assembled from the operator's own monthly gas-and-temperature reports filed with Michigan EGLE for the Arbor Hills Landfill (SRN N2688), parsed into one tidy table and published with the scripts that build it, so any figure can be checked back to its source PDF.</p>
+
+<table class="meta-grid">
+<tr><th>Subject</th><td>Arbor Hills Landfill, Salem Township, Washtenaw County, Michigan (SRN N2688)</td></tr>
+<tr><th>What it covers</th><td>Per-well wellhead readings: temperature, methane, oxygen, carbon monoxide, and methane-to-carbon-dioxide ratio, well by well over time</td></tr>
+<tr><th>Time span</th><td>2021 to 2026</td></tr>
+<tr><th>Source</th><td>The operator's monthly wellfield reports filed with Michigan EGLE (public regulatory records), plus the source PDFs bundled in the release</td></tr>
+<tr><th>Format</th><td>CSV, with a reproducible parser and build scripts</td></tr>
+<tr><th>License / cost</th><td>Free to download; underlying data is public regulatory record</td></tr>
+</table>
+
+<p><a class="get" href="https://github.com/tkunst/arbor-hills-monitor/releases/tag/wellfield-data-2026-08-24">Download the dataset &rarr;</a></p>
+
+<div class="data-links">
+<h2>Related</h2>
+<ul>
+<li><a href="../wellhead-h2s/">Wellhead hydrogen-sulfide survey (2026)</a></li>
+<li><a href="../flagged-wells/">Flagged wells: elevated-temperature reading history</a></li>
+<li><a href="../">All datasets</a> &middot; <a href="../../faq/">Frequently asked questions</a></li>
+</ul>
+</div>
+
+<footer class="site-footer">
+<p>An independent project. All source data is public regulatory records from Michigan EGLE, presented without alteration.</p>
+</footer>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Dataset",
+  "name": "Arbor Hills Landfill wellfield gas and temperature dataset (2021-2026)",
+  "description": "Every EGLE-filed wellhead reading at the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688) - temperature, methane, oxygen, carbon monoxide, and methane-to-carbon-dioxide ratio, well by well from 2021 to 2026 - parsed from the operator's monthly reports filed with Michigan EGLE, with the source PDFs and reproducible build scripts.",
+  "url": "https://arborhillsmonitor.org/data/wellfield/",
+  "keywords": ["Arbor Hills Landfill","landfill gas","wellhead temperature","methane","elevated temperature landfill","EGLE","Salem Township","Washtenaw County","Michigan"],
+  "creator": {"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},
+  "publisher": {"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},
+  "isAccessibleForFree": true,
+  "license": "https://github.com/tkunst/arbor-hills-monitor",
+  "temporalCoverage": "2021/2026",
+  "spatialCoverage": {"@type":"Place","name":"Arbor Hills Landfill, Salem Township, Washtenaw County, Michigan","geo":{"@type":"GeoCoordinates","latitude":42.43,"longitude":-83.55}},
+  "distribution": [{"@type":"DataDownload","encodingFormat":"text/csv","contentUrl":"https://github.com/tkunst/arbor-hills-monitor/releases/tag/wellfield-data-2026-08-24"}]
+}
+</script>
+
+</body>
+</html>

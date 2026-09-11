@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dataset: Arbor Hills Landfill perimeter air monitoring (May 2022&ndash;Sept 2026)</title>
+<meta name="description" content="An open dataset of fence-line methane and hydrogen-sulfide readings from the six-station perimeter network around the Arbor Hills Landfill, May 2022 to September 2026, with a raw snapshot for offline reproducibility. Free to download.">
+<link rel="stylesheet" href="../../style.css">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="canonical" href="https://arborhillsmonitor.org/data/perimeter-air/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://arborhillsmonitor.org/data/perimeter-air/">
+<meta property="og:site_name" content="Arbor Hills Monitor">
+<meta property="og:title" content="Dataset: Arbor Hills Landfill perimeter air monitoring (2022–2026)">
+<meta property="og:description" content="Fence-line methane and hydrogen-sulfide readings from the six-station perimeter network, May 2022 to September 2026, with a raw snapshot for reproducibility. Open data.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Dataset: Arbor Hills perimeter air monitoring (2022–2026)">
+<meta name="twitter:description" content="Fence-line methane and H2S from the six-station perimeter network, May 2022 – September 2026.">
+<style>
+  .backlink { font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .lede { font-size: 1.05rem; }
+  .meta-grid { width: 100%; border-collapse: collapse; margin: 1.25rem 0 1.75rem; font-size: 0.92rem; }
+  .meta-grid th, .meta-grid td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .meta-grid th { width: 34%; font-weight: 600; color: var(--muted); }
+  .get { display: inline-block; margin: 0.5rem 0 0; padding: 0.6rem 1rem; border: 1px solid var(--border); border-radius: 6px; text-decoration: none; font-weight: 600; }
+  a { color: #1a63c9; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="backlink"><a href="../">&larr; Datasets</a> &middot; <a href="../../">Arbor Hills Monitor</a></p>
+
+<header class="site-header">
+<h1>Perimeter air-monitoring dataset</h1>
+<p class="tagline">Fence-line methane and hydrogen-sulfide readings from the six-station perimeter network (MS-1 through MS-6) around the Arbor Hills Landfill, May 2022 to September 2026. Published with a raw snapshot so the enriched table can be rebuilt and checked offline.</p>
+</header>
+
+<p class="lede">This is the ambient, at-the-boundary record behind the monitor's <a href="../../hydrogen-sulfide/">hydrogen sulfide page</a> &mdash; the concentrations that actually reach the property line, in parts per billion, as distinct from the far stronger in-gas readings inside the wells. A data-quality note: since mid-2025 two of the six stations (MS-2 and MS-5) have reported a flat 0.0 ppb of hydrogen sulfide while their methane sensors keep varying, which points to a non-responsive sensor rather than clean air; the dataset carries the raw values so this is visible.</p>
+
+<table class="meta-grid">
+<tr><th>Subject</th><td>Arbor Hills Landfill perimeter, Salem Township, Washtenaw County, Michigan (SRN N2688)</td></tr>
+<tr><th>What it covers</th><td>Fence-line hydrogen sulfide (ppb) and methane readings from the six perimeter stations (MS-1&ndash;MS-6)</td></tr>
+<tr><th>Time span</th><td>May 2022 to September 2026</td></tr>
+<tr><th>Source</th><td>GFL's public perimeter-air feed, operated by Barr Engineering; a raw snapshot is bundled so the enriched table is byte-checkable against the source</td></tr>
+<tr><th>Format</th><td>CSV, with a raw snapshot and build script</td></tr>
+<tr><th>License / cost</th><td>Free to download; underlying data is a public monitoring feed</td></tr>
+</table>
+
+<p><a class="get" href="https://github.com/tkunst/arbor-hills-monitor/releases/tag/perimeter-air-data-2026-08-04">Download the dataset &rarr;</a></p>
+
+<div class="data-links">
+<h2>Related</h2>
+<ul>
+<li><a href="../wellhead-h2s/">Wellhead hydrogen-sulfide survey (2026)</a></li>
+<li><a href="../wellfield/">Wellfield gas &amp; temperature dataset</a></li>
+<li><a href="../">All datasets</a> &middot; <a href="../../faq/">Frequently asked questions</a></li>
+</ul>
+</div>
+
+<footer class="site-footer">
+<p>An independent project. Ambient fence-line readings (ppb) are what reach the property boundary; two of the six stations have not produced valid hydrogen-sulfide readings since mid-2025. Source data is the operator's public perimeter feed (Barr Engineering).</p>
+</footer>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Dataset",
+  "name": "Arbor Hills Landfill perimeter air-monitoring dataset (May 2022-September 2026)",
+  "description": "Fence-line methane and hydrogen-sulfide readings from the six-station perimeter network (MS-1 through MS-6) around the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688), May 2022 to September 2026, from GFL's public perimeter feed operated by Barr Engineering. A raw snapshot is bundled so the enriched table can be reproduced offline. Note: since mid-2025 two stations (MS-2, MS-5) report a flat 0.0 ppb of hydrogen sulfide, a non-responsive-sensor pattern preserved in the raw values.",
+  "url": "https://arborhillsmonitor.org/data/perimeter-air/",
+  "keywords": ["Arbor Hills Landfill","perimeter air monitoring","fence line","hydrogen sulfide","methane","H2S","Barr Engineering","Salem Township","Washtenaw County","Michigan"],
+  "creator": {"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},
+  "publisher": {"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},
+  "isAccessibleForFree": true,
+  "license": "https://github.com/tkunst/arbor-hills-monitor",
+  "temporalCoverage": "2022-05/2026-09",
+  "spatialCoverage": {"@type":"Place","name":"Arbor Hills Landfill perimeter, Salem Township, Washtenaw County, Michigan","geo":{"@type":"GeoCoordinates","latitude":42.43,"longitude":-83.55}},
+  "distribution": [{"@type":"DataDownload","encodingFormat":"text/csv","contentUrl":"https://github.com/tkunst/arbor-hills-monitor/releases/tag/perimeter-air-data-2026-08-04"}]
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dataset: Arbor Hills Landfill flagged wells &mdash; elevated-temperature history</title>
+<meta name="description" content="An open, curated subset of the Arbor Hills Landfill wellfield dataset: the elevated-temperature reading history for flagged wells, against the subsurface-temperature-event thresholds. Free to download.">
+<link rel="stylesheet" href="../../style.css">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="canonical" href="https://arborhillsmonitor.org/data/flagged-wells/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://arborhillsmonitor.org/data/flagged-wells/">
+<meta property="og:site_name" content="Arbor Hills Monitor">
+<meta property="og:title" content="Dataset: Arbor Hills flagged wells — elevated-temperature history">
+<meta property="og:description" content="A curated subset of the wellfield dataset: the elevated-temperature reading history for flagged wells at the Arbor Hills Landfill. Open data.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Dataset: Arbor Hills flagged wells (elevated-temperature history)">
+<meta name="twitter:description" content="Curated elevated-temperature reading history for flagged wells at the Arbor Hills Landfill.">
+<style>
+  .backlink { font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .lede { font-size: 1.05rem; }
+  .meta-grid { width: 100%; border-collapse: collapse; margin: 1.25rem 0 1.75rem; font-size: 0.92rem; }
+  .meta-grid th, .meta-grid td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .meta-grid th { width: 34%; font-weight: 600; color: var(--muted); }
+  .get { display: inline-block; margin: 0.5rem 0 0; padding: 0.6rem 1rem; border: 1px solid var(--border); border-radius: 6px; text-decoration: none; font-weight: 600; }
+  a { color: #1a63c9; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="backlink"><a href="../">&larr; Datasets</a> &middot; <a href="../../">Arbor Hills Monitor</a></p>
+
+<header class="site-header">
+<h1>Flagged wells: elevated-temperature reading history</h1>
+<p class="tagline">A smaller, curated subset of the wellfield dataset &mdash; the elevated-temperature reading history for the flagged wells at the Arbor Hills Landfill, against the subsurface-temperature-event thresholds.</p>
+</header>
+
+<p class="lede">This subset pulls out the wells with an elevated-temperature reading history from the full <a href="../wellfield/">wellfield gas &amp; temperature dataset</a>, for anyone who wants the temperature story without the whole table. It is the shortlist behind the monitor's <a href="../../thermal-map/">thermal map</a>. Every reading traces back to the operator's EGLE filings.</p>
+
+<table class="meta-grid">
+<tr><th>Subject</th><td>Arbor Hills Landfill, Salem Township, Washtenaw County, Michigan (SRN N2688)</td></tr>
+<tr><th>What it covers</th><td>The elevated-temperature reading history for flagged wells, against the subsurface-temperature-event thresholds</td></tr>
+<tr><th>Relationship</th><td>A curated subset of the <a href="../wellfield/">wellfield gas &amp; temperature dataset</a></td></tr>
+<tr><th>Source</th><td>The operator's monthly wellfield reports filed with Michigan EGLE (public regulatory records)</td></tr>
+<tr><th>Format</th><td>CSV</td></tr>
+<tr><th>License / cost</th><td>Free to download; underlying data is public regulatory record</td></tr>
+</table>
+
+<p><a class="get" href="https://github.com/tkunst/arbor-hills-monitor/releases/tag/flagged-wells-2026-08-07">Download the dataset &rarr;</a></p>
+
+<div class="data-links">
+<h2>Related</h2>
+<ul>
+<li><a href="../wellfield/">Wellfield gas &amp; temperature dataset</a> (the full table this is drawn from)</li>
+<li><a href="../wellhead-h2s/">Wellhead hydrogen-sulfide survey (2026)</a></li>
+<li><a href="../">All datasets</a> &middot; <a href="../../faq/">Frequently asked questions</a></li>
+</ul>
+</div>
+
+<footer class="site-footer">
+<p>An independent project. All source data is public regulatory records from Michigan EGLE, presented without alteration.</p>
+</footer>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Dataset",
+  "name": "Arbor Hills Landfill flagged wells: elevated-temperature reading history",
+  "description": "A curated subset of the Arbor Hills Landfill wellfield dataset (Salem Township, Washtenaw County, Michigan; SRN N2688): the elevated-temperature reading history for flagged wells, against the subsurface-temperature-event thresholds, drawn from the operator's monthly reports filed with Michigan EGLE.",
+  "url": "https://arborhillsmonitor.org/data/flagged-wells/",
+  "keywords": ["Arbor Hills Landfill","elevated temperature landfill","wellhead temperature","subsurface temperature event","landfill gas","EGLE","Salem Township","Washtenaw County","Michigan"],
+  "creator": {"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},
+  "publisher": {"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},
+  "isAccessibleForFree": true,
+  "license": "https://github.com/tkunst/arbor-hills-monitor",
+  "isBasedOn": "https://arborhillsmonitor.org/data/wellfield/",
+  "spatialCoverage": {"@type":"Place","name":"Arbor Hills Landfill, Salem Township, Washtenaw County, Michigan","geo":{"@type":"GeoCoordinates","latitude":42.43,"longitude":-83.55}},
+  "distribution": [{"@type":"DataDownload","encodingFormat":"text/csv","contentUrl":"https://github.com/tkunst/arbor-hills-monitor/releases/tag/flagged-wells-2026-08-07"}]
+}
+</script>
+
+</body>
+</html>

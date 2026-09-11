@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dataset: Arbor Hills Landfill wellhead hydrogen-sulfide survey (2026)</title>
+<meta name="description" content="An open dataset of the operator's own per-well wellhead hydrogen-sulfide readings from its 2026 annual survey at the Arbor Hills Landfill — 506 wells — with the source PDF and a reproducible parser. Free to download.">
+<link rel="stylesheet" href="../../style.css">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="canonical" href="https://arborhillsmonitor.org/data/wellhead-h2s/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://arborhillsmonitor.org/data/wellhead-h2s/">
+<meta property="og:site_name" content="Arbor Hills Monitor">
+<meta property="og:title" content="Dataset: Arbor Hills Landfill wellhead hydrogen-sulfide survey (2026)">
+<meta property="og:description" content="The operator's own per-well wellhead hydrogen-sulfide readings from its 2026 annual survey — 506 wells — with source PDF and a reproducible parser. Open data.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Dataset: Arbor Hills wellhead hydrogen-sulfide survey (2026)">
+<meta name="twitter:description" content="Per-well wellhead H2S from the operator's 2026 annual survey, 506 wells, with source PDF and parser.">
+<style>
+  .backlink { font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .lede { font-size: 1.05rem; }
+  .meta-grid { width: 100%; border-collapse: collapse; margin: 1.25rem 0 1.75rem; font-size: 0.92rem; }
+  .meta-grid th, .meta-grid td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .meta-grid th { width: 34%; font-weight: 600; color: var(--muted); }
+  .get { display: inline-block; margin: 0.5rem 0 0; padding: 0.6rem 1rem; border: 1px solid var(--border); border-radius: 6px; text-decoration: none; font-weight: 600; }
+  a { color: #1a63c9; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="backlink"><a href="../">&larr; Datasets</a> &middot; <a href="../../">Arbor Hills Monitor</a></p>
+
+<header class="site-header">
+<h1>Wellhead hydrogen-sulfide survey (2026)</h1>
+<p class="tagline">The operator's own per-well wellhead hydrogen-sulfide readings from its 2026 annual survey at the Arbor Hills Landfill &mdash; all 506 wells &mdash; published with the source PDF and a reproducible parser.</p>
+</header>
+
+<p class="lede">This is the reading-level record behind the monitor's <a href="../../hydrogen-sulfide/">hydrogen sulfide page</a>. In the surveyed gas, 261 of the 506 wells were at or above 76 ppm and 91 were at or above 500 ppm, with the strongest source at a leachate sump. These are in-gas source-strength readings measured inside the wells &mdash; a confined-space hazard, not resident exposure. Every value can be checked back to the operator's filed survey.</p>
+
+<table class="meta-grid">
+<tr><th>Subject</th><td>Arbor Hills Landfill, Salem Township, Washtenaw County, Michigan (SRN N2688)</td></tr>
+<tr><th>What it covers</th><td>Per-well wellhead hydrogen-sulfide (H<sub>2</sub>S) concentration in the extracted gas, all 506 wells in the 2026 annual survey</td></tr>
+<tr><th>Time span</th><td>2026 (annual survey)</td></tr>
+<tr><th>Source</th><td>The operator's own annual wellhead H<sub>2</sub>S survey filed with Michigan EGLE (public regulatory record); source PDF bundled in the release</td></tr>
+<tr><th>Format</th><td>CSV, with a reproducible parser</td></tr>
+<tr><th>License / cost</th><td>Free to download; underlying data is public regulatory record</td></tr>
+</table>
+
+<p><a class="get" href="https://github.com/tkunst/arbor-hills-monitor/releases/tag/wellhead-h2s-annual-2026-09-05">Download the dataset &rarr;</a></p>
+
+<div class="data-links">
+<h2>Related</h2>
+<ul>
+<li><a href="../perimeter-air/">Perimeter air-monitoring dataset (fence-line H<sub>2</sub>S and methane)</a></li>
+<li><a href="../wellfield/">Wellfield gas &amp; temperature dataset</a></li>
+<li><a href="../">All datasets</a> &middot; <a href="../../faq/">Frequently asked questions</a></li>
+</ul>
+</div>
+
+<footer class="site-footer">
+<p>An independent project. In-gas wellhead readings (ppm) are source strength, not resident exposure. All source data is public regulatory records from Michigan EGLE, presented without alteration.</p>
+</footer>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Dataset",
+  "name": "Arbor Hills Landfill wellhead hydrogen-sulfide survey (2026)",
+  "description": "The operator's own per-well wellhead hydrogen-sulfide (H2S) readings from its 2026 annual survey at the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688) - all 506 wells - published with the source PDF and a reproducible parser. Values are in-gas source-strength concentrations measured inside the wells, not resident exposure.",
+  "url": "https://arborhillsmonitor.org/data/wellhead-h2s/",
+  "keywords": ["Arbor Hills Landfill","hydrogen sulfide","H2S","landfill gas","wellhead survey","EGLE","Salem Township","Washtenaw County","Michigan"],
+  "creator": {"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},
+  "publisher": {"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},
+  "isAccessibleForFree": true,
+  "license": "https://github.com/tkunst/arbor-hills-monitor",
+  "temporalCoverage": "2026",
+  "spatialCoverage": {"@type":"Place","name":"Arbor Hills Landfill, Salem Township, Washtenaw County, Michigan","geo":{"@type":"GeoCoordinates","latitude":42.43,"longitude":-83.55}},
+  "distribution": [{"@type":"DataDownload","encodingFormat":"text/csv","contentUrl":"https://github.com/tkunst/arbor-hills-monitor/releases/tag/wellhead-h2s-annual-2026-09-05"}]
+}
+</script>
+
+</body>
+</html>
