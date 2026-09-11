@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://arborhillsmonitor.org/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/public-records/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/public-comment/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/hydrogen-sulfide/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/sem-inspection-2026-06-16/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/sem-exceedance-map/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/thermal-map/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/wellfield-explorer/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/unanswered-questions/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/proposed-protections/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/2022-event/</loc></url>
+  <!--
+    The paginated public-records archive (/public-records/page-2.html …) is
+    reachable via internal links from /public-records/ and is regenerated daily
+    by findings-feed.yml; it is intentionally left to crawler discovery rather
+    than pinned here, to avoid a static sitemap drifting from the live page count.
+  -->
+</urlset>

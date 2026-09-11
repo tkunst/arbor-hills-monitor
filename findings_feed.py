@@ -368,6 +368,13 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
         intro = ""
         title = f"Public Records, page {page_num} &middot; Arbor Hills Monitor"
 
+    # Self-referential canonical + share tags per page (page 1 -> the directory
+    # URL, later pages -> their own page-N.html) so the paginated archive isn't
+    # treated as duplicate content and each page carries a clean share preview.
+    canonical_url = "https://arborhillsmonitor.org/public-records/"
+    if page_num != 1:
+        canonical_url += page_filename(page_num)
+
     # The footer's "Generated ..." line (below) is prose-matched by
     # findings-feed.yml's `git diff --cached --quiet -I'...'` regex, which is
     # what lets a same-data rerun stay a no-op instead of committing all N
@@ -381,6 +388,15 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <meta name="description" content="Every public regulatory record the Arbor Hills Monitor has collected for these facilities, newest first.">
+<link rel="canonical" href="{canonical_url}">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{canonical_url}">
+<meta property="og:site_name" content="Arbor Hills Monitor">
+<meta property="og:title" content="{title}">
+<meta property="og:description" content="Every public regulatory record the Arbor Hills Monitor has collected for these facilities, newest first.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="{title}">
+<meta name="twitter:description" content="Every public regulatory record the Arbor Hills Monitor has collected for these facilities, newest first.">
 <link rel="stylesheet" href="../style.css">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">

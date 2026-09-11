@@ -29,3 +29,7 @@ egle-n2688-state.json
 !package.json
 !.markdownlint.json
 !.markdownlint.jsonc
+# SEO: track the public sitemap despite the *.xml data-file rule above — it is a
+# legitimate public site file, not a data file. (data-guard CI only scans files
+# newly ADDED in a pull request, so a file committed straight to main is not caught.)
+!site/sitemap.xml
