@@ -1055,7 +1055,8 @@ def test_screening_email_five_station_one_email_mandatory_wording():
             and "verification against the required 15-minute rolling-average data is necessary" in body)
     assert "AG STATUS: informational lead" in body
     assert "DAILY BATCH" in body and "▲" in body          # processing note + strictly-above mark
-    assert "UNDERCOUNTS true CJ exceedances" in body           # honest-measurement caveat
+    assert "not the official cj exceedance count" in body.lower()   # honest-measurement caveat
+    assert "ahl's ¶6.3 perimeter action level log" in body.lower()  # ¶6.3 log attributed to AHL
 
 
 def test_screening_email_methane_flammable_only_when_in_range():
@@ -1101,8 +1102,13 @@ def test_closeout_email_start_peak_return_duration():
 
 def test_is_historical_pure():
     now = datetime(2026, 7, 14, 18, 0, tzinfo=timezone.utc)    # 2 PM ET, 2026-07-14
-    assert gw.is_historical(["2026-06-19T01:00Z"], now) is True         # old data
-    assert gw.is_historical(["2026-07-14T17:00Z"], now) is False        # 1 PM ET today
+    assert gw.is_historical(["2026-06-19T01:00Z"], now) is True         # weeks old -> historical
+    assert gw.is_historical(["2026-07-14T17:00Z"], now) is False        # 1 PM ET today -> live
+    # A yesterday-evening excursion detected by the next morning's daily run is the
+    # COMMON case and must read LIVE, not "NOT A LIVE INCIDENT" (the fix for the daily
+    # cadence): 2026-07-13T23:00Z = 7 PM ET 07-13, one ET day before today.
+    assert gw.is_historical(["2026-07-13T23:00Z"], now) is False        # yesterday -> live
+    assert gw.is_historical(["2026-07-12T12:00Z"], now) is True         # 2 ET days old -> historical
     assert gw.is_historical([], now) is False                          # unknown -> not historical
 
 
