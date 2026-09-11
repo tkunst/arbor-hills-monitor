@@ -218,3 +218,34 @@ faster than the ITSL exceedance tier), consolidates delivery to at most two emai
 run without ever averaging or dropping station data, keeps a durable RCA-tracking log,
 and holds every checkable claim to the "accuracy over posturing" bar. The EXCEEDANCE
 tier is unchanged. Ships to the live path as a draft PR for Trisha's review.
+
+## Addendum 2026-09-11: benchmark-reference block in both emails (SUSPENSE 187 email-text upgrade)
+
+Both consolidated emails now carry a fixed **BENCHMARK REFERENCE** block
+(`_benchmark_reference_lines`, static text) so a recipient — especially the county
+commissioners joining `watch_alert_recipients` ~2026-09-17 — reads each number against
+the right standard. Every number + its framing is pulled verbatim from the canonical
+SET-report **B1 symptom master table** (`documents/arbor-hills/SET-report/html/
+B1-symptom-master-table.html` in Lotext; not re-derived). It states:
+
+- the two CJ **perimeter** action levels this screens against (H2S 30 ppb ¶def T, CH4
+  40 ppm ¶def U), **distinguished from** the EGLE Air-Toxics **ITSL health-screening**
+  levels for H2S (72 ppb 24-hr / 750 ppb 15-min acute — a health benchmark, not the CJ
+  trigger; methane has no ITSL);
+- **CH4 500 ppm as a SURFACE standard** (NESHAP MACT AAAA 40 CFR 63.1958(d) + NSPS WWW +
+  MI Part 115), measured ~5-10 cm above the active waste surface — vs. the perimeter
+  fenceline where MS-1..MS-6 sit, far from that surface, so a fenceline reading near
+  500 ppm is extraordinary (the SUSPENSE-187 distance-emphasis framing);
+- the CJ **surface** H2S action level (122 ppb, ¶def O); and the applicable **regimes**
+  cited separately (NSPS WWW + NESHAP MACT AAAA per ROP MI-ROP-N2688-2011a, the CJ, and
+  MI Part 115).
+
+**Distance caveat (accuracy-first):** SUSPENSE 187 also asked for each station's computed
+distance to the landfill boundary. The repo's `site/thermal-map/parcels.js` "gfl" ring
+is a **Section-13 subset**, not the full boundary the fenceline monitors sit on (the
+MS stations compute to ~1,500-1,800 ft *outside* it), so a parcels.js-derived per-station
+distance would be misleading. Rather than ship an unverifiable number to commissioners,
+the block frames the distance **qualitatively and rigorously** (perimeter fenceline vs.
+on-surface SEM) and shows each station's coordinates; a precise per-station distance
+awaits an authoritative full-boundary GIS layer. Additive email text only — no logic
+change; the episode engine and the EXCEEDANCE tier are untouched. Draft PR for Trisha.
