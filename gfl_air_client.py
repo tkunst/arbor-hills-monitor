@@ -92,6 +92,22 @@ _POLLUTANTS = (
     ("ch4", "CH4", "ppm", "ch4_ppm", METRIC_CH4),
 )
 
+# Per-gas identity, derived from _POLLUTANTS so the episode engine (gfl_air_watcher)
+# and the consolidated action-level emails read the SAME single source of truth as
+# the mapper/classifier — field name, unit, and config key can never drift.
+_GAS = {key: {"field": field, "unit": unit, "cfgkey": cfgkey, "metric": metric}
+        for key, field, unit, cfgkey, metric in _POLLUTANTS}
+GASES = tuple(key for key, *_ in _POLLUTANTS)          # ("h2s", "ch4"), in this order
+
+# An explicit non-measurement marker seen in H2S_Text / CH4_Text (spike 2026-09-10,
+# live feed): every one of the 24 CH4=999 fault rows carries CH4_Text='TEST' (23 also
+# H2S=999). The numeric sentinel config excludes 999 for H2S but only 99999 for CH4,
+# so a CH4=999 TEST row would otherwise flag as a real methane action-level crossing.
+# The episode engine treats a TEST-texted reading as no-data for BOTH gases (see
+# is_no_data + ADR 039); this is scoped to the NEW watch/episode tier and never
+# touches the untouched exceedance-tier paths (classify_reading / select_measurements).
+NO_DATA_TEXT = "TEST"
+
 
 class GflAirFetchError(RuntimeError):
     """A GFL/ArcGIS query could not be fetched, or the server returned an error
@@ -276,6 +292,65 @@ def fetch_h2s_window_avg(
     return out
 
 
+def _epoch_ms_to_utc_date_literal(ms: int) -> str:
+    """An epoch-ms instant as an ArcGIS standardized-query `date` literal
+    ('YYYY-MM-DD HH:MM:SS'), interpreted in UTC (same rationale as
+    _utc_date_literal / fetch_h2s_window_avg's TIMEZONE TRAP note — NOT a TIMESTAMP
+    literal, which the layer would read in its fixed-EST field tz)."""
+    return datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def fetch_station_coords(cfg_gfl: dict, *, station_prefix: str = DEFAULT_STATION_PREFIX) -> dict:
+    """BEST-EFFORT {station_name: {'lat': float, 'lon': float}} for the perimeter
+    stations, reprojected to WGS84 (outSR=4326). Layer 4 (the readings table) has NO
+    geometry (spike 2026-09-14), so coordinates come from the current-per-station
+    Feature Layer (config `stations_layer`, default 0), whose station name is in the
+    `Name` field (NOT `LocName`). Raises GflAirFetchError on failure — the alert path
+    treats coordinates as a nicety and degrades to the dashboard link, so a coords
+    outage NEVER blocks a screening/closeout email. See ADR 039."""
+    layer = cfg_gfl.get("stations_layer", 0)
+    data = _query(cfg_gfl.get("service_url", ""), layer, {
+        "where": "1=1",
+        "outFields": "Name",
+        "returnGeometry": "true",
+        "outSR": 4326,
+        "resultRecordCount": 60,
+    })
+    out: dict[str, dict] = {}
+    for f in (data.get("features") or []):
+        name = ((f.get("attributes") or {}).get("Name") or "").strip()
+        g = f.get("geometry") or {}
+        if station_prefix and not name.startswith(station_prefix):
+            continue
+        if name and g.get("x") is not None and g.get("y") is not None:
+            out[name] = {"lat": float(g["y"]), "lon": float(g["x"])}
+    return out
+
+
+def fetch_station_window(cfg_gfl: dict, station: str, center_epoch_ms: int,
+                         hours: int) -> list[dict]:
+    """BEST-EFFORT ±`hours` context readings for ONE station around `center_epoch_ms`
+    (the flagged reading's epoch), OLDEST-first — the "2 hours before and after"
+    context table Model A carries. One small windowed query on the readings layer,
+    with a UTC `date` literal (NOT TIMESTAMP — the fixed-EST trap). Raises
+    GflAirFetchError on failure; the caller treats the context table as best-effort
+    (a live event's +2h rows may not exist yet). Station names are the feed's own
+    MS-* values; a defensive quote-strip keeps the WHERE literal well-formed."""
+    c = _svc(cfg_gfl)
+    span_ms = int(hours) * 3600 * 1000
+    start = _epoch_ms_to_utc_date_literal(center_epoch_ms - span_ms)
+    end = _epoch_ms_to_utc_date_literal(center_epoch_ms + span_ms)
+    st = str(station).replace("'", "")
+    data = _query(c["service_url"], c["readings_layer"], {
+        "where": f"LocName = '{st}' AND Date >= date '{start}' AND Date <= date '{end}'",
+        "outFields": _READING_FIELDS + ",Direction_Text",
+        "orderByFields": "Date ASC",
+        "returnGeometry": "false",
+        "resultRecordCount": 2 * int(hours) + 6,
+    })
+    return _features(data)
+
+
 # ---------------------------------------------------------------------------
 # Pure helpers — accessors, sentinel/threshold classification, ADR-004 mapping
 # (no network; unit-tested directly)
@@ -328,6 +403,62 @@ def _as_float(v) -> Optional[float]:
 
 def _is_sentinel(value: Optional[float], sentinel) -> bool:
     return value is not None and sentinel is not None and value == float(sentinel)
+
+
+# ---------------------------------------------------------------------------
+# Per-gas accessors + no-data test — the shared vocabulary the per-(station,gas)
+# episode engine (gfl_air_watcher, ADR 039) reads readings through. All pure.
+# ---------------------------------------------------------------------------
+
+def gas_field(gas: str) -> str:
+    return _GAS[gas]["field"]
+
+
+def gas_unit(gas: str) -> str:
+    return _GAS[gas]["unit"]
+
+
+def gas_cfgkey(gas: str) -> str:
+    return _GAS[gas]["cfgkey"]
+
+
+def gas_value(row: dict, gas: str) -> Optional[float]:
+    """The raw, UNROUNDED numeric for one gas of one reading (or None). Strictly-`>`
+    flagging (¶5.5 'above') and any near-benchmark precision display read THIS, never
+    the rounded `_Text` (which turns 326.9 into '327' and 40.4 into '40')."""
+    return _as_float(row.get(_GAS[gas]["field"]))
+
+
+def gas_text(row: dict, gas: str) -> str:
+    """The `_Text` qualifier for one gas ('BDL', 'TEST', or the rounded value)."""
+    return (row.get(_GAS[gas]["field"] + "_Text") or "").strip()
+
+
+def is_bdl(row: dict, gas: str) -> bool:
+    """True iff the source marks this gas below its detection limit (H2S_Text /
+    CH4_Text == 'BDL'). Used so a recovery reading is never miswritten as 'below
+    detection' unless the source actually says so (handoff: 'below benchmark' !=
+    'BDL')."""
+    return gas_text(row, gas).upper() == "BDL"
+
+
+def is_no_data(row: dict, gas: str, sentinels: Optional[dict] = None) -> bool:
+    """True iff this gas reading is NOT a real ambient measurement, so it can neither
+    OPEN nor CLOSE an action-level episode (fail-safe: a no-data value is neither an
+    exceedance nor an affirmative recovery). No-data means any of: the value is
+    missing; the value equals the configured numeric sentinel (999 H2S / 99999 CH4 —
+    ambiguous no-data / off-scale-high); OR the `_Text` field is the explicit TEST
+    marker. The TEST clause matters because the numeric sentinel config excludes 999
+    for H2S but only 99999 for CH4, while the feed's CH4=999 fault rows all carry
+    CH4_Text='TEST' (spike 2026-09-10) — so without it a maintenance/test reading
+    would flag as a real methane action-level crossing. Scoped to the episode tier;
+    the exceedance-tier paths are unchanged. See ADR 039."""
+    val = gas_value(row, gas)
+    if val is None:
+        return True
+    if _is_sentinel(val, (sentinels or {}).get(_GAS[gas]["cfgkey"])):
+        return True
+    return gas_text(row, gas).upper() == NO_DATA_TEXT
 
 
 def classify_reading(row: dict, thresholds: dict, sentinels: Optional[dict] = None,

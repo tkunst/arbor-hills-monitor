@@ -66,11 +66,19 @@ encouragement to comment lives on the advocacy site, not here.
    hourly H2S (ppb) / CH4 (ppm) at six perimeter stations, pulled from its public
    ArcGIS FeatureServer. Readings ride the *Measurements* tab (`basis=measured`),
    a small *GFL Air* tab holds the latest-per-station snapshot, and a same-day
-   email fires when a reading crosses a conservative, config-driven action level
-   (**R3/R4**). A liveness guard (`gfl_air.max_stale_days`) turns a silent stall
-   into a same-day "feed appears stale" alert, so a reset ArcGIS cursor can't go
-   unseen. Enabled 2026-07-15; see
-   `docs/decisions/014-gfl-perimeter-air-stream-e.md`.
+   email fires when a reading crosses a conservative, config-driven EXCEEDANCE
+   level (CH4 500 ppm; H2S 72 ppb as a 24-hr rolling average) (**R3/R4**). A
+   separate consolidated **action-level SCREENING** system (ADR 039) watches the
+   Consent Judgment's own enforceable fenceline levels — H2S 30 ppb (¶def T) and
+   CH4 40 ppm (¶def U) — as a per-`(station, gas)` open/close episode engine,
+   emailing the (Trisha-scoped) watch list at most one SCREENING (open) + one
+   CLOSEOUT (close) email per daily run and logging each closed episode to the
+   *Perimeter Action-Level Episodes* tab. Those emails are explicitly **screening
+   alerts on public hourly data, not CJ exceedance determinations** (the CJ levels
+   are 15-min rolling averages). A liveness guard (`gfl_air.max_stale_days`) turns
+   a silent stall into a same-day "feed appears stale" alert, so a reset ArcGIS
+   cursor can't go unseen. Enabled 2026-07-15; see
+   `docs/decisions/014-gfl-perimeter-air-stream-e.md` + `039-perimeter-action-level-screening.md`.
 8. **CivicClerk meeting-change watch (Stream F)** (twice daily —
    `civicclerk_watch.enabled: true`): watches MMPC and Washtenaw County
    Board-of-Commissioners meeting events (hand-picked) plus the Board of Public

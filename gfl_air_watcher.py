@@ -42,6 +42,7 @@ import json
 import os
 import sys
 import tempfile
+from collections import Counter, namedtuple
 from datetime import datetime, timezone
 
 try:
@@ -263,109 +264,683 @@ def format_alert_body(lines: list[str], has_exceedance: bool, has_watch: bool,
     return "\n".join(body)
 
 
+# ===========================================================================
+# Consolidated perimeter ACTION-LEVEL SCREENING system (ADR 039) — REPLACES the
+# per-station CH4-40 WATCH (coder:gfl-air-thresholds). Per-(station,gas) open/close
+# episodes on the Consent Judgment's OWN enforceable perimeter action levels
+# (H2S 30 ppb / ¶def T, CH4 40 ppm / ¶def U), a single consolidated SCREENING email
+# per run + a consolidated CLOSEOUT email per run, and a durable episode log.
+#
+# ⚖️  These emails are SCREENING alerts on PUBLIC HOURLY data, NOT determinations
+# that a Consent Judgment action level was exceeded. The CJ defines both levels as
+# 15-MINUTE ROLLING AVERAGES computed from ~1-min sampling (¶def T/U, ¶5.4); the
+# public ArcGIS feed gives HOURLY values only, so an hourly value above the numeric
+# benchmark is a LEAD for EGLE to obtain AHL's nonpublic 1-min/15-min records — never
+# itself an exceedance finding. The obligated party is Arbor Hills Landfill, Inc.
+# ("AHL"), the CJ defendant — never "GFL". Flagging is STRICTLY ABOVE the benchmark
+# (¶5.5 "above") on the raw unrounded numeric; a no-data / sentinel / TEST reading
+# never opens or closes. All wording is fixed boilerplate with <data> slotted in —
+# NO per-send LLM (deterministic, testable, auditable). See the handoff + ADR 039.
+# ===========================================================================
+
+# The CJ action-level provenance per gas — the "source" column in the episode log
+# and the benchmark-definition lines in the email.
+_CJ_SOURCE = {"h2s": "CJ ¶def T", "ch4": "CJ ¶def U"}
+# The gas label used in subjects / prose ("methane", never "CH4", per the handoff's
+# methane wording; "H2S" reads fine as-is).
+_GAS_LABEL = {"h2s": "H2S", "ch4": "methane"}
+# Methane %-by-volume that falls within the ~5-15% flammable range. Below this the
+# flammable-range safety sentence is NOT emitted (a 40-ppm = 0.004% reading is
+# nowhere near flammable; asserting otherwise would be exactly the overstated claim
+# the accuracy brand forbids). 5% by volume = 50,000 ppm.
+_CH4_FLAMMABLE_PCT = 5.0
+
+EpisodeResult = namedtuple("EpisodeResult", ["state", "opened", "closed"])
+
+
 # ---------------------------------------------------------------------------
-# CH4 early-warning WATCH tier — dedicated, once-per-episode, Trisha-scoped email
-# (coder:gfl-air-thresholds; ADR 014 addendum). Independent of the exceedance/
-# anomaly path above: the 500 ppm CH4 exceedance alert is unchanged, and this
-# never fires twice for the same ongoing excursion. Pure helpers; run() wires
-# them to the marker read/write in sheet_writer.
+# ET / time helpers — the CJ + EGLE operate in Michigan local time, so every
+# recipient-facing timestamp is America/Detroit (correct DST), never UTC/Z. Pure.
 # ---------------------------------------------------------------------------
 
-def watch_episode_stations(snapshot: list[dict]) -> set[str]:
-    """Stations whose LATEST reading this poll (station_snapshot's ch4_status) is
-    'watch' OR 'exceedance' — i.e. CH4 >= the watch level, on either side of the
-    action level. This is the EPISODE-BOUNDARY set, not just the watch-tier set:
-    the handoff's episode resets on 'dropped back below 40', not 'dropped back
-    below 500', so a station descending from an exceedance through the watch band
-    on its way to full recovery must NOT get a fresh WATCH email mid-descent. Pure."""
-    return {s["station"] for s in snapshot
-            if s.get("ch4_status") in ("watch", "exceedance") and s.get("station")}
+def _et(iso_utc: str):
+    """A 'YYYY-MM-DDTHH:MM(:SS)Z' UTC stamp as an aware America/Detroit datetime, or
+    None on blank/garbage / no tz database. Correct DST — unlike the feed's fixed-EST
+    Date_Text, which trails real EDT by 1h in summer (spike 2026-09-14)."""
+    if not iso_utc or _ET is None:
+        return None
+    try:
+        return datetime.fromisoformat(str(iso_utc).replace("Z", "+00:00")).astimezone(_ET)
+    except (ValueError, TypeError):
+        return None
 
 
-def recovered_watch_stations(previously_marked: set[str], stations_seen: set[str],
-                             elevated_now: set[str]) -> set[str]:
-    """Stations to DROP from the episode marker this poll: those with a FRESH
-    reading this poll (affirmative evidence, via `stations_seen`) that is no longer
-    watch/exceedance severity. A station absent from this poll's readings entirely
-    (a dark sensor, a partial/short batch) is left exactly as marked — recovery is
-    only ever read from a positive 'back to ok' reading, never inferred from mere
-    silence, so a reporting gap can't masquerade as a recovery and prematurely
-    re-arm (and thus double-email) a station that is still mid-episode. Pure."""
-    return {st for st in previously_marked if st in stations_seen and st not in elevated_now}
+def et_date(iso_utc: str) -> str:
+    """The America/Detroit calendar date ('YYYY-MM-DD') of a UTC stamp ('' on a parse
+    miss). The recipient-facing event date + the Event-ID date. NOTE it can differ by
+    a day from the raw UTC date near midnight — the 2025-06-19T01:00Z MS-3 spike is
+    2025-06-18 in ET — and the ET date is the correct compliance-local one."""
+    et = _et(iso_utc)
+    return et.strftime("%Y-%m-%d") if et else ""
 
 
-def watch_alert_stations(readings: list[dict], thresholds: dict, sentinels: dict | None,
-                         watch_thresholds: dict, already_marked: set[str]) -> dict[str, tuple]:
-    """{station: (ch4_value, when_iso)} for stations with >=1 CH4 'watch'-severity
-    reading THIS poll that are NOT already in `already_marked` (the once-per-episode
-    dedup gate). When a station has more than one watch reading in the poll's batch
-    (a catch-up after a missed run), the LAST one (readings are OBJECTID-ascending)
-    wins, so the value shown is the most recent. Reuses gc.classify_reading — the
-    same classifier the exceedance/anomaly path uses — so watch/action-level
-    semantics can never drift between the two email channels. Pure — unit-tested."""
-    already_marked = already_marked or set()
-    out: dict[str, tuple] = {}
+def et_label(iso_utc: str) -> str:
+    """A UTC stamp as a human ET label, e.g. '2025-06-18 9:00 PM ET (01:00 UTC)'.
+    Falls back to the raw string on a parse miss — a display nicety must never abort
+    an alert."""
+    et = _et(iso_utc)
+    if et is None:
+        return iso_utc or ""
+    ampm = "AM" if et.hour < 12 else "PM"
+    h12 = et.hour % 12 or 12
+    utc = (str(iso_utc).replace("Z", "").split("T")[-1][:5]) if iso_utc else ""
+    return f"{et.strftime('%Y-%m-%d')} {h12}:{et.minute:02d} {ampm} ET ({utc} UTC)"
+
+
+def _et_iso(iso_utc: str) -> str:
+    """A UTC stamp as a sortable 24-hour ET string 'YYYY-MM-DD HH:MM ET' (falls back
+    to the raw string on a parse miss) — used for the durable episode-log time cells,
+    where lexical sortability beats the 12-hour email label."""
+    et = _et(iso_utc)
+    return f"{et.strftime('%Y-%m-%d %H:%M')} ET" if et else (iso_utc or "")
+
+
+def _duration_hours(opened_iso: str, cleared_iso: str):
+    """Whole+tenths hours between two UTC stamps, or None on a parse miss (the diff is
+    tz-independent, so parsing both to ET is fine)."""
+    a, b = _et(opened_iso), _et(cleared_iso)
+    if a is None or b is None:
+        return None
+    return round((b - a).total_seconds() / 3600.0, 1)
+
+
+def _iso_to_epoch_ms(iso_utc: str):
+    """A 'YYYY-MM-DDTHH:MM(:SS)Z' UTC stamp back to epoch-milliseconds (or None) — the
+    center for a ±context-window fetch."""
+    if not iso_utc:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(iso_utc).replace("Z", "+00:00"))
+        return int(dt.timestamp() * 1000)
+    except (ValueError, TypeError):
+        return None
+
+
+def is_historical(isos, now_utc: datetime) -> bool:
+    """True iff the newest reported reading (by ET calendar date) is from BEFORE today
+    in ET — i.e. this is a backfill / replay of older hours, not the current
+    monitoring cycle. Fires the '[HISTORICAL SCREENING ALERT — NOT A LIVE INCIDENT]'
+    subject so a 2022/2023 event arriving in 2026 can never masquerade as live. A
+    normal daily run (newest reading = today, feed posts hourly) is LIVE; anything
+    unparseable is treated as NOT historical (fail toward the plain live subject
+    rather than mislabeling a live incident). Pure — now_utc injected for testing."""
+    today = None
+    if _ET is not None:
+        today = now_utc.astimezone(_ET).date()
+    dates = sorted({d for d in (et_date(i) for i in isos) if d})
+    if not dates or today is None:
+        return False
+    return dates[-1] < today.isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Episode identity — the human Event ID. Stable per episode (assigned at open,
+# persisted in state), legible, NOT relied on for uniqueness (the log row's
+# (station, gas, opened_at) is the durable key). Pure.
+# ---------------------------------------------------------------------------
+
+def _episode_key(station: str, gas: str) -> str:
+    return f"{station}|{gas}"
+
+
+def _event_id(station: str, opened_iso: str, seq: int) -> str:
+    """AHL-<ET-date>-<station-no-hyphen>-<seq3>, e.g. AHL-2025-06-18-MS3-001."""
+    d = et_date(opened_iso) or (str(opened_iso) or "")[:10]
+    return f"AHL-{d}-{station.replace('-', '')}-{seq:03d}"
+
+
+# ---------------------------------------------------------------------------
+# THE episode state machine — per (station, gas), open/close, cross-run peak. Pure.
+# ---------------------------------------------------------------------------
+
+def _close_record(station: str, gas: str, ep: dict, cleared_at: str, cleared_value) -> dict:
+    return {
+        "station": station, "gas": gas,
+        "event_id": ep.get("event_id", ""),
+        "threshold": ep.get("threshold"),
+        "opened_at": ep.get("opened_at", ""), "opened_value": ep.get("opened_value"),
+        "peak_value": ep.get("peak_value"), "peak_at": ep.get("peak_at", ""),
+        "cleared_at": cleared_at, "cleared_value": cleared_value,
+        "duration_hours": _duration_hours(ep.get("opened_at", ""), cleared_at),
+        "n_over": int(ep.get("n_over", 0)),
+        "source": _CJ_SOURCE.get(gas, ""),
+    }
+
+
+def process_episodes(readings: list[dict], watch_thresholds: dict, sentinels: dict | None,
+                     prev_state: dict | None,
+                     *, station_prefix: str = gc.DEFAULT_STATION_PREFIX) -> EpisodeResult:
+    """The per-(station,gas) episode state machine (ADR 039). Walks the poll's
+    readings in the order given (caller passes OBJECTID/Date ASC — oldest first) and,
+    INDEPENDENTLY for each (station, gas) with a configured watch threshold:
+
+      - OPENS an episode on the first reading STRICTLY ABOVE the threshold while armed
+        (records event_id, opened_at/value, peak, n_over=1).
+      - stays OPEN across subsequent above readings (no re-alert), tracking the running
+        peak (value + timestamp) and n_over — this persists across daily runs because
+        `prev_state` is reloaded each run, so an episode routinely spans many polls.
+      - CLOSES / re-arms on the first real reading AT-OR-BELOW the threshold; that
+        value + time is the 'returned below benchmark' recovery point.
+
+    A no-data reading (missing / numeric sentinel / TEST — gc.is_no_data) NEVER opens
+    or closes: recovery is read only from an affirmative real below-benchmark reading,
+    never inferred from silence or a fault marker (the fail-safe the old per-station
+    watch used, re-keyed per (station,gas)).
+
+    (station, gas) INDEPENDENCE is the load-bearing correctness point (Trisha,
+    2026-09-03): a station's open methane episode must not suppress a new H2S open for
+    the same station, and vice versa — hence the (station, gas) key, not station alone.
+
+    Returns EpisodeResult(state, opened, closed): `state` is the surviving open-episode
+    map to persist; `opened` is every episode that opened this run (peak/n_over reflect
+    the whole batch — the ep object is mutated in place then read back); `closed` is
+    every episode that closed this run (drives the closeout email + one log row each).
+    An episode that opens AND closes within one run appears in BOTH. Pure — unit-tested."""
+    state = {k: dict(v) for k, v in (prev_state or {}).items()}
+    opened_refs: list = []          # (station, gas, ep-object); ep mutated in place
+    closed: list = []
+    wt = watch_thresholds or {}
+    # Monotonic per-(station, ET-date) Event-ID sequence, seeded from carried-over
+    # episodes so a new open never collides with one from a prior run and never reuses
+    # a number after a same-day close/reopen (unique within a run; a human handle, not
+    # a key — the log row's (station, gas, opened_at) is the durable identity).
+    seq_ctr: Counter = Counter()
+    for _k, _ep in state.items():
+        seq_ctr[(_k.split("|", 1)[0], et_date(_ep.get("opened_at", "")))] += 1
     for r in readings:
         st = gc.station_of(r)
-        if not st or st in already_marked:
+        if not st or (station_prefix and not st.startswith(station_prefix)):
             continue
-        c = gc.classify_reading(r, thresholds, sentinels, watch_thresholds)
-        ch4_val, ch4_status = c["ch4"]
-        if ch4_status == "watch":
-            out[st] = (ch4_val, gc.reading_iso(r))
+        when = gc.reading_iso(r)
+        for gas in gc.GASES:
+            thr = wt.get(gc.gas_cfgkey(gas))
+            if thr is None:
+                continue                        # gas has no watch tier -> display-only
+            if gc.is_no_data(r, gas, sentinels):
+                continue                        # never opens or closes
+            val = gc.gas_value(r, gas)
+            if val is None:                     # redundant with is_no_data; keeps the
+                continue                        # comparison below unambiguously float>float
+            thr = float(thr)
+            key = _episode_key(st, gas)
+            ep = state.get(key)
+            over = val > thr                    # STRICT '>' on the raw unrounded numeric
+            if ep is None:
+                if over:
+                    dkey = (st, et_date(when))
+                    seq_ctr[dkey] += 1
+                    ep = {"event_id": _event_id(st, when, seq_ctr[dkey]), "threshold": thr,
+                          "opened_at": when, "opened_value": val,
+                          "peak_value": val, "peak_at": when, "n_over": 1}
+                    state[key] = ep
+                    opened_refs.append((st, gas, ep))
+            else:
+                if over:
+                    ep["n_over"] = int(ep.get("n_over", 0)) + 1
+                    if val > ep["peak_value"]:
+                        ep["peak_value"] = val
+                        ep["peak_at"] = when
+                else:
+                    closed.append(_close_record(st, gas, ep, when, val))
+                    del state[key]
+    opened = [{"station": st, "gas": gas, **ep} for (st, gas, ep) in opened_refs]
+    return EpisodeResult(state=state, opened=opened, closed=closed)
+
+
+def perimeter_episode_rows(closed: list[dict], logged_utc: str) -> list[list]:
+    """One durable log row per CLOSED episode, matching
+    sheet_writer.PERIMETER_EPISODE_HEADERS. Timestamps render as sortable ET (the
+    compliance-local time), values verbatim/unrounded. Pure — unit-tested."""
+    rows = []
+    for c in closed:
+        dur = c.get("duration_hours")
+        rows.append([
+            c.get("station", ""),
+            gc.gas_field(c["gas"]) if c.get("gas") in gc._GAS else c.get("gas", ""),
+            _num(c.get("threshold")),
+            _et_iso(c.get("opened_at", "")),
+            _num(c.get("opened_value")),
+            _num(c.get("peak_value")),
+            _et_iso(c.get("peak_at", "")),
+            _et_iso(c.get("cleared_at", "")),
+            _num(c.get("cleared_value")),
+            ("%g" % dur) if dur is not None else "",
+            c.get("n_over", 0),
+            c.get("source", ""),
+            c.get("event_id", ""),
+            logged_utc,
+        ])
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# The "all six monitors" snapshot rows the SCREENING email shows — raw verbatim
+# readings + a strictly-above-benchmark flag + no-data/BDL qualifiers. Pure.
+# ---------------------------------------------------------------------------
+
+def latest_per_station(readings: list[dict],
+                       station_prefix: str = gc.DEFAULT_STATION_PREFIX) -> dict:
+    """{station: newest raw reading row} (newest = highest OBJECTID) among perimeter
+    stations in `readings`. Pure — the raw rows carry _Text, so the email can honor
+    the no-data/BDL/strictly-above distinctions the processed snapshot dict drops."""
+    latest: dict = {}
+    for r in readings:
+        st = gc.station_of(r)
+        if not st or (station_prefix and not st.startswith(station_prefix)):
+            continue
+        oid = gc.oid_of(r)
+        if oid is None:
+            continue
+        if st not in latest or oid > (gc.oid_of(latest[st]) or -1):
+            latest[st] = r
+    return latest
+
+
+def _monitor_rows(latest: dict, watch_thresholds: dict, sentinels: dict | None) -> list[dict]:
+    """Per-station display rows for the six-monitor table, built from raw latest rows."""
+    wt = watch_thresholds or {}
+    rows = []
+    for st in sorted(latest):
+        r = latest[st]
+        row = {"station": st, "as_of": gc.reading_iso(r),
+               "wind": r.get("Speed"), "dir": r.get("Direction"),
+               "dir_text": (r.get("Direction_Text") or "").strip(), "temp": r.get("Temp")}
+        for gas in gc.GASES:
+            thr = wt.get(gc.gas_cfgkey(gas))
+            val = gc.gas_value(r, gas)
+            nod = gc.is_no_data(r, gas, sentinels)
+            over = (thr is not None) and (not nod) and (val is not None) and (val > float(thr))
+            row[gas] = {"val": val, "text": gc.gas_text(r, gas), "no_data": nod,
+                        "bdl": gc.is_bdl(r, gas), "over": bool(over), "unit": gc.gas_unit(gas)}
+        rows.append(row)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Rendering helpers for the consolidated emails (all pure).
+# ---------------------------------------------------------------------------
+
+def _num(v) -> str:
+    """A raw numeric rendered verbatim/unrounded ('' for None). %g keeps 326.9 and
+    40.4 (the value that a rounded _Text would show as 327 / 40) — the precision the
+    handoff requires so 'above' is never confused with 'at'."""
+    if v is None:
+        return ""
+    try:
+        return f"{float(v):g}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _rounds_to_benchmark(val, thr) -> bool:
+    """True iff a flagged value is ABOVE the benchmark yet rounds (to the nearest
+    integer) to it — e.g. 40.4 vs 40 — so the email can show extra precision and say
+    so, per the handoff."""
+    try:
+        return float(val) > float(thr) and round(float(val)) == round(float(thr))
+    except (TypeError, ValueError):
+        return False
+
+
+def _ch4_pct(ppm):
+    """Methane %-by-volume from ppm (1% = 10,000 ppm), or None."""
+    try:
+        return float(ppm) / 10000.0
+    except (TypeError, ValueError):
+        return None
+
+
+def _gas_word(gases) -> str:
+    """Subject/prose label for a set of implicated gases: 'H2S', 'methane', or
+    'H2S + methane' (never one gas when both are implicated)."""
+    present = [g for g in gc.GASES if g in set(gases)]
+    return " + ".join(_GAS_LABEL[g] for g in present) or "perimeter gas"
+
+
+def _date_span_et(isos) -> str:
+    """The ET date (or 'a..b' span) covering a set of UTC stamps — the subject date."""
+    dates = sorted({d for d in (et_date(i) for i in isos) if d})
+    if not dates:
+        return ""
+    return dates[0] if len(dates) == 1 else f"{dates[0]}..{dates[-1]}"
+
+
+def _coord_str(coords: dict | None, station: str) -> str:
+    c = (coords or {}).get(station) or {}
+    if c.get("lat") is not None and c.get("lon") is not None:
+        return (f"{c['lat']:.5f}, {c['lon']:.5f} "
+                f"(https://www.google.com/maps?q={c['lat']:.5f},{c['lon']:.5f})")
+    return "see dashboard"
+
+
+def _wind_str(row: dict) -> str:
+    d = row.get("dir_text") or _num(row.get("dir"))
+    s = _num(row.get("wind"))
+    if not d and not s:
+        return "n/a"
+    return f"{d or '?'}@{s or '?'} mph"
+
+
+def _context_table(rows: list[dict]) -> list[str]:
+    """The compact ±2-hour context block for one flagged station: its own hourly
+    H2S/CH4 around the flagged reading. Pure; caller supplies the rows."""
+    if not rows:
+        return ["      (context readings unavailable)"]
+    out = []
+    for r in rows:
+        out.append(f"      {et_label(gc.reading_iso(r))}: "
+                   f"H2S={_num(gc.gas_value(r, 'h2s'))} ppb, "
+                   f"CH4={_num(gc.gas_value(r, 'ch4'))} ppm")
     return out
 
 
-def _reading_when_et(iso: str) -> str:
-    """Render a reading_iso() UTC stamp ('YYYY-MM-DDTHH:MMZ') as human Eastern
-    time, e.g. '2026-07-26 12:00 AM ET (04:00 UTC)'. Falls back to the raw string
-    on any parse miss — a display nicety must never abort or blank a watch line."""
-    if not iso:
-        return iso
-    try:
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-        et = dt.astimezone(ZoneInfo("America/Detroit"))
-        ampm = "AM" if et.hour < 12 else "PM"
-        h12 = et.hour % 12 or 12
-        return (f"{et.strftime('%Y-%m-%d')} {h12}:{et.minute:02d} {ampm} ET "
-                f"({dt.strftime('%H:%M')} UTC)")
-    except Exception:
-        return iso
-
-
-def format_watch_body(stations: dict[str, tuple], watch_thresholds: dict,
-                      thresholds: dict, link: str) -> str:
-    """The dedicated CH4 WATCH-tier email body — deliberately NOT format_alert_body,
-    so a reader can never mistake this lower-urgency, Trisha-scoped notice for the
-    full-list [URGENT] exceedance alert."""
-    body = [
-        "GFL Arbor Hills perimeter air monitoring: CH4 EARLY-WARNING WATCH "
-        "(lower urgency).\n",
-        "40 ppm is the Perimeter Methane Action Level defined in Consent "
-        "Judgment 2020-0593-CE (a 15-minute rolling average). At that level GFL "
-        "must run a root-cause analysis, correct the exceedance within 48 hours, "
-        "and report it to EGLE in its semi-annual report (paragraphs 5.5 and "
-        "6.3). This WATCH fires on a single hourly perimeter reading at or above "
-        "40 ppm: an early signal at the consent-judgment number, below the 500 "
-        "ppm NESHAP corrective-action tier (which alerts separately, at "
-        "[URGENT], to the full list).\n",
+def _screening_disclaimer_lines() -> list[str]:
+    """The fixed 'this is a screening alert, not an exceedance determination' preamble
+    — the single most important corrected legal point, so it leads every email."""
+    return [
+        "AUTOMATED SCREENING ALERT — PUBLIC HOURLY DATA",
+        "This is NOT a formal determination that a Consent Judgment action level was "
+        "exceeded. The public source provides HOURLY values only; it does not provide "
+        "the ~1-minute measurements the Consent Judgment requires to calculate or "
+        "verify the 15-minute rolling average that DEFINES an exceedance. A publicly "
+        "reported hourly value above the numerical benchmark corresponding to the "
+        "Consent Judgment action level applicable to Arbor Hills Landfill, Inc. "
+        "(\"AHL\") is a LEAD for EGLE to obtain and examine AHL's nonpublic records; "
+        "verification against the required 15-minute rolling-average data is "
+        "necessary. This hourly-reading proxy for the CJ's 15-minute rolling action "
+        "level likely UNDERCOUNTS true CJ exceedances; GFL's own continuous monitor "
+        "and its ¶6.3 Perimeter Action Level Log are the authoritative 15-minute "
+        "record. It does NOT establish that AHL exceeded, or failed to correct, "
+        "anything.\n",
     ]
-    for levels_line in (_levels_line("Early-warning WATCH level", watch_thresholds),
-                        _levels_line("Action level (for comparison)", thresholds)):
-        if levels_line:
-            body.append(levels_line)
-    for st in sorted(stations):
-        val, when = stations[st]
-        body.append(f"  watch       {st} {_reading_when_et(when)}: "
-                    f"CH4={val:g} ppm >= watch level")
-    body.append(
-        "\n(You will not get another WATCH alert for a station already in this "
-        "episode; it re-arms once that station's CH4 drops back below the watch "
-        "level.)")
-    body.append(f"\nLive dashboard:\n  {link}\n")
-    return "\n".join(body)
+
+
+def _identity_block(event_ids: list[str], event_state: str, period: str,
+                    source_link: str, retrieved_iso: str, data_quality: str) -> list[str]:
+    """The standardized identity block shared by both consolidated emails."""
+    ev = ", ".join(event_ids) if event_ids else "(none)"
+    return [
+        "Facility:            Arbor Hills Landfill, 10690 West Six Mile Road, Salem "
+        "Township, MI",
+        "Responsible entity:  Arbor Hills Landfill, Inc. (\"AHL\") — defendant under "
+        "the Consent Judgment (NOT the operator GFL)",
+        "Authority:           Consent Judgment No. 2020-0593-CE (30th Circuit Court, "
+        "entered 2022-03-07)",
+        f"Event ID(s):         {ev}",
+        f"Event state:         {event_state}",
+        f"Observed period:     {period}  (America/Detroit, ET)",
+        f"Source:              {source_link}",
+        f"                     retrieved {et_label(retrieved_iso)}",
+        "                     Hourly-value basis: NOT documented by the source "
+        "(service/layer/field/dashboard metadata all blank, verified) — whether the "
+        "hourly value is instantaneous, an hourly average, or an hourly max is UNKNOWN "
+        "from public data; a further reason to obtain AHL's underlying ~1-minute "
+        "measurements.",
+        f"Data quality:        {data_quality}",
+        "",
+    ]
+
+
+def _cj_implications_lines(gases) -> list[str]:
+    """The fixed ¶5.5(D)/(E) implication + requested-EGLE-review + AG-status footer,
+    shared by both emails. Only meaningful IF verified as a 15-min-rolling exceedance."""
+    lines = [
+        "POTENTIAL CONSENT-JUDGMENT IMPLICATIONS (only if verified as a 15-minute "
+        "rolling-average exceedance):",
+        "  Potentially implicates ¶5.5(D) or ¶5.5(E) depending on whether "
+        "Cell 6/4F excavation or relocation activities were underway (the alert cannot "
+        "know operational status). Under ¶5.5(E) AHL must conduct a root-cause "
+        "analysis and appropriate corrective actions, and CORRECT the exceedance "
+        "within 48 hours of detection — or request an extension under ¶16.4. (The "
+        "48-hour deadline applies to CORRECTION, not to completing the root-cause "
+        "analysis.) During Cell 6/4F waste excavation/relocation, ¶5.5(D) routes "
+        "the response through the Cell 6/4F Waste Relocation and Odor Control Plan "
+        "(§3.6) instead.",
+        "",
+    ]
+    if "ch4" in set(gases):
+        lines += [
+            "  Methane note: a perimeter methane reading above 40 ppm is the CJ "
+            "¶def U action-level benchmark; it is far below the ~5-15% (50,000-"
+            "150,000 ppm) flammable range at ordinary perimeter concentrations. A "
+            "flammability assessment line is included below ONLY for a reading whose "
+            "%-by-volume actually reaches that range.",
+            "",
+        ]
+    lines += [
+        "REQUESTED EGLE REVIEW: obtain AHL's underlying ~1-minute measurements and "
+        "15-minute rolling averages for this period; determine whether a 15-minute "
+        "rolling-average exceedance occurred; and review the required root-cause "
+        "analysis, corrective-action record, and any ¶16.4 extension "
+        "(¶5.5(E)/(F)).",
+        "AG STATUS: informational lead pending EGLE technical verification — not a "
+        "compliance determination.",
+        "",
+        "Processing note: the monitor ingests the public feed in a DAILY BATCH, so one "
+        "email may cover several past hours at once; \"newly detected / returned below "
+        "benchmark\" describe the PUBLIC HOURLY series, not AHL's compliance status.",
+    ]
+    return lines
+
+
+def _benchmark_definition_lines() -> list[str]:
+    return [
+        "  Perimeter H2S  — CJ Action Level = 30 ppb as a 15-MINUTE ROLLING AVERAGE "
+        "(¶def T)",
+        "  Perimeter CH4  — CJ Action Level = 40 ppm as a 15-MINUTE ROLLING AVERAGE "
+        "(¶def U)",
+        "  The values below are PUBLIC HOURLY readings compared to those numerical "
+        "benchmarks (flagged STRICTLY ABOVE, on the raw unrounded value). Whether a "
+        "15-minute rolling-average exceedance occurred can be determined only from "
+        "AHL's nonpublic data.",
+    ]
+
+
+def _subject(historical: bool, verb: str, gases, stations, isos) -> str:
+    tag = ("[HISTORICAL SCREENING ALERT — NOT A LIVE INCIDENT]" if historical
+           else "[SCREENING ALERT]")
+    st = ", ".join(sorted(set(stations))) or "perimeter"
+    return (f"{tag} Arbor Hills perimeter — {_gas_word(gases)} hourly value(s) "
+            f"{verb} CJ benchmark — {st} — {_date_span_et(isos)}, ET")
+
+
+def format_screening_email(opened: list[dict], continuing: list[dict], monitor_rows: list[dict],
+                           watch_thresholds: dict, *, link: str, retrieved_iso: str,
+                           coords: dict | None = None, context: dict | None = None,
+                           historical: bool = False, stations_reporting: int | None = None,
+                           n_stations_expected: int = 6) -> tuple[str, str]:
+    """The consolidated per-run SCREENING (OPEN) email — Model A. ONE email listing ALL
+    monitors' verbatim per-station readings for BOTH gases (▲ = strictly above the
+    benchmark), the newly-detected + continuing episodes, a ±2h context block per
+    flagged (station, gas), and the full fixed legal framing. Returns (subject, body).
+    Fired iff >=1 episode OPENED this run; a continuing-only run sends nothing (no
+    re-alert). Pure — all <data> slotted into a static template, no per-send LLM."""
+    coords = coords or {}
+    context = context or {}
+    opened_isos = [o.get("opened_at", "") for o in opened]
+    stations = [o["station"] for o in opened]
+    gases = {o["gas"] for o in opened}
+
+    # Event state summary across opened + continuing.
+    state_parts = []
+    if opened:
+        state_parts.append(f"Newly detected ({len(opened)})")
+    if continuing:
+        state_parts.append(f"Continuing ({len(continuing)})")
+    if historical:
+        state_parts.append("HISTORICAL BACKFILL")
+    event_state = "; ".join(state_parts) or "Newly detected"
+
+    period_isos = opened_isos + [r["as_of"] for r in monitor_rows if r.get("as_of")]
+    period = (f"{et_label(min(opened_isos))} to {et_label(max(period_isos))}"
+              if opened_isos else "n/a")
+
+    n_report = stations_reporting if stations_reporting is not None else len(monitor_rows)
+    dq = (f"stations reporting {n_report}/{n_stations_expected} · 999/99999 "
+          "no-data & TEST-marker readings excluded from flagging · calibration "
+          "status: not published by the source")
+
+    body: list[str] = []
+    body += _screening_disclaimer_lines()
+    body += _identity_block([o.get("event_id", "") for o in opened] +
+                            [c.get("event_id", "") for c in continuing],
+                            event_state, period, link, retrieved_iso, dq)
+
+    body.append("WHAT TRIGGERED THIS — public hourly values vs the CJ numerical "
+                "benchmarks:")
+    body += _benchmark_definition_lines()
+    body.append("")
+
+    # The all-six-monitors table.
+    body.append("ALL PERIMETER MONITORS (latest reading this run; ▲ = public "
+                "hourly value STRICTLY ABOVE the benchmark):")
+    body.append("  Station  H2S (ppb)        CH4 (ppm)        Wind            As-Of (ET)")
+    near = False
+    for row in monitor_rows:
+        def cell(gas):
+            nonlocal near
+            g = row[gas]
+            thr = (watch_thresholds or {}).get(gc.gas_cfgkey(gas))
+            if g["no_data"]:
+                mark = "TEST/no-data" if (g["text"] or "").upper() in ("TEST",) else "no-data"
+                return f"{_num(g['val'])} ({mark})"
+            if g["bdl"]:
+                return "BDL"
+            txt = _num(g["val"])
+            if g["over"]:
+                txt += "▲"
+                if thr is not None and _rounds_to_benchmark(g["val"], thr):
+                    near = True
+                    txt += "*"
+            return txt or "·"
+        body.append(f"  {row['station']:<7}  {cell('h2s'):<15}  {cell('ch4'):<15}  "
+                    f"{_wind_str(row):<14}  {et_label(row.get('as_of',''))}")
+    if near:
+        body.append("  * value is ABOVE the benchmark but rounds to it — shown to full "
+                    "precision (the raw unrounded value drives the flag, not the "
+                    "rounded display).")
+    body.append("  \"Above benchmark\" is NOT \"below detection\": BDL appears only "
+                "where the source marks it; \"no-data\" is the ambiguous 999/99999/TEST "
+                "marker, excluded from flagging.")
+    body.append("")
+
+    # Newly-detected episodes + per-flagged context.
+    body.append("NEWLY DETECTED (public hourly value above the benchmark this run):")
+    for o in opened:
+        gl = _GAS_LABEL[o["gas"]]
+        unit = gc.gas_unit(o["gas"])
+        body.append(f"  {o['event_id']}  {o['station']} · {gl}: opened "
+                    f"{et_label(o['opened_at'])} at {_num(o['opened_value'])} {unit} "
+                    f"(> {_num(o['threshold'])} {unit} benchmark) · highest public "
+                    f"hourly value so far {_num(o['peak_value'])} {unit} at "
+                    f"{et_label(o['peak_at'])}")
+        # Methane flammability line — ONLY when the %-by-volume is actually in range.
+        if o["gas"] == "ch4":
+            pct = _ch4_pct(o["peak_value"])
+            if pct is not None and pct >= _CH4_FLAMMABLE_PCT:
+                body.append(f"      If confirmed as a representative ambient-air "
+                            f"concentration, {pct:g}% methane falls within methane's "
+                            f"~5-15% flammable range and warrants immediate safety "
+                            f"assessment.")
+        ctx = context.get(_episode_key(o["station"], o["gas"])) or context.get(o["station"])
+        body.append(f"      Station {o['station']} location: {_coord_str(coords, o['station'])}")
+        body.append(f"      ±2-hour context around {o['station']} "
+                    f"(all values that station's own raw hourly reading):")
+        body += _context_table(ctx or [])
+    if continuing:
+        body.append("")
+        body.append("CONTINUING (opened on an earlier run, still above benchmark on "
+                    "the public hourly series; no re-alert):")
+        for c in continuing:
+            gl = _GAS_LABEL[c["gas"]]
+            unit = gc.gas_unit(c["gas"])
+            body.append(f"  {c.get('event_id','')}  {c['station']} · {gl}: opened "
+                        f"{et_label(c.get('opened_at',''))} · peak so far "
+                        f"{_num(c.get('peak_value'))} {unit} at "
+                        f"{et_label(c.get('peak_at',''))}")
+    body.append("")
+
+    body += _cj_implications_lines(gases)
+    body.append("")
+    body.append(f"Live dashboard: {link}")
+
+    subject = _subject(historical, "above", gases, stations, opened_isos)
+    return subject, "\n".join(body)
+
+
+def format_closeout_email(closed: list[dict], *, link: str,
+                          retrieved_iso: str, coords: dict | None = None,
+                          historical: bool = False) -> tuple[str, str]:
+    """The consolidated per-run CLOSEOUT (CLOSE) email — the ping that each episode's
+    public hourly series returned below the benchmark, with start / peak / return /
+    duration per episode. It is NOT proof AHL corrected anything (only that the public
+    hourly number fell back under the benchmark). Carries the same standardized
+    framing block. Returns (subject, body). Fired iff >=1 episode CLOSED this run.
+    Pure — a static template with <data> slotted in, no per-send LLM."""
+    coords = coords or {}
+    stations = [c["station"] for c in closed]
+    gases = {c["gas"] for c in closed}
+    close_isos = [c.get("cleared_at", "") for c in closed]
+    open_isos = [c.get("opened_at", "") for c in closed]
+
+    period = (f"{et_label(min(open_isos))} to {et_label(max(close_isos))}"
+              if open_isos and close_isos else "n/a")
+    event_state = "Returned below benchmark" + (" (HISTORICAL BACKFILL)" if historical else "")
+    dq = ("closeout of episode(s) whose public hourly series returned at-or-below the "
+          "benchmark · calibration status: not published by the source")
+
+    body: list[str] = []
+    body += _screening_disclaimer_lines()
+    body += _identity_block([c.get("event_id", "") for c in closed], event_state, period,
+                            link, retrieved_iso, dq)
+
+    body.append("RETURNED BELOW BENCHMARK (the public hourly series recovered — this "
+                "does NOT establish that AHL corrected anything):")
+    for c in closed:
+        gl = _GAS_LABEL[c["gas"]]
+        unit = gc.gas_unit(c["gas"])
+        dur = c.get("duration_hours")
+        body.append(
+            f"  {c.get('event_id','')}  {c['station']} · {gl} (benchmark "
+            f"{_num(c.get('threshold'))} {unit}, {c.get('source','')}) · "
+            f"location {_coord_str(coords, c['station'])}:")
+        body.append(
+            f"      first-above {et_label(c.get('opened_at',''))} at "
+            f"{_num(c.get('opened_value'))} {unit} · highest public hourly value "
+            f"{_num(c.get('peak_value'))} {unit} at {et_label(c.get('peak_at',''))} "
+            f"· first-below-benchmark {et_label(c.get('cleared_at',''))} at "
+            f"{_num(c.get('cleared_value'))} {unit} · elapsed "
+            f"{('%g' % dur + ' hr') if dur is not None else 'n/a'} · "
+            f"{c.get('n_over', 0)} hourly reading(s) above benchmark")
+        if c["gas"] == "ch4":
+            pct = _ch4_pct(c.get("peak_value"))
+            if pct is not None and pct >= _CH4_FLAMMABLE_PCT:
+                body.append(f"      Peak: if confirmed as a representative ambient-air "
+                            f"concentration, {pct:g}% methane falls within methane's "
+                            f"~5-15% flammable range and warrants immediate safety "
+                            f"assessment.")
+    body.append("")
+    body += _cj_implications_lines(gases)
+    body.append("")
+    body.append("The durable record of each episode (start / peak / return / duration) "
+                "is logged to the \"Perimeter Action-Level Episodes\" case-file tab, to "
+                "back a review of whether AHL's ¶6.3 Perimeter Action Level Log + "
+                "quarterly root-cause report show a root-cause analysis + "
+                "prevent-recurrence correction for each.")
+    body.append(f"Live dashboard: {link}")
+
+    subject = _subject(historical, "returned below", gases, stations, close_isos)
+    return subject, "\n".join(body)
 
 
 # ---------------------------------------------------------------------------
@@ -645,17 +1220,17 @@ def run() -> int:
     h2s_avg_window_hours = int(cfg_gfl.get("h2s_avg_window_hours", 24))
     h2s_avg_min_readings = int(cfg_gfl.get("h2s_avg_min_readings", 12))
     h2s_averaged = h2s_avg_window_hours > 0
-    # CH4 WATCH-tier notification (coder:gfl-air-thresholds). Empty/unset = display-
-    # only (today's rollback lever): the watch line still shows on the snapshot tab
-    # and rides along in the combined exceedance/anomaly email as before, but no
-    # dedicated email is sent. Configured (non-empty) = the watch tier graduates to
-    # its OWN once-per-episode email, scoped to this list (Trisha, per the Ridge
-    # Wood review_recipients precedent) — and is dropped from the combined pass
-    # (include_watch below) so it is never emailed via both channels at once.
-    # GFL_AIR_WATCH_RECIPIENTS_EXTRA (added 2026-08-21, Trisha's direction) is this
-    # list's own private-supplement env, parallel to email_alerts.resolve_recipients'
-    # ALERT_RECIPIENTS_EXTRA — lets a recipient be added here WITHOUT committing
-    # their address to this PUBLIC repo's config.yml.
+    # Consolidated ACTION-LEVEL screening tier recipients (ADR 039). Empty/unset =
+    # DISPLAY-ONLY rollback lever: the episode engine is skipped entirely (no OPEN/
+    # CLOSE emails, no episode-log writes), and the watch status still shows on the
+    # snapshot tab. Configured (non-empty) = the per-(station,gas) episode engine runs
+    # and emails this list. The action-level (watch) tier is NEVER folded into the
+    # full-list exceedance/anomaly email (include_watch=False below), so a sub-
+    # exceedance action-level lead — including the new H2S 30 ppb tier — cannot blast
+    # the whole distribution list. GFL_AIR_WATCH_RECIPIENTS_EXTRA (2026-08-21, Trisha's
+    # direction) is this list's private-supplement env, parallel to
+    # email_alerts.resolve_recipients' ALERT_RECIPIENTS_EXTRA — a recipient added here
+    # WITHOUT committing their address to this PUBLIC repo's config.yml.
     watch_recipients = ea.merge_extra_recipients(
         cfg_gfl.get("watch_alert_recipients") or [], "GFL_AIR_WATCH_RECIPIENTS_EXTRA")
     link = cfg_gfl.get("dashboard_url") or cfg_gfl.get("service_url", "")
@@ -750,9 +1325,14 @@ def run() -> int:
     except Exception as ce:  # noqa: BLE001 — durable capture is best-effort
         print(f"[gfl-air]   durable capture skipped: {ce}")
 
+    # The full-list EXCEEDANCE / anomaly email (unchanged tier: CH4 500 ppm / H2S
+    # 72 ppb 24-hr avg). include_watch=False ALWAYS now: the action-level (watch) tier
+    # is owned entirely by the consolidated per-(station,gas) episode engine below and
+    # is NEVER folded into this full-list email (ADR 039) — so the H2S 30 ppb / CH4
+    # 40 ppm leads can't blast the whole distribution list.
     lines, has_exceedance, has_watch = alert_lines(
         readings, thresholds, sentinels, alert_on_sentinel, watch_thresholds,
-        h2s_averaged=h2s_averaged, include_watch=not watch_recipients)
+        h2s_averaged=h2s_averaged, include_watch=False)
 
     # H2S exceedance alerting is the rolling per-station average (the 72 ppb level IS a
     # 24-hr-average level; ADR 014 decision 4) — NOT the instantaneous readings, which
@@ -792,57 +1372,125 @@ def run() -> int:
         except Exception as e:  # noqa: BLE001 — alert best-effort; readings recorded
             print(f"[gfl-air]   readings recorded but alert email FAILED: {e}")
 
-    # Dedicated CH4 WATCH-tier email (coder:gfl-air-thresholds) — independent of the
-    # exceedance/anomaly path above; runs every poll regardless of has_exceedance (the
-    # tiers don't suppress each other). Fully skipped (no Sheets read, no behavior
-    # change) when watch_recipients is empty — the display-only rollback lever.
+    # Consolidated ACTION-LEVEL SCREENING system (ADR 039) — the per-(station,gas)
+    # episode engine. Independent of the exceedance/anomaly path above. Fully skipped
+    # (no Sheets read/write, no email) when watch_recipients is empty (display-only
+    # rollback) or no gas has a watch threshold.
     if watch_thresholds and watch_recipients:
-        stations_this_poll = {gc.station_of(r) for r in readings if gc.station_of(r)}
-        elevated_now = watch_episode_stations(snapshot)
-        try:
-            previously_marked = sw.gfl_air_watch_marker(sheets, sheet_id)
-        except Exception as e:  # noqa: BLE001 — unreadable marker => empty (fail-safe
-            # toward alerting: looks like "nothing alerted yet", never like "already
-            # covered", so we'd rather re-alert than risk silently swallowing one).
-            print(f"[gfl-air]   watch marker read FAILED, treating as empty: {e}")
-            previously_marked = set()
-        recovered = recovered_watch_stations(previously_marked, stations_this_poll, elevated_now)
-
-        new_watch = watch_alert_stations(readings, thresholds, sentinels,
-                                         watch_thresholds, previously_marked)
-        if new_watch:
-            subject = (f"[GFL air watch] Arbor Hills perimeter: {len(new_watch)} "
-                       f"station(s) reached the CH4 early-warning level")
-            body = format_watch_body(new_watch, watch_thresholds, thresholds, link)
-            try:
-                ea.send_email(subject, body, cfg, recipients=watch_recipients)
-                # Marker write is GATED on send success (mirrors the liveness stale-
-                # marker): a failed send leaves the marker un-added-to, so the SAME
-                # station is retried next poll instead of being silently marked
-                # "already told" when nobody was actually told.
-                sw.set_gfl_air_watch_marker(
-                    sheets, sheet_id, (previously_marked - recovered) | set(new_watch))
-                print(f"[gfl-air]   WATCH emailed: {sorted(new_watch)}.")
-            except Exception as e:  # noqa: BLE001 — best-effort; marker NOT updated
-                print(f"[gfl-air]   WATCH detected but alert email FAILED "
-                      f"(marker not updated — will retry next run): {e}")
-        elif recovered:
-            # Nothing NEW this poll, but >=1 station has AFFIRMATIVE recovery evidence
-            # (a fresh reading back below 40) — reconcile the marker regardless of
-            # whether any email fired, so a station that fully cycles below 40 and
-            # back up is treated as a fresh episode next time, not permanently
-            # suppressed. A station with NO reading this poll is left untouched
-            # (see recovered_watch_stations — silence is never read as recovery).
-            reconciled = previously_marked - recovered
-            try:
-                sw.set_gfl_air_watch_marker(sheets, sheet_id, reconciled)
-                print(f"[gfl-air]   watch episode marker reconciled (recovered: "
-                      f"{sorted(recovered)}).")
-            except Exception as e:  # noqa: BLE001 — best-effort; retried next poll
-                print(f"[gfl-air]   watch marker recovery reconcile FAILED "
-                      f"(ignored, retried next poll): {e}")
+        _run_action_level_episodes(
+            sheets, sheet_id, cfg, readings, watch_thresholds, sentinels, prefix,
+            link, watch_recipients, cfg_gfl)
 
     return 0
+
+
+def _open_episode_from_state(key: str, ep: dict) -> dict:
+    """A state-map entry (keyed 'station|gas') as a flat dict for the email helpers."""
+    station, _, gas = key.partition("|")
+    return {"station": station, "gas": gas, **ep}
+
+
+def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds,
+                               sentinels, prefix, link, watch_recipients, cfg_gfl) -> None:
+    """Advance the per-(station,gas) episode state on this poll's readings, persist it
+    (crash-safe: the durable log ROW is written BEFORE the state entry, per the repo
+    invariant), and send AT MOST one consolidated SCREENING (open) email and one
+    CLOSEOUT (close) email. Coords + ±2h context are best-effort; a failure there
+    degrades the email but never blocks it. Emails are best-effort (like the
+    exceedance email) — the episode STATE is the committed system of record."""
+    # Prior open-episode state — fail-safe toward re-alerting on an unreadable cell.
+    try:
+        prev_state = sw.gfl_air_episode_state(sheets, sheet_id)
+    except Exception as e:  # noqa: BLE001 — unreadable state => empty (re-derive, never
+        print(f"[gfl-air]   episode-state read FAILED, treating as empty: {e}")  # suppress)
+        prev_state = {}
+
+    result = process_episodes(readings, watch_thresholds, sentinels, prev_state,
+                              station_prefix=prefix)
+    # "Continuing" = episodes open BOTH before and after this run (not newly opened).
+    prev_keys = set(prev_state)
+    opened_keys = {_episode_key(o["station"], o["gas"]) for o in result.opened}
+    continuing = [_open_episode_from_state(k, result.state[k])
+                  for k in sorted(result.state)
+                  if k in prev_keys and k not in opened_keys]
+
+    if not result.opened and not result.closed:
+        # Elevated-but-nothing-new (continuing only) or all-quiet — no re-alert. Still
+        # persist state so cross-run peaks/n_over that advanced this run are kept.
+        try:
+            sw.set_gfl_air_episode_state(sheets, sheet_id, result.state)
+        except Exception as e:  # noqa: BLE001 — best-effort; re-derived next poll
+            print(f"[gfl-air]   episode-state write skipped (no alerts this run): {e}")
+        return
+
+    now_utc = datetime.now(timezone.utc)
+    retrieved_iso = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Best-effort station coordinates (layer 0) — a nicety; never blocks an alert.
+    coords: dict = {}
+    try:
+        coords = gc.fetch_station_coords(cfg_gfl, station_prefix=prefix)
+    except Exception as e:  # noqa: BLE001
+        print(f"[gfl-air]   station coords unavailable (using dashboard link): {e}")
+
+    # Durable log rows for CLOSED episodes FIRST (Sheet row before state entry — the
+    # crash-safe invariant: a kill re-writes the row, never drops it).
+    if result.closed:
+        try:
+            sw.ensure_perimeter_episodes_tab(sheets, sheet_id)
+            sw.append_rows(sheets, sheet_id, sw.TAB_PERIMETER_EPISODES,
+                           perimeter_episode_rows(result.closed, retrieved_iso))
+            print(f"[gfl-air]   logged {len(result.closed)} closed episode(s).")
+        except Exception as e:  # noqa: BLE001 — a log-write failure must not lose the
+            print(f"[gfl-air]   episode-log write FAILED (state NOT advanced so it "  # state->row order
+                  f"retries next run): {e}")
+            return  # leave state unwritten so the close (row+state) retries atomically
+
+    # Persist the advanced state (committed system of record).
+    try:
+        sw.set_gfl_air_episode_state(sheets, sheet_id, result.state)
+    except Exception as e:  # noqa: BLE001
+        print(f"[gfl-air]   episode-state write FAILED (will re-derive next run): {e}")
+
+    # SCREENING (open) email — one consolidated email listing all monitors + the
+    # newly-detected + continuing episodes. Best-effort.
+    if result.opened:
+        opened_isos = [o.get("opened_at", "") for o in result.opened]
+        hist = is_historical(opened_isos, now_utc)
+        context: dict = {}
+        for st in sorted({o["station"] for o in result.opened}):
+            center = _iso_to_epoch_ms(next((o["opened_at"] for o in result.opened
+                                            if o["station"] == st), ""))
+            if center is None:
+                continue
+            try:
+                context[st] = gc.fetch_station_window(cfg_gfl, st, center, 2)
+            except Exception as e:  # noqa: BLE001 — context is best-effort
+                print(f"[gfl-air]   ±2h context for {st} unavailable: {e}")
+        monitor_rows = _monitor_rows(latest_per_station(readings, prefix),
+                                     watch_thresholds, sentinels)
+        subject, body = format_screening_email(
+            result.opened, continuing, monitor_rows, watch_thresholds, link=link,
+            retrieved_iso=retrieved_iso, coords=coords, context=context, historical=hist,
+            stations_reporting=len(monitor_rows))
+        try:
+            ea.send_email(subject, body, cfg, recipients=watch_recipients)
+            print(f"[gfl-air]   SCREENING emailed: {subject}")
+        except Exception as e:  # noqa: BLE001 — best-effort; state already committed
+            print(f"[gfl-air]   SCREENING email FAILED (episode(s) tracked): {e}")
+
+    # CLOSEOUT (close) email — one consolidated closeout per run. Best-effort.
+    if result.closed:
+        close_isos = [c.get("cleared_at", "") for c in result.closed]
+        hist = is_historical(close_isos, now_utc)
+        subject, body = format_closeout_email(
+            result.closed, link=link, retrieved_iso=retrieved_iso,
+            coords=coords, historical=hist)
+        try:
+            ea.send_email(subject, body, cfg, recipients=watch_recipients)
+            print(f"[gfl-air]   CLOSEOUT emailed: {subject}")
+        except Exception as e:  # noqa: BLE001 — best-effort; log row already written
+            print(f"[gfl-air]   CLOSEOUT email FAILED (episode(s) logged): {e}")
 
 
 if __name__ == "__main__":

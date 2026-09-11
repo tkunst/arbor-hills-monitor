@@ -299,37 +299,50 @@ gfl_air:
   #     posts hourly (~23-24 readings/window; verified live 2026-07-18), so 12 is a safe floor.
   h2s_avg_window_hours: 24
   h2s_avg_min_readings: 12
-  # WATCH thresholds — the lower-urgency EARLY-WARNING tier (classifier added
-  # 2026-07-17, coder:gfl-air-thresholds). A reading at/above a watch level but BELOW
-  # the matching action level above is a 'watch': it shows 'watch' status in the
-  # snapshot tab and, if watch_alert_recipients (below) is configured, sends a
-  # dedicated once-per-episode email. OPTIONAL + partial — only pollutants listed
-  # here get a watch tier; omit the block entirely for single-tier.
-  #   ch4_ppm 40 — the Perimeter Methane Action Level in Consent Judgment 2020-0593-CE
-  #     (defined there as a 15-min rolling average; we apply it to instantaneous hourly
-  #     readings as an early warning). At 40 ppm GFL must run a root-cause analysis + correct
-  #     within 48 hrs (CJ 5.5) and report it to EGLE in its semi-annual report (CJ 6.3).
-  #     Not a health standard (~0.08% of the methane LEL); sits below 500 ppm NESHAP.
-  #     H2S has NO watch tier here on purpose — its odor-nuisance level (~5-8 ppb) fired
-  #     ~2874x in 4 yrs and would flood (see the h2s_ppb note above).
+  # WATCH thresholds — the CJ PERIMETER ACTION-LEVEL tier. A reading STRICTLY ABOVE a
+  # watch level (¶5.5 "above"; the raw unrounded numeric) but below the matching
+  # exceedance action level above drives the consolidated per-(station,gas) OPEN +
+  # CLOSE screening/closeout emails (ADR 039, added 2026-09-10) — one email per daily
+  # run, to watch_alert_recipients (below). OPTIONAL + partial: only pollutants listed
+  # here get a watch tier; a gas omitted here is DISPLAY-ONLY (no episode, no alert).
+  #   h2s_ppb 30 — the CJ Perimeter H2S Action Level (Consent Judgment 2020-0593-CE
+  #     ¶def T), a 15-MINUTE ROLLING AVERAGE. The public feed is HOURLY only, so this
+  #     alerts on any hourly reading above 30 ppb as the closest available PROXY — a
+  #     SCREENING lead for EGLE, NOT a determination that the 15-min rolling-average
+  #     level was exceeded (which needs AHL's nonpublic ~1-min data). This proxy likely
+  #     UNDERCOUNTS true CJ exceedances. This is the CJ's OWN enforceable fenceline
+  #     trigger and is stricter+faster than the 72 ppb / 24-hr ITSL exceedance tier
+  #     above; it crossed 30 ppb only 56x on 24 days across the ~4.4yr record (~34
+  #     per-station episodes), not a flood — the ~5-8 ppb odor-nuisance level (which
+  #     WOULD flood, ~2874x) is deliberately NOT used.
+  #   ch4_ppm 40 — the CJ Perimeter Methane Action Level (¶def U), also a 15-min
+  #     rolling average, applied to hourly readings as the same screening proxy. At
+  #     40 ppm AHL must run a root-cause analysis + CORRECT within 48 hrs (¶5.5(E)) and
+  #     report it to EGLE (¶6.3). Not a health standard (~0.08% of the methane LEL);
+  #     sits below the 500 ppm NESHAP exceedance tier. MOVED into the ADR-039
+  #     consolidated model 2026-09-10 (was the standalone CH4-40 watch).
   watch_thresholds:
+    h2s_ppb: 30
     ch4_ppm: 40
-  # WATCH-tier notification (added 2026-07-21, coder:gfl-air-thresholds — the
-  # notification half of the two-tier CH4 scheme; the classifier above already
-  # existed). A WATCH email sends ONCE per station per continuous >=40ppm episode
-  # (re-arms only after that station drops back below 40) — dedicated subject/body,
-  # NEVER mixed with the full-list [URGENT]/anomaly email, so the whole
-  # distribution list isn't pinged for a sub-action-level trend. Real-specimen check (live feed,
-  # 2026-07-21): CH4>=40 across the full ~4.4yr record is ~368 episodes total across
-  # all 6 stations (~92/yr, ~1.75/wk combined) — not a flood; zero watch/exceedance
-  # emails have fired since the classifier shipped 2026-07-17 (checked via the
-  # workflow's run logs). Empty list = DISPLAY-ONLY (the rollback lever): the watch
-  # line still shows on the snapshot tab and, unchanged from before this change,
-  # still rides along in the full-list combined email — just no dedicated send.
+  # WATCH-tier recipients — the audience for the ADR-039 consolidated action-level
+  # screening system (rebuilt 2026-09-10 from the 2026-07-21 CH4-only watch). Per
+  # daily run this list gets AT MOST: one consolidated SCREENING (OPEN) email listing
+  # ALL six monitors' verbatim readings for BOTH gases (flagging strictly-above) when
+  # >=1 (station,gas) episode opens, and one CLOSEOUT (CLOSE) email with start/peak/
+  # return/duration per episode when >=1 closes. A continuing-only run (elevated but
+  # nothing newly opened/closed) sends NOTHING (no re-alert). These emails are NEVER
+  # mixed into the full-list [URGENT] exceedance/anomaly email, so the whole
+  # distribution list isn't pinged for a sub-exceedance action-level lead.
+  # Real-specimen backtest (live feed, 2026-09-10): H2S>30 = 56 crossings on 24 days
+  # (~34 per-station episodes), CH4>40 = ~368 episodes across ~4.4yr — <=1 open-email
+  # per exceedance-day, not a flood. Empty list = DISPLAY-ONLY (the rollback lever):
+  # the episode engine is skipped entirely (no OPEN/CLOSE emails, no episode-log
+  # writes), and the watch status still shows on the GFL Air snapshot tab.
   # RESOLVED 2026-08-21 (Trisha's neutral-branding pass): like alert_recipients
   # above, this list is committed to a PUBLIC repo. A second recipient here now
   # goes via GFL_AIR_WATCH_RECIPIENTS_EXTRA (a private env/secret, merged in by
-  # email_alerts.merge_extra_recipients) instead of being committed here.
+  # email_alerts.merge_extra_recipients) instead of being committed here — the 5
+  # county commissioners join this list ~2026-09-17.
   watch_alert_recipients:
     - arbor-hills@trishakunst.com          # Trisha
   # Sentinel / no-data values in the feed (ambiguous no-data vs off-scale-high).

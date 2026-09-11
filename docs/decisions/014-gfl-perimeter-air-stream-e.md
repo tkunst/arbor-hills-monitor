@@ -431,3 +431,29 @@ other two.
   read, not just a green build), it reverses who receives a live notification (full
   list → Trisha-only) on an already-`enabled` stream, and the episode-dedup adds new
   suppression logic to a fail-safe-by-default alerting path.
+
+## Addendum 2026-09-10: the CH4-40 watch was FOLDED INTO the consolidated action-level screening model (ADR 039)
+
+This 2026-07-21 per-station CH4-40 WATCH — its `watch_episode_stations` /
+`recovered_watch_stations` / `watch_alert_stations` / `format_watch_body` helpers and
+the column-O station-name-set marker — has been **retired and replaced** by the
+consolidated per-`(station, gas)` action-level screening system in **ADR 039**. The CH4
+classifier *tier* (`watch_thresholds.ch4_ppm: 40`) is unchanged; only the
+notification/dedup model changed:
+
+- The per-station-name set marker (column O) became a per-`(station, gas)` open-episode
+  JSON map in the same cell (`gfl_air_episode_state`); the legacy array is read as "no
+  open episodes" (fail-safe re-derive) on the first run after deploy.
+- The dedicated `[GFL air watch]` CH4-only email became the consolidated **SCREENING
+  (open)** + **CLOSEOUT (close)** emails, which now also carry the NEW H2S 30 ppb tier
+  (`watch_thresholds.h2s_ppb: 30`, CJ ¶def T) and the mandatory screening legal framing.
+- The `alert_lines(..., include_watch=...)` display-only fold-in of watch lines into the
+  full-list combined email is **gone** (`include_watch=False` always) — the watch tier is
+  never mixed into the full list, so the new H2S 30 ppb tier can't blast it.
+- Notification-only email posture changed from "marker gated on send success (retry)"
+  to "episode STATE committed like the cursor; emails best-effort (no retry), matching
+  this stream's exceedance email" — see ADR 039.
+
+The 500 ppm CH4 exceedance tier and the H2S 24-hr-average exceedance tier remain
+**exactly** as this ADR describes. See ADR 039 for the full replacement design + the
+2026-09-10 live-feed backtest.

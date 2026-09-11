@@ -99,13 +99,29 @@ external users but no sensitive data). Public repo.
   readings while the newest is stale — mitigates ADR 014's OBJECTID-reset silent
   stall (the cursor resetting below the stored value → `OBJECTID > cursor` empty
   forever). Marker in the `GFL Air` tab's column N; self-resets on recovery.
-  A CH4 WATCH tier (`gfl_air.watch_thresholds`) fires below the action level; if
-  `gfl_air.watch_alert_recipients` is set, it emails once per station per
-  continuous episode (>=40ppm, re-arms below 40) to that list only — separate
-  from, and never mixed into, the full-list exceedance/anomaly email. Episode
-  marker in column O (fail-safe: unreadable/failed-write → more alerting, never
-  suppression). Empty `watch_alert_recipients` = display-only (rollback lever).
-  See ADR 014's 2026-07-21 addendum.
+  A consolidated ACTION-LEVEL SCREENING system (`gfl_air.watch_thresholds`:
+  H2S 30 ppb / CJ ¶def T, CH4 40 ppm / CJ ¶def U — ADR 039, added 2026-09-10,
+  replacing the old per-station CH4-40 watch) runs a per-`(station, gas)`
+  open/close episode state machine (state JSON in the `GFL Air` tab's column O;
+  a legacy array reads as empty → fail-safe re-derive). Per daily run it emails
+  the `watch_alert_recipients` list (+ `GFL_AIR_WATCH_RECIPIENTS_EXTRA`) at most
+  ONE consolidated SCREENING (open) email (all six monitors' verbatim readings
+  for both gases, flagged STRICTLY above; ±2h context; station coords) and ONE
+  CLOSEOUT (close) email (start/peak/return/duration per episode); a
+  continuing-only run sends nothing (no re-alert). Each closed episode also
+  appends a row to the "Perimeter Action-Level Episodes" tab (the RCA-tracking
+  log). **These are SCREENING alerts on PUBLIC HOURLY data, NOT CJ exceedance
+  determinations** — the CJ levels are 15-min rolling averages from ~1-min
+  sampling; the feed is hourly. Mandatory legal framing (party = "Arbor Hills
+  Landfill, Inc. (AHL)" not GFL; "hourly value exceeded the numerical benchmark…
+  verification vs the 15-min rolling avg is needed"; 48h = CORRECTION not the RCA;
+  ¶5.5(D)/(E); HISTORICAL subject tag; methane %-flammable only if ≥5%). NEVER
+  mixed into the full-list exceedance/anomaly email (`include_watch=False`
+  always). Empty `watch_alert_recipients` = display-only (rollback lever); a gas
+  absent from `watch_thresholds` = display-only. The EXCEEDANCE tier (CH4 500 /
+  H2S 72-24hr-avg) is untouched. Episode state committed like the cursor; emails
+  best-effort (no retry, matching the exceedance email). See ADR 039 (+ ADR 014's
+  2026-07-21 addendum, now folded in).
 - `civicclerk_watcher.py` — Stream F: twice-daily change-watch on MMPC +
   Washtenaw County BOC meeting events (hand-picked, via `mmpc_client.fetch_event`)
   plus the Board of Public Works/DPA (categoryId 68, AUTO-DISCOVERED via the new

@@ -308,6 +308,7 @@ CFG = {"gfl_air": {
 def _wire(monkeypatch, cfg=CFG):
     fake = FakeSheets()
     sent = []
+    monkeypatch.delenv("GFL_AIR_WATCH_RECIPIENTS_EXTRA", raising=False)
     monkeypatch.setenv("GSHEET_ID", "SID")
     monkeypatch.setattr(gw, "load_config", lambda: copy.deepcopy(cfg))
     monkeypatch.setattr(gw.dc, "sheets_service", lambda: fake)
@@ -317,6 +318,11 @@ def _wire(monkeypatch, cfg=CFG):
     # so an incremental poll stays hermetic (no real ArcGIS call). Tests that exercise
     # the average alert override this with their own {station: {avg, n}} mapping.
     monkeypatch.setattr(gw.gc, "fetch_h2s_window_avg", lambda *a, **k: {})
+    # The consolidated action-level screening path (ADR 039) fetches best-effort
+    # station coords + ±2h context; stub both so tests stay hermetic (they already
+    # degrade gracefully on a live-network failure, but the timeout is slow + noisy).
+    monkeypatch.setattr(gw.gc, "fetch_station_coords", lambda *a, **k: {})
+    monkeypatch.setattr(gw.gc, "fetch_station_window", lambda *a, **k: [])
     return fake, sent
 
 
@@ -402,11 +408,13 @@ def test_incremental_writes_measurements_and_emails_on_ch4_exceedance(monkeypatc
     assert sw.gfl_air_cursor(fake, "SID") == 111    # advanced past the batch
 
 
-def test_incremental_emails_watch_not_urgent_on_watch_level(monkeypatch):
-    # A CH4 reading in [watch, action) sends a LOWER-urgency [GFL air watch] email,
-    # never [URGENT]. Wires a CFG that carries watch_thresholds.
+def test_watch_below_exceedance_is_display_only_without_recipients(monkeypatch):
+    # watch_thresholds set but NO watch_alert_recipients => DISPLAY-ONLY (ADR 039):
+    # a CH4 reading in [watch, exceedance) sends NO email (the episode engine is
+    # skipped AND the watch tier is never folded into the full-list exceedance email),
+    # but the snapshot tab still shows 'watch' status.
     cfg = copy.deepcopy(CFG)
-    cfg["gfl_air"]["watch_thresholds"] = {"ch4_ppm": 40}
+    cfg["gfl_air"]["watch_thresholds"] = {"h2s_ppb": 30, "ch4_ppm": 40}
     fake, sent = _wire(monkeypatch, cfg)
     base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
     monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
@@ -421,10 +429,9 @@ def test_incremental_emails_watch_not_urgent_on_watch_level(monkeypatch):
     monkeypatch.setattr(gw.gc, "fetch_readings", fetch)
 
     assert gw.run() == 0
-    assert len(sent) == 1
-    subj, body = sent[0]
-    assert "GFL air watch" in subj and "URGENT" not in subj
-    assert "watch level" in body.lower()
+    assert sent == []                               # display-only: no email anywhere
+    ms3 = next(r for r in _summary(fake) if r[0] == "MS-3")
+    assert ms3[5] == "watch"                        # CH4 Status column still shows 'watch'
 
 
 def test_second_incremental_with_no_new_readings_is_noop(monkeypatch):
@@ -905,106 +912,265 @@ def test_gfl_air_latest_as_of_takes_the_newest_and_ignores_non_reading_rows():
     assert sw.gfl_air_latest_as_of(fake, "SID") is not None
 
 
-# --- CH4 WATCH-tier notification (coder:gfl-air-thresholds) --------------------
-# The classifier tier itself (severity='watch', the config, the snapshot column)
-# predates this: it shipped 2026-07-17 (ac53d30/2c37d12) and already has coverage
-# above. What follows covers the NEW piece — a dedicated, once-per-episode,
-# Trisha-scoped email — which did not exist before this change.
+# --- Consolidated ACTION-LEVEL SCREENING system (ADR 039) ----------------------
+# Replaces the per-station CH4-40 watch. Per-(station,gas) open/close episodes on
+# the CJ action levels (H2S 30 ppb / ¶def T, CH4 40 ppm / ¶def U), ONE consolidated
+# SCREENING (open) + ONE CLOSEOUT (close) email per run, a durable episode log, and
+# the mandatory screening legal framing. Pure engine + formatters + sheet-state +
+# run() integration; the documented backtest anchors are encoded as hermetic fixtures.
 
-def _snap(station, ch4_status):
-    return {"station": station, "as_of": "2026-07-10T12:00Z", "h2s": 0,
-            "h2s_status": "ok", "ch4": 45, "ch4_status": ch4_status, "wind": 1,
-            "direction": 200, "temp": 75, "oid": 1, "note": "n"}
+WT = {"h2s_ppb": 30, "ch4_ppm": 40}          # the CJ action-level watch tier (ADR 039)
 
 
-def test_watch_episode_stations_includes_watch_and_exceedance_excludes_ok():
-    snapshot = [_snap("MS-1", "watch"), _snap("MS-2", "exceedance"),
-                _snap("MS-3", "ok"), _snap("MS-4", "sentinel")]
-    assert gw.watch_episode_stations(snapshot) == {"MS-1", "MS-2"}
+def _r(oid, station, h2s, ch4, ms, *, h2s_text="", ch4_text=""):
+    return _reading(oid, station, h2s, ch4, ms, h2s_text=h2s_text, ch4_text=ch4_text)
 
 
-def test_recovered_watch_stations_requires_affirmative_evidence():
-    # MS-1 has a fresh reading THIS poll that's back to ok -> genuinely recovered.
-    # MS-2 is still elevated this poll -> not recovered.
-    # MS-3 has NO reading at all this poll (dark sensor / partial batch) -> left
-    # exactly as marked, NOT treated as recovered just because it's silent.
-    marked = {"MS-1", "MS-2", "MS-3"}
-    seen = {"MS-1", "MS-2"}                 # MS-3 absent from this poll's readings
-    elevated_now = {"MS-2"}                 # only MS-2 is still >=40 among those seen
-    assert gw.recovered_watch_stations(marked, seen, elevated_now) == {"MS-1"}
+def _elev(oid, station, h2s, ch4, ms):
+    """A reading with realistic _Text (numeric string, or 'BDL' only for a true 0) —
+    so an elevated value is never mislabeled BDL/no-data in the monitor table."""
+    return _reading(oid, station, h2s, ch4, ms,
+                    h2s_text=("BDL" if h2s == 0 else str(h2s)), ch4_text=str(ch4))
 
 
-def test_watch_alert_stations_skips_already_marked_and_non_watch():
-    readings = [
-        _reading(1, "MS-1", 3.0, 45.0),   # watch, not marked -> included
-        _reading(2, "MS-2", 3.0, 46.0),   # watch, already marked -> excluded
-        _reading(3, "MS-3", 3.0, 13000.0),  # exceedance (>= THRESH's 12500), not watch -> excluded
-        _reading(4, "MS-4", 3.0, 10.0),   # ok -> excluded
-    ]
-    out = gw.watch_alert_stations(readings, THRESH, SENT, WATCH, already_marked={"MS-2"})
-    assert set(out) == {"MS-1"}
-    val, when = out["MS-1"]
-    assert val == 45.0 and when
+# ----- pure episode engine (process_episodes) --------------------------------
+
+def test_episode_opens_on_strict_above_and_closes_on_return_below():
+    rs = [_r(1, "MS-2", 10, 5, DAY0),
+          _r(2, "MS-2", 45, 5, DAY0 + 3600_000),      # opens (H2S 45 > 30)
+          _r(3, "MS-2", 154.8, 5, DAY0 + 7200_000),   # peak
+          _r(4, "MS-2", 12, 5, DAY0 + 10800_000)]     # closes (12 <= 30)
+    res = gw.process_episodes(rs, WT, SENT, {})
+    assert len(res.opened) == 1
+    assert res.opened[0]["station"] == "MS-2" and res.opened[0]["gas"] == "h2s"
+    assert len(res.closed) == 1
+    c = res.closed[0]
+    assert c["peak_value"] == 154.8 and c["opened_value"] == 45 and c["cleared_value"] == 12
+    assert c["n_over"] == 2 and c["duration_hours"] == 2.0 and c["source"] == "CJ ¶def T"
+    assert res.state == {}                             # re-armed
 
 
-def test_watch_alert_stations_last_reading_wins_within_one_poll():
-    readings = [_reading(1, "MS-1", 3.0, 45.0), _reading(2, "MS-1", 3.0, 48.0)]
-    out = gw.watch_alert_stations(readings, THRESH, SENT, WATCH, already_marked=set())
-    assert out["MS-1"][0] == 48.0
+def test_episode_strictly_above_not_at_the_benchmark():
+    # EXACTLY at the benchmark is NOT flagged (¶5.5 "above"); just-above IS.
+    assert gw.process_episodes([_r(1, "MS-1", 30.0, 5, DAY0)], WT, SENT, {}).opened == []
+    assert gw.process_episodes([_r(1, "MS-1", 30.1, 5, DAY0)], WT, SENT, {}).opened != []
+    assert gw.process_episodes([_r(1, "MS-1", 1, 40.0, DAY0)], WT, SENT, {}).opened == []
+    assert gw.process_episodes([_r(1, "MS-1", 1, 40.1, DAY0)], WT, SENT, {}).opened != []
 
 
-def test_alert_lines_include_watch_false_drops_watch_lines_entirely():
-    r = _reading(1, "MS-1", 3.0, 100.0)             # CH4 100 -> watch severity
-    lines, has_exc, has_watch = gw.alert_lines([r], THRESH, SENT, True, WATCH,
-                                               include_watch=False)
-    assert lines == [] and has_exc is False and has_watch is False
+def test_episode_per_station_gas_independence():
+    # MS-2 H2S and MS-2 CH4 open as two independent episodes (the (station,gas) key).
+    res = gw.process_episodes([_r(1, "MS-2", 45, 100, DAY0)], WT, SENT, {})
+    assert {(o["station"], o["gas"]) for o in res.opened} == {("MS-2", "h2s"), ("MS-2", "ch4")}
+    # A PRIOR open CH4 episode must not stop a fresh H2S open for the same station.
+    prev = {"MS-2|ch4": {"event_id": "X", "threshold": 40.0,
+                         "opened_at": gc.reading_iso({"Date": DAY0}), "opened_value": 100,
+                         "peak_value": 100, "peak_at": gc.reading_iso({"Date": DAY0}), "n_over": 1}}
+    res2 = gw.process_episodes([_r(2, "MS-2", 45, 100, DAY0 + 3600_000)], WT, SENT, prev)
+    assert [(o["station"], o["gas"]) for o in res2.opened] == [("MS-2", "h2s")]  # only H2S is new
 
 
-def test_alert_lines_include_watch_true_is_unchanged_default():
-    r = _reading(1, "MS-1", 3.0, 100.0)
-    lines, has_exc, has_watch = gw.alert_lines([r], THRESH, SENT, True, WATCH)
-    assert has_watch is True and len(lines) == 1
+def test_episode_no_data_never_opens_or_closes():
+    # sentinel (999 H2S / 99999 CH4) and TEST-texted readings are no-data.
+    assert gw.process_episodes([_r(1, "MS-1", 999.0, 5, DAY0)], WT, SENT, {}).opened == []
+    assert gw.process_episodes([_r(1, "MS-1", 5, 99999.0, DAY0)], WT, SENT, {}).opened == []
+    assert gw.process_episodes(
+        [_r(1, "MS-1", 5, 999.0, DAY0, ch4_text="TEST")], WT, SENT, {}).opened == []
+    # A no-data reading while OPEN does not close (recovery must be a real reading).
+    prev = {"MS-1|h2s": {"event_id": "X", "threshold": 30.0,
+                         "opened_at": gc.reading_iso({"Date": DAY0}), "opened_value": 45,
+                         "peak_value": 45, "peak_at": gc.reading_iso({"Date": DAY0}), "n_over": 1}}
+    res = gw.process_episodes([_r(2, "MS-1", 999.0, 5, DAY0 + 3600_000)], WT, SENT, prev)
+    assert res.closed == [] and "MS-1|h2s" in res.state
 
 
-# --- watch-episode marker (sheet_writer, column O) ------------------------------
+def test_episode_spans_multiple_runs_tracks_cross_run_peak_closes_once():
+    res1 = gw.process_episodes([_r(1, "MS-2", 45, 5, DAY0)], WT, SENT, {})
+    assert len(res1.opened) == 1 and res1.closed == []
+    res2 = gw.process_episodes([_r(2, "MS-2", 154.8, 5, DAY0 + 3600_000)], WT, SENT, res1.state)
+    assert res2.opened == [] and res2.closed == []            # continuing: no re-alert
+    assert res2.state["MS-2|h2s"]["peak_value"] == 154.8      # cross-run peak tracked
+    res3 = gw.process_episodes([_r(3, "MS-2", 10, 5, DAY0 + 7200_000)], WT, SENT, res2.state)
+    assert res3.opened == [] and len(res3.closed) == 1
+    c = res3.closed[0]
+    assert c["peak_value"] == 154.8 and c["duration_hours"] == 2.0 and c["n_over"] == 2
 
-def test_gfl_air_watch_marker_roundtrips_and_survives_a_snapshot_write():
+
+def test_episode_open_and_close_within_one_run_appears_in_both():
+    rs = [_r(1, "MS-3", 326.9, 5, DAY0), _r(2, "MS-3", 1.0, 5, DAY0 + 3600_000)]
+    res = gw.process_episodes(rs, WT, SENT, {})
+    assert len(res.opened) == 1 and len(res.closed) == 1 and res.state == {}
+    assert res.closed[0]["peak_value"] == 326.9 and res.closed[0]["duration_hours"] == 1.0
+
+
+def test_episode_event_id_is_et_dated_and_seq_disambiguates_dual_gas():
+    # The 2025-06-19T01:00Z MS-3 spike is 2025-06-18 in ET; the Event ID uses ET.
+    ms = int(datetime(2025, 6, 19, 1, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    res = gw.process_episodes([_r(1, "MS-3", 326.9, 45, ms)], WT, SENT, {})
+    assert sorted(o["event_id"] for o in res.opened) == [
+        "AHL-2025-06-18-MS3-001", "AHL-2025-06-18-MS3-002"]
+
+
+def test_episode_event_id_seq_is_monotonic_within_a_run_on_reopen():
+    # open, close, reopen, close, reopen (same station + ET-day) -> 001, 002, 003 — a
+    # freed number is never reused, so the Event IDs in one run's emails/log are all
+    # distinct (a same-day reopen does not collide with the earlier episode's ID).
+    ms = int(datetime(2024, 2, 22, 8, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    rs = [_r(1, "MS-2", 35, 5, ms), _r(2, "MS-2", 20, 5, ms + 3600_000),
+          _r(3, "MS-2", 40, 5, ms + 7200_000), _r(4, "MS-2", 10, 5, ms + 10800_000),
+          _r(5, "MS-2", 50, 5, ms + 14400_000)]
+    res = gw.process_episodes(rs, WT, SENT, {})
+    assert [o["event_id"] for o in res.opened] == [
+        "AHL-2024-02-22-MS2-001", "AHL-2024-02-22-MS2-002", "AHL-2024-02-22-MS2-003"]
+
+
+# ----- pure email formatters -------------------------------------------------
+
+def _opened(station, gas, val, ms, *, peak=None, peak_ms=None):
+    iso = gc.reading_iso({"Date": ms})
+    return {"station": station, "gas": gas, "event_id": gw._event_id(station, iso, 1),
+            "threshold": float(WT[gc.gas_cfgkey(gas)]), "opened_at": iso, "opened_value": val,
+            "peak_value": peak if peak is not None else val,
+            "peak_at": gc.reading_iso({"Date": peak_ms or ms}), "n_over": 1}
+
+
+def test_screening_email_five_station_one_email_mandatory_wording():
+    opened = [_opened(s, "h2s", v, DAY0) for s, v in
+              [("MS-1", 77.1), ("MS-2", 78.0), ("MS-3", 73.8), ("MS-4", 73.5), ("MS-6", 74.5)]]
+    mr = gw._monitor_rows(
+        {o["station"]: _elev(i, o["station"], o["opened_value"], 5, DAY0)
+         for i, o in enumerate(opened)}, WT, SENT)
+    subj, body = gw.format_screening_email(opened, [], mr, WT, link="L",
+                                           retrieved_iso="2026-09-10T13:00:00Z", historical=True)
+    expected_date = gw.et_date(gc.reading_iso({"Date": DAY0}))   # ET date of the opening reading
+    assert "SCREENING ALERT" in subj and "HISTORICAL" in subj and expected_date in subj
+    for st in ("MS-1", "MS-2", "MS-3", "MS-4", "MS-6"):
+        assert st in subj and st in body
+    # every mandatory legal phrase (verbatim intent):
+    assert "NOT a formal determination" in body
+    assert 'Arbor Hills Landfill, Inc. ("AHL")' in body and "NOT the operator GFL" in body
+    assert "48 hours" in body and "CORRECTION, not to completing the root-cause" in body
+    assert "¶5.5(D) or ¶5.5(E)" in body
+    assert ("publicly reported hourly value above the numerical benchmark" in body
+            and "verification against the required 15-minute rolling-average data is necessary" in body)
+    assert "AG STATUS: informational lead" in body
+    assert "DAILY BATCH" in body and "▲" in body          # processing note + strictly-above mark
+    assert "UNDERCOUNTS true CJ exceedances" in body           # honest-measurement caveat
+
+
+def test_screening_email_methane_flammable_only_when_in_range():
+    lo = [_opened("MS-2", "ch4", 500.0, DAY0)]
+    _, body_lo = gw.format_screening_email(lo, [], [], WT, link="L",
+                                           retrieved_iso="2026-09-10T13:00:00Z")
+    # The actual flammability CLAIM sentence must be ABSENT at 0.05% (a static
+    # explanatory note may mention the range in the abstract; the claim must not fire).
+    assert "warrants immediate safety assessment" not in body_lo
+    hi = [_opened("MS-2", "ch4", 89090.0, DAY0)]
+    _, body_hi = gw.format_screening_email(hi, [], [], WT, link="L",
+                                           retrieved_iso="2026-09-10T13:00:00Z")
+    assert ("8.909% methane falls within methane's ~5-15% flammable range and warrants "
+            "immediate safety assessment" in body_hi)
+    assert "near-explosive" not in body_hi.lower()             # never the forbidden phrasing
+
+
+def test_screening_email_subject_live_vs_historical_and_dual_gas():
+    opened = [_opened("MS-2", "h2s", 45.0, DAY0), _opened("MS-2", "ch4", 45.0, DAY0)]
+    subj_h, _ = gw.format_screening_email(opened, [], [], WT, link="L",
+                                          retrieved_iso="2026-09-10T13:00:00Z", historical=True)
+    subj_l, _ = gw.format_screening_email(opened, [], [], WT, link="L",
+                                          retrieved_iso="2026-09-10T13:00:00Z", historical=False)
+    assert subj_h.startswith("[HISTORICAL SCREENING ALERT — NOT A LIVE INCIDENT]")
+    assert subj_l.startswith("[SCREENING ALERT]")
+    assert "H2S + methane" in subj_h                           # dual-gas names both
+
+
+def test_closeout_email_start_peak_return_duration():
+    ep = gw._close_record(
+        "MS-2", "h2s",
+        {"event_id": "AHL-2026-07-13-MS2-001", "threshold": 30.0,
+         "opened_at": gc.reading_iso({"Date": DAY0}), "opened_value": 45,
+         "peak_value": 154.8, "peak_at": gc.reading_iso({"Date": DAY0 + 7200_000}), "n_over": 3},
+        gc.reading_iso({"Date": DAY0 + 10800_000}), 12.0)
+    subj, body = gw.format_closeout_email([ep], link="L",
+                                          retrieved_iso="2026-09-10T13:00:00Z", historical=True)
+    assert "returned below" in subj
+    assert "first-above" in body and "highest public hourly value 154.8" in body
+    assert "first-below-benchmark" in body and "elapsed 3 hr" in body
+    assert "does NOT establish that AHL corrected anything" in body
+
+
+def test_is_historical_pure():
+    now = datetime(2026, 7, 14, 18, 0, tzinfo=timezone.utc)    # 2 PM ET, 2026-07-14
+    assert gw.is_historical(["2026-06-19T01:00Z"], now) is True         # old data
+    assert gw.is_historical(["2026-07-14T17:00Z"], now) is False        # 1 PM ET today
+    assert gw.is_historical([], now) is False                          # unknown -> not historical
+
+
+# ----- sheet_writer: episode-state store (column O) + episode log tab ---------
+
+def test_gfl_air_episode_state_roundtrips_and_survives_a_snapshot_write():
     fake = FakeSheets()
     sw.ensure_gfl_air_tabs(fake, "SID")
     six = [{"station": s, "as_of": "2026-07-10T12:00Z", "h2s": 0, "h2s_status": "ok",
             "ch4": 5, "ch4_status": "ok", "wind": 1, "direction": 200, "temp": 75,
             "oid": 100 + i, "note": "n"} for i, s in enumerate(STATIONS)]
     sw.write_gfl_air_summary(fake, "SID", six, "link")
-    assert sw.gfl_air_watch_marker(fake, "SID") == set()          # never fired yet
-    sw.set_gfl_air_watch_marker(fake, "SID", {"MS-3", "MS-5"})
-    assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3", "MS-5"}
-    # survives a fresh REPLACE snapshot write, and doesn't collide with column N
+    assert sw.gfl_air_episode_state(fake, "SID") == {}
+    state = {"MS-2|h2s": {"event_id": "AHL-2026-07-13-MS2-001", "threshold": 30.0,
+                          "opened_at": "2026-07-13T05:00Z", "opened_value": 45.0,
+                          "peak_value": 154.8, "peak_at": "2026-07-13T09:00Z", "n_over": 5}}
+    sw.set_gfl_air_episode_state(fake, "SID", state)
+    assert sw.gfl_air_episode_state(fake, "SID") == state
+    # survives a REPLACE snapshot write and coexists with the column-N stale marker
     sw.set_gfl_air_stale_marker(fake, "SID", "2026-07-10T12:00Z")
     sw.write_gfl_air_summary(fake, "SID", six, "link")
-    assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3", "MS-5"}
+    assert sw.gfl_air_episode_state(fake, "SID") == state
     assert sw.gfl_air_stale_marker(fake, "SID") == "2026-07-10T12:00Z"
     assert len(_summary(fake)) == 6
 
 
-def test_gfl_air_watch_marker_defaults_to_empty_set_on_blank_or_garbage():
+def test_gfl_air_episode_state_empty_on_blank_garbage_or_legacy_array():
     fake = FakeSheets()
     sw.ensure_gfl_air_tabs(fake, "SID")
-    assert sw.gfl_air_watch_marker(fake, "SID") == set()           # tab exists, cell blank
-    fake.values().update(
-        spreadsheetId="SID", range=f"'{sw.TAB_GFL_AIR}'!O2",
-        valueInputOption="RAW", body={"values": [["not json"]]},
-    ).execute()
-    assert sw.gfl_air_watch_marker(fake, "SID") == set()           # fail-safe, never raises
+    assert sw.gfl_air_episode_state(fake, "SID") == {}          # blank cell
+    for junk in ("not json", '["MS-2"]'):                       # garbage + the LEGACY array
+        fake.values().update(spreadsheetId="SID", range=f"'{sw.TAB_GFL_AIR}'!O2",
+                             valueInputOption="RAW", body={"values": [[junk]]}).execute()
+        assert sw.gfl_air_episode_state(fake, "SID") == {}      # fail-safe: re-derive
 
 
-# --- watch-tier run() integration: recipient scoping + once-per-episode --------
+def test_perimeter_episode_rows_content():
+    ep = gw._close_record(
+        "MS-2", "h2s",
+        {"event_id": "AHL-2026-07-13-MS2-001", "threshold": 30.0,
+         "opened_at": "2026-07-13T09:00Z", "opened_value": 45.0,
+         "peak_value": 154.8, "peak_at": "2026-07-13T13:00Z", "n_over": 3},
+        "2026-07-13T15:00Z", 12.0)
+    rows = gw.perimeter_episode_rows([ep], "2026-09-10T13:00:00Z")
+    assert len(rows) == 1 and len(rows[0]) == len(sw.PERIMETER_EPISODE_HEADERS)
+    r = rows[0]
+    assert r[0] == "MS-2" and r[1] == "H2S" and r[2] == "30"
+    assert r[9] == "6" and r[10] == 3 and r[11] == "CJ ¶def T"   # duration, n_over, source
+    assert "ET" in r[3] and r[12] == "AHL-2026-07-13-MS2-001"
+
+
+def test_ensure_perimeter_episodes_tab_and_append():
+    fake = FakeSheets()
+    sw.ensure_perimeter_episodes_tab(fake, "SID")
+    assert sw.TAB_PERIMETER_EPISODES in fake._values._tabs
+    sw.append_rows(fake, "SID", sw.TAB_PERIMETER_EPISODES,
+                   [["MS-1", "H2S"] + [""] * (len(sw.PERIMETER_EPISODE_HEADERS) - 2)])
+    assert len(fake._values._tabs[sw.TAB_PERIMETER_EPISODES]) == 2   # header + 1
+
+
+# ----- run() integration -----------------------------------------------------
 
 _WATCH_RECIPIENTS = ["arbor-hills@trishakunst.com"]
 
 
 def _watch_cfg():
     cfg = copy.deepcopy(CFG)
-    cfg["gfl_air"]["watch_thresholds"] = {"ch4_ppm": 40}
+    cfg["gfl_air"]["watch_thresholds"] = {"h2s_ppb": 30, "ch4_ppm": 40}
     cfg["gfl_air"]["watch_alert_recipients"] = list(_WATCH_RECIPIENTS)
     return cfg
 
@@ -1019,167 +1185,173 @@ def _wire_with_recipients(monkeypatch, cfg):
     monkeypatch.setattr(gw.ea, "send_email",
                         lambda subj, body, c, recipients=None: sent.append((subj, body, recipients)))
     monkeypatch.setattr(gw.gc, "fetch_h2s_window_avg", lambda *a, **k: {})
+    monkeypatch.setattr(gw.gc, "fetch_station_coords", lambda *a, **k: {})
+    monkeypatch.setattr(gw.gc, "fetch_station_window", lambda *a, **k: [])
     return fake, sent
 
 
-def test_watch_recipients_empty_is_display_only_rollback_lever(monkeypatch):
-    # No watch_alert_recipients configured -> today's original behavior: the watch
-    # line rides the combined, full-list email (unchanged), no dedicated send.
+def _baseline_then(monkeypatch):
+    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
+    gw.run()                                                    # baseline -> cursor 105
+
+
+def test_run_empty_watch_recipients_is_display_only(monkeypatch):
     cfg = copy.deepcopy(CFG)
-    cfg["gfl_air"]["watch_thresholds"] = {"ch4_ppm": 40}
+    cfg["gfl_air"]["watch_thresholds"] = {"h2s_ppb": 30, "ch4_ppm": 40}   # no recipients
     fake, sent = _wire(monkeypatch, cfg)
-    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
-    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
-    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
-    gw.run()
-    new = [_reading(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
-    new[2]["CH4"] = 45.0
+    _baseline_then(monkeypatch)
+    new = [_elev(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
+    new[2] = _elev(108, "MS-3", 45.0, 5.0, DAY1)                 # MS-3 H2S 45 (>30 watch)
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0
+    assert sent == []                                           # display-only: no email
+    assert sw.gfl_air_episode_state(fake, "SID") == {}          # engine skipped entirely
+    ms3 = next(r for r in _summary(fake) if r[0] == "MS-3")
+    assert ms3[3] == "watch"                                    # H2S Status column shows 'watch'
+
+
+def test_run_configured_sends_one_consolidated_screening_email(monkeypatch):
+    fake, sent = _wire_with_recipients(monkeypatch, _watch_cfg())
+    _baseline_then(monkeypatch)
+    new = [_elev(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
+    new[2] = _elev(108, "MS-3", 0.0, 45.0, DAY1)                # MS-3 CH4 opens (>40)
     monkeypatch.setattr(gw.gc, "fetch_readings",
                         lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
     assert gw.run() == 0
     assert len(sent) == 1
-    assert "GFL air watch" in sent[0][0]
-    assert sw.gfl_air_watch_marker(fake, "SID") == set()      # marker never touched
-
-
-def test_watch_recipients_configured_sends_scoped_email_and_marks_episode(monkeypatch):
-    cfg = _watch_cfg()
-    fake, sent = _wire_with_recipients(monkeypatch, cfg)
-    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
-    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
-    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
-    gw.run()                                            # baseline -> cursor 105
-
-    new = [_reading(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
-    new[2]["CH4"] = 45.0                                 # MS-3 enters watch
-    monkeypatch.setattr(gw.gc, "fetch_readings",
-                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
-    assert gw.run() == 0
-
-    assert len(sent) == 1                                # ONE email, not two
     subj, body, recipients = sent[0]
-    assert "GFL air watch" in subj and "URGENT" not in subj
-    assert recipients == _WATCH_RECIPIENTS               # scoped, not the full list
-    assert "MS-3" in body and "consent judgment" in body.lower() and "ET (" in body
-    assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3"}
+    assert "SCREENING ALERT" in subj and "URGENT" not in subj
+    assert recipients == _WATCH_RECIPIENTS
+    assert "MS-3" in body and 'Arbor Hills Landfill, Inc. ("AHL")' in body
+    assert "MS-3|ch4" in sw.gfl_air_episode_state(fake, "SID")
 
 
-def test_watch_recipients_extra_env_merges_and_dedupes(monkeypatch):
-    # GFL_AIR_WATCH_RECIPIENTS_EXTRA (private, not committed to config.yml) adds a
-    # recipient to the scoped watch-tier send, parallel to email_alerts'
-    # ALERT_RECIPIENTS_EXTRA for the main alert_recipients list.
-    cfg = _watch_cfg()
-    fake, sent = _wire_with_recipients(monkeypatch, cfg)
-    monkeypatch.setenv("GFL_AIR_WATCH_RECIPIENTS_EXTRA",
-                        "extra@example.com, arbor-hills@trishakunst.com")  # 2nd is a dup of config
-    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
-    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
-    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
-    gw.run()                                            # baseline -> cursor 105
-
-    new = [_reading(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
-    new[2]["CH4"] = 45.0                                 # MS-3 enters watch
+def test_run_five_stations_same_hour_open_is_one_email(monkeypatch):
+    fake, sent = _wire_with_recipients(monkeypatch, _watch_cfg())
+    _baseline_then(monkeypatch)
+    new = [_elev(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
+    for i, v in [(0, 77.1), (1, 78.0), (2, 73.8), (3, 73.5), (5, 74.5)]:   # MS-1,2,3,4,6
+        new[i] = _elev(106 + i, STATIONS[i], v, 5.0, DAY1)
     monkeypatch.setattr(gw.gc, "fetch_readings",
                         lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
     assert gw.run() == 0
+    assert len(sent) == 1                                       # ONE consolidated email
+    subj, body, _ = sent[0]
+    for st in ("MS-1", "MS-2", "MS-3", "MS-4", "MS-6"):
+        assert st in subj
+    assert "MS-5" not in subj                                   # MS-5 (5/0) not flagged
+    st_state = sw.gfl_air_episode_state(fake, "SID")
+    assert sum(1 for k in st_state if k.endswith("|h2s")) == 5
 
+
+def test_run_extra_env_merges_and_dedupes_recipients(monkeypatch):
+    fake, sent = _wire_with_recipients(monkeypatch, _watch_cfg())
+    monkeypatch.setenv("GFL_AIR_WATCH_RECIPIENTS_EXTRA",
+                       "extra@example.com, arbor-hills@trishakunst.com")   # 2nd dups config
+    _baseline_then(monkeypatch)
+    new = [_elev(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
+    new[2] = _elev(108, "MS-3", 0.0, 45.0, DAY1)
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0
     assert len(sent) == 1
-    _, _, recipients = sent[0]
-    # config order preserved, env addr appended, dup not duplicated
-    assert recipients == ["arbor-hills@trishakunst.com", "extra@example.com"]
+    assert sent[0][2] == ["arbor-hills@trishakunst.com", "extra@example.com"]
 
 
-def test_watch_continuing_episode_is_suppressed_then_recovery_rearms(monkeypatch):
-    cfg = _watch_cfg()
-    fake, sent = _wire_with_recipients(monkeypatch, cfg)
-    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
-    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
-    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
-    gw.run()                                            # baseline -> cursor 105
+def test_run_continuing_then_recovery_then_reenter(monkeypatch):
+    fake, sent = _wire_with_recipients(monkeypatch, _watch_cfg())
+    _baseline_then(monkeypatch)
 
-    def poll(oid, ch4, day):
-        rows = [_reading(oid, "MS-3", 0.0, ch4, day)]
+    def poll(oid, ch4, ms):
+        rows = [_elev(oid, "MS-3", 0.0, ch4, ms)]
         monkeypatch.setattr(gw.gc, "fetch_readings",
                             lambda c, since, limit=None: [r for r in rows if r["OBJECTID"] > since])
         return gw.run()
 
-    assert poll(106, 45.0, DAY1) == 0                    # enters watch -> emailed
+    assert poll(106, 45.0, DAY1) == 0                           # opens -> SCREENING (1)
+    assert len(sent) == 1 and "SCREENING ALERT" in sent[0][0]
+    assert "MS-3|ch4" in sw.gfl_air_episode_state(fake, "SID")
+
+    assert poll(107, 46.0, DAY1 + 3600_000) == 0                # continues -> NO email
     assert len(sent) == 1
-    assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3"}
 
-    assert poll(107, 46.0, DAY1 + 3600_000) == 0         # still elevated -> suppressed
-    assert len(sent) == 1
-    assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3"}
+    assert poll(108, 10.0, DAY1 + 7200_000) == 0                # recovers -> CLOSEOUT (2)
+    assert len(sent) == 2 and "returned below" in sent[1][0]
+    assert sw.gfl_air_episode_state(fake, "SID") == {}
+    assert len(fake._values._tabs.get(sw.TAB_PERIMETER_EPISODES, [])) == 2   # header + 1 closed row
 
-    assert poll(108, 10.0, DAY1 + 7200_000) == 0         # recovers below 40
-    assert len(sent) == 1                                # no email for a recovery
-    assert sw.gfl_air_watch_marker(fake, "SID") == set()  # marker reconciled
-
-    assert poll(109, 47.0, DAY1 + 10800_000) == 0        # re-enters -> fresh episode
-    assert len(sent) == 2
-    assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3"}
+    assert poll(109, 47.0, DAY1 + 10800_000) == 0               # re-enters -> fresh SCREENING (3)
+    assert len(sent) == 3
+    assert "MS-3|ch4" in sw.gfl_air_episode_state(fake, "SID")
 
 
-def test_watch_send_failure_leaves_marker_unset_and_retries_next_poll(monkeypatch):
+def test_run_screening_email_best_effort_state_committed_on_send_failure(monkeypatch):
+    # A failed SCREENING send must not crash and must not lose the episode STATE
+    # (committed like the cursor; the email is best-effort, matching the exceedance
+    # email). Because state is committed, a continuing reading does NOT re-alert (the
+    # OPEN email is not retried — documented ADR-039 posture); the CLOSEOUT still fires.
     cfg = _watch_cfg()
     fake = FakeSheets()
+    monkeypatch.delenv("GFL_AIR_WATCH_RECIPIENTS_EXTRA", raising=False)
     monkeypatch.setenv("GSHEET_ID", "SID")
     monkeypatch.setattr(gw, "load_config", lambda: copy.deepcopy(cfg))
     monkeypatch.setattr(gw.dc, "sheets_service", lambda: fake)
     monkeypatch.setattr(gw.gc, "fetch_h2s_window_avg", lambda *a, **k: {})
+    monkeypatch.setattr(gw.gc, "fetch_station_coords", lambda *a, **k: {})
+    monkeypatch.setattr(gw.gc, "fetch_station_window", lambda *a, **k: [])
     base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
     monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
     monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
 
-    def failing_send(subj, body, c, recipients=None):
+    def boom(*a, **k):
         raise RuntimeError("SMTP down")
-    monkeypatch.setattr(gw.ea, "send_email", failing_send)
-    gw.run()                                            # baseline
+    monkeypatch.setattr(gw.ea, "send_email", boom)
+    gw.run()                                                    # baseline
 
-    new = [_reading(106, "MS-3", 0.0, 45.0, DAY1)]
+    r1 = [_elev(106, "MS-3", 0.0, 45.0, DAY1)]
     monkeypatch.setattr(gw.gc, "fetch_readings",
-                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
-    assert gw.run() == 0                                # best-effort: never crashes
-    assert sw.gfl_air_watch_marker(fake, "SID") == set()   # NOT marked — send failed
+                        lambda c, since, limit=None: [r for r in r1 if r["OBJECTID"] > since])
+    assert gw.run() == 0                                        # best-effort: never crashes
+    assert "MS-3|ch4" in sw.gfl_air_episode_state(fake, "SID")  # STATE committed despite send fail
 
     sent = []
     monkeypatch.setattr(gw.ea, "send_email",
                         lambda subj, body, c, recipients=None: sent.append((subj, body, recipients)))
-    new2 = [_reading(107, "MS-3", 0.0, 46.0, DAY1 + 3600_000)]
+    r2 = [_elev(107, "MS-3", 0.0, 46.0, DAY1 + 3600_000)]        # continuing
     monkeypatch.setattr(gw.gc, "fetch_readings",
-                        lambda c, since, limit=None: [r for r in new2 if r["OBJECTID"] > since])
+                        lambda c, since, limit=None: [r for r in r2 if r["OBJECTID"] > since])
     assert gw.run() == 0
-    assert len(sent) == 1                               # retried and succeeded
-    assert sw.gfl_air_watch_marker(fake, "SID") == {"MS-3"}
+    assert sent == []                                           # OPEN not retried (episode open)
+
+    r3 = [_elev(108, "MS-3", 0.0, 10.0, DAY1 + 7200_000)]        # closes
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in r3 if r["OBJECTID"] > since])
+    assert gw.run() == 0
+    assert len(sent) == 1 and "returned below" in sent[0][0]    # CLOSEOUT still fires
 
 
-def test_watch_and_exceedance_on_different_stations_both_notify_independently(monkeypatch):
-    cfg = _watch_cfg()
-    fake, sent = _wire_with_recipients(monkeypatch, cfg)
-    base = [_reading(100 + i, s, 0.0, 5.0) for i, s in enumerate(STATIONS)]
-    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(base))
-    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: [])
-    gw.run()
-
-    new = [_reading(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
-    new[2]["CH4"] = 45.0                                 # MS-3: watch
-    new[4]["CH4"] = 600.0                                # MS-5: exceedance (action level 12500? no)
+def test_run_exceedance_tier_unchanged_and_independent_of_episode_engine(monkeypatch):
+    # A CH4 exceedance (>= 12500 in the fixture) still emails [URGENT] to the DEFAULT
+    # full list (recipients None), untouched. An H2S action-level crossing on another
+    # station opens an episode -> a SEPARATE consolidated SCREENING email to the watch
+    # list. The two tiers fire independently, to different audiences.
+    fake, sent = _wire_with_recipients(monkeypatch, _watch_cfg())
+    _baseline_then(monkeypatch)
+    new = [_elev(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
+    new[2] = _elev(108, "MS-3", 45.0, 5.0, DAY1)                # MS-3 H2S 45 (action-level watch)
+    new[4] = _elev(110, "MS-5", 0.0, 20000.0, DAY1)            # MS-5 CH4 >= 12500 exceedance
     monkeypatch.setattr(gw.gc, "fetch_readings",
                         lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
     assert gw.run() == 0
-
-    # unchanged combined exceedance path did NOT fire here (THRESH ch4 action = 12500,
-    # so 600 is still 'watch' too) — bump one station past the fixture's action level
-    # instead, in a follow-up poll, to prove independence without re-deriving THRESH.
-    assert len(sent) == 1 and "GFL air watch" in sent[0][0]
-
-    new2 = [_reading(200, "MS-5", 0.0, 20000.0, DAY1 + 3600_000)]  # >= action 12500
-    monkeypatch.setattr(gw.gc, "fetch_readings",
-                        lambda c, since, limit=None: [r for r in new2 if r["OBJECTID"] > since])
-    assert gw.run() == 0
-    assert len(sent) == 2
     urgent = [s for s in sent if "URGENT" in s[0]]
-    assert len(urgent) == 1 and urgent[0][2] is None     # exceedance -> default full list
+    screening = [s for s in sent if "SCREENING ALERT" in s[0]]
+    assert len(urgent) == 1 and urgent[0][2] is None            # exceedance -> full list, unchanged
+    assert "20000" in urgent[0][1]
+    assert len(screening) == 1 and screening[0][2] == _WATCH_RECIPIENTS
+    assert "MS-3" in screening[0][1]                            # H2S action-level episode present
 
 
 # --- durable air-readings exhibit (ADR 026): select_capture_rows + gating -------

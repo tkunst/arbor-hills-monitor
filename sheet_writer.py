@@ -502,6 +502,18 @@ GFL_AIR_SUMMARY_HEADERS = [
     "Wind (mph)", "Wind Dir", "Temp (F)", "OBJECTID", "Note", "Link",
 ]
 
+# Perimeter Action-Level Episodes (Stream E, ADR 039) — the durable log of every
+# CLOSED per-(station,gas) CJ action-level episode (H2S 30 ppb / ¶def T, CH4 40 ppm /
+# ¶def U). One append-only row per closed episode; the clean record Trisha tracks the
+# "was a root-cause analysis done properly" review against. Every timestamp is stored
+# in America/Detroit ET (the compliance-local time), matching the emails.
+TAB_PERIMETER_EPISODES = "Perimeter Action-Level Episodes"
+PERIMETER_EPISODE_HEADERS = [
+    "Station", "Gas", "Threshold", "Opened (ET)", "Opened Value", "Peak Value",
+    "Peak (ET)", "Cleared (ET)", "Cleared Value", "Duration (hr)", "Readings Over",
+    "Source", "Event ID", "Logged (UTC)",
+]
+
 _TAB_HEADERS = {
     TAB_NEW: FEED_HEADERS,
     TAB_HISTORICAL: FEED_HEADERS,
@@ -2430,52 +2442,76 @@ def set_gfl_air_stale_marker(service, sheet_id: str, as_of: str) -> None:
     ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
 
 
-# The CH4 watch-episode marker lives in column O — outside the A:L station write
-# span AND distinct from column N's liveness stale-marker — so write_gfl_air_summary
-# never clobbers it. It records which stations are CURRENTLY inside an already-
-# alerted >=40ppm episode (coder:gfl-air-thresholds; ADR 014 addendum), the
-# once-per-episode gate for the separate CH4 WATCH-tier email. Unlike the single-
-# value stale marker, this is a SET (JSON array) since multiple stations can be
-# mid-episode at once.
-_GFL_WATCH_MARKER_LABEL_CELL = "O1"
-_GFL_WATCH_MARKER_VALUE_CELL = "O2"
+# The per-(station,gas) ACTION-LEVEL EPISODE STATE lives in column O — outside the
+# A:L station write span AND distinct from column N's liveness stale-marker — so
+# write_gfl_air_summary never clobbers it, and there is no clear() to wipe it. It is
+# the OPEN-episode map for the consolidated action-level screening system (Stream E,
+# ADR 039): a JSON object {"<station>|<gas>": {event_id, threshold, opened_at,
+# opened_value, peak_value, peak_at, n_over}, ...} carried across the daily runs so
+# an episode that spans several polls keeps one identity + a cross-run peak.
+#
+# This REPLACES the old CH4-only watch marker (coder:gfl-air-thresholds), which stored
+# a JSON ARRAY of station names in this same cell. The reader below returns {} on
+# anything that is not a JSON object — including that legacy array — so the FIRST run
+# after deploy simply re-derives open episodes from the current readings (fail-safe
+# toward re-alerting, never toward silent suppression). See ADR 039.
+_GFL_EPISODE_STATE_LABEL_CELL = "O1"
+_GFL_EPISODE_STATE_VALUE_CELL = "O2"
 
 
-def gfl_air_watch_marker(service, sheet_id: str) -> set:
-    """Stations currently inside an already-alerted CH4 watch/exceedance episode
-    (>=40ppm) — read before deciding which stations' watch email is 'new' this poll.
-    Returns an EMPTY set (never raises) on a missing/blank/unparseable cell —
-    fail-safe toward alerting: an unreadable marker must look like 'nothing has
-    been alerted yet', never like 'everything is already covered', since the
-    latter would risk silently swallowing a real watch notification."""
+def gfl_air_episode_state(service, sheet_id: str) -> dict:
+    """The open per-(station,gas) action-level episode map (see the note above).
+    Returns an EMPTY dict (never raises) on a missing/blank/unparseable cell OR a
+    legacy JSON-array value — fail-safe toward re-alerting: an unreadable state must
+    look like 'no episodes open yet', never like 'everything already covered', since
+    the latter would risk silently swallowing a real screening/closeout alert."""
     resp = (
         service.spreadsheets()
         .values()
-        .get(spreadsheetId=sheet_id, range=f"'{TAB_GFL_AIR}'!{_GFL_WATCH_MARKER_VALUE_CELL}")
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_GFL_AIR}'!{_GFL_EPISODE_STATE_VALUE_CELL}")
         .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     vals = resp.get("values", [])
     if not vals or not vals[0] or not str(vals[0][0]).strip():
-        return set()
+        return {}
     try:
         data = json.loads(str(vals[0][0]))
     except (ValueError, TypeError):
-        return set()
-    return {str(s) for s in data} if isinstance(data, list) else set()
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-def set_gfl_air_watch_marker(service, sheet_id: str, stations) -> None:
-    """Persist the CURRENT full set of stations mid-episode (not an incremental
-    add) — a plain snapshot of 'who is >=40ppm right now, already notified about',
-    so a missed write just means next poll recomputes from current data rather than
-    drifting. Writes a human label (O1) + the JSON array (O2) in one update."""
+def set_gfl_air_episode_state(service, sheet_id: str, state: dict) -> None:
+    """Persist the CURRENT full open-episode map (not an incremental add) — a plain
+    snapshot, so a missed write just means next poll re-derives from current data
+    rather than drifting. Writes a human label (O1) + the JSON object (O2) in one
+    update; column O is outside the A:L station write span."""
     service.spreadsheets().values().update(
         spreadsheetId=sheet_id,
-        range=f"'{TAB_GFL_AIR}'!{_GFL_WATCH_MARKER_LABEL_CELL}",
+        range=f"'{TAB_GFL_AIR}'!{_GFL_EPISODE_STATE_LABEL_CELL}",
         valueInputOption="RAW",
-        body={"values": [["CH4 Watch-Episode Stations (>=40ppm, already alerted)"],
-                          [json.dumps(sorted(stations))]]},
+        body={"values": [["Open Action-Level Episodes (per station|gas; ADR 039)"],
+                          [json.dumps(state or {}, sort_keys=True)]]},
     ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+
+
+# ---------------------------------------------------------------------------
+# Perimeter Action-Level Episodes tab (Stream E, ADR 039) — append-only durable log
+# of every CLOSED episode. Its own tab (not the GFL Air snapshot), created on demand.
+# ---------------------------------------------------------------------------
+
+def ensure_perimeter_episodes_tab(service, sheet_id: str) -> None:
+    """Create the Perimeter Action-Level Episodes tab if missing and reconcile its
+    header row (same self-healing policy as ensure_gfl_air_tabs). Called only from
+    gfl_air_watcher.py, so the tab doesn't appear until an episode actually closes."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_PERIMETER_EPISODES not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_PERIMETER_EPISODES}}}]},
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    _set_header(service, sheet_id, TAB_PERIMETER_EPISODES, PERIMETER_EPISODE_HEADERS)
 
 
 # ---------------------------------------------------------------------------
