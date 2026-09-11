@@ -59,6 +59,9 @@ jobs:
         # warn-only (see check_publish_safety.py). Reads only files -- no creds.
         run: python scripts/check_publish_safety.py
       - name: Commit and push if the feed changed
+        env:
+          # IndexNow key is PUBLIC by design (served at site/${INDEXNOW_KEY}.txt) -- not a secret.
+          INDEXNOW_KEY: "6d89c9250ca1d020ae236334eaf3b054"
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -76,4 +79,16 @@ jobs:
           else
             git commit -m "chore(findings): regenerate the public Findings feed"
             git push
+            # IndexNow: the moment new records publish, tell Bing (and Yandex/Seznam,
+            # which share the endpoint) to recrawl instead of waiting for a scheduled
+            # pass. Bing feeds ChatGPT/Copilot, so this shortens the lag before the
+            # freshest records can surface in AI answers. Best-effort BY DESIGN: a
+            # failed ping must NEVER fail a deploy that already succeeded, so it is
+            # guarded with `|| echo` + a 20s timeout (a 4xx from IndexNow also does
+            # not fail the step -- curl has no --fail). Submits page 1, where new
+            # records land; deeper pages are picked up on the normal crawl.
+            curl -sS -m 20 -X POST "https://api.indexnow.org/indexnow" \
+              -H "Content-Type: application/json; charset=utf-8" \
+              --data-raw "{\"host\":\"arborhillsmonitor.org\",\"key\":\"${INDEXNOW_KEY}\",\"keyLocation\":\"https://arborhillsmonitor.org/${INDEXNOW_KEY}.txt\",\"urlList\":[\"https://arborhillsmonitor.org/public-records/\"]}" \
+              -w 'IndexNow: HTTP %{http_code}\n' || echo "IndexNow ping failed (non-fatal)."
           fi
