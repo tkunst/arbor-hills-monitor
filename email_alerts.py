@@ -104,14 +104,18 @@ def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None
     """items: [{parsed, metadata, link}]. Procedural action items first.
 
     urgent_recap: same shape, plus each item's metadata carries
-    'urgent_sent_at' — a recap of items already sent as their own same-day
-    [URGENT] email. Rendered FIRST and clearly labeled as already-sent, so a
-    reader who got that email recognizes this as a repeat, not a new event."""
+    'urgent_sent_at' — a recap of items sent as their own same-day [URGENT]
+    email to the urgent-tier list. Rendered FIRST. NOTE: the header deliberately
+    does NOT say the items were "already emailed separately" — digest-only
+    recipients (e.g. DIGEST_RECIPIENTS_EXTRA — the commissioners) do NOT receive
+    the same-day [URGENT] emails, so for them this recap is their FIRST sighting,
+    not a repeat; claiming otherwise would be false. The 'Sent <date>' line still
+    records when the urgent email went to the urgent-tier list."""
     if not items and not urgent_recap:
         return "No new Arbor Hills (N2688) documents this period."
     lines = []
     if urgent_recap:
-        lines.append("URGENT ITEMS FROM EARLIER (already emailed separately):")
+        lines.append("URGENT ITEMS FROM EARLIER:")
         for it in urgent_recap:
             p, m = it["parsed"], it["metadata"]
             sent_at = m.get("urgent_sent_at", "")

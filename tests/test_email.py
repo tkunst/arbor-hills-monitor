@@ -162,7 +162,8 @@ def test_format_digest_body_empty_with_no_recap_is_unchanged():
 def test_format_digest_body_recap_only_still_renders_not_empty_message():
     body = ea.format_digest_body([], [_recap_item()])
     assert body != "No new Arbor Hills (N2688) documents this period."
-    assert "URGENT ITEMS FROM EARLIER (already emailed separately):" in body
+    assert "URGENT ITEMS FROM EARLIER:" in body
+    assert "already emailed separately" not in body  # digest-only members never got the urgent email
     assert "Sent 2026-08-15T09:00:00  Urgent Doc" in body
 
 
