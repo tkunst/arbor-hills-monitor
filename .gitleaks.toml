@@ -1,0 +1,20 @@
+# gitleaks configuration for arbor-hills-monitor.
+#
+# Extends the default gitleaks ruleset and adds a narrow allowlist for the
+# site's IndexNow verification key. That key is PUBLIC by design: it is
+# committed to site/<key>.txt and served at
+# https://arborhillsmonitor.org/<key>.txt so Bing/Yandex can verify domain
+# ownership before accepting IndexNow submissions. It is therefore not a secret,
+# but its 32-hex-char, high-entropy form trips the default `generic-api-key`
+# rule in findings-feed.yml and public-comment.yml. Allowlist it by value.
+
+title = "arbor-hills-monitor"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "IndexNow verification key is public by design (published at site/<key>.txt); not a secret."
+regexes = [
+  '''6d89c9250ca1d020ae236334eaf3b054''',
+]
