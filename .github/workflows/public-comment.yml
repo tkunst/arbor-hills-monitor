@@ -38,6 +38,9 @@ jobs:
       - name: Regenerate the Public Comment Periods page
         run: python scripts/gen_public_comment_feed.py
       - name: Commit and push if the page changed
+        env:
+          # IndexNow key is PUBLIC by design (served at site/${INDEXNOW_KEY}.txt) -- not a secret.
+          INDEXNOW_KEY: "6d89c9250ca1d020ae236334eaf3b054"
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -57,4 +60,14 @@ jobs:
           else
             git commit -m "chore(public-comment): regenerate the Public Comment Periods page"
             git push
+            # IndexNow: comment deadlines are time-sensitive, so the moment a period
+            # opens/closes or a deadline moves, tell Bing (and Yandex/Seznam, shared
+            # endpoint) to recrawl instead of waiting for a scheduled pass -- Bing
+            # feeds ChatGPT/Copilot. Best-effort BY DESIGN: 20s timeout + `|| echo`
+            # so a failed or 4xx ping can never fail a deploy that already succeeded.
+            # Same public key file as the findings feed (site/${INDEXNOW_KEY}.txt).
+            curl -sS -m 20 -X POST "https://api.indexnow.org/indexnow" \
+              -H "Content-Type: application/json; charset=utf-8" \
+              --data-raw "{\"host\":\"arborhillsmonitor.org\",\"key\":\"${INDEXNOW_KEY}\",\"keyLocation\":\"https://arborhillsmonitor.org/${INDEXNOW_KEY}.txt\",\"urlList\":[\"https://arborhillsmonitor.org/public-comment/\"]}" \
+              -w 'IndexNow: HTTP %{http_code}\n' || echo "IndexNow ping failed (non-fatal)."
           fi
