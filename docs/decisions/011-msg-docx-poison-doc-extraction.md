@@ -258,3 +258,46 @@ The retroactive backfill of the 15 known docs is a manual step:
    that comma-separated list.
 3. Spot-check the resulting Sheet rows, then manually delete the 14 old stub
    rows from the feed tab (residual risk #2 above).
+
+## 2026-09-10 addendum — 11 legacy `.doc` (RA) are ENCRYPTED: do NOT `RETRY_DOC_IDS` them
+
+A `/dedupe-curate` audit (2026-09-10) found 14 Arbor Hills **Remediation Area**
+(`-714792003991405124`) documents still absent from `Archived PDFs`. **11 of
+them are legacy binary `.doc` that are genuinely password/RC4-ENCRYPTED at the
+source** — the "human-judgment-call problem" `poison_doc_extractor.py`'s
+docstring anticipated, now confirmed concretely:
+
+- `antiword` → "Encrypted documents are not supported" on all 11; LibreOffice →
+  "source file could not be loaded"; `textutil` → binary garbage. The OLE2
+  `Security` flag is `5`. Trisha downloaded one manually (2026-09-10) and Word
+  confirmed it is **password-protected**.
+- These are NOT the ADR-011 `.msg`/`.docx` backfill set above (different
+  doc_ids), and residual-risk #4 (legacy `.doc` is a genuine gap) applies —
+  but here the gap is not "no `.doc` parser," it is **encryption**: no parser,
+  and no future `.doc` library, can read them without the password. **`RETRY_DOC_IDS`
+  will re-fail on every one.** They stay terminally `skipped`; leave them there.
+- **Correct remedy = FOIA EGLE** for unencrypted copies of the 2002 NPDES
+  `MI0045713` permit-issuance packet (they are a 2002 "Conversion - Permit"
+  set: General Purpose Memo/Letter, Fact Sheet, Application Transmittal +
+  Acknowledgment, Pre-public Notice, Decision-maker Memo, Mixing Zone, Basis of
+  Decision, Individual Permit Issued Letter, Public Notice).
+
+**Do-not-retry doc_ids (encrypted):** `-8684491649718103300`,
+`-6904300104235532049`, `-3591020644751821597`, `-3504600192496034508`,
+`-1987809141968712770`, `3101556787685491880`, `3507011584973462812`,
+`4952804410694111352`, `6093035641993986024`, `6145408853465357390`,
+`8281766965637565431`.
+
+The other 3 of the 14 are images and are resolved: `-7959968098742911921`
+("10/5/23 Pic") was already hand-curated (2026-07-23); `9145541881522253416`
+("Pond") and `-3310380287454320847` ("Stilling basin") were hand-curated
+2026-09-10 — each source file's main image data is corrupt at nSITE, but the
+intact embedded 2016×1512 JPEG was recovered and rendered to PDF. Full
+disposition: the Cowork workspace's
+`documents/arbor-hills/source-docs/RA-unmirrored-photos-2026-09-10/DISPOSITION-14-poison-docs.md`.
+
+*(Optional future hardening, not done here: a `KNOWN_ENCRYPTED_DOC_IDS`
+constant that `select_todo()` honors even under `RETRY_DOC_IDS`, so a manual
+retry can't waste a run on these. Deferred — documenting them here, at the
+one place a human consults before running `RETRY_DOC_IDS`, is the proportionate
+fix; the normal/retry-poisoned paths already skip them.)*
