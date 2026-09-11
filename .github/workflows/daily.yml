@@ -56,6 +56,10 @@ jobs:
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
           DIGEST_RECIPIENTS_EXTRA: ${{ secrets.DIGEST_RECIPIENTS_EXTRA }}
+          # CAN-SPAM unsubscribe (ADR 040): the shared suppression list + the
+          # never-suppressible owner list, honored at email_alerts.send_email.
+          UNSUBSCRIBED_EMAILS: ${{ secrets.UNSUBSCRIBED_EMAILS }}
+          MONITOR_OWNER_EMAILS: ${{ secrets.MONITOR_OWNER_EMAILS }}
         run: python -c "import email_alerts, config_loader; email_alerts.send_test_email(config_loader.load_config())"
       - name: Run the watcher
         env:
@@ -74,6 +78,10 @@ jobs:
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
           DIGEST_RECIPIENTS_EXTRA: ${{ secrets.DIGEST_RECIPIENTS_EXTRA }}
+          # CAN-SPAM unsubscribe (ADR 040): the shared suppression list + the
+          # never-suppressible owner list, honored at email_alerts.send_email.
+          UNSUBSCRIBED_EMAILS: ${{ secrets.UNSUBSCRIBED_EMAILS }}
+          MONITOR_OWNER_EMAILS: ${{ secrets.MONITOR_OWNER_EMAILS }}
           # ADR 007 addendum: the watcher now mirrors each new doc to Drive
           # inline (archiver.mirror_one_now()), best-effort, so its Sheet row
           # and alert link to the durable copy instead of the referer-fragile
