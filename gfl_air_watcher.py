@@ -782,16 +782,18 @@ def _benchmark_reference_lines() -> list[str]:
         "Level (¶def U); an early-warning tripwire (~0.08% of methane's lower "
         "explosive limit). Methane has no EGLE Air-Toxics screening level — its "
         "concerns are flammability + the surface SEM line below.",
-        "  • CH4 500 ppm — a SURFACE standard, NOT a perimeter one: the federal NESHAP "
-        "MACT Subpart AAAA corrective-action level (40 CFR 63.1958(d)) + NSPS Subpart "
-        "WWW + Michigan Part 115, measured with a probe ~5-10 cm ABOVE the active "
-        "waste surface, ON the landfill (the CJ ¶5.4 layers its own RCA duty on top). "
-        "MS-1..MS-6 are PERIMETER FENCELINE monitors at the site's property boundary "
-        "(coordinates above), far from that active waste surface, where landfill gas is "
-        "heavily diluted by atmospheric dispersion — so a fenceline reading anywhere "
-        "near 500 ppm would be extraordinary and signals gas escaping/migrating in "
-        "volume, regardless of whether a fenceline 500 ppm is itself a violation. (The "
-        "monitor's separate EXCEEDANCE alert still fires at CH4 500 ppm.)",
+        "  • CH4 500 ppm above background — a SURFACE standard, NOT a perimeter one: the "
+        "federal NESHAP MACT Subpart AAAA surface-emission standard (40 CFR 63.1958(d); "
+        "federal corrective action attaches at §63.1960) + NSPS Subpart WWW + Michigan "
+        "Part 115, measured by a surface-emission (SEM) scan with the probe just above "
+        "the landfill cover (~5-10 cm), ON the landfill (the CJ ¶5.4 layers its own RCA "
+        "duty on top). MS-1..MS-6 are PERIMETER FENCELINE monitors at the site's "
+        "property boundary (coordinates above), far from the landfill surface, where "
+        "landfill gas is heavily diluted by atmospheric dispersion — so a fenceline "
+        "reading anywhere near 500 ppm would be extraordinary and would suggest gas "
+        "escaping/migrating in volume, regardless of whether a fenceline 500 ppm is "
+        "itself a violation. (The monitor's separate EXCEEDANCE alert still fires at "
+        "CH4 500 ppm.)",
         "  • Surface H2S 122 ppb — the CJ surface H2S Action Level (¶def O, Jerome "
         "meter at 5-10 cm); a surface, not a perimeter, level.",
         "  Applicable regimes: Arbor Hills is subject to NSPS Subpart WWW (40 CFR 60) + "

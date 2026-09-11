@@ -232,10 +232,12 @@ B1-symptom-master-table.html` in Lotext; not re-derived). It states:
   40 ppm ¶def U), **distinguished from** the EGLE Air-Toxics **ITSL health-screening**
   levels for H2S (72 ppb 24-hr / 750 ppb 15-min acute — a health benchmark, not the CJ
   trigger; methane has no ITSL);
-- **CH4 500 ppm as a SURFACE standard** (NESHAP MACT AAAA 40 CFR 63.1958(d) + NSPS WWW +
-  MI Part 115), measured ~5-10 cm above the active waste surface — vs. the perimeter
-  fenceline where MS-1..MS-6 sit, far from that surface, so a fenceline reading near
-  500 ppm is extraordinary (the SUSPENSE-187 distance-emphasis framing);
+- **CH4 500 ppm above background as a SURFACE standard** — the NESHAP MACT AAAA
+  surface-emission standard (40 CFR 63.1958(d); federal corrective action attaches at
+  §63.1960) + NSPS WWW + MI Part 115, measured by a SEM scan just above the landfill
+  cover — vs. the perimeter fenceline where MS-1..MS-6 sit, far from that surface, so a
+  fenceline reading near 500 ppm is extraordinary (the SUSPENSE-187 distance-emphasis
+  framing);
 - the CJ **surface** H2S action level (122 ppb, ¶def O); and the applicable **regimes**
   cited separately (NSPS WWW + NESHAP MACT AAAA per ROP MI-ROP-N2688-2011a, the CJ, and
   MI Part 115).
