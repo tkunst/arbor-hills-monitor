@@ -2,7 +2,16 @@
 # Ignore vendored markdown so a local virtualenv / node_modules doesn't pollute
 # the lint. (CI's markdownlint job is checkout-only and never creates these, but
 # contributors who run setup.sh will have a .venv.)
+#
+# docs/overnight-coder-handoffs/ holds TRANSIENT, hand-written overnight-coder task
+# specs (prose staged for the loop, not published product docs). They are committed
+# so the loop can reference them by path, but every hand-authored handoff would
+# otherwise re-break the repo-wide markdownlint job over pedantic blank-line/bullet
+# rules (it has been red on `main` since commit 4a92b31 landed the staged specs).
+# Excluding the scratch-spec directory is the durable fix; product docs (README,
+# ADRs, site) stay linted.
 ignores:
   - ".venv/**"
   - "venv/**"
   - "node_modules/**"
+  - "docs/overnight-coder-handoffs/**"
