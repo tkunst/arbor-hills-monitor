@@ -208,9 +208,10 @@ def test_discovery_unions_seed_floor(monkeypatch):
     monkeypatch.setattr(gc.requests, "get", r.get)
     dr = gc.discover_page_urls(r.base, f"{r.base}/sitemap.xml",
                                ["/", "/faq", "/location-hours"], gw._DEFAULT_IGNORE)
-    # seeds appear even though only /faq is in the sitemap
-    assert "http://site.test/" in dr.urls
-    assert "http://site.test/location-hours" in dr.urls
+    # seeds appear even though only /faq is in the sitemap (exact set — also
+    # avoids a URL-substring membership pattern that trips CodeQL)
+    assert set(dr.urls) == {"http://site.test/", "http://site.test/faq",
+                            "http://site.test/location-hours"}
 
 
 def test_discovery_falls_back_to_nav_then_seed_only(monkeypatch):
@@ -467,15 +468,22 @@ def test_new_page_alerts_in_steady_state(monkeypatch):
     assert "ADDED" in sent[0][0]
 
 
-def test_removed_page_alerts_once_then_quiet(monkeypatch):
+def test_removal_is_debounced_over_two_runs(monkeypatch):
+    # A transient site-wide 404 must NOT fire a "REMOVED" email on the first run;
+    # only a SECOND consecutive 404 confirms the removal.
     r = _router_with_pages("/", "/faq", "/community")
     fake, sent, _ = _wire(monkeypatch, r)
     gw.run()                                  # baseline all three
     r.remove_page("/community")               # now 404s
+    # First run after removal: pending, SILENT (debounce).
     assert gw.run() == 0
-    removed = [row for row in _rows(fake) if row[3] == "removed-page"]
+    assert sent == []
+    pend = [row for row in _rows(fake) if row[3] == gw._CHANGE_PENDING]
+    assert len(pend) == 1 and pend[0][2] == "http://site.test/community"
+    # Second consecutive 404: confirmed removal + one alert.
+    assert gw.run() == 0
+    removed = [row for row in _rows(fake) if row[3] == gw._CHANGE_REMOVED]
     assert len(removed) == 1
-    assert removed[0][2] == "http://site.test/community"
     assert removed[0][4] == gw._REMOVED_HASH
     assert len(sent) == 1 and "REMOVED" in sent[0][0]
     # A third run: still 404 — must NOT re-alert.
@@ -484,19 +492,116 @@ def test_removed_page_alerts_once_then_quiet(monkeypatch):
     assert sent == []
 
 
+def test_transient_404_then_recover_identical_no_alert(monkeypatch):
+    # A single 404 that clears next run (identical content) is a blip — no alert
+    # at all, and the state resets so future real changes are still detected.
+    r = _router_with_pages("/", "/community")
+    fake, sent, _ = _wire(monkeypatch, r)
+    gw.run()                                  # baseline
+    r.remove_page("/community")
+    gw.run()                                  # pending (silent)
+    r.set_page("/community", build_page())    # back, identical content
+    assert gw.run() == 0
+    assert sent == []                          # transient blip — zero emails
+    assert any("recovered" in row[6] for row in _rows(fake))
+
+
+def test_transient_404_then_recover_changed_diffs(monkeypatch):
+    # A page that 404s once and comes back CHANGED diffs against its pre-404
+    # content (preserved on the pending row), not against the removed sentinel.
+    r = Router()
+    r.set_page("/", build_page("Home."))
+    r.set_page("/community", build_page("Original claim: setback 1000 feet."))
+    fake, sent, _ = _wire(monkeypatch, r)
+    gw.run()                                  # baseline
+    r.remove_page("/community")
+    gw.run()                                  # pending (silent)
+    r.set_page("/community", build_page("Revised claim: setback 500 feet."))
+    assert gw.run() == 0
+    changed = [row for row in _rows(fake)
+               if row[3] == gw._CHANGE_CHANGED and row[2] == "http://site.test/community"]
+    assert changed
+    assert len(sent) == 1 and "changed" in sent[0][0].lower()
+    assert "500 feet" in sent[0][1]           # diffed against the pre-404 content
+
+
 def test_removed_then_returned_alerts_as_new(monkeypatch):
     r = _router_with_pages("/", "/community")
     fake, sent, _ = _wire(monkeypatch, r)
     gw.run()                                  # baseline
     r.remove_page("/community")
-    gw.run()                                  # removed alert
+    gw.run()                                  # pending (silent)
+    gw.run()                                  # confirmed removed + alert
     sent.clear()
     r.set_page("/community", build_page("Back again."))
     assert gw.run() == 0
-    new_rows = [row for row in _rows(fake) if row[3] == "new-page"]
+    new_rows = [row for row in _rows(fake) if row[3] == gw._CHANGE_NEW]
     assert new_rows                            # recorded as a (returned) new page
     assert len(sent) == 1
     assert "returned" in sent[0][0].lower() or "returned" in sent[0][1].lower()
+
+
+def test_seed_first_success_is_silent_baseline_not_new(monkeypatch):
+    # A seed page that failed on the activation run must baseline SILENTLY when it
+    # later succeeds — never a false "Page ADDED" (a launch page isn't "new").
+    r = Router()
+    r.set_page("/", build_page("Home."))
+    r.set_page("/faq", build_challenge())      # seed fails on the initial run
+    fake, sent, _ = _wire(monkeypatch, r)
+    assert gw.run() == 1                        # loud activation block on /faq
+    sent.clear()
+    r.set_page("/faq", build_page("FAQ now loads."))
+    assert gw.run() == 0
+    faq_rows = [row for row in _rows(fake) if row[2] == "http://site.test/faq"]
+    assert faq_rows and faq_rows[-1][3] == gw._CHANGE_BASELINE
+    assert sent == []                          # NOT a new-page alert
+
+
+def test_total_blindness_exits_loud(monkeypatch):
+    # Every page failing post-baseline (e.g. Cloudflare walls the runner) must
+    # exit 1 so the workflow-failure email surfaces it — not a silent green no-op.
+    r = _router_with_pages("/", "/faq")
+    fake, sent, _ = _wire(monkeypatch, r)
+    gw.run()                                  # baseline
+
+    def dead(url, headers=None, timeout=None):
+        raise ConnectionError("walled")
+
+    monkeypatch.setattr(gw.gc.requests, "get", dead)
+    assert gw.run() == 1
+    assert sent == []                          # no false change/removal alerts
+
+
+def test_bulk_removal_sends_one_consolidated_email(monkeypatch):
+    # A mass removal confirming at once (> the cap) sends ONE consolidated notice,
+    # not N — but still records every removed-page row.
+    r = _router_with_pages("/", "/faq", "/a", "/b", "/c", "/d")
+    fake, sent, _ = _wire(monkeypatch, r, cfg=_cfg(max_new=1))
+    gw.run()                                  # baseline six
+    for p in ("/a", "/b", "/c", "/d"):
+        r.remove_page(p)
+    gw.run()                                  # four pending (silent)
+    assert sent == []
+    assert gw.run() == 0                        # four confirmed at once (> cap=1)
+    assert len(sent) == 1                       # ONE consolidated email
+    assert "4 pages REMOVED" in sent[0][0]
+    assert len([row for row in _rows(fake) if row[3] == gw._CHANGE_REMOVED]) == 4
+
+
+def test_unchanged_run_with_rotated_noise_is_noop(monkeypatch):
+    # The cardinal-sin path end-to-end: a second real run() with rotated
+    # per-request noise (as a live Cloudflare/WP server serves) must NOT fire a
+    # false "changed", through the full Sheet round-trip.
+    r = Router()
+    r.set_page("/", build_page("Home.", nonce="AAA", ver="1"))
+    r.set_page("/faq", build_page("FAQ.", nonce="BBB", ver="2"))
+    fake, sent, _ = _wire(monkeypatch, r)
+    gw.run()                                  # baseline
+    r.set_page("/", build_page("Home.", nonce="XXX", ver="9"))
+    r.set_page("/faq", build_page("FAQ.", nonce="YYY", ver="8"))
+    assert gw.run() == 0
+    assert sent == []
+    assert not [row for row in _rows(fake) if row[3] == gw._CHANGE_CHANGED]
 
 
 def test_anti_stampede_rebaselines_silently(monkeypatch):
@@ -540,10 +645,10 @@ def test_activation_block_is_loud_when_seed_unreadable(monkeypatch):
     r.set_page("/faq", build_challenge())
     fake, sent, _ = _wire(monkeypatch, r)
     assert gw.run() == 1                        # loud: surfaces the block on activation
-    # / still baselined; /faq did not (no false row)
+    # / still baselined; /faq did not (no false row). Exact set — also avoids the
+    # URL-substring membership pattern CodeQL flags.
     urls = {row[2] for row in _rows(fake)}
-    assert "http://site.test/" in urls
-    assert "http://site.test/faq" not in urls
+    assert urls == {"http://site.test/"}
 
 
 def test_display_only_when_no_recipients(monkeypatch):

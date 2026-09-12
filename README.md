@@ -388,7 +388,10 @@ encouragement to comment lives on the advocacy site, not here.
     new-page alert, a changed page → a readable unified diff (with a NEW-EMAIL-
     CONTACT callout if GFL adds an address), a page now returning HTTP 404/410 →
     removed-page alert (confirmed by the real HTTP status, never by mere absence
-    from the sitemap). The first run baselines every page silently in one atomic
+    from the sitemap, and **debounced over two runs** so a transient site-wide
+    404 — a WordPress permalink flush, a CDN purge — can't fire a burst of false
+    "removed" emails). A run where *every* page fails to fetch (e.g. Cloudflare
+    walling the runner) exits loud rather than going silently blind. The first run baselines every page silently in one atomic
     write; an anti-stampede guard re-baselines silently if too many pages look new
     at once. State is the append-only `GFL Info Site Watch` tab (both the diff
     basis and a dated durable snapshot — no Drive). Alerts are scoped verbatim
