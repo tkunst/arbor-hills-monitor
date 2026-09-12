@@ -1265,7 +1265,7 @@ nsite_public_notices:
 # Until enabled: true is on main, gfl-info-site-watch.yml runs on schedule but
 # _should_run() makes every run a quiet no-op. Keyless — no secret to provision.
 gfl_info_site:
-  enabled: false
+  enabled: true                            # activated 2026-09-12 (Trisha-directed) — Azure-runner probe green (run 34706429886), recipients = Trisha; see ADR 041
   base_url: "https://arborhillslandfill.com"
   sitemap_url: "https://arborhillslandfill.com/sitemap.xml"
   # The six launch-day pages (2026-09-10) — a FLOOR always checked even if
