@@ -60,12 +60,16 @@ ships disabled and a human flips it on + picks recipients — this loop never do
 (overnight-coder procedure). Until enabled: true is on main, every scheduled run
 is a quiet no-op (exit 0).
 
-ACTIVATION-BLOCK IS LOUD: if a SEED page has no baseline yet AND its fetch/parse
-fails, that run exits 1 (→ workflow-failure email) — so a Cloudflare wall on the
-Actions runner surfaces on the activation run instead of silently no-oping
-forever. (The fetch path is verified from residential + datacenter IPs, but the
-GitHub Actions Azure IP is a different ASN Cloudflare could challenge; run the
-workflow_dispatch PROBE mode before flipping enabled to confirm — see below.)
+ACTIVATION-BLOCK IS LOUD + ALL-OR-NOTHING: if ANY page fails to fetch/parse on
+the initial (activation) run, that run exits 1 (→ workflow-failure email) AND
+writes NO baselines, leaving the tab empty so the next run retries the full
+baseline cleanly. This surfaces a Cloudflare wall on the Actions runner
+immediately AND prevents a partially-baselined run from later firing a false
+"Page ADDED" for the page that failed. (The fetch path is verified from
+residential + datacenter IPs, but the GitHub Actions Azure IP is a different ASN
+Cloudflare could challenge; run the workflow_dispatch PROBE mode before flipping
+enabled to confirm — see below. A never-seen page that 404s is "ignore", not a
+failure, so a dead sitemap link never blocks the baseline.)
 
 PROBE MODE (workflow_dispatch input `probe=true`, or `--probe`): a pure fetch-
 path diagnostic that runs REGARDLESS of the enabled flag and writes NOTHING to
@@ -392,10 +396,17 @@ def run(probe: bool = False) -> int:
         except (gc.GFLInfoSiteFetchError, gc.GFLInfoSiteContentError) as e:
             # Transient / challenge — never diffed into a false change.
             failed += 1
-            if prior is None and is_initial and is_seed:
-                # Persistent block on the activation run for a core page → loud.
+            if prior is None and is_initial:
+                # ANY fetch/parse failure on the activation run → loud, and the
+                # initial baseline is ALL-OR-NOTHING (see Phase 2): if any page
+                # fails, NO page is baselined, so a partially-baselined page can't
+                # later false-fire "Page ADDED" (a seed OR a discovered non-seed
+                # like /privacy-policy). A never-seen 404 is "ignore" above, not a
+                # failure, so a dead sitemap link never blocks — only a real
+                # challenge/transient failure does, which is the activation
+                # problem worth blocking on.
                 print(f"[gfl-info-site]   BLOCK     {label}: NO BASELINE and fetch/"
-                      f"parse failed on the activation run (exit 1): {e}")
+                      f"parse failed on the activation run: {e}")
                 exit_code = 1
             else:
                 print(f"[gfl-info-site]   skip      {label}: fetch/parse failed, "
@@ -484,7 +495,15 @@ def run(probe: bool = False) -> int:
               f"new (> {rc['max_new_pages']}) — re-baselined silently, no alerts. "
               "Likely a site republish / discovery change; review the tab.")
 
-    if silent_baselines:
+    if is_initial and failed:
+        # ALL-OR-NOTHING initial baseline: at least one page failed to fetch this
+        # activation run, so write NOTHING and leave the tab empty for a clean
+        # retry next run. This is what prevents a partially-baselined initial run
+        # (some pages baselined, one failed) from later firing a false "Page
+        # ADDED" for the page that failed. exit_code is already 1 (set above).
+        print(f"[gfl-info-site] initial baseline ABORTED: {failed} page(s) failed "
+              "to fetch — writing nothing; will retry the full baseline next run.")
+    elif silent_baselines:
         rows = []
         for e in silent_baselines:
             if stampeded:

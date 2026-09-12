@@ -638,17 +638,62 @@ def test_fetch_failure_after_baseline_is_skip_and_warn(monkeypatch):
     assert sent == []                          # not diffed into a false alert
 
 
-def test_activation_block_is_loud_when_seed_unreadable(monkeypatch):
-    # Initial run, a SEED page serves a challenge (no <main>) and has no baseline.
+def test_activation_block_is_loud_and_all_or_nothing(monkeypatch):
+    # Initial run, a SEED page serves a challenge (no <main>). The run must exit
+    # loud AND baseline NOTHING (all-or-nothing) — not a partial baseline.
     r = Router()
     r.set_page("/", build_page("Home."))
     r.set_page("/faq", build_challenge())
     fake, sent, _ = _wire(monkeypatch, r)
     assert gw.run() == 1                        # loud: surfaces the block on activation
-    # / still baselined; /faq did not (no false row). Exact set — also avoids the
-    # URL-substring membership pattern CodeQL flags.
-    urls = {row[2] for row in _rows(fake)}
-    assert urls == {"http://site.test/"}
+    assert _rows(fake) == []                    # nothing baselined (all-or-nothing)
+    assert sent == []
+
+
+def test_initial_baseline_is_all_or_nothing_no_false_added(monkeypatch):
+    # A NON-seed discovered page (e.g. /privacy-policy) failing on the initial run
+    # must NOT leave a partial baseline that later false-fires "Page ADDED" for it.
+    r = Router()
+    r.set_page("/", build_page("Home."))            # seed, ok
+    r.set_page("/faq", build_page("FAQ."))           # seed, ok
+    r.set_page("/privacy-policy", build_challenge()) # non-seed discovered, fails
+    fake, sent, _ = _wire(monkeypatch, r)
+    assert gw.run() == 1                              # loud on the initial failure
+    assert _rows(fake) == []                          # NOTHING baselined
+    assert sent == []
+    # Fix the failing page; a clean run now baselines all three silently.
+    r.set_page("/privacy-policy", build_page("Privacy."))
+    assert gw.run() == 0
+    assert sent == []                                 # no false "Page ADDED"
+    rows = _rows(fake)
+    assert len(rows) == 3 and all(row[3] == gw._CHANGE_BASELINE for row in rows)
+
+
+def test_site_wide_404_debounces_not_liveness(monkeypatch):
+    # Every page 404'ing at once must go through the removal DEBOUNCE (silent
+    # pending), NOT false-fire the liveness exit-1 (which is for fetch/parse
+    # failures — a 404 is GFLInfoSiteGone, handled separately and not counted).
+    r = _router_with_pages("/", "/faq")
+    fake, sent, _ = _wire(monkeypatch, r)
+    gw.run()                                          # baseline
+    r.remove_page("/")
+    r.remove_page("/faq")
+    assert gw.run() == 0                               # NOT exit 1
+    assert sent == []
+    assert len([row for row in _rows(fake) if row[3] == gw._CHANGE_PENDING]) == 2
+
+
+def test_new_pages_exactly_at_cap_alert_individually(monkeypatch):
+    # Exactly max_new_pages_per_run new pages (== cap, not > cap) alert
+    # individually — pins the boundary so a future '>' -> '>=' flip is caught.
+    r = _router_with_pages("/", "/faq")
+    fake, sent, _ = _wire(monkeypatch, r, cfg=_cfg(max_new=3))
+    gw.run()                                          # baseline the two seeds
+    for p in ("/a", "/b", "/c"):                       # exactly 3 = cap
+        r.set_page(p, build_page(f"Page {p}."))
+    assert gw.run() == 0
+    assert len([row for row in _rows(fake) if row[3] == gw._CHANGE_NEW]) == 3
+    assert len(sent) == 3                              # individual, not consolidated
 
 
 def test_display_only_when_no_recipients(monkeypatch):
