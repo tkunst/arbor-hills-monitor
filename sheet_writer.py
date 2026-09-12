@@ -1442,22 +1442,25 @@ def ensure_gfl_info_site_tabs(service, sheet_id: str) -> None:
     _set_header(service, sheet_id, TAB_GFL_INFO_SITE, GFL_INFO_SITE_HEADERS)
 
 
-def last_gfl_info_site_snapshot(service, sheet_id: str, url: str) -> tuple[str, str] | None:
-    """Return (content_hash, normalized_text) from the most recent row for `url`,
-    or None if the page has never been snapshotted. None means 'baseline this
-    page'; a hash mismatch means 'changed'. Reading the last matching row (not a
-    _meta cell) is what makes the watch race-free — the tab is append-only, so no
-    concurrent job can clobber it. Rows are appended chronologically, so the last
-    URL match is the latest snapshot (same idiom as last_pfas_snapshot)."""
+def last_gfl_info_site_row(service, sheet_id: str, url: str) -> tuple[str, str, str] | None:
+    """Return (change, content_hash, normalized_text) from the most recent row for
+    `url`, or None if the page has never been snapshotted. None means 'baseline
+    this page'. The `change` column is load-bearing for the watcher's removal
+    DEBOUNCE state machine: it distinguishes a normal snapshot from a
+    'pending-removal' (one 404 seen, awaiting a second) or a confirmed
+    'removed-page'. Reading the last matching row (not a _meta cell) is what makes
+    the watch race-free — the tab is append-only, so no concurrent job can clobber
+    it. Rows are appended chronologically, so the last URL match is the latest."""
     latest = None
     for r in _tab_rows(service, sheet_id, TAB_GFL_INFO_SITE, "A2:I"):
         if len(r) > 2 and r[2] == url:
             latest = r
     if latest is None:
         return None
+    change = latest[3] if len(latest) > 3 else ""
     content_hash = latest[4] if len(latest) > 4 else ""
     text = latest[8] if len(latest) > 8 else ""
-    return content_hash, text
+    return change, content_hash, text
 
 
 def all_gfl_info_site_urls(service, sheet_id: str) -> set[str]:

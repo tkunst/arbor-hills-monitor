@@ -93,18 +93,29 @@ and each is fetched and classified against its last row in the tab:
 
 | state | classification |
 |---|---|
-| never seen, **initial run** (tab empty) | silent baseline (one atomic write) |
-| never seen, steady state | **new-page** alert |
+| never seen, **initial run** OR a **seed** page | silent baseline (initial run = one atomic write) |
+| never seen, steady state, **non-seed** | **new-page** alert |
 | seen, hash unchanged | no-op |
 | seen, hash changed | **changed** alert (with a diff) |
-| seen (200 before), now HTTP 404/410 | **removed-page** alert |
-| was removed, now 200 again | **new-page (returned)** alert |
+| seen (200 before), **first** HTTP 404/410 | `pending-removal` (SILENT — debounce) |
+| `pending-removal`, **second** consecutive 404/410 | **removed-page** alert |
+| `pending-removal`, now 200 again | recover (silent if identical, else **changed** with a diff) |
+| was `removed-page`, now 200 again | **new-page (returned)** alert |
 
 **Removal is confirmed by a real HTTP 404/410 on the page itself, never by mere
 absence from the sitemap** (which can be incomplete or transiently fail) — so a
-flaky sitemap fetch can never fire a false "page removed" alert. A removed page's
-row stores a `(removed)` sentinel hash so a re-run that still 404s recognizes it
-as already-removed and does **not** re-alert.
+flaky sitemap fetch can never fire a false "page removed" alert.
+
+**Removal is also DEBOUNCED over two runs** (review-driven, ADR-041 finding #1):
+one 404 records a silent `pending-removal` row (preserving the last real snapshot
+so a recovery can still be diffed); only a *second consecutive* 404 confirms it
+and alerts. This stops a transient site-wide 404 — a WordPress permalink/rewrite
+flush, a CDN purge, an origin deploy — from firing a burst of false "REMOVED"
+emails (the exact overstatement this project must avoid). A confirmed removal
+stores a `(removed)` sentinel hash so a re-run that still 404s does **not**
+re-alert. A **seed page's first successful fetch is a silent baseline, not a
+"new page"** — a launch page we merely hadn't fetched yet (e.g. it 404'd on the
+activation run) must never fire a false "Page ADDED".
 
 ## Anti-stampede + crash safety
 
@@ -115,7 +126,13 @@ as already-removed and does **not** re-alert.
   look new at once (a whole-site republish, a host change, the sitemap
   ballooning), the run **re-baselines them silently** instead of blasting
   new-page emails — the same defense as `watcher.max_new_docs_per_run` / `wds` /
-  `gfl_air`.
+  `gfl_air`. The **same cap applies symmetrically to confirmed removals**: a mass
+  removal confirming at once (a multi-run outage, not page-by-page deletion) sends
+  **one consolidated notice**, not N — while still recording every row.
+- **Liveness** (review-driven, finding #2): a real run (baselines exist) where
+  *every* page failed to fetch — most likely Cloudflare walling the runner or the
+  site down — **exits 1** so the workflow-failure email surfaces it, rather than a
+  green no-op that silently hides the watch having gone blind.
 - Durable Sheet row is written **before** the alert email (crash-safe: a kill
   between them loses the alert, never the record, and never re-fires next run
   since the row advanced the stored hash).
@@ -186,10 +203,14 @@ non-zero if any is Cloudflare-walled — the definitive Azure-runner verificatio
    this isn't discovered only at activation.)
 2. **Cloudflare could later escalate to a mandatory JS/Turnstile challenge** that
    `requests` can't pass from any IP. *Detection:* `extract_content` raises on a
-   challenge page (no `<main>`), so the watch skips-and-warns (after baseline) or
-   exits 1 (activation) — never a false "changed". *Recovery:* switch to a
+   challenge page (no `<main>`), so the watch skips-and-warns (partial) or exits 1
+   — never a false "changed"; and the **liveness guard exits 1 when *every* page
+   fails** (the total-wall case), surfacing it via the workflow-failure email
+   rather than a silent green no-op (review finding #2). *Recovery:* switch to a
    headless-browser fetcher behind the same `fetch_page` interface; the diff /
-   state layer is unchanged.
+   state layer is unchanged. (A *partial*, page-specific persistent failure is
+   still only a log line — a fast-follow could add a per-page consecutive-failure
+   alert, matching `gfl_air`'s `max_stale_days`.)
 3. **A page redesign moving content out of `<main>`** would drop that content
    from the hash. *Detection:* the change would show as a large diff (or a
    too-short → skip). *Accepted:* `<main id="SiteContent">` is the WP theme's
@@ -200,8 +221,22 @@ non-zero if any is Cloudflare-walled — the definitive Azure-runner verificatio
 5. **A whole-site republish** could flip every page's normalized hash at once →
    up to ~7 "changed" emails in one run. Accepted: a full rewrite of the
    operator's narrative is genuinely newsworthy, and 7 is the ceiling for a
-   fixed-size site; the anti-stampede guard covers new-page bursts, and a mass
-   *new*-page burst re-baselines silently.
+   fixed-size site; the anti-stampede guard covers new-page bursts, a mass
+   *new*-page burst re-baselines silently, and a mass *removal* sends one
+   consolidated notice.
+6. **A page that returns after a *confirmed* removal is not diffed against its
+   pre-removal content** (the confirmed `removed-page` row stores no text), so the
+   "returned" alert says a page is back but not what changed while it was gone. A
+   *transient* (single-404) removal-then-return **is** diffed (the `pending`
+   row preserves the last real snapshot). Accepted as LOW (review finding #4):
+   rare, and the returned page is now baselined so the next edit diffs normally.
+7. **`fetch_page` follows redirects with no post-redirect host re-check**
+   (theoretical redirect-SSRF): a same-host page 301-ing to a link-local address
+   would be followed. Requires compromising GFL's origin (remote threat) and is
+   inherent to any redirect-follower; the more plausible vector — a hostile
+   *sitemap* child — is explicitly host-guarded (review finding #6). Accepted;
+   noted so a future hardening pass can disable redirects + canonicalize if the
+   threat model changes.
 
 ## Tests
 

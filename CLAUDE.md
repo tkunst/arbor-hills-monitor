@@ -424,11 +424,16 @@ external users but no sensitive data). Public repo.
   dated durable snapshot — pfas_watcher idiom, no Drive): initial run baselines
   every page SILENTLY in ONE atomic write; steady-state new page → new-page alert;
   hash changed → changed alert (capped unified diff, with a NEW-EMAIL-CONTACT
-  callout); a page now HTTP 404/410 → removed-page alert (a `(removed)` sentinel
-  hash so it never re-alerts); a removed page returning → new-page (returned).
+  callout); a page now HTTP 404/410 → pending-removal (SILENT), a 2nd consecutive
+  404 → removed-page alert (2-run DEBOUNCE so a transient site-wide 404 — a WP
+  permalink flush / CDN purge / deploy — can't fire false removals; a `(removed)`
+  sentinel so it never re-alerts); a removed page returning → new-page (returned).
+  A SEED page's first sighting is a SILENT baseline (a launch page, not "new").
   REMOVAL is confirmed by real HTTP status, never sitemap-absence (a flaky sitemap
-  can't fire a false removal). Anti-stampede: > `max_new_pages_per_run` new at once
-  → silent re-baseline. Row-before-email (crash-safe). Recipients scoped VERBATIM
+  can't fire a false removal). Anti-stampede: > `max_new_pages_per_run` new (or
+  removed) at once → silent re-baseline / one consolidated removal notice. LIVENESS:
+  all pages failing post-baseline → exit 1 (never silently blind). Child-sitemap
+  fetches are SSRF-host-guarded. Row-before-email (crash-safe). Recipients scoped VERBATIM
   (Trisha only to start, + `GFL_INFO_SITE_RECIPIENTS_EXTRA`); EMPTY ⇒ DISPLAY-ONLY
   (rows, no email — never falls back to the coalition list). PROBE mode
   (`--probe` / workflow_dispatch `probe=true`) is a fetch-path diagnostic that runs
