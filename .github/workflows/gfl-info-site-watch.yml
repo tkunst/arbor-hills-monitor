@@ -1,0 +1,80 @@
+name: gfl-info-site-watch
+
+# Daily snapshot + change-diff watch on GFL's public "informational website" for
+# Arbor Hills (arborhillslandfill.com, ADR 041). Discovers the page set via
+# /sitemap.xml (+ nav fallback + a seed floor), fetches each page (plain requests
+# + browser UA — the FAQ answers are server-rendered collapsed accordions, so no
+# headless browser is needed), normalizes it (strips Cloudflare/WP per-request
+# noise), and emails a diff when a page changes / is added / is removed vs. the
+# last snapshot in the "GFL Info Site Watch" tab. First sighting baselines
+# silently.
+#
+# Safe to leave scheduled from day one: gfl_info_site.enabled is false by default,
+# so gfl_info_site_watcher._should_run() makes every scheduled run a quiet no-op
+# (exit 0) until Trisha flips it on. Lighter than the other jobs — no Anthropic,
+# no OCR, no Drive/OAuth (Sheets I/O via the service account + SMTP for the
+# alert). State is the append-only GFL Info Site Watch tab, NOT _meta, so this
+# never races the other jobs; 8am ET keeps it clear of the 3-7am cluster.
+#
+# PROBE: the workflow_dispatch `probe` input runs a fetch-path diagnostic that
+# writes NOTHING to the Sheet and sends NO email, and runs REGARDLESS of the
+# enabled flag — it fetches + normalizes every seed page from THIS (Azure) runner
+# and exits non-zero if any is Cloudflare-walled. Run it before flipping enabled:
+#   gh workflow run gfl-info-site-watch.yml -f probe=true
+#
+# CLOUDFLARE / RUNNER NOTE: the fetch path is verified from residential + data-
+# center IPs, but Cloudflare could still challenge the Azure runner's ASN. If the
+# probe ever fails, the fallback is a self-hosted / local runner — swap `runs-on`
+# below (a one-line change) and register the runner. None exists today.
+on:
+  schedule:
+    - cron: "0 13 * * *"    # 8am ET (1pm UTC). DST drift of +/-1h is acceptable.
+  workflow_dispatch:
+    inputs:
+      probe:
+        description: "Fetch-path diagnostic only (no Sheet writes, no email); runs even when disabled."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gfl-info-site-watch
+  cancel-in-progress: false
+
+jobs:
+  gfl-info-site-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Watch GFL info site for changes
+        env:
+          # Sheets I/O uses the service account; the change alert uses SMTP.
+          # No Anthropic (nothing to classify) and no OAuth (no Drive mirror).
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          # Private recipient supplement (kept out of the public config.yml).
+          GFL_INFO_SITE_RECIPIENTS_EXTRA: ${{ secrets.GFL_INFO_SITE_RECIPIENTS_EXTRA }}
+          # workflow_dispatch probe → fetch-path diagnostic only.
+          GFL_INFO_SITE_PROBE: ${{ inputs.probe && '1' || '' }}
+        run: python gfl_info_site_watcher.py

@@ -366,6 +366,38 @@ encouragement to comment lives on the advocacy site, not here.
     flags the suppression heuristic's untested false-positive direction —
     validated only against the two real ROP records seen) for the full
     writeup.
+22. **GFL info-site change-watch (Stream S)** (daily, optional —
+    `gfl_info_site.enabled: false`, ships OFF): the first watch on the
+    **operator's own** public "informational website"
+    (`arborhillslandfill.com`), which GFL launched 2026-09-10 to address
+    community questions about the proposed expansion. Every other stream watches
+    an EGLE/county system; this watches GFL's own narrative — the signal is WHEN
+    and HOW it changes (a FAQ answer edited, a claim added or walked back, a page
+    added/removed, an email contact finally published — the launch site is
+    phone-only). NEW external (non-EGLE) source — never routes through the EGLE
+    document parser. `requests` + a browser UA renders the full DOM including the
+    COLLAPSED FAQ accordion answers (WordPress server-renders them, so no
+    headless browser is needed — verified from residential + datacenter IPs). The
+    site is Cloudflare-fronted, so normalization isolates the `<main>` content and
+    strips per-request noise (the CF beacon, WordPress `nonce=`s, `?ver=`
+    cache-busters) — proven **hash-stable across two live fetches** while the raw
+    HTML differs every time; a real text change or a new document/page link still
+    trips the hash. Pages are discovered from `/sitemap.xml` (a WordPress/Rank-Math
+    INDEX, followed one level), a nav-crawl fallback, and a `seed_paths` floor;
+    the derived WP index pages and non-page assets are ignored. A new page →
+    new-page alert, a changed page → a readable unified diff (with a NEW-EMAIL-
+    CONTACT callout if GFL adds an address), a page now returning HTTP 404/410 →
+    removed-page alert (confirmed by the real HTTP status, never by mere absence
+    from the sitemap). The first run baselines every page silently in one atomic
+    write; an anti-stampede guard re-baselines silently if too many pages look new
+    at once. State is the append-only `GFL Info Site Watch` tab (both the diff
+    basis and a dated durable snapshot — no Drive). Alerts are scoped verbatim
+    (Trisha only to start; empty ⇒ display-only, never the coalition list).
+    **Before activation**, run the workflow_dispatch PROBE
+    (`gh workflow run gfl-info-site-watch.yml -f probe=true`) to confirm the
+    GitHub Actions runner isn't Cloudflare-walled — the residential + datacenter
+    IPs pass, but the Azure runner ASN is unproven (no self-hosted runner exists
+    as a fallback today). See `docs/decisions/041-gfl-info-site-watch.md`.
 
 > **A note on the document links (corrected 2026-08-23 — see ADR 007's
 > addendum).** Every case-file row's **Link** column points to EGLE's nSITE
