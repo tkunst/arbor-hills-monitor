@@ -1124,7 +1124,12 @@ def test_emails_carry_the_benchmark_reference_block():
         assert "SURFACE standard, NOT a perimeter one" in body
         assert ("NESHAP MACT Subpart AAAA" in body and "NSPS Subpart WWW" in body
                 and "Michigan Part 115" in body)
-        assert "PERIMETER FENCELINE monitors" in body and "extraordinary" in body
+        # measurement-basis framing (surface probe vs ambient fenceline), NOT an
+        # unsupported "far from the source" distance claim (the thermal-map GIS shows
+        # the wellfield extends toward the monitors; see ADR 039 2026-09-11 addendum).
+        assert "AMBIENT AIR at the perimeter fenceline" in body
+        assert "fundamentally different measurement" in body
+        assert "far from the landfill surface" not in body and "heavily diluted" not in body
         # surface H2S 122 ppb (¶def O) + the applicable-regimes/ROP line
         assert "122 ppb" in body and "¶def O" in body and "MI-ROP-N2688-2011a" in body
 

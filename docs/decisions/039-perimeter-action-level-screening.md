@@ -234,20 +234,28 @@ B1-symptom-master-table.html` in Lotext; not re-derived). It states:
   trigger; methane has no ITSL);
 - **CH4 500 ppm above background as a SURFACE standard** — the NESHAP MACT AAAA
   surface-emission standard (40 CFR 63.1958(d); federal corrective action attaches at
-  §63.1960) + NSPS WWW + MI Part 115, measured by a SEM scan just above the landfill
-  cover — vs. the perimeter fenceline where MS-1..MS-6 sit, far from that surface, so a
-  fenceline reading near 500 ppm is extraordinary (the SUSPENSE-187 distance-emphasis
-  framing);
+  §63.1960) + NSPS WWW + MI Part 115, measured by a Method-21 SEM probe just above the
+  landfill cover (over the waste) — vs. the perimeter fenceline where MS-1..MS-6 sample
+  ambient air. The distinction is the **measurement basis** (on-surface probe vs.
+  ambient fenceline), NOT distance (see the distance caveat below);
 - the CJ **surface** H2S action level (122 ppb, ¶def O); and the applicable **regimes**
   cited separately (NSPS WWW + NESHAP MACT AAAA per ROP MI-ROP-N2688-2011a, the CJ, and
   MI Part 115).
 
-**Distance caveat (accuracy-first):** SUSPENSE 187 also asked for each station's computed
-distance to the landfill boundary. The repo's `site/thermal-map/parcels.js` "gfl" ring
-is a **Section-13 subset**, not the full boundary the fenceline monitors sit on (the
-MS stations compute to ~1,500-1,800 ft *outside* it), so a parcels.js-derived per-station
-distance would be misleading. Rather than ship an unverifiable number to commissioners,
-the block frames the distance **qualitatively and rigorously** (perimeter fenceline vs.
-on-surface SEM) and shows each station's coordinates; a precise per-station distance
-awaits an authoritative full-boundary GIS layer. Additive email text only — no logic
-change; the episode engine and the EXCEEDANCE tier are untouched. Draft PR for Trisha.
+**Distance caveat (accuracy-first) — corrected 2026-09-11.** SUSPENSE 187 #4/#5 asked
+for each station's distance to the landfill and a "far from the source, so you'd never
+expect near-500 at the perimeter" framing. Two data sources were checked and BOTH
+undercut a clean distance claim: (1) `site/thermal-map/parcels.js`'s "gfl" ring is a
+Section-13 subset (monitors compute ~1,500-1,800 ft *outside* it); (2) the richer
+`site/thermal-map/spatial-data.js` layer (Trisha's Washtenaw GIS export — the 6 MS
+`perimeter` coords match exactly, plus the gas-well field) gives **two different
+answers**: the nearest *surveyed* (exact-GPS) gas well is ~1,200-2,300 ft from each
+station, but the `context` set of approximately-placed Cell-6 edge wells plots within
+~43-310 ft — i.e. the landfill/wellfield clearly extends *toward* the monitors, so
+"far from the surface / heavily diluted / would essentially never see near-500 at the
+perimeter" is **NOT supported** and was removed (it had shipped in the first cut of this
+block, PR #68). The block now makes only the robust **measurement-basis** distinction
+(a Method-21 on-surface SEM probe vs. ambient fenceline air) and ships **no precise
+per-station distance** (the exact-vs-context data disagree; a defensible number awaits an
+authoritative full-landfill / active-cell boundary layer). Additive email text only — no
+logic change; the episode engine and the EXCEEDANCE tier are untouched.
