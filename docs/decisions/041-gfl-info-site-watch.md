@@ -121,7 +121,12 @@ activation run) must never fire a false "Page ADDED".
 
 - The **initial baseline is one atomic append** of all discovered pages, so a
   crash can't leave a partial baseline that the next run misreads as a burst of
-  "new" pages (the failure mode an independent review flagged).
+  "new" pages (the failure mode an independent review flagged). It is also
+  **all-or-nothing against fetch failures** (second review round): if ANY page
+  fails to fetch/parse on the activation run, NO page is baselined and the run
+  exits 1 — so a page that failed on the one-time initial run can't later
+  false-fire "Page ADDED" (a never-seen 404 is "ignore", not a failure, so a dead
+  sitemap link never blocks the baseline).
 - In steady state, if **more than `max_new_pages_per_run` (default 3)** pages
   look new at once (a whole-site republish, a host change, the sitemap
   ballooning), the run **re-baselines them silently** instead of blasting
