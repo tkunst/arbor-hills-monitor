@@ -1,6 +1,6 @@
 graph LR
   %% program -> data store lineage; dotted = read, bold = write
-  ds_conservancy_sheet[("Conservancy Case-File Sheet")]
+  ds_case_file_sheet[("Case-File Sheet")]
   ds_drive_archive[("Google Drive PDF Archive")]
   ds_nsite[("EGLE nSITE Portal (Air)")]
   ds_wds[("EGLE WDS Portal (Solid Waste)")]
@@ -9,12 +9,13 @@ graph LR
   ds_gfl_air[("GFL Perimeter Air ArcGIS FeatureServer (Barr, public)")]
   ds_ridgewood[("Ridge Wood Elementary H2S Report Page (Barr, public)")]
   ds_ride[("EGLE RIDE RRDOpenData ArcGIS Service (Part 201 + UST, public)")]
+  ds_gfl_info_site[("GFL Info Website (arborhillslandfill.com, Cloudflare)")]
   ds_smtp[("Email Recipients (SMTP)")]
   ds_anthropic[("Anthropic Claude API")]
   ds_config[("config.yml (risk register + settings)")]
   sheet_writer["sheet_writer"]
-  sheet_writer -. read .-> ds_conservancy_sheet
-  sheet_writer ==>|write| ds_conservancy_sheet
+  sheet_writer -. read .-> ds_case_file_sheet
+  sheet_writer ==>|write| ds_case_file_sheet
   archive_client["archive_client"]
   archive_client ==>|write| ds_drive_archive
   nsite_client["nsite_client"]
@@ -44,7 +45,9 @@ graph LR
   ridgewood_archiver ==>|write| ds_drive_archive
   ride_client["ride_client"]
   ride_client -. read .-> ds_ride
-  style ds_conservancy_sheet fill:#f59e0b,color:#000,stroke:#b45309
+  gfl_info_site_client["gfl_info_site_client"]
+  gfl_info_site_client -. read .-> ds_gfl_info_site
+  style ds_case_file_sheet fill:#f59e0b,color:#000,stroke:#b45309
   style ds_drive_archive fill:#f59e0b,color:#000,stroke:#b45309
   style ds_nsite fill:#f59e0b,color:#000,stroke:#b45309
   style ds_wds fill:#f59e0b,color:#000,stroke:#b45309
@@ -53,6 +56,7 @@ graph LR
   style ds_gfl_air fill:#f59e0b,color:#000,stroke:#b45309
   style ds_ridgewood fill:#f59e0b,color:#000,stroke:#b45309
   style ds_ride fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_gfl_info_site fill:#f59e0b,color:#000,stroke:#b45309
   style ds_smtp fill:#f59e0b,color:#000,stroke:#b45309
   style ds_anthropic fill:#f59e0b,color:#000,stroke:#b45309
   style ds_config fill:#f59e0b,color:#000,stroke:#b45309

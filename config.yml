@@ -1228,6 +1228,86 @@ nsite_public_notices:
     SANL: quarterly
     ERNGX: quarterly
 
+# --- GFL "informational website" change-watch (Stream S, ADR 041, added 2026-09-11) ---
+# OFF BY DEFAULT. A daily snapshot + change-diff watch on the OPERATOR's own
+# public info site for Arbor Hills (arborhillslandfill.com), which GFL launched
+# 2026-09-10 to address community questions about the proposed expansion. Unlike
+# every other stream (which watches EGLE / county systems), this watches GFL's
+# OWN narrative — the signal is WHEN and HOW that narrative changes (a FAQ answer
+# edited, a claim added or walked back, a new/removed page, an email contact
+# finally published). NEW EXTERNAL (non-EGLE) source — it NEVER routes through
+# egle_doc_parser.
+#
+# When enabled, gfl_info_site_watcher.py discovers the page set (/sitemap.xml — a
+# WP/Rank-Math index it follows one level — or a nav-crawl fallback, unioned with
+# seed_paths), fetches each page (plain requests + a browser UA; the FAQ answers
+# are server-rendered COLLAPSED accordions, so a plain GET captures the substance
+# — no headless browser needed), normalizes it (isolates <main>, strips scripts /
+# Cloudflare per-request tokens / nonces / ?ver= cache-busters — proven
+# hash-stable across fetches, 2026-09-11), and diffs the normalized text against
+# the last snapshot in the "GFL Info Site Watch" tab (that append-only tab IS the
+# state AND the dated durable snapshot — no Drive/OAuth needed). The FIRST run
+# baselines every page SILENTLY in one atomic write.
+#
+# ACTIVATION — same pattern as PFAS / Meeting Watch / the nSITE watches:
+#   1. review + merge,
+#   2. BEFORE flipping enabled, verify the Actions runner's fetch path is not
+#      Cloudflare-walled — the residential + datacenter IPs pass, but the GitHub
+#      Actions (Azure) runner IP is a different ASN Cloudflare could challenge.
+#      Run the workflow_dispatch PROBE and confirm it logs green:
+#        gh workflow run gfl-info-site-watch.yml -f probe=true
+#      ("all seed pages fetched + normalized cleanly"). If it is walled, the
+#      fallback is a self-hosted / local runner (NONE exists today — a real setup
+#      step); `runs-on` in the workflow is a one-line swap.
+#   3. pick recipients below (Trisha's call — an operator-narrative watch, scoped
+#      VERBATIM like Meeting Watch, NOT the coalition alert_recipients list; empty
+#      ⇒ DISPLAY-ONLY: durable rows, no email), then set enabled: true and commit.
+# Until enabled: true is on main, gfl-info-site-watch.yml runs on schedule but
+# _should_run() makes every run a quiet no-op. Keyless — no secret to provision.
+gfl_info_site:
+  enabled: false
+  base_url: "https://arborhillslandfill.com"
+  sitemap_url: "https://arborhillslandfill.com/sitemap.xml"
+  # The six launch-day pages (2026-09-10) — a FLOOR always checked even if
+  # sitemap/nav discovery degrades; discovery adds any other content page it finds.
+  seed_paths:
+    - "/"
+    - "/what-we-do"
+    - "/landfill-improvements"
+    - "/community"
+    - "/faq"
+    - "/location-hours"
+  # Derived / noise pages excluded from the watch (regex on the URL PATH): the WP
+  # HTML sitemap index (/sitemap, /sitemap/blog) and non-page assets. NOTE:
+  # /privacy-policy is deliberately NOT ignored — it's a real content page, so it
+  # is discovered and watched too.
+  ignore_path_patterns:
+    - "^/sitemap($|/)"
+    - "\\.kml$"
+    - "\\.xsl$"
+    - "^/wp-"
+  # Min <main> visible-text length for a fetch to count as the real page; a
+  # shorter body is treated as a bad fetch / Cloudflare challenge and skipped,
+  # never diffed into a false "changed" alert. The smallest real page
+  # (/location-hours) normalizes to ~560 chars, so 150 is a safe floor.
+  min_content_chars: 150
+  # Cap the unified diff shown in a change email (the URL carries full context).
+  max_diff_lines: 80
+  # Anti-stampede: if MORE than this many pages look NEW in one steady-state run
+  # (a whole-site republish, a host change, the sitemap ballooning), re-baseline
+  # them silently instead of blasting new-page emails. The FIRST run baselines
+  # everything atomically regardless of this cap. GFL adding >3 pages in a single
+  # day is implausible; a burst is far more likely a discovery glitch. Mirrors
+  # watcher.max_new_docs_per_run / wds / gfl_air anti-stampede guards.
+  max_new_pages_per_run: 3
+  # Recipients — used VERBATIM (Trisha only to start; the Meeting Watch / MMD /
+  # RIDE precedent for a brand-new stream). A private supplement goes via
+  # GFL_INFO_SITE_RECIPIENTS_EXTRA (a GitHub Secret) so it isn't committed to this
+  # PUBLIC repo. EMPTY (both unset) ⇒ DISPLAY-ONLY: durable rows, NO email — it
+  # never falls back to the coalition alert_recipients list (fail-safe).
+  recipients:
+    - arbor-hills@trishakunst.com          # Trisha only (operator-narrative watch, not the advocacy list)
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 # NOTE (2026-08-21, Trisha's direction): this list is committed to a PUBLIC repo,

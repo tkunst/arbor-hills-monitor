@@ -150,6 +150,11 @@ TAB_CIVICCLERK_ARCHIVE = "CivicClerk Archived Files"
 # detection needs no _meta key (append-only ⇒ race-free, unlike the _meta
 # singletons every other job must not write concurrently). See pfas_watcher.py.
 TAB_PFAS = "PFAS Page Watch"
+# GFL "informational website" change-watch (ADR 041) — same on-demand + append-
+# only-is-state policy as TAB_PFAS above: no tab until gfl_info_site_watcher runs;
+# the most recent row per URL holds the last content hash + normalized text, so
+# change detection needs no _meta key (race-free). See gfl_info_site_watcher.py.
+TAB_GFL_INFO_SITE = "GFL Info Site Watch"
 # Unified view across BOTH Evidence-by-Risk tabs: one row per (risk, evidence
 # item) regardless of source, so filtering/sorting by Risk shows everything —
 # not just whichever portal's own tab you happened to open. Not itself WDS
@@ -365,6 +370,18 @@ CIVICCLERK_ARCHIVE_HEADERS = [
 # Drive/OAuth needed, well under the 50k-char cell cap for an ~8 KB page). It's
 # last so the human-facing columns read cleanly to its left.
 PFAS_SNAPSHOT_HEADERS = [
+    "Date", "Page", "URL", "Change", "Content Hash", "Chars",
+    "Note", "Fetched At", "Normalized Text",
+]
+
+# GFL info-site change-watch (ADR 041). Same row shape and rationale as
+# PFAS_SNAPSHOT_HEADERS: one row per observed page-state — "baseline" (first
+# sighting, silent), "changed" (fires an alert), "new-page" / "removed-page"
+# (a page appearing/disappearing after the initial baseline, fires an alert).
+# The last column carries the full normalized content — the diff basis for next
+# run AND a durable dated snapshot of what the page said — so no Drive/OAuth is
+# needed (well under the 50k-char cell cap; the largest page normalizes to ~9 KB).
+GFL_INFO_SITE_HEADERS = [
     "Date", "Page", "URL", "Change", "Content Hash", "Chars",
     "Note", "Fetched At", "Normalized Text",
 ]
@@ -1400,6 +1417,82 @@ def append_pfas_snapshot_row(
     alert, never the record, and never re-fires next run since the row already
     advances the stored hash)."""
     append_rows(service, sheet_id, TAB_PFAS, [[
+        date, page, url, change, content_hash, chars, note, fetched_at, normalized_text,
+    ]])
+
+
+# ---------------------------------------------------------------------------
+# GFL info-site change-watch (ADR 041) — the tab is the state (append-only ⇒
+# race-free), exactly like the PFAS Page Watch tab above.
+# ---------------------------------------------------------------------------
+
+
+def ensure_gfl_info_site_tabs(service, sheet_id: str) -> None:
+    """Create the GFL Info Site Watch tab if missing and reconcile its header row
+    on every run (same self-healing policy as ensure_pfas_tabs()). Called only
+    from gfl_info_site_watcher.py, so the tab doesn't appear until the watch
+    actually runs — same no-empty-tab policy as the PFAS/Meeting/GFL Air tabs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_GFL_INFO_SITE not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_GFL_INFO_SITE}}}]},
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    _set_header(service, sheet_id, TAB_GFL_INFO_SITE, GFL_INFO_SITE_HEADERS)
+
+
+def last_gfl_info_site_snapshot(service, sheet_id: str, url: str) -> tuple[str, str] | None:
+    """Return (content_hash, normalized_text) from the most recent row for `url`,
+    or None if the page has never been snapshotted. None means 'baseline this
+    page'; a hash mismatch means 'changed'. Reading the last matching row (not a
+    _meta cell) is what makes the watch race-free — the tab is append-only, so no
+    concurrent job can clobber it. Rows are appended chronologically, so the last
+    URL match is the latest snapshot (same idiom as last_pfas_snapshot)."""
+    latest = None
+    for r in _tab_rows(service, sheet_id, TAB_GFL_INFO_SITE, "A2:I"):
+        if len(r) > 2 and r[2] == url:
+            latest = r
+    if latest is None:
+        return None
+    content_hash = latest[4] if len(latest) > 4 else ""
+    text = latest[8] if len(latest) > 8 else ""
+    return content_hash, text
+
+
+def all_gfl_info_site_urls(service, sheet_id: str) -> set[str]:
+    """The set of every URL that has EVER been recorded in the tab (any change
+    type). The watcher needs this to (a) tell a genuinely new page apart from the
+    silent initial baseline, and (b) know which previously-seen pages to re-check
+    for removal — a page absent from today's discovery but present here is
+    fetched, and only a real HTTP 404/410 makes it a 'removed-page' alert."""
+    urls: set[str] = set()
+    for r in _tab_rows(service, sheet_id, TAB_GFL_INFO_SITE, "A2:I"):
+        if len(r) > 2 and r[2]:
+            urls.add(r[2])
+    return urls
+
+
+def gfl_info_site_tab_is_empty(service, sheet_id: str) -> bool:
+    """True if the tab holds no data rows yet — i.e. this is the very first run
+    (the initial-baseline run, where every discovered page is baselined SILENTLY
+    rather than each firing a 'new-page' alert). Distinct from
+    all_gfl_info_site_urls() being empty only in intent/readability."""
+    return not any(
+        len(r) > 2 and r[2]
+        for r in _tab_rows(service, sheet_id, TAB_GFL_INFO_SITE, "A2:C"))
+
+
+def append_gfl_info_site_snapshot_row(
+    service, sheet_id: str, date: str, page: str, url: str, change: str,
+    content_hash: str, chars: int, note: str, fetched_at: str, normalized_text: str,
+) -> None:
+    """Append one GFL Info Site Watch row. Written BEFORE the change email is sent
+    (durable record first, alert best-effort second — the same crash-safe ordering
+    as the rest of the monitor: a kill after the row but before the email loses
+    the alert, never the record, and never re-fires next run since the row already
+    advances the stored hash)."""
+    append_rows(service, sheet_id, TAB_GFL_INFO_SITE, [[
         date, page, url, change, content_hash, chars, note, fetched_at, normalized_text,
     ]])
 

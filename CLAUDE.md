@@ -402,6 +402,39 @@ external users but no sensitive data). Public repo.
   mention "ROP" in passing would have its email (not its Sheet row)
   wrongly suppressed; `rop_alert_suppression: false` is the rollback if that
   ever bites. See ADR 032 + its 2026-08-26 addendum.
+- `gfl_info_site_client.py` — Stream S: fetch + normalize for the change-watch
+  on the OPERATOR's own public "informational website" (arborhillslandfill.com,
+  launched 2026-09-10 for the expansion). NEW external (non-EGLE) source — never
+  goes through `egle_doc_parser`. `requests` + a browser UA renders the full DOM
+  incl. the COLLAPSED FAQ accordion answers (WordPress server-renders them; no
+  headless browser needed — verified from residential + datacenter IPs). Cloudflare-
+  fronted, so normalization isolates `<main id=SiteContent>`, strips scripts /
+  per-request nonces / `?ver=` cache-busters / the CF beacon (proven hash-STABLE
+  across two live fetches while raw HTML differs), keeps sorted link PATHS
+  (query-stripped) so a new doc link still trips the hash, and decodes any
+  Cloudflare-obfuscated (`data-cfemail`) or `mailto:` email so a future email
+  contact surfaces (the site is phone-only at launch). Discovery follows
+  `/sitemap.xml` (a WP/Rank-Math INDEX) one level, falls back to a nav-crawl, and
+  unions a `seed_paths` floor; challenge detection gates on content-PRESENCE (no
+  `<main>`/too-short → raise), never on artifact strings (the ambient CF beacon).
+  Stdlib + requests. See ADR 041.
+- `gfl_info_site_watcher.py` — Stream S: daily snapshot + change-diff. Check set =
+  discovered ∪ every-URL-ever-recorded ∪ seed floor; per URL, classify vs the last
+  row in the append-only `GFL Info Site Watch` tab (the tab IS the state AND a
+  dated durable snapshot — pfas_watcher idiom, no Drive): initial run baselines
+  every page SILENTLY in ONE atomic write; steady-state new page → new-page alert;
+  hash changed → changed alert (capped unified diff, with a NEW-EMAIL-CONTACT
+  callout); a page now HTTP 404/410 → removed-page alert (a `(removed)` sentinel
+  hash so it never re-alerts); a removed page returning → new-page (returned).
+  REMOVAL is confirmed by real HTTP status, never sitemap-absence (a flaky sitemap
+  can't fire a false removal). Anti-stampede: > `max_new_pages_per_run` new at once
+  → silent re-baseline. Row-before-email (crash-safe). Recipients scoped VERBATIM
+  (Trisha only to start, + `GFL_INFO_SITE_RECIPIENTS_EXTRA`); EMPTY ⇒ DISPLAY-ONLY
+  (rows, no email — never falls back to the coalition list). PROBE mode
+  (`--probe` / workflow_dispatch `probe=true`) is a fetch-path diagnostic that runs
+  regardless of the flag and touches neither Sheet nor email — the pre-activation
+  Azure-runner Cloudflare check. Gated on `gfl_info_site.enabled` (ships `false`).
+  See ADR 041.
 
 ## Forbidden patterns (do not do these)
 

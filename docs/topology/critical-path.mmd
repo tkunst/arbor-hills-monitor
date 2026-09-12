@@ -1,5 +1,5 @@
 flowchart TD
-  %% A new EGLE Air filing is caught and triaged — persona: N2688 Conservancy advocate
+  %% A new EGLE Air filing is caught and triaged — persona: N2688 monitor reader
   %% The monitor spots a new Air permit filing for the landfill, classifies its risk, and alerts the advocate.
   %% (no telemetry wired yet — annotate p50/p99 here once available)
   s1["1. The daily monitor wakes at 6am<br/><small>watcher, config_loader</small>"]
@@ -15,7 +15,7 @@ flowchart TD
   s3 -. touches .-> s3_ds
   s4["4. Record the finding as a row in the case-file Sheet<br/><small>sheet_writer</small>"]
   s3 --> s4
-  s4_ds[("Conservancy Case-File Sheet")]
+  s4_ds[("Case-File Sheet")]
   s4 -. touches .-> s4_ds
   s5["5. Email the advocate now if urgent, else queue for the Sunday digest<br/><small>email_alerts</small>"]
   s4 --> s5
