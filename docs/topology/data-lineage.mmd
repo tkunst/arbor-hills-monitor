@@ -10,6 +10,7 @@ graph LR
   ds_ridgewood[("Ridge Wood Elementary H2S Report Page (Barr, public)")]
   ds_ride[("EGLE RIDE RRDOpenData ArcGIS Service (Part 201 + UST, public)")]
   ds_gfl_info_site[("GFL Info Website (arborhillslandfill.com, Cloudflare)")]
+  ds_pws_pfas[("EGLE Public Water Supply PFAS ArcGIS Service (MPART, public)")]
   ds_smtp[("Email Recipients (SMTP)")]
   ds_anthropic[("Anthropic Claude API")]
   ds_config[("config.yml (risk register + settings)")]
@@ -47,6 +48,8 @@ graph LR
   ride_client -. read .-> ds_ride
   gfl_info_site_client["gfl_info_site_client"]
   gfl_info_site_client -. read .-> ds_gfl_info_site
+  pfas_pws_client["pfas_pws_client"]
+  pfas_pws_client -. read .-> ds_pws_pfas
   style ds_case_file_sheet fill:#f59e0b,color:#000,stroke:#b45309
   style ds_drive_archive fill:#f59e0b,color:#000,stroke:#b45309
   style ds_nsite fill:#f59e0b,color:#000,stroke:#b45309
@@ -57,6 +60,7 @@ graph LR
   style ds_ridgewood fill:#f59e0b,color:#000,stroke:#b45309
   style ds_ride fill:#f59e0b,color:#000,stroke:#b45309
   style ds_gfl_info_site fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_pws_pfas fill:#f59e0b,color:#000,stroke:#b45309
   style ds_smtp fill:#f59e0b,color:#000,stroke:#b45309
   style ds_anthropic fill:#f59e0b,color:#000,stroke:#b45309
   style ds_config fill:#f59e0b,color:#000,stroke:#b45309

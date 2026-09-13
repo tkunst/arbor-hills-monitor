@@ -440,6 +440,29 @@ external users but no sensitive data). Public repo.
   regardless of the flag and touches neither Sheet nor email — the pre-activation
   Azure-runner Cloudflare check. Gated on `gfl_info_site.enabled` (ships `false`).
   See ADR 041.
+- `pfas_pws_client.py` — Stream R: fetch + canonicalize for the Public Water
+  Supply PFAS sampling watch. Keyless EGLE ArcGIS FeatureServer (the data behind
+  the MPART PFAS map), one query per run (`WSSN IN (...)`, explicit outFields);
+  Fetch-vs-Parse error split (mirror `mmd_client`), `epoch_ms_to_date`, canonical
+  `record_view`. The seven MI-regulated PFAS are String columns; `classify_value`
+  is FAIL-SAFE — non-detect ONLY on a recognized `<`-limit / `ND`/`BDL`/`U`
+  token, a detection on any number (a quantified value below 2 ppt counts;
+  trailing qualifiers like `J` stripped), and anything else UNRECOGNIZED →
+  treated as a POSSIBLE detection (never silently dropped). Round key =
+  `SysSampleCode` (0 null table-wide, unique) with a `(date,loc)` fallback.
+  Stdlib only; NEVER routes through `egle_doc_parser`. See ADR 042.
+- `pfas_pws_watcher.py` — Stream R: daily snapshot-diff per watched WSSN (Salem
+  Elementary 2001381 + future capture-zone supplies) vs the `Public Water Supply
+  PFAS Watch` tab. Alerts on a NEW sampling round (even all-non-detect — "sampled
+  again, still clean" is the news) OR any DETECTION (subject elevated); detections
+  route to the shared Measurements tab (`basis=measured`, `metric=pfas_<analyte>`,
+  value verbatim). Write order Measurements → watch row (advances hash) → email
+  (crash re-detects, never loses a detection). First sighting baselines silently
+  (a historical detection is noted, not alerted — forward-looking). FetchError =
+  skip-and-warn after baseline / loud on activation; ParseError = always loud.
+  **No MCL comparison** (MI-2020 vs federal-2024 dual-regime accuracy trap — the
+  raw value+analyte+date is actionable; see ADR 042). Recipients scoped verbatim
+  (Trisha to start). Gated on `pfas_pws.enabled` (ships `false`). See ADR 042.
 
 ## Forbidden patterns (do not do these)
 

@@ -222,6 +222,12 @@ TAB_MMD = "MMD Watch"
 # "baseline" (first sighting, silent) or "changed" (fires an alert). See
 # ride_watcher.py.
 TAB_RIDE = "RIDE Watch"
+# EGLE Public Water Supply PFAS sampling watch (Stream R, ADR 042) — same
+# ROP/MMD/RIDE Watch idiom (Sheet-derived ⇒ race-free, NOT _meta): no tab until
+# pfas_pws_watcher runs; one row per observed state of a watched WSSN's PFAS
+# sampling record, keyed by Item (e.g. "pws:2001381") in col B. See
+# pfas_pws_watcher.py.
+TAB_PFAS_PWS = "Public Water Supply PFAS Watch"
 # nSITE Submissions watch (Stream K, ADR 020) — same on-demand policy: no tab
 # appears until nsite_submissions_watcher actually runs. Append-only, keyed by
 # Item (e.g. "subm:N2688") in col B for dedup/state — the PFAS/Meeting/ROP/MMD/
@@ -432,6 +438,16 @@ MMD_WATCH_HEADERS = [
 # canonical snapshot JSON is what next run diffs against AND a durable dated
 # record of what RRDOpenData said.
 RIDE_WATCH_HEADERS = [
+    "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
+    "Snapshot JSON",
+]
+
+# EGLE Public Water Supply PFAS sampling watch (Stream R, ADR 042). Same row
+# shape and rationale as MMD_WATCH_HEADERS/RIDE_WATCH_HEADERS: the last column's
+# canonical snapshot JSON (the WSSN's sampling rounds keyed by SysSampleCode) is
+# what next run diffs against AND a durable dated record. "Change" is baseline
+# (silent) / changed / detection.
+PFAS_PWS_WATCH_HEADERS = [
     "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
     "Snapshot JSON",
 ]
@@ -1737,6 +1753,68 @@ def append_mmd_watch_row(
     (durable record first, alert best-effort second — same crash-safe ordering
     as append_rop_watch_row)."""
     append_rows(service, sheet_id, TAB_MMD, [[
+        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
+    ]])
+
+
+# ---------------------------------------------------------------------------
+# EGLE Public Water Supply PFAS sampling watch (Stream R, ADR 042) — the tab is
+# the state (append-only ⇒ race-free), exactly like the MMD/ROP Watch tabs.
+# ---------------------------------------------------------------------------
+
+
+def ensure_pfas_pws_tabs(service, sheet_id: str) -> None:
+    """Create the Public Water Supply PFAS Watch tab if missing and reconcile its
+    header row on every run (same self-healing policy as ensure_mmd_tabs()).
+    Called only from pfas_pws_watcher.py, so the tab doesn't appear until the
+    watch actually runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_PFAS_PWS not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_PFAS_PWS}}}]},
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    _set_header(service, sheet_id, TAB_PFAS_PWS, PFAS_PWS_WATCH_HEADERS)
+
+
+def last_pfas_pws_snapshot(service, sheet_id: str, item_key: str) -> tuple[str, str] | None:
+    """Return (snapshot_hash, snapshot_json) from the most recent row for this
+    item_key (e.g. "pws:2001381"), or None if never snapshotted. None means
+    'baseline this item'; a hash mismatch means 'changed'. Race-free append-only
+    read (last write for a key wins), same idiom as last_mmd_snapshot."""
+    return last_pfas_pws_snapshots(service, sheet_id, [item_key])[item_key]
+
+
+def last_pfas_pws_snapshots(
+    service, sheet_id: str, item_keys: list[str],
+) -> dict[str, tuple[str, str] | None]:
+    """Batched form of last_pfas_pws_snapshot: ONE tab read for however many keys
+    are asked for (the all-baselined check on a fetch failure), instead of one
+    full-tab read per key. Same race-free append-only read as last_mmd_snapshots."""
+    latest_by_key: dict[str, list] = {}
+    for r in _tab_rows(service, sheet_id, TAB_PFAS_PWS, "A2:H"):
+        if len(r) > 1:
+            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
+    result: dict[str, tuple[str, str] | None] = {}
+    for key in item_keys:
+        r = latest_by_key.get(key)
+        if r is None:
+            result[key] = None
+        else:
+            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
+    return result
+
+
+def append_pfas_pws_watch_row(
+    service, sheet_id: str, date: str, item_key: str, label: str, change: str,
+    snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
+) -> None:
+    """Append one Public Water Supply PFAS Watch row. Written AFTER any
+    Measurements rows for a detection (system of record first) but BEFORE the
+    change email — advancing the stored hash here is what makes a crash re-detect
+    rather than re-alert (see pfas_pws_watcher._diff_and_record)."""
+    append_rows(service, sheet_id, TAB_PFAS_PWS, [[
         date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
     ]])
 

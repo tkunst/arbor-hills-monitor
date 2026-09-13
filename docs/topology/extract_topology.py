@@ -33,10 +33,13 @@ import re
 
 def _repo_root(start):
     """Walk up from this script to the repo root (dir holding .git), so the
-    extractor works regardless of where under the repo it is committed."""
+    extractor works regardless of where under the repo it is committed. Accepts
+    `.git` as a FILE as well as a directory, so it also works from a git worktree
+    (where `.git` is a gitdir-pointer file) — used when this stream was built in
+    an isolated worktree."""
     d = os.path.dirname(os.path.abspath(start))
     while d != os.path.dirname(d):
-        if os.path.isdir(os.path.join(d, ".git")):
+        if os.path.exists(os.path.join(d, ".git")):
             return d
         d = os.path.dirname(d)
     return os.path.dirname(os.path.dirname(os.path.abspath(start)))  # fallback
@@ -63,12 +66,14 @@ DOMAIN = {
     "ridgewood_archiver": "orchestration", # daily Ridge Wood H2S mirror+extract — Stream G (ADR 016)
     "ride_watcher": "orchestration",   # daily RIDE / Part 201 + UST status watch — Stream J (ADR 019)
     "gfl_info_site_watcher": "orchestration", # daily GFL info-site change-watch — Stream S (ADR 041)
+    "pfas_pws_watcher": "orchestration", # daily Public Water Supply PFAS watch — Stream R (ADR 042)
     # Ingestion — one client per external source (nSITE, WDS, MMPC, PFAS, GFL air, Ridge Wood, RIDE, GFL info site)
     "nsite_client": "ingestion", "mmpc_client": "ingestion",
     "wds_watcher": "ingestion", "wds_client": "ingestion",
     "pfas_client": "ingestion",        # PFAS page fetch + content-hash normalize (ADR 012)
     "gfl_air_client": "ingestion",     # GFL ArcGIS FeatureServer fetch + ADR-004 mapping (ADR 014)
     "gfl_info_site_client": "ingestion",  # GFL info-site fetch + <main> normalize (ADR 041)
+    "pfas_pws_client": "ingestion",    # EGLE PWS PFAS ArcGIS fetch + classify (ADR 042)
     "ridgewood_client": "ingestion",   # Ridge Wood H2S report scrape + fail-safe extract (ADR 016)
     "ride_client": "ingestion",        # RIDE RRDOpenData ArcGIS fetch + canonicalize (ADR 019)
     # Document processing & risk
@@ -114,6 +119,7 @@ DATASTORES = [
     ("ds:ridgewood", "Ridge Wood Elementary H2S Report Page (Barr, public)"),
     ("ds:ride", "EGLE RIDE RRDOpenData ArcGIS Service (Part 201 + UST, public)"),
     ("ds:gfl-info-site", "GFL Info Website (arborhillslandfill.com, Cloudflare)"),
+    ("ds:pws-pfas", "EGLE Public Water Supply PFAS ArcGIS Service (MPART, public)"),
     ("ds:smtp", "Email Recipients (SMTP)"),
     ("ds:anthropic", "Anthropic Claude API"),
     ("ds:config", "config.yml (risk register + settings)"),
@@ -139,6 +145,7 @@ DATA_EDGES = [
     ("ridgewood_archiver", "ds:drive-archive", "write"), # mirrors Ridge Wood PDFs (optional, ADR 016)
     ("ride_client", "ds:ride", "read"),            # query RRDOpenData Layer 0/1 (Stream J, ADR 019)
     ("gfl_info_site_client", "ds:gfl-info-site", "read"),  # GET + normalize GFL info-site pages (Stream S, ADR 041)
+    ("pfas_pws_client", "ds:pws-pfas", "read"),    # query the PWS PFAS FeatureServer (Stream R, ADR 042)
 ]
 # DISPATCH edges — call targets resolved against config, not a static symbol.
 # Represented as `dispatch` (and the equivalent plain import edge is suppressed,

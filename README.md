@@ -401,6 +401,27 @@ encouragement to comment lives on the advocacy site, not here.
     GitHub Actions runner isn't Cloudflare-walled — the residential + datacenter
     IPs pass, but the Azure runner ASN is unproven (no self-hosted runner exists
     as a fallback today). See `docs/decisions/041-gfl-info-site-watch.md`.
+23. **Public Water Supply PFAS sampling watch (Stream R)** (daily, optional —
+    `pfas_pws.enabled: false`, ships OFF): the DRINKING-WATER PFAS record for
+    supplies in the landfill's capture zone, which the landfill's own
+    leachate/groundwater PFAS record can't see. **Salem Elementary (WSSN
+    2001381)** sits in the capture zone, is sampled ~annually, and has come back
+    all-non-detect (<2 ppt) across six rounds Dec-2020 → Feb-2025. New external
+    source — a keyless EGLE ArcGIS FeatureServer (the data behind the statewide
+    MPART PFAS map), never routed through the EGLE document parser. Each run
+    snapshots every watched WSSN's sampling rounds (keyed by the unique
+    SysSampleCode) into the `Public Water Supply PFAS Watch` tab and alerts on
+    **(a) a new sampling round** (even all-non-detect — "sampled again, still
+    clean" is itself the news) or **(b) any detection** of a regulated PFAS
+    (subject elevated; detections also route to the shared Measurements tab,
+    `basis=measured`). The classifier is fail-safe: a value it doesn't recognize
+    (a future lab qualifier / new token) is treated as a possible detection and
+    alerted, never silently dropped. It deliberately carries **no MCL comparison**
+    — Michigan's 2020 PFAS MCLs and the federal 2024 MCLs differ, so a
+    single-regime "below MCL" label would understate an enforceable exceedance;
+    the alert gives the raw value + analyte + date and points to the applicable
+    standards. First sighting of each WSSN baselines silently. More capture-zone
+    WSSNs are added via config. See `docs/decisions/042-pfas-pws-watch.md`.
 
 > **A note on the document links (corrected 2026-08-23 — see ADR 007's
 > addendum).** Every case-file row's **Link** column points to EGLE's nSITE
