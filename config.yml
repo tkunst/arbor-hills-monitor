@@ -1320,6 +1320,14 @@ unsubscribe:
   # not here. List EVERY owner address that appears on ANY recipient list.
   owner_addresses:
     - arbor-hills@trishakunst.com
+  # Whole domains that are Trisha's — ANY address at them is treated as an owner
+  # (never suppressed, held, or footered). @trishakunst.com is a Cloudflare
+  # catch-all that forwards to her, so every alias at it is hers; listing the
+  # DOMAIN covers present + future aliases without enumerating them. A domain is
+  # not sensitive, so it lives here; private personal addresses (gmail/proton/
+  # yahoo) go in the MONITOR_OWNER_EMAILS secret instead.
+  owner_domains:
+    - trishakunst.com
   # NOTE: the SUPPRESSION LIST is intentionally NOT here — opted-out third-party
   # addresses are PII and this repo + the case-file Sheet are PUBLIC. They live in
   # the UNSUBSCRIBED_EMAILS secret (comma/semicolon list), read at send time.

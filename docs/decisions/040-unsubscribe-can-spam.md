@@ -30,7 +30,18 @@ it and this amendment differ, **this amendment governs.**
    `email.utils.parseaddr`, so a `Name <a@b>` recipient still matches a bare
    suppressed `a@b`), and two LOW code-review wording fixes. 4 new tests added
    (footer-omits-postal, armed-via-mailto-no-postal, display-name suppression,
-   count-only logging); full suite 1468 passed.
+   count-only logging); full suite 1470 passed.
+
+3. **Owner protection extended to a whole DOMAIN.** Owners to protect (Trisha,
+   2026-09-13): the entire `@trishakunst.com` catch-all domain, plus a few private
+   personal mailboxes (gmail/proton/yahoo) — the latter kept OUT of this public
+   file, held only in the `MONITOR_OWNER_EMAILS` secret. Since exact-address
+   matching can't express "the whole domain," `load_owner_domains` (config
+   `unsubscribe.owner_domains` ∪ the `MONITOR_OWNER_DOMAINS` env) was added; ANY
+   address at an owner domain is an owner — never footered, held, or suppressed
+   (the self-lockout guard extended to the domain). The domain `trishakunst.com`
+   is public, so it lives in `config.yml`; the private personal addresses go in the
+   `MONITOR_OWNER_EMAILS` secret and are never committed.
 
 **Operational core — honoring opt-outs (unchanged, restated):** the apparatus
 *offers* the opt-out; a human still closes the loop. When someone replies/emails
