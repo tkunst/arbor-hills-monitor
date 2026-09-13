@@ -110,7 +110,20 @@ def wssn_snapshot(records: list[dict], wssn) -> dict:
         if str(r.get("WSSN", "")).strip() != str(int(wssn)):
             continue
         view = pc.record_view(r)
-        rounds[pc.round_key(view)] = view
+        k = pc.round_key(view)
+        if k in rounds:
+            # SysSampleCode is unique table-wide today, but NEVER silently drop a
+            # round on a collision — that could drop a detection (the worst
+            # outcome). Disambiguate to a guaranteed-unique key so BOTH rows are
+            # preserved (a genuine collision then surfaces as an extra round in
+            # the diff, which is visible, not lost).
+            base = f"{k}|{view['sample_date']}|{view['loc']}"
+            k2, i = base, 0
+            while k2 in rounds:
+                i += 1
+                k2 = f"{base}#{i}"
+            k = k2
+        rounds[k] = view
     return {"wssn": str(int(wssn)), "rounds": rounds}
 
 
@@ -139,16 +152,38 @@ def diff_rounds(old_snap: dict, new_snap: dict) -> dict:
     }
 
 
+def _tag_detections(view: dict, dets: list[dict]) -> list[dict]:
+    """Tag a list of round_detections entries with their round context
+    (date/loc/system/wssn) — the shape routed to Measurements + named in alerts."""
+    return [{**d, "sample_date": view.get("sample_date", ""),
+             "loc": view.get("loc", ""), "system": view.get("system", ""),
+             "wssn": view.get("wssn", ""), "round_key": pc.round_key(view)}
+            for d in dets]
+
+
 def all_detections(views: list[dict]) -> list[dict]:
-    """Flatten round_detections across a list of round views, each tagged with
-    its round context (date/loc/system/wssn) — the set routed to Measurements
-    and named in a detection alert."""
+    """Every detection across a list of round views, context-tagged. Used for the
+    baseline historical-detection note and for brand-new rounds (where every
+    detection is, by definition, new)."""
     out = []
     for v in views:
-        for d in pc.round_detections(v):
-            out.append({**d, "sample_date": v.get("sample_date", ""),
-                        "loc": v.get("loc", ""), "system": v.get("system", ""),
-                        "wssn": v.get("wssn", ""), "round_key": pc.round_key(v)})
+        out.extend(_tag_detections(v, pc.round_detections(v)))
+    return out
+
+
+def flagged_detections(diff: dict) -> list[dict]:
+    """The detections that should ELEVATE an alert + route to Measurements: every
+    detection in a brand-NEW round, PLUS only the detections in a CHANGED round
+    that are NEW relative to that round's OLD view. Diffing against the old view
+    is what stops an unrelated edit (e.g. a LocName correction) on a round that
+    already held a detection from re-crying "DETECTION" and writing a phantom
+    duplicate to the Measurements system-of-record (review finding #1)."""
+    out = all_detections(diff["new"])
+    for old_v, new_v in diff["changed"]:
+        old_set = {(d["analyte"], d["raw"]) for d in pc.round_detections(old_v)}
+        fresh = [d for d in pc.round_detections(new_v)
+                 if (d["analyte"], d["raw"]) not in old_set]
+        out.extend(_tag_detections(new_v, fresh))
     return out
 
 
@@ -156,25 +191,33 @@ def summarize_change(diff: dict) -> tuple[str, str, bool]:
     """(note, body, is_detection): describe what changed. `is_detection` is True
     when any new/changed round carries a DETECTION or an UNRECOGNIZED value
     (fail-safe) — the watcher uses it to elevate the alert subject. Pure."""
-    changed_new_views = diff["new"] + [n for (_o, n) in diff["changed"]]
-    dets = all_detections(changed_new_views)
-    lines: list[str] = []
+    dets = flagged_detections(diff)
 
+    def _det_str(entries):
+        return "; ".join(
+            f"{x['analyte']} {x['raw']} ppt"
+            + (" (UNRECOGNIZED value — review)" if x["state"] == "unrecognized" else "")
+            for x in entries)
+
+    lines: list[str] = []
     for v in diff["new"]:
         d = pc.round_detections(v)
         if d:
-            det_str = "; ".join(
-                f"{x['analyte']} {x['raw']} ppt"
-                + (" (UNRECOGNIZED value — review)" if x["state"] == "unrecognized" else "")
-                for x in d)
             lines.append(f"+ NEW ROUND {v['sample_date']} @ {v['loc'] or '—'}: "
-                         f"DETECTION — {det_str}")
+                         f"DETECTION — {_det_str(d)}")
         else:
             lines.append(f"+ NEW ROUND {v['sample_date']} @ {v['loc'] or '—'}: "
                          "all seven regulated PFAS non-detect")
-    for _old, v in diff["changed"]:
-        lines.append(f"~ ROUND UPDATED {v['sample_date']} @ {v['loc'] or '—'} "
-                     "(a prior result was revised — see snapshot)")
+    for old_v, v in diff["changed"]:
+        old_set = {(x["analyte"], x["raw"]) for x in pc.round_detections(old_v)}
+        fresh = [x for x in pc.round_detections(v)
+                 if (x["analyte"], x["raw"]) not in old_set]
+        if fresh:
+            lines.append(f"~ ROUND UPDATED {v['sample_date']} @ {v['loc'] or '—'}: "
+                         f"NEW DETECTION — {_det_str(fresh)}")
+        else:
+            lines.append(f"~ ROUND UPDATED {v['sample_date']} @ {v['loc'] or '—'} "
+                         "(a prior result was revised — see snapshot)")
     for v in diff["removed"]:
         lines.append(f"- ROUND REMOVED {v['sample_date']} @ {v['loc'] or '—'}")
 
@@ -295,7 +338,9 @@ def _diff_and_record(sheets, sheet_id, today, key, wssn, snap, cfg, recipients,
     note, body, is_detection = summarize_change(diff)
 
     # (1) Measurements (system of record) FIRST — only detections, basis=measured.
-    dets = all_detections(diff["new"] + [n for (_o, n) in diff["changed"]])
+    # flagged_detections() excludes a detection already present on a changed
+    # round's OLD view, so an unrelated edit never re-writes a known detection.
+    dets = flagged_detections(diff)
     if dets:
         try:
             meas = measurement_dicts(dets)
@@ -373,10 +418,16 @@ def run() -> int:
 
     counts = {"baseline": 0, "changed": 0, "detection": 0, "unchanged": 0}
     for wssn in wssns:
-        snap = wssn_snapshot(records, wssn)
-        result = _diff_and_record(sheets, sheet_id, today, f"pws:{wssn}", wssn,
-                                  snap, cfg, recipients, query_url)
-        counts[result] += 1
+        # Per-item guard: a fault on one WSSN (a Sheets write hiccup, a malformed
+        # record) must not abort the others — the per-item guarantee mmd_watcher's
+        # docstring claims but does not enforce.
+        try:
+            snap = wssn_snapshot(records, wssn)
+            result = _diff_and_record(sheets, sheet_id, today, f"pws:{wssn}", wssn,
+                                      snap, cfg, recipients, query_url)
+            counts[result] += 1
+        except Exception as e:  # noqa: BLE001 — isolate one WSSN's failure
+            print(f"[pws-pfas] WSSN {wssn}: FAILED this run (other WSSNs continue): {e}")
 
     print(f"[pws-pfas] done — {counts['detection']} detection, {counts['changed']} "
           f"changed, {counts['baseline']} baselined, {counts['unchanged']} unchanged.")

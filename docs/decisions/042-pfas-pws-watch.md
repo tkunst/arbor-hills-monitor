@@ -126,6 +126,27 @@ no-op.
    configured — adding WSSNs is a config edit, and the gap is documented, not
    silent.
 
+## Independent review (findings fixed before merge)
+
+The Step-5 diff-only review found one MEDIUM and several LOW, all fixed:
+
+- **MEDIUM — an edited round re-firing a known detection.** Changed-round
+  detection routing originally computed from the new view only, so an unrelated
+  edit (e.g. a `LocName` correction) to a round already holding a detection would
+  re-cry "DETECTION" and write a phantom duplicate to the Measurements
+  system-of-record. **Fixed:** `flagged_detections` routes/elevates only
+  detections that are NEW relative to the changed round's OLD view.
+- **LOW — a `SysSampleCode` collision silently dropping a round** (the
+  missed-detection direction). **Fixed:** `wssn_snapshot` disambiguates a
+  colliding key instead of overwriting, so no round is ever dropped.
+- **LOW — `"5 U"`/`"2 UJ"` (a number carrying a non-detect qualifier flag)
+  classified as a detection.** **Fixed:** `classify_value` treats a `U`/`UJ`/`ND`/
+  `BDL` qualifier as a non-detect, while still treating an estimated-value `J`
+  (`"2.1 J"`) as a detection.
+- **LOW — a changed-round alert body not naming the newly-detected analyte** →
+  now spelled out ("NEW DETECTION — PFOS 12 ppt"); and a **per-item `try`** in
+  `run()` now enforces the documented per-WSSN isolation.
+
 ## Tests
 
 `tests/test_pfas_pws.py` — hermetic (synthetic ArcGIS payloads, opener mocked
