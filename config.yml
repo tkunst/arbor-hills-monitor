@@ -1423,19 +1423,19 @@ temperature_thresholds:
 # path is plain SMTP and there is no web backend (static GitHub Pages), so
 # RFC-8058 one-click is not available.
 #
-# ARMING: the apparatus is armed ONLY when BOTH `mailto` and `postal_address`
-# below are set. There is deliberately NO enabled flag — "postal address
-# configured" IS the switch. Until armed, a non-owner (third-party) recipient is
-# HELD (not sent) rather than sent a non-compliant message; Trisha's own addresses
-# (owner_addresses + the MONITOR_OWNER_EMAILS secret) are always sent and never
-# carry a footer.
+# ARMING: the apparatus is armed when `mailto` below is set (a working opt-out is
+# the one required element). There is deliberately NO enabled flag — "mailto
+# configured" IS the switch. `postal_address` is OPTIONAL. Until armed (no mailto),
+# a non-owner (third-party) recipient is HELD (not sent) rather than sent mail with
+# no way to opt out; Trisha's own addresses (owner_addresses + owner_domains + the
+# MONITOR_OWNER_EMAILS secret) are always sent and never carry a footer.
 #
-# OPEN DECISIONS for Trisha (see ADR 040 / the PR — do NOT ship these guessed):
-#   - postal_address: REQUIRED by CAN-SPAM. A PO box is fine. Ships EMPTY on
-#     purpose so nothing goes out with an invented address — fill it to go live.
+# RESOLVED (Trisha 2026-09-13; see ADR 040 amendment):
+#   - postal_address: NOT required — these are advocacy (non-commercial) alerts.
+#     Left EMPTY on purpose; the footer omits the postal line. LIVE via mailto.
 #   - opt-out granularity: v1 is GLOBAL (unsubscribe = all monitor mail);
 #     per-stream opt-out is a documented follow-on.
-#   - capture: v1 is a mailto to a monitored inbox + MANUAL triage into the
+#   - capture: v1 is a mailto to the monitored inbox + MANUAL triage into the
 #     UNSUBSCRIBED_EMAILS secret; an auto-reader is a documented follow-on.
 unsubscribe:
   # The opt-out mailbox. A @trishakunst.com alias (Cloudflare catch-all → Gmail)
