@@ -32,6 +32,7 @@ COMMISSIONER = "commissioner@washtenaw.org"
 
 POSTAL = "PO Box 123, Ann Arbor, MI 48104"
 MAILTO = "unsubscribe@trishakunst.com"
+TKUNST_ALIAS = "hello@trishakunst.com"   # any @trishakunst.com alias is Trisha
 
 # Armed config that ALSO sets a postal address (mailto arms it; postal is an
 # optional footer line — kept here so the with-postal path stays covered).
@@ -42,6 +43,7 @@ ARMED = {
         "postal_address": POSTAL,
         "sender_identity": "Arbor Hills Landfill Monitor",
         "owner_addresses": [OWNER],
+        "owner_domains": ["trishakunst.com"],
     },
 }
 
@@ -123,6 +125,12 @@ def test_load_owner_emails_unions_config_and_env_normalized(monkeypatch):
     monkeypatch.setenv("MONITOR_OWNER_EMAILS", " Trisha@Proton.me ; ME@GMAIL.com ")
     owners = ea.load_owner_emails(ARMED)
     assert owners == {OWNER, "trisha@proton.me", "me@gmail.com"}
+
+
+def test_load_owner_domains_unions_config_and_env_stripped(monkeypatch):
+    monkeypatch.setenv("MONITOR_OWNER_DOMAINS", " @Foo.COM ; bar.org ")
+    doms = ea.load_owner_domains(ARMED)
+    assert doms == {"trishakunst.com", "foo.com", "bar.org"}   # config + env, '@'/case stripped
 
 
 def test_load_suppressed_never_contains_an_owner(monkeypatch):
@@ -276,6 +284,22 @@ def test_held_recipients_logged_by_count_not_address(monkeypatch, capsys):
     assert "2 recipient(s)" in out                    # the count is logged
     assert ALLY not in out                            # ...but never the addresses
     assert COMMISSIONER not in out
+
+
+def test_owner_domain_address_is_treated_as_owner(monkeypatch):
+    # "Protect the entire @trishakunst.com domain": any alias at it is an owner —
+    # never footered, and never suppressed even if wrongly added to the opt-out
+    # list. Uses hello@ (NOT in owner_addresses) to exercise the DOMAIN path.
+    srv = _smtp(monkeypatch)
+    monkeypatch.setenv("UNSUBSCRIBED_EMAILS", TKUNST_ALIAS)   # mistakenly opted out
+    ea.send_email("s", "BODY", ARMED, recipients=[TKUNST_ALIAS, ALLY])
+    msgs = _by_to(srv)
+    # domain-owner: delivered, clean, and NOT suppressed
+    assert TKUNST_ALIAS in msgs
+    assert msgs[TKUNST_ALIAS]["List-Unsubscribe"] is None
+    assert msgs[TKUNST_ALIAS].get_content().rstrip("\n") == "BODY"
+    # a genuine third party still gets the apparatus
+    assert msgs[ALLY]["List-Unsubscribe"] is not None
 
 
 # --------------------------------------------------------------------------- #

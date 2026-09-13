@@ -199,6 +199,12 @@ def _norm_email(addr: str) -> str:
     return parseaddr(addr or "")[1].strip().lower()
 
 
+def _email_domain(addr: str) -> str:
+    """Lowercased domain of a (normalized) address, or '' if it has none."""
+    n = _norm_email(addr)
+    return n.rsplit("@", 1)[1] if "@" in n else ""
+
+
 def _split_env_emails(env_var: str) -> list:
     """Addresses from a comma/semicolon-separated env var — same shape as the
     ALERT_RECIPIENTS_EXTRA / GFL_AIR_WATCH_RECIPIENTS_EXTRA private-supplement
@@ -231,16 +237,42 @@ def load_owner_emails(cfg: dict | None = None) -> set:
     return owners
 
 
+def load_owner_domains(cfg: dict | None = None) -> set:
+    """Whole domains that are Trisha's — ANY address at them is an owner (never
+    suppressed, held, or footered). Her @trishakunst.com is a Cloudflare catch-all
+    that forwards to her, so every alias at it is hers; listing the DOMAIN protects
+    all present and future aliases without enumerating them. Two sources UNIONED:
+    config `unsubscribe.owner_domains` (a domain is not sensitive — fine in this
+    PUBLIC repo) and the `MONITOR_OWNER_DOMAINS` env secret. Leading '@' and case
+    are stripped, so '@Trishakunst.COM' and 'trishakunst.com' are the same."""
+    domains = set()
+    if cfg:
+        for d in ((cfg.get("unsubscribe") or {}).get("owner_domains") or []):
+            d = (d or "").strip().lower().lstrip("@")
+            if d:
+                domains.add(d)
+    for d in _split_env_emails("MONITOR_OWNER_DOMAINS"):
+        d = d.strip().lower().lstrip("@")
+        if d:
+            domains.add(d)
+    return domains
+
+
 def load_suppressed_emails(owners: set | None = None, cfg: dict | None = None) -> set:
     """Opted-out addresses from the `UNSUBSCRIBED_EMAILS` env secret (comma/
     semicolon list). Deliberately a PRIVATE secret, never a Sheet/config tab: a
     suppression list is third-party PII, and both the case-file Sheet and
-    config.yml are PUBLIC. Owner addresses are removed from the result, so an
-    owner can NEVER be suppressed — even by a mistaken entry."""
+    config.yml are PUBLIC. Owner addresses AND owner-domain addresses are removed
+    from the result, so an owner can NEVER be suppressed — even by a mistaken
+    entry (the self-lockout guard, extended to the whole owner domain)."""
     if owners is None:
         owners = load_owner_emails(cfg)
+    owner_domains = load_owner_domains(cfg)
     supp = {_norm_email(a) for a in _split_env_emails("UNSUBSCRIBED_EMAILS")}
-    return supp - owners
+    supp -= owners
+    if owner_domains:
+        supp = {a for a in supp if _email_domain(a) not in owner_domains}
+    return supp
 
 
 def _unsubscribe_settings(cfg: dict) -> tuple:
@@ -336,6 +368,7 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
     recipients = list(recipients) if scoped else resolve_recipients(cfg)
 
     owners = load_owner_emails(cfg)
+    owner_domains = load_owner_domains(cfg)
     suppressed = load_suppressed_emails(owners, cfg)
     if suppressed and not owners:
         print("[email_alerts] WARNING: UNSUBSCRIBED_EMAILS is set but the owner "
@@ -369,7 +402,8 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
         server.starttls()
         server.login(user, password)
         for recipient in recipients:
-            is_owner = _norm_email(recipient) in owners
+            is_owner = (_norm_email(recipient) in owners
+                        or _email_domain(recipient) in owner_domains)
             out_body = body
             add_unsub_header = False
             if not is_owner:
