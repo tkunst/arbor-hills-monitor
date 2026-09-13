@@ -1338,7 +1338,7 @@ gfl_info_site:
 # enabled run baselines every WSSN silently; flip enabled here to pause/resume
 # (the tab holds the state). Keyless — no secret to provision.
 pfas_pws:
-  enabled: false
+  enabled: true                            # activated 2026-09-13 (Trisha-directed) — keyless EGLE ArcGIS (no runner probe needed); recipients = Trisha; first run baselines silently. See ADR 042.
   # EGLE PublicWaterSupplySamplingOpenData FeatureServer, layer 1 (query endpoint).
   service_url: "https://gisagoegle.state.mi.us/arcgis/rest/services/EGLE/PublicWaterSupplySamplingOpenData/FeatureServer/1/query"
   # Watched Public Water System Serial Numbers. Start with Salem Elementary
