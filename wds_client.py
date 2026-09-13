@@ -401,11 +401,15 @@ def _parse_penalties_page(h: str) -> list[dict]:
     ):
         parent, mid = m.group(1), m.group(2)
         c = (_tr_cells(m.group(3)) + [""] * 6)[:6]
-        if "_C_R_" not in mid:
-            # A penalty-container row. Carry a penalty only if it has the three
-            # always-present penalty fields; otherwise it is an empty container,
+        is_payment = "_C_R_" in mid           # nested payment child (…_U_R_…_C_R_…)
+        is_container = "_U_R_" in mid and not is_payment   # penalty-grid slot
+        if is_container:
+            # A penalty-container slot. Carry a penalty only if it has the three
+            # always-present penalty fields; otherwise it is an EMPTY container,
             # which also CLOSES the prior penalty's payment section (so a later
-            # unrelated payment child can't pair back onto it).
+            # unrelated payment child can't pair back onto it). Positively requiring
+            # `_U_R_` (not merely "not a payment") means a hypothetical unrelated
+            # summary row can neither become a bogus penalty nor orphan a payment.
             if _PTYPE_RE.match(c[1]) and c[3] and "$" in c[2]:
                 ad, at = actions.get(parent, ("", ""))
                 last = {
@@ -416,7 +420,7 @@ def _parse_penalties_page(h: str) -> list[dict]:
                 out.append(last)
             else:
                 last = None
-        elif last is not None and any("$" in x for x in c):
+        elif is_payment and last is not None and any("$" in x for x in c):
             # The id-confirmed payment CHILD of the penalty just seen:
             # [SchedDate, $Sched, DatePaid, $Paid]. Keyed on the id + a dollar
             # amount (an empty payment template has neither), NOT on the

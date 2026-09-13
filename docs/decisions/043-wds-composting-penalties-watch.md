@@ -141,3 +141,31 @@ Trisha's).
    same-day collision would at worst produce one spurious "changed"; the content
    diff, not identity, absorbs it — same tolerance the `annual` (Year-only) and
    `qmr` collections already accept.
+
+## Accepted LOW review residuals (two review rounds)
+
+Two independent diff-only review rounds resolved two MEDIUM parser findings (by
+rewriting `_parse_penalties_page` to discriminate rows on their id STRUCTURE —
+`_U_R_` penalty container vs nested `_C_R_` payment child — rather than by content
+guesswork). The remaining items are LOW and accepted, not fixed, for the reasons
+noted:
+
+- *Assessment-amount `$`-symbol dependency* — a penalty row is confirmed by (among
+  the id checks) a `$` in the amount cell. If WDS ever rendered an amount without
+  the symbol, that penalty's own digest line would be missed. Kept because the `$`
+  is the guard that stops a stray summary row from parsing as a bogus penalty
+  (loosening it re-opens that MEDIUM), it is fail-safe (a miss, never a false
+  alert), and the parent enforcement action still fires URGENT via
+  `compliance_actions` regardless. All six live rows render with `$`.
+- *First payment child only / page-boundary pairing* — only the first payment row
+  of a penalty is captured, and the penalty→payment pairing is per page (a penalty
+  whose payment child rendered on the next page would orphan the payment). Both
+  match the hand-verified reference scraper and the live data (each penalty has one
+  payment, all six pair on one page); the "paid" watch signal only needs the first
+  payment. Not changed to avoid diverging from the verified reference.
+- *Archiver dedup loop not unit-tested* — the per-URL snapshot de-dup is covered by
+  a page-URL-equality test and an explicit add-after-fetch ordering comment, but
+  the `run()` loop itself is not exercised (it would need disproportionate
+  Sheets/Drive mocking). Accepted: the loop was confirmed correct across both
+  review rounds, and its only effect is which pages get a raw-HTML snapshot
+  (portal-drift insurance) — never the alerting path.

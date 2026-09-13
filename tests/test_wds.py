@@ -496,6 +496,23 @@ def test_empty_container_between_penalty_and_payment_blocks_mispairing():
     assert rows[0]["Amount Paid"] == ""       # the $999 payment did NOT bleed onto it
 
 
+def test_unrelated_summary_row_does_not_orphan_the_payment():
+    # A penalty is positively identified by a `_U_R_` container id (not merely
+    # "not a payment"). An unrelated summary row (neither `_U_R_` nor `_C_R_`)
+    # sitting between a penalty and its payment child must be IGNORED — it must
+    # not reset `last` and orphan the payment.
+    other = ('<tr id="ctl00_Body_ComplianceActionsL_R_ctl01_T_ctl01_X_R_ctl00_SummaryRow">'
+             '<td>unrelated</td><td>row</td></tr>')
+    h = ("<html><body><table>"
+         + _pen_row("ctl01", 0, "FA - FINAL MONETARY PENALTY", "$750.00", "D1", "P1")
+         + other
+         + _pay_row("ctl01", 0, "7/1/2024", "$750.00", "7/2/2024", "$750.00")
+         + "</table></body></html>")
+    rows = wc._parse_penalties_page(h)
+    assert len(rows) == 1
+    assert rows[0]["Amount Paid"] == "$750.00"     # payment still pairs
+
+
 def test_penalty_and_payment_never_straddle_pages():
     # Each ComplianceActions page is parsed independently (_parse_penalties_page),
     # so a payment child with no penalty row ABOVE IT ON THE SAME PAGE is ignored —
