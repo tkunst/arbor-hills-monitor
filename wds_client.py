@@ -348,7 +348,6 @@ def fetch_compliance_actions(w: str) -> list[dict]:
 # 475946 penalty rows ($447,485.46 assessed) exactly (verified live 2026-09-13).
 
 _PTYPE_RE = re.compile(r"^[A-Z]{2} - ")          # "FA - ...", "AC - ..."
-_DATE_ONLY_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
 
 
 def _tr_cells(tr: str) -> list[str]:
@@ -373,11 +372,19 @@ def _clean_row_text(block: str) -> str:
 
 
 def _parse_penalties_page(h: str) -> list[dict]:
-    """Penalty records on ONE ComplianceActions page. The penalty->payment pairing
-    walks summary rows in DOCUMENT ORDER, so it is done per page — a penalty and its
-    payment row never straddle a page boundary on this grid (verified against
-    475946: all six pair cleanly; test_penalty_and_payment_never_straddle_pages
-    asserts it)."""
+    """Penalty records on ONE ComplianceActions page. Rows are discriminated by
+    their id STRUCTURE, not by content guesswork: a penalty renders as an
+    `..._U_R_ctlN_SummaryRow` container row, and each penalty's payment renders as
+    a NESTED `..._U_R_ctlN_C_R_ctlK_SummaryRow` child (the `_C_R_` segment marks the
+    payment sub-grid). Confirmed live on 475946: exactly those two id shapes exist
+    (221 containers / 60 payment children). Most container rows are EMPTY (an action
+    with no penalty still renders one), so a real penalty additionally needs a
+    penalty-type code, a document number, AND a dollar amount — this is what stops a
+    stray non-penalty summary row from parsing as a bogus penalty. Payment pairing
+    walks DOCUMENT ORDER within a page (a penalty and its payment never straddle a
+    page boundary here — test_penalty_and_payment_never_straddle_pages asserts it).
+    This id-structure approach faithfully reproduces the six 475946 penalty rows
+    ($447,485.46) that the hand-verified Lotext scraper produced."""
     # Parent-action map: which (date, type) each ctlNN row is a penalty of.
     actions = {}
     for m in re.finditer(
@@ -389,25 +396,36 @@ def _parse_penalties_page(h: str) -> list[dict]:
                                rec.get("Compliance Action Type", ""))
     out, last = [], None
     for m in re.finditer(
-        r'<tr[^>]*id="ctl00_Body_ComplianceActionsL_R_(ctl\d+)_T_[^"]*SummaryRow"[^>]*>(.*?)</tr>',
+        r'<tr[^>]*id="ctl00_Body_ComplianceActionsL_R_(ctl\d+)_T_([^"]*)SummaryRow"[^>]*>(.*?)</tr>',
         h, re.S,
     ):
-        parent = m.group(1)
-        c = (_tr_cells(m.group(2)) + [""] * 6)[:6]
-        if len(c) >= 4 and _PTYPE_RE.match(c[1]) and c[3]:
-            ad, at = actions.get(parent, ("", ""))
-            last = {
-                "Action Date": ad, "Action Type": at, "Penalty Type": c[1],
-                "Assessment Amount": c[2], "Document #": c[3], "Penalty Payment ID": c[4],
-                "Scheduled Date": "", "Scheduled Amount": "", "Date Paid": "", "Amount Paid": "",
-            }
-            out.append(last)
-        elif last is not None and _DATE_ONLY_RE.match(c[0]) and any("$" in x for x in c):
-            # Payment row for the penalty just seen: [SchedDate, $Sched, DatePaid, $Paid].
+        parent, mid = m.group(1), m.group(2)
+        c = (_tr_cells(m.group(3)) + [""] * 6)[:6]
+        if "_C_R_" not in mid:
+            # A penalty-container row. Carry a penalty only if it has the three
+            # always-present penalty fields; otherwise it is an empty container,
+            # which also CLOSES the prior penalty's payment section (so a later
+            # unrelated payment child can't pair back onto it).
+            if _PTYPE_RE.match(c[1]) and c[3] and "$" in c[2]:
+                ad, at = actions.get(parent, ("", ""))
+                last = {
+                    "Action Date": ad, "Action Type": at, "Penalty Type": c[1],
+                    "Assessment Amount": c[2], "Document #": c[3], "Penalty Payment ID": c[4],
+                    "Scheduled Date": "", "Scheduled Amount": "", "Date Paid": "", "Amount Paid": "",
+                }
+                out.append(last)
+            else:
+                last = None
+        elif last is not None and any("$" in x for x in c):
+            # The id-confirmed payment CHILD of the penalty just seen:
+            # [SchedDate, $Sched, DatePaid, $Paid]. Keyed on the id + a dollar
+            # amount (an empty payment template has neither), NOT on the
+            # scheduled-date cell — which is sometimes blank (a paid-but-unscheduled
+            # penalty), so gating on it would silently drop a real payment.
             last["Scheduled Date"] = c[0]
             last["Scheduled Amount"] = c[1]
-            last["Date Paid"] = c[2] if len(c) > 2 else ""
-            last["Amount Paid"] = c[3] if len(c) > 3 else ""
+            last["Date Paid"] = c[2]
+            last["Amount Paid"] = c[3]
             last = None
     return out
 
