@@ -1,6 +1,9 @@
 """
-wds_archiver.py — nightly raw-HTML snapshot of the 5 WDS collection pages into
-Trisha's Drive (portal-drift insurance, ADR 009 residual risk #1).
+wds_archiver.py — nightly raw-HTML snapshot of the WDS collection pages into
+Trisha's Drive (portal-drift insurance, ADR 009 residual risk #1). One snapshot
+per DISTINCT page: several collections share a page (penalties + compliance_actions
+on ComplianceActions.aspx; the two composting grids on Utilization/Default.aspx —
+ADR 043), de-duplicated by page URL below.
 
 WDS has no per-record PDFs to mirror the way archiver.py mirrors nSITE PDFs —
 each "record" is a row rendered server-side by a 2001-era ASP.NET app; the
@@ -131,6 +134,10 @@ def run() -> int:
         except Exception as e:  # noqa: BLE001 — WDSFetchError / network → skip, warn
             print(f"[wds-archive] {name}: fetch failed, skipping this run: {e}")
             continue
+        # Mark the URL snapshotted ONLY after a successful fetch (never above the
+        # try): if the first owner of a shared page fails to fetch, a sibling
+        # collection on the same page still gets to snapshot it this run, so a
+        # transient failure never silently drops a page.
         snapshotted_urls.add(page_url)
 
         col_hashes = hashes.setdefault(name, {})

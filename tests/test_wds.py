@@ -385,27 +385,37 @@ def test_new_collections_are_registered():
 
 # --- Penalties: parser (nested penalty->payment sub-grid) -------------------
 
+def _pen_row(parent, idx, ptype, amt, doc, pay_id):
+    # A penalty-CONTAINER SummaryRow: ..._U_R_ctlN_SummaryRow (no _C_R_ segment),
+    # matching the real 475946 id shape.
+    return (f'<tr id="ctl00_Body_ComplianceActionsL_R_{parent}_T_{parent}_U_R_ctl{idx:02d}_SummaryRow">'
+            f'<td></td><td>{ptype}</td><td>{amt}</td><td>{doc}</td>'
+            f'<td>{pay_id}</td><td></td></tr>')
+
+
+def _pay_row(parent, idx, sd, sa, pd, pa):
+    # A payment CHILD SummaryRow: ..._U_R_ctlN_C_R_ctlK_SummaryRow (the _C_R_
+    # segment is what marks it a payment, independent of the scheduled-date cell).
+    return (f'<tr id="ctl00_Body_ComplianceActionsL_R_{parent}_T_{parent}_U_R_ctl{idx:02d}_C_R_ctl00_SummaryRow">'
+            f'<td>{sd}</td><td>{sa}</td><td>{pd}</td><td>{pa}</td></tr>')
+
+
 def _ca_page(*, parent="ctl01", date="5/25/2023",
              atype="311 - STATE COMPLIANCE ORDER 3008(A)", penalties=()):
     """A minimal ComplianceActions page: one parent action DetailEditRow plus its
-    nested penalty/payment SummaryRow rows, reproducing the real WDS structure the
-    live parser walks. Each `penalties` entry is (ptype, amount, doc, pay_id,
-    sched_date, sched_amt, paid_date, paid_amt); a payment SummaryRow is emitted
-    only when the paid/sched fields are given."""
+    nested penalty/payment SummaryRow rows in the REAL id structure the live parser
+    keys on. Each `penalties` entry is (ptype, amount, doc, pay_id, sched_date,
+    sched_amt, paid_date, paid_amt); a payment child row is emitted only when any
+    payment field is given."""
     parts = [
         f'<tr id="ctl00_Body_ComplianceActionsL_R_{parent}_DetailEditRow"><td>'
         f'Compliance Action Date: {date} Compliance Action Type: {atype} '
         f'Determined By: EGLE</td></tr>'
     ]
     for i, (ptype, amt, doc, pay_id, sd, sa, pd, pa) in enumerate(penalties):
-        parts.append(
-            f'<tr id="ctl00_Body_ComplianceActionsL_R_{parent}_T_p{i}_SummaryRow">'
-            f'<td></td><td>{ptype}</td><td>{amt}</td><td>{doc}</td>'
-            f'<td>{pay_id}</td><td></td></tr>')
-        if sd or pd:
-            parts.append(
-                f'<tr id="ctl00_Body_ComplianceActionsL_R_{parent}_T_q{i}_SummaryRow">'
-                f'<td>{sd}</td><td>{sa}</td><td>{pd}</td><td>{pa}</td></tr>')
+        parts.append(_pen_row(parent, i, ptype, amt, doc, pay_id))
+        if sd or sa or pd or pa:
+            parts.append(_pay_row(parent, i, sd, sa, pd, pa))
     return "<html><body><table>" + "".join(parts) + "</table></body></html>"
 
 
@@ -425,22 +435,74 @@ def test_parse_penalties_pairs_penalty_with_its_payment_and_reads_parent():
     assert fa["Penalty Type"] == "FA - FINAL MONETARY PENALTY"
     assert fa["Assessment Amount"] == "$15,300.00"
     assert fa["Document #"] == "115-05-2023"
-    # The FOLLOWING payment row is paired onto the right penalty (document order).
+    # The nested payment child is paired onto the right penalty (document order).
     assert fa["Date Paid"] == "6/2/2023"
     assert fa["Amount Paid"] == "$15,300.00"
     assert ac["Penalty Type"] == "AC - FINAL ASSESSED COSTS"
     assert ac["Amount Paid"] == "$1,424.46"
 
 
+def test_new_unpaid_penalty_parses_with_empty_payment_fields():
+    # The headline signal: a newly assessed penalty with NO payment child yet.
+    # It must parse (notable) with blank payment fields, not be dropped.
+    h = _ca_page(penalties=[
+        ("FA - FINAL MONETARY PENALTY", "$355,109.00", "2020-0593-CE", "MUL40006",
+         "", "", "", ""),
+    ])
+    rows = wc._parse_penalties_page(h)
+    assert len(rows) == 1
+    assert rows[0]["Assessment Amount"] == "$355,109.00"
+    assert rows[0]["Date Paid"] == "" and rows[0]["Amount Paid"] == ""
+    assert ww._classify_penalty(rows[0], False)[0] == "notable"
+
+
+def test_payment_with_blank_scheduled_date_still_pairs():
+    # A payment child is recognized by its _C_R_ id + a dollar amount, NOT by the
+    # scheduled-date cell — which is sometimes blank (paid but never scheduled).
+    # Keying on the date cell would silently drop the "paid" backfill signal.
+    h = _ca_page(penalties=[
+        ("FA - FINAL MONETARY PENALTY", "$355,109.00", "2020-0593-CE", "MUL40006",
+         "", "", "5/1/2022", "$355,109.00"),   # blank scheduled date, real payment
+    ])
+    rows = wc._parse_penalties_page(h)
+    assert len(rows) == 1
+    assert rows[0]["Scheduled Date"] == ""
+    assert rows[0]["Date Paid"] == "5/1/2022"
+    assert rows[0]["Amount Paid"] == "$355,109.00"
+
+
+def test_non_penalty_container_row_is_not_a_bogus_penalty():
+    # Most _U_R_ container rows are EMPTY (an action with no penalty still renders
+    # one). A container whose cells don't carry a penalty-type code + document # +
+    # dollar amount must NOT parse as a penalty — the guard against a stray
+    # two-letter-coded summary row (e.g. a status code) becoming a bogus $ penalty.
+    empty_container = _pen_row("ctl02", 0, "", "", "", "")
+    stray = _pen_row("ctl02", 1, "MI - Some Status", "not-a-dollar-amount", "", "")
+    h = "<html><body><table>" + empty_container + stray + "</table></body></html>"
+    assert wc._parse_penalties_page(h) == []
+
+
+def test_empty_container_between_penalty_and_payment_blocks_mispairing():
+    # An empty penalty container CLOSES the prior penalty's payment section, so a
+    # later unrelated payment child cannot pair back onto an earlier penalty.
+    h = ("<html><body><table>"
+         + _pen_row("ctl01", 0, "FA - FINAL MONETARY PENALTY", "$750.00", "D1", "P1")
+         + _pen_row("ctl02", 0, "", "", "", "")            # empty container resets
+         + _pay_row("ctl02", 0, "1/1/2030", "$999.00", "1/1/2030", "$999.00")
+         + "</table></body></html>")
+    rows = wc._parse_penalties_page(h)
+    assert len(rows) == 1
+    assert rows[0]["Assessment Amount"] == "$750.00"
+    assert rows[0]["Amount Paid"] == ""       # the $999 payment did NOT bleed onto it
+
+
 def test_penalty_and_payment_never_straddle_pages():
     # Each ComplianceActions page is parsed independently (_parse_penalties_page),
-    # so a payment row with no penalty row ABOVE IT ON THE SAME PAGE is ignored —
+    # so a payment child with no penalty row ABOVE IT ON THE SAME PAGE is ignored —
     # a penalty and its payment can never be paired across a page boundary. (On the
     # live 475946 grid all six pairs sit on one page; this asserts the structural
     # guarantee rather than relying on that.)
-    payment_only = ('<tr id="ctl00_Body_ComplianceActionsL_R_ctl01_T_q0_SummaryRow">'
-                    '<td>6/26/2023</td><td>$15,300.00</td><td>6/2/2023</td>'
-                    '<td>$15,300.00</td></tr>')
+    payment_only = _pay_row("ctl01", 0, "6/26/2023", "$15,300.00", "6/2/2023", "$15,300.00")
     assert wc._parse_penalties_page(payment_only) == []
 
 
