@@ -142,6 +142,43 @@ def _classify_compliance_action(r, changed):
     return "notable", "procedural", ["R2"]
 
 
+def _classify_penalty(r, changed):
+    """WDS penalty — a nested sub-grid under a compliance action, carrying the
+    dollar amount the action row itself lacks (assessed / scheduled / paid).
+
+    A NEW penalty is NOTABLE (R2), deliberately NOT urgent. Penalties render on the
+    SAME ComplianceActions page as the `compliance_actions` collection, whose
+    classifier already fires URGENT on exactly the parent events a penalty attaches
+    to (violation notice / compliance order / consent decree / FINAL MONETARY). If
+    the penalty were urgent too, one real enforcement event would send TWO urgent
+    emails. So compliance_actions stays the same-day trip-wire; the penalty adds its
+    dollar figure to the weekly digest. (See docs/decisions/043.)
+
+    A *changed* penalty is a payment backfill — its only mutable fields are the
+    scheduled/paid amounts and dates — i.e. the penalty getting paid: good news ->
+    watch, never a re-fired notable."""
+    if changed:
+        return "watch", "evidence", ["R2"]
+    return "notable", "evidence", ["R2"]
+
+
+def _classify_composting_registration(r, changed):
+    """Composting registration on the Utilization module — the across-the-road
+    compost parcel's Part 115 authorization. A NEW registration is NOTABLE (R1): a
+    fresh authorization to compost on the expansion-adjacent parcel (a renewal shows
+    up as a new row with a new receipt date, so it is covered here too). An in-place
+    change — e.g. Registration Status flipping 'Accepting from public' -> 'EXPIRED',
+    or an expiration-date edit — is routine lifecycle -> watch."""
+    return ("watch" if changed else "notable"), "evidence", ["R1"]
+
+
+def _classify_composting_report(r, changed):
+    """Composting annual report-year on the Utilization module (yard-waste and
+    finished-compost tonnages). A routine annual filing — watch (R1: refreshes the
+    compost-activity picture next to the landfill), new or backfilled alike."""
+    return "watch", "evidence", ["R1"]
+
+
 COLLECTIONS = {
     "qmr": {
         "identity": lambda r: (_g(r, "Due Date"), _g(r, "Date Received")),
@@ -215,6 +252,56 @@ COLLECTIONS = {
             f" ({_g(r, 'Compliance Action Date') or '?'})",
             "compliance_doc_effective_date": _iso_date(_g(r, "Compliance Action Date")),
         },
+    },
+    "penalties": {
+        # Identity keys on the four fields set once at assessment and never edited:
+        # Action Date + Penalty Type + Document # + Assessment Amount. Two penalties
+        # can share (date, doc#) — e.g. the 5/25/2023 pair on doc 115-05-2023, an
+        # FA $15,300 and an AC $1,424.46 — so Penalty Type + Assessment Amount are
+        # in the key to keep them distinct (they would otherwise flap 'changed'
+        # against each other every run, the exact collision the compliance_actions
+        # identity fix addressed; see test_penalties_sharing_date_and_doc_dont_collide).
+        # The mutable payment fields live in content, so a later payment backfill
+        # re-alerts (as a watch, per _classify_penalty).
+        "identity": lambda r: (_g(r, "Action Date"), _g(r, "Penalty Type"),
+                               _g(r, "Document #"), _g(r, "Assessment Amount")),
+        "content": lambda r: (_g(r, "Scheduled Date"), _g(r, "Scheduled Amount"),
+                              _g(r, "Date Paid"), _g(r, "Amount Paid")),
+        "date": lambda r: _iso_date(_g(r, "Action Date")),
+        "label": lambda r: f"WDS penalty — {_g(r, 'Penalty Type') or '?'} {_g(r, 'Assessment Amount') or ''}".strip(),
+        "detail": lambda r: (f"{_g(r, 'Assessment Amount') or '?'} assessed "
+                             f"({_g(r, 'Action Type') or 'compliance action'}, doc {_g(r, 'Document #') or '?'}); "
+                             f"paid {_g(r, 'Amount Paid') or '-'} {_g(r, 'Date Paid')}").strip(),
+        "classify": _classify_penalty,
+    },
+    "composting_registrations": {
+        # Application Receipt Date is the natural per-registration key (one
+        # registration per application; the six 475946 rows have six distinct
+        # receipt dates). Status / expiration / admin-completeness are the mutable
+        # lifecycle fields that re-alert (as a watch) when they change.
+        "identity": lambda r: (_g(r, "Application Receipt Date"),),
+        "content": lambda r: (_g(r, "Registration Status"),
+                              _g(r, "Registration Expiration Date"),
+                              _g(r, "Is Administratively Complete?"),
+                              _g(r, "Admin Completeness Review Date"),
+                              _g(r, "Registration Types")),
+        "date": lambda r: _iso_date(_g(r, "Application Receipt Date")),
+        "label": lambda r: f"Composting registration (received {_g(r, 'Application Receipt Date') or '?'})",
+        "detail": lambda r: (f"Status {_g(r, 'Registration Status') or '?'}; "
+                             f"expires {_g(r, 'Registration Expiration Date') or '?'}; "
+                             f"admin complete {_g(r, 'Is Administratively Complete?') or '?'}").strip(),
+        "classify": _classify_composting_registration,
+    },
+    "composting_reports": {
+        # One row per report year; the tonnage detail is an opaque fingerprint
+        # (Report Detail) so a later backfill re-alerts (watch). Bare Year sorts
+        # fine on its own, like the annual collection — no _iso_date needed.
+        "identity": lambda r: (_g(r, "Year"),),
+        "content": lambda r: (_g(r, "Report Detail"),),
+        "date": lambda r: _g(r, "Year"),
+        "label": lambda r: f"Composting annual report — {_g(r, 'Year') or '?'}",
+        "detail": lambda r: f"Composting report {_g(r, 'Year') or '?'}: {_g(r, 'Report Detail') or '-'}",
+        "classify": _classify_composting_report,
     },
 }
 

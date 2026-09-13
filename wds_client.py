@@ -210,7 +210,22 @@ _URLS = {
     "annual": lambda w: f"{_BASE}/SolidWaste/AnnualLandfillReports.aspx?w={w}",
     "evaluations": lambda w: f"{_BASE}/Cme/Evaluations.aspx?w={w}",
     "compliance_actions": lambda w: f"{_BASE}/Cme/ComplianceActions.aspx?w={w}",
+    # penalties share the ComplianceActions page with compliance_actions (a nested
+    # sub-grid, a DIFFERENT parse — see fetch_penalties); composting_registrations
+    # and composting_reports are two inline grids on the Utilization landing page.
+    # Two collections can therefore resolve to one URL — fetch_raw_snapshot / the
+    # archiver de-dup by URL so each distinct page is snapshotted only once.
+    "penalties": lambda w: f"{_BASE}/Cme/ComplianceActions.aspx?w={w}",
+    "composting_registrations": lambda w: f"{_BASE}/Utilization/Default.aspx?w={w}",
+    "composting_reports": lambda w: f"{_BASE}/Utilization/Default.aspx?w={w}",
 }
+
+
+def page_url(name: str, w: str) -> str:
+    """The WDS page URL a collection reads. Public accessor over _URLS so
+    wds_archiver can de-dup snapshots (penalties + compliance_actions share the
+    ComplianceActions page; the two composting grids share the Utilization page)."""
+    return _URLS[name](w)
 
 
 def fetch_qmr(w: str) -> list[dict]:
@@ -323,12 +338,182 @@ def fetch_compliance_actions(w: str) -> list[dict]:
                       "ComplianceActionsL", _parse_compliance_actions)
 
 
+# --- Penalties (nested sub-grid on the ComplianceActions page) --------------
+# A compliance action can carry penalty rows; WDS renders them as nested
+# <tr ...SummaryRow> rows under the parent action's DetailEditRow. A penalty row's
+# cells are [ , Penalty Type ("FA - ..."), Assessment Amount ($), Document #,
+# Payment ID, ], optionally FOLLOWED in document order by a payment row
+# [Sched Date, $Sched, Date Paid, $Paid]. This is a faithful port of the
+# hand-verified Lotext scripts/wds_scrape_penalties.py — it reproduces the six
+# 475946 penalty rows ($447,485.46 assessed) exactly (verified live 2026-09-13).
+
+_PTYPE_RE = re.compile(r"^[A-Z]{2} - ")          # "FA - ...", "AC - ..."
+_DATE_ONLY_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
+
+
+def _tr_cells(tr: str) -> list[str]:
+    """Rendered <td> cell texts of one table row, with WebForms' exact-doubling
+    collapse (a value sometimes renders twice inside its own cell)."""
+    t = re.sub(r"<input\b[^>]*>", " ", tr, flags=re.I)
+    t = re.sub(r"<select\b.*?</select>", " ", t, flags=re.S | re.I)
+    out = []
+    for c in re.findall(r"<td[^>]*>(.*?)</td>", t, re.S | re.I):
+        c = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", c))).strip()
+        m = re.match(r"^(.*?)\s+\1$", c)
+        if m:
+            c = m.group(1).strip()
+        out.append(c)
+    return out
+
+
+def _clean_row_text(block: str) -> str:
+    c = re.sub(r"<input\b[^>]*>", " ", block, flags=re.I)
+    c = re.sub(r"<select\b.*?</select>", " ", c, flags=re.S | re.I)
+    return re.sub(r"[ \t\r\n]+", " ", html.unescape(re.sub(r"<[^>]+>", " ", c)))
+
+
+def _parse_penalties_page(h: str) -> list[dict]:
+    """Penalty records on ONE ComplianceActions page. The penalty->payment pairing
+    walks summary rows in DOCUMENT ORDER, so it is done per page — a penalty and its
+    payment row never straddle a page boundary on this grid (verified against
+    475946: all six pair cleanly; test_penalty_and_payment_never_straddle_pages
+    asserts it)."""
+    # Parent-action map: which (date, type) each ctlNN row is a penalty of.
+    actions = {}
+    for m in re.finditer(
+        r'id="ctl00_Body_ComplianceActionsL_R_(ctl\d+)_DetailEditRow"[^>]*>(.*?)</tr>',
+        h, re.S,
+    ):
+        rec = _fields_from_text(_clean_row_text(m.group(2)), _CA_LABELS)
+        actions[m.group(1)] = (rec.get("Compliance Action Date", ""),
+                               rec.get("Compliance Action Type", ""))
+    out, last = [], None
+    for m in re.finditer(
+        r'<tr[^>]*id="ctl00_Body_ComplianceActionsL_R_(ctl\d+)_T_[^"]*SummaryRow"[^>]*>(.*?)</tr>',
+        h, re.S,
+    ):
+        parent = m.group(1)
+        c = (_tr_cells(m.group(2)) + [""] * 6)[:6]
+        if len(c) >= 4 and _PTYPE_RE.match(c[1]) and c[3]:
+            ad, at = actions.get(parent, ("", ""))
+            last = {
+                "Action Date": ad, "Action Type": at, "Penalty Type": c[1],
+                "Assessment Amount": c[2], "Document #": c[3], "Penalty Payment ID": c[4],
+                "Scheduled Date": "", "Scheduled Amount": "", "Date Paid": "", "Amount Paid": "",
+            }
+            out.append(last)
+        elif last is not None and _DATE_ONLY_RE.match(c[0]) and any("$" in x for x in c):
+            # Payment row for the penalty just seen: [SchedDate, $Sched, DatePaid, $Paid].
+            last["Scheduled Date"] = c[0]
+            last["Scheduled Amount"] = c[1]
+            last["Date Paid"] = c[2] if len(c) > 2 else ""
+            last["Amount Paid"] = c[3] if len(c) > 3 else ""
+            last = None
+    return out
+
+
+def fetch_penalties(w: str) -> list[dict]:
+    """Penalty sub-grid across all ComplianceActions pages — same page + pager as
+    fetch_compliance_actions, a different parse. Full-record de-dup guards against a
+    page-repeat double-counting a penalty (mirrors _paged_detail's de-dup)."""
+    op = _opener()
+    url = _URLS["penalties"](w)
+    h = _get(op, url)
+    prefix, pe = _pager(h)
+    out = _parse_penalties_page(h)
+    sep = "&" if "?" in url else "?"
+    for n in range(1, pe + 1):
+        out += _parse_penalties_page(_get(op, url + sep + f"{prefix}={n}*_*0*0"))
+    seen, clean = set(), []
+    for r in out:
+        sig = tuple(sorted(r.items()))
+        if sig in seen:
+            continue
+        seen.add(sig)
+        clean.append(r)
+    return clean
+
+
+# --- Composting (Utilization module: two inline grids) ----------------------
+# Reg  = composting registrations — clean single-value detail rows, so the shared
+#        _paged_detail reader handles it. RptYr = composting report-years; each row
+#        REPEATS Product Types / quantity spans (yard clippings, finished compost,
+#        ...), so _detail_rows' last-wins grouping would DROP the tonnages. Collect
+#        EVERY span value under each RptYr row in document order into one opaque
+#        fingerprint instead (a new year is new; a later tonnage backfill is
+#        changed). The add-a-record template row renders Year "0" -> filtered by
+#        requiring a 4-digit year.
+
+
+def fetch_composting_registrations(w: str) -> list[dict]:
+    return _paged_detail(_opener(), _URLS["composting_registrations"](w), "Reg")
+
+
+_YEAR_RE = re.compile(r"^\d{4}$")
+
+
+def _parse_composting_reports(h: str) -> list[dict]:
+    rows: dict[str, dict] = {}
+    order: list[str] = []
+    for m in re.finditer(
+        r'<span\b([^>]*\bclass="[^"]*detailControl[^"]*"[^>]*)>(.*?)</span>',
+        h, re.S | re.I,
+    ):
+        attrs, inner = m.group(1), m.group(2)
+        ri = re.search(r"RptYr_R_ctl(\d+)_", attrs)
+        if not ri:
+            continue
+        t = re.search(r'title="([^"]*)"', attrs)
+        title = t.group(1).rstrip(":").strip() if t else ""
+        val = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", inner))).strip()
+        k = ri.group(1)
+        if k not in rows:
+            rows[k] = {"Year": "", "values": []}
+            order.append(k)
+        if title == "Year" and not rows[k]["Year"]:
+            rows[k]["Year"] = val
+        if val:
+            rows[k]["values"].append(val)
+    out = []
+    for k in order:
+        r = rows[k]
+        if not _YEAR_RE.match(r["Year"]):     # drops the "Year: 0" add-a-record template
+            continue
+        out.append({"Year": r["Year"], "Report Detail": " | ".join(r["values"])})
+    return out
+
+
+def fetch_composting_reports(w: str) -> list[dict]:
+    """Composting annual report-years on the Utilization page. De-dup by Year (the
+    RptYr pager returns the same rows on each page — the same 'counts more than it
+    displays' quirk Applications has; the watch is forward-looking, so the
+    non-displayed older years being absent from the baseline is harmless)."""
+    op = _opener()
+    url = _URLS["composting_reports"](w)
+    h = _get(op, url)
+    prefix, pe = _pager(h)
+    out = _parse_composting_reports(h)
+    sep = "&" if "?" in url else "?"
+    for n in range(1, pe + 1):
+        out += _parse_composting_reports(_get(op, url + sep + f"{prefix}={n}*_*0*0"))
+    seen, clean = set(), []
+    for r in out:
+        if r["Year"] in seen:
+            continue
+        seen.add(r["Year"])
+        clean.append(r)
+    return clean
+
+
 FETCHERS = {
     "qmr": fetch_qmr,
     "applications": fetch_applications,
     "annual": fetch_annual,
     "evaluations": fetch_evaluations,
     "compliance_actions": fetch_compliance_actions,
+    "penalties": fetch_penalties,
+    "composting_registrations": fetch_composting_registrations,
+    "composting_reports": fetch_composting_reports,
 }
 
 

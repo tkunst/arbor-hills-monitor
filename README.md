@@ -36,8 +36,11 @@ encouragement to comment lives on the advocacy site, not here.
    `wds.enabled: true`) it also
    polls **Stream C** — the EGLE Waste Data System (Part-115 solid waste, site
    475946): quarterly groundwater reports (R5), annual capacity/airspace (R1),
-   permit/license applications (R1), and enforcement (R2). Off by default; see
-   `docs/decisions/009-wds-stream-c.md` for activation.
+   permit/license applications (R1), enforcement actions (R2), assessed
+   **penalties** (R2), and **composting/utilization** registrations + report-years
+   (R1). Off by default; see `docs/decisions/009-wds-stream-c.md` for activation
+   and `docs/decisions/043-wds-composting-penalties-watch.md` for the
+   penalties + composting collections.
 3. **Classify**: each document is OCR'd if needed, then sent to Claude with the
    risk register and signal keywords. Output per doc:
    - `summary`, `key_data_point`
