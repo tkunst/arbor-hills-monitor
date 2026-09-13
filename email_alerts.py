@@ -15,6 +15,7 @@ import os
 import re
 import smtplib
 from email.message import EmailMessage
+from email.utils import parseaddr
 from typing import Optional
 
 # Matches "180F", "180 F", "180°F", "180 degrees F", "180 deg F"
@@ -190,9 +191,12 @@ def resolve_recipients(cfg: dict) -> list:
 
 
 def _norm_email(addr: str) -> str:
-    """Lowercased + trimmed — the canonical form for ALL address comparison
-    (suppression, owner-matching), so case/whitespace never defeats the guard."""
-    return (addr or "").strip().lower()
+    """Bare address, lowercased + trimmed — the canonical form for ALL address
+    comparison (suppression, owner-matching), so case/whitespace/display-name
+    never defeats the guard. parseaddr pulls the address out of a
+    'Name <foo@x.com>' form so a display-name recipient still matches a bare
+    suppressed 'foo@x.com' (SEC-004)."""
+    return parseaddr(addr or "")[1].strip().lower()
 
 
 def _split_env_emails(env_var: str) -> list:
@@ -240,11 +244,14 @@ def load_suppressed_emails(owners: set | None = None, cfg: dict | None = None) -
 
 
 def _unsubscribe_settings(cfg: dict) -> tuple:
-    """(mailto, postal_address) from config, trimmed. BOTH must be non-empty for
-    the apparatus to be ARMED — a compliant message needs a working opt-out method
-    AND a physical postal address. `postal_address` ships EMPTY (Trisha's call), so
-    'postal address configured' is itself the arming switch; there is deliberately
-    no separate `enabled` flag (that would recreate the compliance gap)."""
+    """(mailto, postal_address) from config, trimmed. `mailto` being set ARMS the
+    apparatus — a working opt-out method is the one thing these alerts must give
+    recipients. `postal_address` is OPTIONAL: these are advocacy (non-commercial)
+    alerts, so CAN-SPAM's physical-address rule does not bind, and Trisha's call
+    (2026-09-13) is to expose no postal address. When postal IS set it is added to
+    the footer; when empty the footer simply omits it. There is deliberately no
+    separate `enabled` flag — 'mailto configured' is the single arming switch, so a
+    recipient can never get an armed message without a live opt-out address in it."""
     u = cfg.get("unsubscribe") or {}
     return (u.get("mailto") or "").strip(), (u.get("postal_address") or "").strip()
 
@@ -254,30 +261,34 @@ def build_list_unsubscribe(mailto: str, recipient: str) -> str:
     address to remove, so manual triage (or a future inbox-reader) can add the
     right address to UNSUBSCRIBED_EMAILS without guessing from headers."""
     from urllib.parse import quote
+    addr = quote(mailto, safe="@")   # SEC-003: encode the address, like subj/body
     subj = quote("Unsubscribe: Arbor Hills Landfill Monitor")
     body = quote(
         "Unsubscribe this address from all Arbor Hills Landfill Monitor "
         f"emails: {recipient}"
     )
-    return f"<mailto:{mailto}?subject={subj}&body={body}>"
+    return f"<mailto:{addr}?subject={subj}&body={body}>"
 
 
 def unsubscribe_footer(cfg: dict, mailto: str, postal: str, recipient: str) -> str:
-    """The CAN-SPAM footer: why they receive it, how to opt out (of ALL monitor
-    mail), a clear sender identity, and a valid physical postal address — the two
-    requirements beyond the link. Uses the standard '-- ' signature separator."""
+    """The opt-out footer: why they receive it, how to opt out (of ALL monitor
+    mail), a clear sender identity, and — only if configured — a physical postal
+    address. A working opt-out is the one required element for these advocacy
+    alerts; the postal line is optional and omitted when unset (Trisha's call).
+    Uses the standard '-- ' signature separator."""
     u = cfg.get("unsubscribe") or {}
     sender = (u.get("sender_identity") or "Arbor Hills Landfill Monitor").strip()
     reason = (u.get("receiving_reason")
-              or "You are receiving this because you subscribed to Arbor Hills "
-                 "Landfill Monitor email alerts.").strip()
+              or "You are receiving this because your address was added to the "
+                 "Arbor Hills Landfill Monitor alert list.").strip()
+    postal_line = f"{postal}\n" if postal else ""
     return (
         "\n\n-- \n"
         f"{reason}\n"
         f"To unsubscribe from all Arbor Hills Landfill Monitor emails, reply to "
         f"this message or email {mailto} (this address: {recipient}).\n"
         f"{sender}\n"
-        f"{postal}\n"
+        f"{postal_line}"
     )
 
 
@@ -302,12 +313,14 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
       * The shared suppression list (`UNSUBSCRIBED_EMAILS`) is filtered out of
         EVERY send. Owner addresses (load_owner_emails) are never suppressed.
       * A non-owner recipient's message gets a `List-Unsubscribe` mailto header
-        and a compliant footer (sender identity + postal address + opt-out) — but
-        ONLY when the apparatus is ARMED (unsubscribe.mailto AND
-        unsubscribe.postal_address both set). Owner copies never get the footer.
-      * Fail-safe when NOT armed: a non-owner recipient is DROPPED rather than
-        sent a non-compliant commercial message — self-arming the moment the
-        postal address is filled in. Owners are always sent. If the owner list is
+        and a footer (sender identity + opt-out, plus a postal address only if one
+        is configured) — but ONLY when the apparatus is ARMED (unsubscribe.mailto
+        set). These are advocacy (non-commercial) alerts, so a working opt-out is
+        the one required element; a postal address is optional. Owner copies never
+        get the footer.
+      * Fail-safe when NOT armed (no unsubscribe.mailto): a non-owner recipient is
+        DROPPED rather than sent mail with no way to opt out — self-arming the
+        moment the mailto is set. Owners are always sent. If the owner list is
         EMPTY we cannot classify third parties, so we DON'T drop (never risk
         silencing Trisha) and only warn.
 
@@ -327,9 +340,10 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
     if suppressed and not owners:
         print("[email_alerts] WARNING: UNSUBSCRIBED_EMAILS is set but the owner "
               "list (MONITOR_OWNER_EMAILS / unsubscribe.owner_addresses) is empty "
-              "— owner self-protection is inert and no recipient will be dropped. "
-              "Set the owner list so Trisha's own addresses can never be "
-              "suppressed.")
+              "— suppressed addresses are still dropped, but owner self-protection "
+              "is inert and the unarmed fail-safe holds no one (a third party "
+              "can't be told from an owner). Set the owner list so Trisha's own "
+              "addresses can never be suppressed.")
     recipients = [r for r in recipients if _norm_email(r) not in suppressed]
 
     host = os.environ.get("SMTP_HOST")
@@ -344,7 +358,9 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
         return False
 
     mailto, postal = _unsubscribe_settings(cfg)
-    armed = bool(mailto and postal)
+    # mailto (a working opt-out) is the arming switch; postal is an optional
+    # footer line (advocacy alerts don't require a physical address). ADR 040.
+    armed = bool(mailto)
 
     sender = os.environ.get("SMTP_FROM") or user
     sent = 0
@@ -361,9 +377,11 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
                     out_body = body + unsubscribe_footer(cfg, mailto, postal, recipient)
                     add_unsub_header = True
                 elif owners:
-                    # We can positively tell this is a third party AND we cannot
-                    # be compliant (unarmed) → do NOT send non-compliant mail.
-                    # Self-arms once the postal address is set. Owners unaffected.
+                    # We can positively tell this is a third party AND there is no
+                    # opt-out method configured (unarmed) → do NOT send mail with
+                    # no way to unsubscribe. Self-arms once unsubscribe.mailto is
+                    # set. Owners are never dropped, so a stream that always carries
+                    # an owner (e.g. URGENT) can never be emptied here (trap 4).
                     dropped.append(recipient)
                     continue
                 # else: owners empty → can't classify a third party → send as-is
@@ -381,10 +399,13 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
             server.send_message(msg)
             sent += 1
     if dropped:
+        # SEC-001: log the COUNT only, never the addresses. Held recipients can
+        # include intentionally-private third parties, and Actions logs are
+        # world-readable (CWE-532/CWE-359). If addresses are ever needed for
+        # triage, route them to a private sink, not this log line.
         print(f"[email_alerts] {len(dropped)} non-owner recipient(s) NOT sent "
               f"{subject!r} — unsubscribe apparatus not armed. Set "
-              f"unsubscribe.postal_address (+ unsubscribe.mailto) to send them. "
-              f"Held: {', '.join(dropped)}")
+              f"unsubscribe.mailto to send them. Held: {len(dropped)} recipient(s)")
     print(f"[email_alerts] sent {subject!r} to {sent} recipient(s)")
     return sent > 0
 

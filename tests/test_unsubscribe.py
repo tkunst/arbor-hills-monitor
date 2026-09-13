@@ -33,7 +33,8 @@ COMMISSIONER = "commissioner@washtenaw.org"
 POSTAL = "PO Box 123, Ann Arbor, MI 48104"
 MAILTO = "unsubscribe@trishakunst.com"
 
-# Fully-armed config: mailto + postal both set → apparatus is armed.
+# Armed config that ALSO sets a postal address (mailto arms it; postal is an
+# optional footer line — kept here so the with-postal path stays covered).
 ARMED = {
     "alert_recipients": [OWNER, ALLY],
     "unsubscribe": {
@@ -44,11 +45,12 @@ ARMED = {
     },
 }
 
-# Not armed: no postal address → self-arming fail-safe (non-owners held).
+# Not armed: no opt-out method configured (mailto empty) → self-arming fail-safe
+# holds non-owners rather than send them mail with no way to unsubscribe.
 UNARMED = {
     "alert_recipients": [OWNER, ALLY],
     "unsubscribe": {
-        "mailto": MAILTO,
+        "mailto": "",
         "postal_address": "",
         "owner_addresses": [OWNER],
     },
@@ -149,6 +151,17 @@ def test_unsubscribe_footer_has_identity_postal_and_mailto():
     assert ALLY in footer                            # this recipient's address
 
 
+def test_unsubscribe_footer_omits_postal_when_unset():
+    # Production config (Trisha 2026-09-13): no postal address. The footer still
+    # carries identity + opt-out; it just omits the postal line.
+    footer = ea.unsubscribe_footer(ARMED, MAILTO, "", ALLY)
+    assert "Arbor Hills Landfill Monitor" in footer   # sender identity
+    assert MAILTO in footer                            # opt-out method
+    assert ALLY in footer                              # this recipient's address
+    assert POSTAL not in footer                        # none configured
+    assert "\n\n\n" not in footer                      # no blank line left behind
+
+
 # --------------------------------------------------------------------------- #
 # Suppression (all streams route through send_email)
 # --------------------------------------------------------------------------- #
@@ -217,6 +230,54 @@ def test_armed_nonowner_gets_header_and_footer_owner_does_not(monkeypatch):
     assert owner.get_content().rstrip("\n") == "BODYTEXT"
 
 
+def test_armed_via_mailto_without_postal_footers_and_headers_nonowner(monkeypatch):
+    # The ACTUAL production config: mailto set, NO postal address. mailto alone
+    # arms the apparatus (advocacy alerts need a working opt-out, not an address).
+    srv = _smtp(monkeypatch)
+    monkeypatch.setenv("MONITOR_OWNER_EMAILS", OWNER)
+    cfg = {
+        "alert_recipients": [OWNER, ALLY],
+        "unsubscribe": {"mailto": MAILTO, "postal_address": "",
+                        "owner_addresses": [OWNER]},
+    }
+    ea.send_email("s", "BODYTEXT", cfg, recipients=[OWNER, ALLY])
+    msgs = _by_to(srv)
+    ally = msgs[ALLY]
+    assert ally["List-Unsubscribe"] is not None
+    assert ally["List-Unsubscribe"].startswith(f"<mailto:{MAILTO}")
+    assert "To unsubscribe" in ally.get_content()
+    assert MAILTO in ally.get_content()
+    assert POSTAL not in ally.get_content()          # no postal line configured
+    # owner still clean
+    assert msgs[OWNER]["List-Unsubscribe"] is None
+    assert msgs[OWNER].get_content().rstrip("\n") == "BODYTEXT"
+
+
+def test_suppression_matches_display_name_form(monkeypatch):
+    # SEC-004: a recipient given as "Name <foo@x.com>" must still be suppressed
+    # when foo@x.com is on the opt-out list (parseaddr normalization), else an
+    # opted-out person keeps receiving mail.
+    srv = _smtp(monkeypatch)
+    monkeypatch.setenv("MONITOR_OWNER_EMAILS", OWNER)
+    monkeypatch.setenv("UNSUBSCRIBED_EMAILS", ALLY)
+    ea.send_email("s", "body", ARMED, recipients=[OWNER, f"Ally Person <{ALLY}>"])
+    tos = set(_by_to(srv))
+    assert OWNER in tos
+    assert not any(ALLY in (t or "") for t in tos)   # neither bare nor display form
+
+
+def test_held_recipients_logged_by_count_not_address(monkeypatch, capsys):
+    # SEC-001: held non-owners are logged as a COUNT, never by address (Actions
+    # logs are world-readable).
+    _smtp(monkeypatch)
+    monkeypatch.setenv("MONITOR_OWNER_EMAILS", OWNER)
+    ea.send_email("s", "body", UNARMED, recipients=[OWNER, ALLY, COMMISSIONER])
+    out = capsys.readouterr().out
+    assert "2 recipient(s)" in out                    # the count is logged
+    assert ALLY not in out                            # ...but never the addresses
+    assert COMMISSIONER not in out
+
+
 # --------------------------------------------------------------------------- #
 # Trap 4 — the self-arming fail-safe never empties the URGENT send / never
 # corrupts recap state
@@ -225,9 +286,9 @@ def test_armed_nonowner_gets_header_and_footer_owner_does_not(monkeypatch):
 def test_unarmed_nonowner_held_owner_still_sent_returns_true(monkeypatch):
     srv = _smtp(monkeypatch)
     monkeypatch.setenv("MONITOR_OWNER_EMAILS", OWNER)
-    # not armed (no postal address): the non-owner is HELD rather than sent a
-    # non-compliant message, but the owner is always sent -> True (never a
-    # spurious False that would drop the URGENT recap).
+    # not armed (no mailto): the non-owner is HELD rather than sent mail with no
+    # way to opt out, but the owner is always sent -> True (never a spurious
+    # False that would drop the URGENT recap).
     assert ea.send_email("s", "body", UNARMED, recipients=[OWNER, ALLY]) is True
     tos = set(_by_to(srv))
     assert OWNER in tos
