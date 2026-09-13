@@ -1308,6 +1308,50 @@ gfl_info_site:
   recipients:
     - arbor-hills@trishakunst.com          # Trisha only (operator-narrative watch, not the advocacy list)
 
+# --- Public Water Supply PFAS sampling watch (Stream R, ADR 042, added 2026-09-12) ---
+# OFF BY DEFAULT. A daily snapshot-diff watch on EGLE's Public Water Supply PFAS
+# sampling results (the data behind the statewide MPART PFAS map) for supplies in
+# the Arbor Hills capture zone. This is the DRINKING-WATER half of the PFAS story
+# the landfill's own leachate/groundwater PFAS record can't see. Salem Elementary
+# (WSSN 2001381) sits in the capture zone, is sampled ~annually, and has come back
+# all-non-detect (<2 ppt) across six rounds Dec-2020->Feb-2025. NEW external
+# (non-EGLE-document) source — a keyless ArcGIS FeatureServer, NEVER routed through
+# egle_doc_parser (same ArcGIS idiom as Streams E/I/J).
+#
+# When enabled, pfas_pws_watcher.py fetches every watched WSSN's sampling rows
+# (one query, WSSN IN (...)), snapshots each WSSN's rounds (keyed by the unique
+# SysSampleCode) into the "Public Water Supply PFAS Watch" tab, and alerts on:
+#   (a) a NEW sampling round appearing (even all-non-detect — "sampled again,
+#       still clean" is itself the news), and
+#   (b) any DETECTION of a regulated PFAS (a value that is not a `<`-limit
+#       non-detect). Detections route to the shared Measurements tab
+#       (basis=measured). The classifier is FAIL-SAFE: an unrecognized value
+#       (a future J-flag / new token) is treated as a POSSIBLE detection (alert +
+#       log), never silently dropped. NO MCL comparison is baked in — MI-2020 and
+#       federal-2024 PFAS MCLs differ, so a single-regime "below MCL" label would
+#       be an accuracy trap; the alert gives the raw value + analyte + date, which
+#       is actionable, and points to the applicable standards (see ADR 042).
+# The FIRST run per WSSN baselines silently (a historical detection is noted in
+# the row, not alerted — the watch is forward-looking).
+#
+# ACTIVATION — same pattern as MMD / RIDE / PFAS: review + merge; the first
+# enabled run baselines every WSSN silently; flip enabled here to pause/resume
+# (the tab holds the state). Keyless — no secret to provision.
+pfas_pws:
+  enabled: false
+  # EGLE PublicWaterSupplySamplingOpenData FeatureServer, layer 1 (query endpoint).
+  service_url: "https://gisagoegle.state.mi.us/arcgis/rest/services/EGLE/PublicWaterSupplySamplingOpenData/FeatureServer/1/query"
+  # Watched Public Water System Serial Numbers. Start with Salem Elementary
+  # (in the landfill's capture zone); add other capture-zone WSSNs here as they
+  # are identified — no code change needed.
+  wssns:
+    - 2001381    # SALEM ELEMENTARY SCHOOL, 7806 Salem Rd (Type 2 provisional WHPA; capture zone)
+  # Recipient override: Trisha only to start (Meeting Watch / MMD / RIDE / GFL-info
+  # precedent for a brand-new stream). Delete/comment this block to send to the
+  # full alert_recipients list once the alert copy has been seen in the wild.
+  recipients:
+    - arbor-hills@trishakunst.com
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 # NOTE (2026-08-21, Trisha's direction): this list is committed to a PUBLIC repo,

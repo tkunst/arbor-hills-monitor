@@ -1,0 +1,61 @@
+name: pfas-pws-watch
+
+# EGLE Public Water Supply PFAS sampling watch (Stream R, ADR 042): daily
+# snapshot-diff on EGLE's keyless ArcGIS FeatureServer of Public Water Supply
+# PFAS results, for supplies in the Arbor Hills capture zone (Salem Elementary
+# WSSN 2001381 to start). Emails an alert on a NEW sampling round or any
+# DETECTION vs. the last snapshot in the "Public Water Supply PFAS Watch" tab;
+# detections also route to the shared Measurements tab (basis=measured). First
+# sighting of each WSSN baselines silently.
+#
+# Safe to leave scheduled from day one: pfas_pws.enabled gates the run —
+# pfas_pws_watcher._should_run() makes every run a quiet no-op (exit 0) while
+# it's false. No Anthropic (a deterministic snapshot-diff, not the Claude
+# classifier) and no Drive/OAuth (the deliverable is the alert + the durable
+# Sheet row + the Measurements rows — same scope call as pfas/mmd/rop, ADR 012).
+# 12pm ET takes a free slot after mmd-watch's 11am; state is the "Public Water
+# Supply PFAS Watch" tab, NOT _meta, so it never races the other jobs.
+on:
+  schedule:
+    - cron: "0 17 * * *"    # 12pm ET (5pm UTC). DST drift of +/-1h is acceptable.
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pfas-pws-watch
+  cancel-in-progress: false
+
+jobs:
+  pfas-pws-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Watch Public Water Supply PFAS sampling for changes
+        env:
+          # Sheets I/O uses the service account; the change alert uses SMTP.
+          # No Anthropic (nothing to classify) and no OAuth (no Drive mirror).
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
+        run: python pfas_pws_watcher.py
