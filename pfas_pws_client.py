@@ -68,10 +68,15 @@ RECORD_FIELDS = ("WSSN", "SystemName", "LocName", "SysSampleCode", "SampleDate",
                  *ANALYTES)
 _OUTFIELDS = ",".join(RECORD_FIELDS)
 
-# Recognized NON-DETECT tokens (besides a `<`-prefixed reporting limit like
-# "<2"/"<4"). Uppercased before matching. Anything not matched here and not a
-# number is treated as a POSSIBLE detection, never as clean.
+# Recognized NON-DETECT tokens for a WHOLE-string match (besides a `<`-prefixed
+# reporting limit like "<2"/"<4"). Uppercased before matching.
 _NONDETECT_TOKENS = frozenset(("ND", "NOT DETECTED", "BDL", "U", "<RL"))
+# Recognized non-detect QUALIFIER flags that can trail a number (e.g. "5 U",
+# "5 UJ", "2 ND") — a numeric carrying one of these is a NON-DETECT at that
+# reporting limit, NOT a detection. Distinct from an estimated-value flag like
+# "J" ("2.1 J" IS a detection). Anything not matched here and not a clean number
+# is treated as a POSSIBLE detection, never as clean.
+_NONDETECT_FLAGS = frozenset(("U", "UJ", "ND", "BDL"))
 
 
 class PwsFetchError(RuntimeError):
@@ -183,14 +188,19 @@ def classify_value(raw) -> tuple[str, float | None]:
         return ("nodata", None)
     if s.startswith("<") or s.upper() in _NONDETECT_TOKENS:
         return ("nondetect", None)
+    # A numeric carrying a non-detect qualifier flag (e.g. "5 U", "2 ND") is a
+    # non-detect at that limit — NOT a detection. (An estimated-value flag like
+    # "J" is different: "2.1 J" IS a detection.)
+    tokens = s.split()
+    if any(t.upper() in _NONDETECT_FLAGS for t in tokens):
+        return ("nondetect", None)
     try:
         return ("detection", float(s))
     except ValueError:
-        # Strip a trailing qualifier token, e.g. "2.1 J" -> "2.1".
-        head = s.split()[0]
+        # Strip a trailing estimated-value qualifier token, e.g. "2.1 J" -> "2.1".
         try:
-            return ("detection", float(head))
-        except ValueError:
+            return ("detection", float(tokens[0]))
+        except (ValueError, IndexError):
             return ("unrecognized", None)
 
 

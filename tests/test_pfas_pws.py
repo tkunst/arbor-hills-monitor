@@ -135,7 +135,8 @@ def test_fetch_non_numeric_wssn_crashes_loudly():
     ("<2", "nondetect"), ("<4", "nondetect"), ("ND", "nondetect"),
     ("NOT DETECTED", "nondetect"), ("BDL", "nondetect"),
     ("2", "detection"), ("1.9", "detection"), ("3.1", "detection"),
-    ("2.1 J", "detection"),                       # trailing qualifier stripped
+    ("2.1 J", "detection"),                       # estimated-value flag: still a detection
+    ("5 U", "nondetect"), ("2 UJ", "nondetect"),  # non-detect qualifier flag on a number
     ("", "nodata"), (None, "nodata"),
     ("junk", "unrecognized"),                     # fail-safe: never silently clean
 ])
@@ -230,6 +231,40 @@ def test_format_change_body_mentions_label_note_body():
     assert "WSSN 2001381" in b and "note-x" in b and "line-1" in b
 
 
+def test_metadata_edit_on_detection_round_is_not_flagged():
+    # A LocName-only correction to a round that ALREADY holds a detection must NOT
+    # re-flag that detection (review finding #1).
+    withdet = baseline_records() + [_row(2001381, "HIT", _ms(2026, 1, 1), "EP01", PFOS="7")]
+    edited = baseline_records() + [_row(2001381, "HIT", _ms(2026, 1, 1), "EP-01", PFOS="7")]
+    diff = pw.diff_rounds(pw.wssn_snapshot(withdet, 2001381),
+                          pw.wssn_snapshot(edited, 2001381))
+    note, body, is_det = pw.summarize_change(diff)
+    assert is_det is False
+    assert pw.flagged_detections(diff) == []
+    assert "revised" in body                       # named as a revision, not a detection
+
+
+def test_round_corrected_into_detection_is_flagged_and_named():
+    old = pw.wssn_snapshot(baseline_records(), 2001381)
+    corrected = [dict(r) for r in baseline_records()]
+    corrected[0]["PFOS"] = "12"                    # 871103.01: <2 -> detection
+    diff = pw.diff_rounds(old, pw.wssn_snapshot(corrected, 2001381))
+    note, body, is_det = pw.summarize_change(diff)
+    assert is_det is True
+    assert "NEW DETECTION" in body and "PFOS 12 ppt" in body
+    assert len(pw.flagged_detections(diff)) == 1
+
+
+def test_sample_code_collision_preserves_both_rounds():
+    # A SysSampleCode collision must NOT silently drop a round (would drop a
+    # detection — review finding #2). Both rounds survive, the detection visible.
+    dup = [_row(2001381, "DUP", _ms(2026, 2, 1), "EP01"),
+           _row(2001381, "DUP", _ms(2026, 2, 2), "EP02", PFOS="9")]
+    snap = pw.wssn_snapshot(dup, 2001381)
+    assert len(snap["rounds"]) == 2
+    assert any(d["analyte"] == "PFOS" for d in pw.all_detections(list(snap["rounds"].values())))
+
+
 # ==============================================================================
 # Watcher — run() flows (fake Sheets, canned fetch, captured mailer)
 # ==============================================================================
@@ -319,6 +354,37 @@ def test_detection_elevates_and_writes_measurement(monkeypatch):
     assert len(meas) == 1
     # Measurements headers: [As-Of, Well ID, Metric, Value, Unit, Basis, ...]
     assert meas[0][2] == "pfas_pfos" and meas[0][3] == "18" and meas[0][5] == "measured"
+
+
+def test_edited_detection_round_does_not_re_alert_or_re_route(monkeypatch):
+    # End-to-end (review finding #1): a metadata-only edit to a round that already
+    # holds a detection must NOT elevate to "DETECTION" or write a phantom
+    # duplicate to Measurements.
+    withdet = baseline_records() + [_row(2001381, "HIT", _ms(2026, 1, 1), "EP01", PFOS="7")]
+    fake, sent = _wire(monkeypatch, records=withdet)
+    assert pw.run() == 0                            # baseline: silent, no Measurements
+    assert sent == [] and _meas_rows(fake) == []
+    edited = baseline_records() + [_row(2001381, "HIT", _ms(2026, 1, 1), "EP-01", PFOS="7")]
+    monkeypatch.setattr(pw.pc, "fetch_results",
+                        lambda wssns=None, url=None, timeout=60: copy.deepcopy(edited))
+    assert pw.run() == 0
+    assert [r for r in _rows(fake) if r[3] == "changed"]   # recorded as a change
+    assert not any(r[3] == "detection" for r in _rows(fake))
+    assert not any("DETECTION" in s[0] for s in sent)      # NOT re-cried as a detection
+    assert _meas_rows(fake) == []                          # known detection NOT re-written
+
+
+def test_round_corrected_into_detection_alerts_and_routes(monkeypatch):
+    fake, sent = _wire(monkeypatch)                 # baseline: all Salem clean
+    assert pw.run() == 0
+    corrected = [dict(r) for r in baseline_records()]
+    corrected[0]["PFOS"] = "12"                     # EGLE corrects 871103.01 to a detection
+    monkeypatch.setattr(pw.pc, "fetch_results",
+                        lambda wssns=None, url=None, timeout=60: copy.deepcopy(corrected))
+    assert pw.run() == 0
+    assert any(r[3] == "detection" for r in _rows(fake))
+    assert any("DETECTION" in s[0] and "PFOS 12 ppt" in s[1] for s in sent)
+    assert len(_meas_rows(fake)) == 1
 
 
 def test_baseline_with_historical_detection_is_silent_but_noted(monkeypatch):
