@@ -171,6 +171,17 @@ def all_detections(views: list[dict]) -> list[dict]:
     return out
 
 
+def _fresh_detections(old_view: dict, new_view: dict) -> list[dict]:
+    """The detections present in a CHANGED round's new view that were NOT already
+    detections in its old view (keyed on analyte + raw value). The single source
+    of truth for "what's newly detected on this changed round" — used by both
+    flagged_detections (routing/elevation) and summarize_change (the body), so the
+    two can't drift."""
+    old_set = {(d["analyte"], d["raw"]) for d in pc.round_detections(old_view)}
+    return [d for d in pc.round_detections(new_view)
+            if (d["analyte"], d["raw"]) not in old_set]
+
+
 def flagged_detections(diff: dict) -> list[dict]:
     """The detections that should ELEVATE an alert + route to Measurements: every
     detection in a brand-NEW round, PLUS only the detections in a CHANGED round
@@ -180,10 +191,7 @@ def flagged_detections(diff: dict) -> list[dict]:
     duplicate to the Measurements system-of-record (review finding #1)."""
     out = all_detections(diff["new"])
     for old_v, new_v in diff["changed"]:
-        old_set = {(d["analyte"], d["raw"]) for d in pc.round_detections(old_v)}
-        fresh = [d for d in pc.round_detections(new_v)
-                 if (d["analyte"], d["raw"]) not in old_set]
-        out.extend(_tag_detections(new_v, fresh))
+        out.extend(_tag_detections(new_v, _fresh_detections(old_v, new_v)))
     return out
 
 
@@ -209,9 +217,7 @@ def summarize_change(diff: dict) -> tuple[str, str, bool]:
             lines.append(f"+ NEW ROUND {v['sample_date']} @ {v['loc'] or '—'}: "
                          "all seven regulated PFAS non-detect")
     for old_v, v in diff["changed"]:
-        old_set = {(x["analyte"], x["raw"]) for x in pc.round_detections(old_v)}
-        fresh = [x for x in pc.round_detections(v)
-                 if (x["analyte"], x["raw"]) not in old_set]
+        fresh = _fresh_detections(old_v, v)
         if fresh:
             lines.append(f"~ ROUND UPDATED {v['sample_date']} @ {v['loc'] or '—'}: "
                          f"NEW DETECTION — {_det_str(fresh)}")
@@ -223,7 +229,10 @@ def summarize_change(diff: dict) -> tuple[str, str, bool]:
 
     n_new = len(diff["new"])
     if dets:
-        note = f"PFAS DETECTED — {len(dets)} result(s) across {n_new} new round(s)"
+        # Count RESULTS, not "new rounds" — a detection can arrive via a
+        # correction to an existing round (0 new rounds), so conflating the two
+        # would print a wrong number into the public Sheet's Change column.
+        note = f"PFAS DETECTED — {len(dets)} result(s)"
     elif n_new:
         note = f"{n_new} new sampling round(s), all non-detect"
     elif diff["changed"] or diff["removed"]:
