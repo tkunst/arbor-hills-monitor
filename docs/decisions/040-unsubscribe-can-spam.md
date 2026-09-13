@@ -1,8 +1,42 @@
 # ADR 040 — CAN-SPAM unsubscribe for the multi-recipient alert emails
 
-**Status:** accepted (2026-09-10) · applies to the LIVE outbound-mail path ·
-opened as a **draft PR for Trisha's review — NOT auto-merged** (it changes real
-outbound mail AND needs her postal-address decision; overnight-coder Step 8).
+**Status:** accepted (2026-09-10) · **amended 2026-09-13 (see below)** · applies to
+the LIVE outbound-mail path · opened as a **draft PR for Trisha's review — NOT
+auto-merged** (it changes real outbound mail; overnight-coder Step 8).
+
+## Amendment (2026-09-13, Trisha-directed)
+
+Two decisions taken while walking Trisha through activation change the design as
+originally written below. The body is kept intact as the historical record; where
+it and this amendment differ, **this amendment governs.**
+
+1. **Arming switch moves from the postal address to `unsubscribe.mailto`; the
+   postal address becomes OPTIONAL.** These alerts are *advocacy* (non-commercial —
+   they promote no product or service), so CAN-SPAM's mandatory-physical-address
+   rule does not bind them; the one element recipients must get is a **working
+   opt-out.** US email law is opt-**out**, not opt-in, so manually adding recipients
+   (there is no signup form) is lawful as long as the opt-out works and is honored.
+   Trisha's call: **expose no postal address.** So `armed = bool(mailto)` (was
+   `bool(mailto and postal)`); `unsubscribe_footer` omits the postal line when
+   unset; `config.yml` keeps `mailto` set and `postal_address: ""`. A postal line
+   can be added later (e.g. a PO box) with no code change. The `receiving_reason`
+   footer line was corrected from "you subscribed" to "your address was added"
+   (accurate for a manually-curated list).
+
+2. **Step-6 hard-stop (SEC-001) cleared.** The fail-safe log line no longer prints
+   held-recipient addresses to the world-readable Actions logs — it logs a **count
+   only** (`Held: N recipient(s)`). Folded into the same pass: SEC-003 (the
+   `List-Unsubscribe` mailto is now `quote`-encoded), SEC-004 (`_norm_email` uses
+   `email.utils.parseaddr`, so a `Name <a@b>` recipient still matches a bare
+   suppressed `a@b`), and two LOW code-review wording fixes. 4 new tests added
+   (footer-omits-postal, armed-via-mailto-no-postal, display-name suppression,
+   count-only logging); full suite 1468 passed.
+
+**Operational core — honoring opt-outs (unchanged, restated):** the apparatus
+*offers* the opt-out; a human still closes the loop. When someone replies/emails
+`unsubscribe@trishakunst.com`, their address must be added to the
+`UNSUBSCRIBED_EMAILS` secret (and never re-added). An unmonitored opt-out mailbox
+is the real failure mode.
 
 ## Context
 

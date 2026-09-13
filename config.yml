@@ -1300,16 +1300,20 @@ temperature_thresholds:
 #     UNSUBSCRIBED_EMAILS secret; an auto-reader is a documented follow-on.
 unsubscribe:
   # The opt-out mailbox. A @trishakunst.com alias (Cloudflare catch-all → Gmail)
-  # is public-safe to print. Half of the arming condition.
+  # is public-safe to print. This is THE arming switch: set = apparatus armed
+  # (non-owners get the header + footer); blank it and non-owners are held.
   mailto: unsubscribe@trishakunst.com
-  # CAN-SPAM's required physical postal address. Trisha's decision — a PO box is
-  # fine. EMPTY = apparatus NOT armed (third parties held, owner still emailed).
+  # OPTIONAL physical postal address. These are advocacy (non-commercial) alerts,
+  # so CAN-SPAM's physical-address rule does not apply; Trisha's call (2026-09-13)
+  # is to expose none. EMPTY = the footer simply omits the postal line (still
+  # armed via mailto). Set it later (e.g. a PO box) only if you want one printed.
   postal_address: ""
   # Clear sender identity printed in the footer (neutral, per the data-layer
   # posture — this is the monitor, not any advocacy org).
   sender_identity: "Arbor Hills Landfill Monitor"
-  # Why the recipient is getting the email (CAN-SPAM footer line). Optional.
-  receiving_reason: "You are receiving this because you subscribed to Arbor Hills Landfill Monitor email alerts."
+  # Why the recipient is getting the email (footer line). Recipients are added
+  # manually (there is no signup form), so this says "added," not "subscribed."
+  receiving_reason: "You are receiving this because your address was added to the Arbor Hills Landfill Monitor alert list."
   # Trisha's OWN addresses — never suppressed, never held, never footered. The
   # non-sensitive catch-all lives here (it is already public in alert_recipients);
   # PRIVATE addresses (proton / gmail) go in the MONITOR_OWNER_EMAILS *secret*,
