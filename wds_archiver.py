@@ -108,16 +108,30 @@ def run() -> int:
     today = _today()
     tmp = tempfile.gettempdir()
 
+    # Some collections read the SAME page (penalties + compliance_actions share
+    # the ComplianceActions page; composting_registrations + composting_reports
+    # share the Utilization page). The snapshot is per PAGE, so record each distinct
+    # URL once — the first collection that owns it snapshots it, later siblings skip.
     uploaded = skipped = 0
+    snapshotted_urls: set[str] = set()
     for name in enabled_collections:
         if name not in ww.COLLECTIONS:
             print(f"[wds-archive] unknown collection {name!r} — skipping")
+            continue
+        try:
+            page_url = wc.page_url(name, w)
+        except KeyError:
+            print(f"[wds-archive] {name}: no page URL registered — skipping")
+            continue
+        if page_url in snapshotted_urls:
+            print(f"[wds-archive] {name}: shares a page already snapshotted this run — skipping")
             continue
         try:
             pages = wc.fetch_raw_snapshot(name, w)
         except Exception as e:  # noqa: BLE001 — WDSFetchError / network → skip, warn
             print(f"[wds-archive] {name}: fetch failed, skipping this run: {e}")
             continue
+        snapshotted_urls.add(page_url)
 
         col_hashes = hashes.setdefault(name, {})
         for i, html in enumerate(pages):

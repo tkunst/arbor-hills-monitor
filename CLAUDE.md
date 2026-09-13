@@ -81,6 +81,16 @@ external users but no sensitive data). Public repo.
   each doc to Drive inline (`archiver.mirror_one_now()`) before writing its
   Sheet row.
 - `watcher.py` — daily new-doc check + alerts (+ WDS Stream C when enabled).
+  Stream C (`wds_watcher.py` + `wds_client.py`) polls eight WDS collections for
+  site 475946: applications/qmr/annual/evaluations/compliance_actions plus
+  **penalties** (nested penalty sub-grid on the ComplianceActions page — new
+  assessed penalty = notable R2, NOT urgent, to avoid a double-fire with
+  compliance_actions' urgent on the same page-event; payment backfill = watch) and
+  **composting_registrations** / **composting_reports** (the Utilization module's
+  Reg + RptYr grids — new registration = notable R1, new report-year = watch R1).
+  All notable/watch → weekly digest. `wds_archiver.py` de-dups snapshots by page
+  URL so penalties/compliance_actions and the two composting grids don't
+  double-snapshot their shared pages. See ADR 043.
   Same inline-mirror-before-write as backfill.py.
 - `pfas_client.py` — content-hash normalizer for EGLE's PFAS pages (isolates
   `<main>`, ignores Sitecore theme cache-busters). Pure; stdlib-only.

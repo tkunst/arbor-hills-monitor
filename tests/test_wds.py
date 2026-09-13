@@ -364,6 +364,241 @@ def test_historical_events_one_per_row_matches_live_classification():
     assert events[1]["severity"] == "watch"
 
 
+# ===========================================================================
+# ADR 043 — the last coverage-matrix gap: penalties + composting/utilization.
+# ===========================================================================
+
+# --- Registry consistency: fetchers and collections stay in lockstep -------
+
+def test_fetchers_and_collections_cover_the_same_names():
+    # A new collection must be wired in BOTH the fetch layer and the classify
+    # layer; check_wds/wds_archiver iterate one against the other, so a name in
+    # only one would silently go unfetched or unclassified.
+    assert set(wc.FETCHERS) == set(ww.COLLECTIONS)
+
+
+def test_new_collections_are_registered():
+    for name in ("penalties", "composting_registrations", "composting_reports"):
+        assert name in ww.COLLECTIONS
+        assert name in wc.FETCHERS
+
+
+# --- Penalties: parser (nested penalty->payment sub-grid) -------------------
+
+def _ca_page(*, parent="ctl01", date="5/25/2023",
+             atype="311 - STATE COMPLIANCE ORDER 3008(A)", penalties=()):
+    """A minimal ComplianceActions page: one parent action DetailEditRow plus its
+    nested penalty/payment SummaryRow rows, reproducing the real WDS structure the
+    live parser walks. Each `penalties` entry is (ptype, amount, doc, pay_id,
+    sched_date, sched_amt, paid_date, paid_amt); a payment SummaryRow is emitted
+    only when the paid/sched fields are given."""
+    parts = [
+        f'<tr id="ctl00_Body_ComplianceActionsL_R_{parent}_DetailEditRow"><td>'
+        f'Compliance Action Date: {date} Compliance Action Type: {atype} '
+        f'Determined By: EGLE</td></tr>'
+    ]
+    for i, (ptype, amt, doc, pay_id, sd, sa, pd, pa) in enumerate(penalties):
+        parts.append(
+            f'<tr id="ctl00_Body_ComplianceActionsL_R_{parent}_T_p{i}_SummaryRow">'
+            f'<td></td><td>{ptype}</td><td>{amt}</td><td>{doc}</td>'
+            f'<td>{pay_id}</td><td></td></tr>')
+        if sd or pd:
+            parts.append(
+                f'<tr id="ctl00_Body_ComplianceActionsL_R_{parent}_T_q{i}_SummaryRow">'
+                f'<td>{sd}</td><td>{sa}</td><td>{pd}</td><td>{pa}</td></tr>')
+    return "<html><body><table>" + "".join(parts) + "</table></body></html>"
+
+
+def test_parse_penalties_pairs_penalty_with_its_payment_and_reads_parent():
+    h = _ca_page(penalties=[
+        ("FA - FINAL MONETARY PENALTY", "$15,300.00", "115-05-2023", "RMD60021",
+         "6/26/2023", "$15,300.00", "6/2/2023", "$15,300.00"),
+        ("AC - FINAL ASSESSED COSTS", "$1,424.46", "115-05-2023", "RMD60021",
+         "6/26/2023", "$1,424.46", "6/2/2023", "$1,424.46"),
+    ])
+    rows = wc._parse_penalties_page(h)
+    assert len(rows) == 2                       # two penalties under one action
+    fa, ac = rows
+    # Parent action fields are joined onto each penalty.
+    assert fa["Action Date"] == "5/25/2023"
+    assert fa["Action Type"] == "311 - STATE COMPLIANCE ORDER 3008(A)"
+    assert fa["Penalty Type"] == "FA - FINAL MONETARY PENALTY"
+    assert fa["Assessment Amount"] == "$15,300.00"
+    assert fa["Document #"] == "115-05-2023"
+    # The FOLLOWING payment row is paired onto the right penalty (document order).
+    assert fa["Date Paid"] == "6/2/2023"
+    assert fa["Amount Paid"] == "$15,300.00"
+    assert ac["Penalty Type"] == "AC - FINAL ASSESSED COSTS"
+    assert ac["Amount Paid"] == "$1,424.46"
+
+
+def test_penalty_and_payment_never_straddle_pages():
+    # Each ComplianceActions page is parsed independently (_parse_penalties_page),
+    # so a payment row with no penalty row ABOVE IT ON THE SAME PAGE is ignored —
+    # a penalty and its payment can never be paired across a page boundary. (On the
+    # live 475946 grid all six pairs sit on one page; this asserts the structural
+    # guarantee rather than relying on that.)
+    payment_only = ('<tr id="ctl00_Body_ComplianceActionsL_R_ctl01_T_q0_SummaryRow">'
+                    '<td>6/26/2023</td><td>$15,300.00</td><td>6/2/2023</td>'
+                    '<td>$15,300.00</td></tr>')
+    assert wc._parse_penalties_page(payment_only) == []
+
+
+# --- Penalties: classifier + diff (identity, collision, backfill) -----------
+
+def _penalty(ptype, amt, doc, paid_date="", paid_amt="", sched_date="", sched_amt=""):
+    return {"Action Date": "5/25/2023", "Action Type": "311 - STATE COMPLIANCE ORDER 3008(A)",
+            "Penalty Type": ptype, "Assessment Amount": amt, "Document #": doc,
+            "Penalty Payment ID": "RMD60021", "Scheduled Date": sched_date,
+            "Scheduled Amount": sched_amt, "Date Paid": paid_date, "Amount Paid": paid_amt}
+
+
+def test_new_penalty_is_notable_not_urgent():
+    # Deliberately NOT urgent — compliance_actions already fires urgent on the
+    # parent enforcement event on the same page; urgent here would double-fire.
+    sev, dtype, risks = ww._classify_penalty(
+        _penalty("FA - FINAL MONETARY PENALTY", "$355,109.00", "2020-0593-CE"), False)
+    assert sev == "notable"
+    assert risks == ["R2"]
+
+
+def test_penalty_payment_backfill_is_a_single_changed_watch():
+    unpaid = _penalty("FA - FINAL MONETARY PENALTY", "$355,109.00", "2020-0593-CE",
+                      paid_amt="$0.00", sched_date="4/8/2022", sched_amt="$355,109.00")
+    _e, entry, _n = ww.diff_collection("penalties", [unpaid], _empty(), {})
+    paid = dict(unpaid, **{"Date Paid": "5/1/2022", "Amount Paid": "$355,109.00"})
+    events, _e2, _n2 = ww.diff_collection("penalties", [paid], entry, {})
+    assert len(events) == 1
+    assert events[0]["kind"] == "changed"
+    assert events[0]["severity"] == "watch"     # penalty getting paid = good news
+
+
+def test_penalties_sharing_date_and_doc_dont_collide():
+    # The real 5/25/2023 pair on doc 115-05-2023: an FA ($15,300) and an AC
+    # ($1,424.46). They share Action Date AND Document # — Penalty Type +
+    # Assessment Amount are in the identity to keep them two distinct records
+    # (else they'd flap 'changed' against each other every run, the collision the
+    # compliance_actions identity fix guards against).
+    fa = _penalty("FA - FINAL MONETARY PENALTY", "$15,300.00", "115-05-2023",
+                  paid_date="6/2/2023", paid_amt="$15,300.00")
+    ac = _penalty("AC - FINAL ASSESSED COSTS", "$1,424.46", "115-05-2023",
+                  paid_date="6/2/2023", paid_amt="$1,424.46")
+    _e, entry, _n = ww.diff_collection("penalties", [fa, ac], _empty(), {})
+    assert len(entry["records"]) == 2
+    # Re-polling the identical two rows must be a permanent no-op, not flap.
+    events, entry2, _n2 = ww.diff_collection("penalties", [fa, ac], entry, {})
+    assert events == []
+    assert entry2 == entry
+
+
+def test_new_penalty_after_baseline_alerts_notable():
+    fa = _penalty("FA - FINAL MONETARY PENALTY", "$15,300.00", "115-05-2023")
+    _e, entry, _n = ww.diff_collection("penalties", [fa], _empty(), {})
+    ac = _penalty("AC - FINAL ASSESSED COSTS", "$1,424.46", "115-05-2023")
+    events, _e2, _n2 = ww.diff_collection("penalties", [fa, ac], entry, {})
+    assert len(events) == 1
+    assert events[0]["kind"] == "new"
+    assert events[0]["severity"] == "notable"
+    assert events[0]["risks"] == ["R2"]
+
+
+# --- Composting registrations ----------------------------------------------
+
+def _reg(receipt, status, expires="8/5/2030", complete="Yes"):
+    return {"Application Receipt Date": receipt, "Registration Status": status,
+            "Registration Expiration Date": expires, "Is Administratively Complete?": complete,
+            "Admin Completeness Review Date": "8/5/2025", "Registration Types": ""}
+
+
+def test_new_composting_registration_is_notable_status_change_is_watch():
+    assert ww._classify_composting_registration(_reg("5/20/2025", "Accepting from public"), False)[0] == "notable"
+    assert ww._classify_composting_registration(_reg("5/20/2025", "EXPIRED"), True)[0] == "watch"
+    # R1 — the compost parcel next to the landfill.
+    assert ww._classify_composting_registration(_reg("5/20/2025", "Accepting from public"), False)[2] == ["R1"]
+
+
+def test_composting_registration_diff_new_then_status_flip():
+    active = _reg("5/20/2025", "Accepting from public")
+    _e, entry, _n = ww.diff_collection("composting_registrations", [active], _empty(), {})
+    # A NEW registration (new receipt date) after baseline = notable.
+    fresh = _reg("6/1/2027", "Accepting from public", expires="6/1/2032")
+    events, entry2, _n2 = ww.diff_collection("composting_registrations", [active, fresh], entry, {})
+    assert len(events) == 1 and events[0]["kind"] == "new" and events[0]["severity"] == "notable"
+    # An in-place status flip on the existing registration = changed/watch.
+    expired = dict(active, **{"Registration Status": "EXPIRED"})
+    events2, _e3, _n3 = ww.diff_collection("composting_registrations", [expired, fresh], entry2, {})
+    assert len(events2) == 1 and events2[0]["kind"] == "changed" and events2[0]["severity"] == "watch"
+
+
+# --- Composting report-years (RptYr parser + classifier) --------------------
+
+def _rptyr_span(row, title, value):
+    idpart = f'id="ctl00_Body_RptYr_R_ctl{row:02d}_D_x"'
+    cls = 'class="detailControl plainText2ca"'
+    titleattr = f'title="{title}:"' if title else ''
+    return f"<span {idpart} {titleattr} {cls}>{value}</span>"
+
+
+def test_parse_composting_reports_keeps_all_tonnages_and_drops_template():
+    # One real report-year row REPEATS Product Types / quantity spans; the fingerprint
+    # must keep ALL of them (last-wins grouping would drop the finished-compost line).
+    # The trailing Year "0" row is WDS's add-a-record template and must be filtered.
+    h = "<html><body>" + "".join([
+        _rptyr_span(0, "Year", "2025"),
+        _rptyr_span(0, "Product Types", "YC - Yard clippings"),
+        _rptyr_span(0, "", "35,053.0"),
+        _rptyr_span(0, "", "YARD WASTE FROM 7 COUNTIES"),
+        _rptyr_span(0, "Product Types", "FC - Finished compost"),
+        _rptyr_span(0, "", "93,442.0"),
+        _rptyr_span(1, "Year", "0"),          # add-a-record template
+    ]) + "</body></html>"
+    rows = wc._parse_composting_reports(h)
+    assert len(rows) == 1                       # the Year "0" template row is dropped
+    assert rows[0]["Year"] == "2025"
+    detail = rows[0]["Report Detail"]
+    # BOTH product types + BOTH tonnages survive (proving not last-wins).
+    for token in ("YC - Yard clippings", "35,053.0", "FC - Finished compost", "93,442.0"):
+        assert token in detail
+
+
+def test_composting_report_new_year_is_watch_and_backfill_re_alerts():
+    r2024 = {"Year": "2024", "Report Detail": "YC | 130,844.0"}
+    _e, entry, _n = ww.diff_collection("composting_reports", [r2024], _empty(), {})
+    # A new report year appearing = watch (R1 refresh), date is the bare year.
+    r2025 = {"Year": "2025", "Report Detail": "YC | 35,053.0"}
+    events, entry2, _n2 = ww.diff_collection("composting_reports", [r2024, r2025], entry, {})
+    assert len(events) == 1
+    assert events[0]["kind"] == "new"
+    assert events[0]["severity"] == "watch"
+    assert events[0]["risks"] == ["R1"]
+    assert events[0]["date"] == "2025"          # bare year, like annual
+    # A later tonnage backfill on an existing year re-alerts once (changed/watch).
+    r2025b = {"Year": "2025", "Report Detail": "YC | 35,053.0 | FC | 2,000.0"}
+    events2, _e3, _n3 = ww.diff_collection("composting_reports", [r2024, r2025b], entry2, {})
+    assert len(events2) == 1 and events2[0]["kind"] == "changed" and events2[0]["severity"] == "watch"
+
+
+# --- Archiver URL-dedup key -------------------------------------------------
+
+def test_page_url_shared_pages_collapse_for_archiver_dedup():
+    # wds_archiver de-dups snapshots by page_url, so collections that read the same
+    # page MUST resolve to the identical URL (penalties + compliance_actions on the
+    # ComplianceActions page; the two composting grids on the Utilization page) and
+    # genuinely distinct pages must not collide.
+    w = "475946"
+    assert wc.page_url("penalties", w) == wc.page_url("compliance_actions", w)
+    assert wc.page_url("composting_registrations", w) == wc.page_url("composting_reports", w)
+    assert wc.page_url("penalties", w) != wc.page_url("composting_reports", w)
+
+
+def test_only_compliance_actions_still_defines_a_deadline_extractor():
+    # The new collections carry no dated compliance obligation, so they must not
+    # define a "deadline" extractor (ADR 025 invariant, re-asserted after the add).
+    assert "deadline" in ww.COLLECTIONS["compliance_actions"]
+    for name in ("penalties", "composting_registrations", "composting_reports"):
+        assert "deadline" not in ww.COLLECTIONS[name]
+
+
 def test_historical_events_drops_identity_less_rows():
     # The trailing blank add-a-record template row diff_collection() also drops.
     rows = [

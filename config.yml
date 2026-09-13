@@ -121,12 +121,27 @@ wds:
   #                      No -> watch
   #   annual             new report = watch; years-remaining < floor -> notable (R1)
   #   evaluations        new inspection = watch
+  #   penalties          new assessed penalty = NOTABLE (R2, the $ amount); payment
+  #                      backfill = watch. Deliberately notable, NOT urgent — these
+  #                      are a sub-grid of the same ComplianceActions page whose
+  #                      compliance_actions row already fires URGENT on the parent
+  #                      enforcement event; urgent here would double-fire. See ADR 043.
+  #   composting_registrations  new registration = notable (R1, the compost parcel
+  #                      next to the landfill); status/expiration change = watch
+  #   composting_reports new annual compost report-year = watch (R1 refresh)
+  # (penalties + the two composting_* collections added 2026-09-13, ADR 043 — the
+  # last coverage-matrix gap. To roll their alerting back without a code change,
+  # remove them from this list; the code paths stay and just go unpolled. Rule B —
+  # silent first-baseline — means their first live run records-all/alerts-none.)
   collections:
     - applications
     - compliance_actions
     - qmr
     - annual
     - evaluations
+    - penalties
+    - composting_registrations
+    - composting_reports
   years_remaining_floor: 3.0        # annual report: below this (yrs) -> notable
   # Anti-stampede: if one run yields more alert events than this, treat it as a
   # first-enable-without-seed or a data anomaly and silently re-baseline instead
