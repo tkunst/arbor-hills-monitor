@@ -303,6 +303,19 @@ def test_render_entry_label_present_when_only_key_data_point():
     assert "summary" not in out.lower()
 
 
+def test_render_entry_label_summary_only_does_not_overclaim_a_key_data_point():
+    # The summary-present branch says "...and any key data point below...". When
+    # a summary is present but the key data point is blank, no finding-kdp
+    # paragraph renders -- the "any ... below" hedge must keep that accurate
+    # (a universal over an empty set, not an existence claim). Pins the one
+    # branch whose wording names possibly-absent content.
+    row = ff.parse_feed_rows([_row(summary="EGLE approved the protocol.", kdp="")])[0]
+    out = ff.render_entry(row)
+    assert "Automated summary of the linked document above." in out
+    assert "finding-kdp" not in out  # no key-data-point paragraph rendered
+    assert "any key data point below" in out  # hedge present, accurate vacuously
+
+
 def test_render_entry_no_label_when_no_summary_and_no_kdp():
     # An auto row with neither field has nothing to disclaim -- no empty label.
     row = ff.parse_feed_rows([_row(summary="", kdp="")])[0]
