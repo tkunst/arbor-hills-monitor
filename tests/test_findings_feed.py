@@ -295,11 +295,12 @@ def test_render_entry_label_present_when_only_key_data_point():
     row = ff.parse_feed_rows([_row(summary="", kdp="180F at AHW272.")])[0]
     out = ff.render_entry(row)
     assert 'class="finding-auto-label"' in out
-    assert "The key data point below is machine-generated" in out
+    assert "Automated key data point from the linked document above." in out
     assert "Consult the source document before relying on it." in out
-    # No <p>...</p> summary paragraph is rendered, so the label must not claim
-    # "This summary ..." (the accuracy nit this branch fixes).
-    assert "This summary" not in out
+    # No <p>...</p> summary paragraph is rendered, so the label must not claim a
+    # "summary" ANYWHERE -- neither the lead nor the detail (the accuracy nit
+    # this branch fixes: "Automated summary" would be self-contradictory here).
+    assert "summary" not in out.lower()
 
 
 def test_render_entry_no_label_when_no_summary_and_no_kdp():
