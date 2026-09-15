@@ -329,6 +329,45 @@ def render_entry(row: dict) -> str:
         parts.append(f'<h3><a href="{link}">{name}</a></h3>')
     else:
         parts.append(f'<h3>{name}</h3>')
+    # Per-item "this is an automated summary" label (insurance-readiness /
+    # negligent-publication reduction; master analysis 5.4). Both `summary`
+    # (2-3 sentence recap) and `key_data_point` (the single most citable claim)
+    # are Claude-generated in egle_doc_parser._classify_with_claude -- machine
+    # output, not the monitor asserting a fact of its own. Labeling reframes
+    # each entry as a summary-OF-a-primary-source, which is the accurate
+    # characterization. ONE per-item label, placed above BOTH the summary and
+    # the key data point, deliberately governs both (5.4 blesses a per-item
+    # label, and the wording names the key data point explicitly so the more
+    # assertive of the two auto-fields isn't left arguably unlabeled). Shown
+    # only when there is machine-generated content to disclaim: Hand-Curated
+    # rows carry a human-entered title but a blank summary/key_data_point (see
+    # parse_handcurated_rows), so they get no label; a write_stub_row entry
+    # carries a system-generated `summary` and is correctly labeled (its whole
+    # message is "consult the source"). The label text is a fixed literal
+    # (no row data interpolated), so nothing here needs escaping. `link` above
+    # is the resolved display link (nSITE or its Drive mirror) -- either way it
+    # is "the linked document above"; a linkless row says "this document".
+    # The whole label branches so it never names content that isn't rendered:
+    # an entry with only a key data point (blank summary) renders no summary
+    # paragraph below, so BOTH its lead and its detail name the key data point,
+    # never a "summary". The common case (summary present) keeps the
+    # "Automated summary of ..." lead and uses "any key data point below",
+    # which stays accurate whether or not a key data point actually follows.
+    if summary or kdp:
+        source_ref = "the linked document above" if link else "this document"
+        if summary:
+            label = (
+                f"Automated summary of {source_ref}. This summary and any key "
+                "data point below are machine-generated and may contain errors. "
+                "Consult the source document before relying on them."
+            )
+        else:  # key data point only -- no summary paragraph is rendered below
+            label = (
+                f"Automated key data point from {source_ref}. It is "
+                "machine-generated and may contain errors. Consult the source "
+                "document before relying on it."
+            )
+        parts.append(f'<p class="finding-auto-label">{label}</p>')
     if summary:
         parts.append(f'<p>{summary}</p>')
     if kdp:

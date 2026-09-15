@@ -133,6 +133,17 @@ footer.site-footer {
   font-size: 0.9rem;
 }
 
+/* Per-item "automated summary" label: sits between the document title/link
+   and the machine-generated summary + key-data-point. Muted and small so it
+   reads as a standing disclaimer, not body content, while staying legible. */
+.finding-auto-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: italic;
+  line-height: 1.4;
+  margin: 0 0 0.6rem;
+}
+
 .findings-nav {
   margin-top: 2rem;
 }
