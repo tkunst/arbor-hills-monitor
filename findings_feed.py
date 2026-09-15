@@ -347,13 +347,27 @@ def render_entry(row: dict) -> str:
     # (no row data interpolated), so nothing here needs escaping. `link` above
     # is the resolved display link (nSITE or its Drive mirror) -- either way it
     # is "the linked document above"; a linkless row says "this document".
+    # The second sentence branches so the label never references a rendered
+    # "summary" that isn't there: an entry with only a key data point (blank
+    # summary) renders no summary paragraph below, so it names just the key
+    # data point. The common case (summary present) uses "any key data point
+    # below", which stays accurate whether or not a key data point follows.
     if summary or kdp:
         source_ref = "the linked document above" if link else "this document"
+        if summary:
+            detail = (
+                "This summary and any key data point below are machine-generated "
+                "and may contain errors. Consult the source document before "
+                "relying on them."
+            )
+        else:  # key data point only -- no summary paragraph is rendered below
+            detail = (
+                "The key data point below is machine-generated and may contain "
+                "errors. Consult the source document before relying on it."
+            )
         parts.append(
             f'<p class="finding-auto-label">Automated summary of {source_ref}. '
-            "This summary and any key data point below are machine-generated and "
-            "may contain errors. Consult the source document before relying on "
-            "them.</p>"
+            f"{detail}</p>"
         )
     if summary:
         parts.append(f'<p>{summary}</p>')

@@ -289,10 +289,17 @@ def test_render_entry_label_no_link_variant():
 
 def test_render_entry_label_present_when_only_key_data_point():
     # Defensive: a row carrying a key data point but a blank summary still has
-    # machine-generated content to disclaim, so the label must show.
+    # machine-generated content to disclaim, so the label must show -- but with
+    # wording that does NOT reference a rendered "summary" paragraph, since none
+    # is emitted in this branch (the label names just the key data point).
     row = ff.parse_feed_rows([_row(summary="", kdp="180F at AHW272.")])[0]
     out = ff.render_entry(row)
     assert 'class="finding-auto-label"' in out
+    assert "The key data point below is machine-generated" in out
+    assert "Consult the source document before relying on it." in out
+    # No <p>...</p> summary paragraph is rendered, so the label must not claim
+    # "This summary ..." (the accuracy nit this branch fixes).
+    assert "This summary" not in out
 
 
 def test_render_entry_no_label_when_no_summary_and_no_kdp():
