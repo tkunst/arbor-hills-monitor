@@ -245,6 +245,74 @@ def test_render_entry_includes_populated_fields():
     assert "Key data point:" in out and "180F at AHW272." in out
 
 
+def test_render_entry_shows_automated_summary_label_when_summary_present():
+    # The insurance-readiness label (master analysis 5.4): a per-item disclaimer
+    # framing the auto-generated content as a summary-of-a-primary-source. A row
+    # with a valid link references "the linked document above".
+    row = ff.parse_feed_rows([_row(summary="EGLE approved the protocol.")])[0]
+    out = ff.render_entry(row)
+    assert 'class="finding-auto-label"' in out
+    assert "Automated summary of the linked document above." in out
+    assert "may contain errors" in out
+    assert "Consult the source document before relying on them." in out
+
+
+def test_render_entry_label_wording_names_the_key_data_point():
+    # 5.4 also flags the "Key data point" call-out as machine-generated; the
+    # single per-item label must explicitly govern it, not just the summary
+    # paragraph (the KDP is the more assertive of the two auto-fields).
+    row = ff.parse_feed_rows([_row()])[0]
+    out = ff.render_entry(row)
+    assert "This summary and any key data point below are machine-generated" in out
+
+
+def test_render_entry_label_sits_between_title_and_summary():
+    # Placement matters: the disclaimer must appear AFTER the title/link and
+    # BEFORE the summary text (and before the key-data-point call-out below it).
+    row = ff.parse_feed_rows([_row(summary="A summary.", kdp="180F.")])[0]
+    out = ff.render_entry(row)
+    i_title = out.index("<h3>")
+    i_label = out.index('class="finding-auto-label"')
+    i_summary = out.index("<p>A summary.</p>")
+    i_kdp = out.index("finding-kdp")
+    assert i_title < i_label < i_summary < i_kdp
+
+
+def test_render_entry_label_no_link_variant():
+    # A row with no usable link (stub row, or a rejected non-http scheme) still
+    # gets the label, but references "this document" rather than a link above.
+    row = ff.parse_feed_rows([_row(link="", summary="Source could not be processed.")])[0]
+    out = ff.render_entry(row)
+    assert "Automated summary of this document." in out
+    assert "the linked document above" not in out
+
+
+def test_render_entry_label_present_when_only_key_data_point():
+    # Defensive: a row carrying a key data point but a blank summary still has
+    # machine-generated content to disclaim, so the label must show.
+    row = ff.parse_feed_rows([_row(summary="", kdp="180F at AHW272.")])[0]
+    out = ff.render_entry(row)
+    assert 'class="finding-auto-label"' in out
+
+
+def test_render_entry_no_label_when_no_summary_and_no_kdp():
+    # An auto row with neither field has nothing to disclaim -- no empty label.
+    row = ff.parse_feed_rows([_row(summary="", kdp="")])[0]
+    out = ff.render_entry(row)
+    assert "finding-auto-label" not in out
+    assert "Automated summary" not in out
+
+
+def test_render_entry_no_label_for_handcurated_rows():
+    # Hand-Curated rows carry a human-entered title but a blank summary/KDP
+    # (parse_handcurated_rows) -- they are NOT machine-generated summaries, so
+    # they must never carry the "automated summary" disclaimer.
+    hc = ff.parse_handcurated_rows([_hc_row(title="GFL letter")])[0]
+    out = ff.render_entry(hc)
+    assert "finding-auto-label" not in out
+    assert "Automated summary" not in out
+
+
 def test_render_entry_never_renders_risks():
     # Risks (R1-R8) are this project's own internal taxonomy -- meaningless to
     # a public reader with no legend, so never rendered regardless of value.
