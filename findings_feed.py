@@ -10,6 +10,7 @@ its row-building functions and its API calls.
 from __future__ import annotations
 
 import html
+import os
 import re
 
 # Only this one pure helper is reused from sheet_writer -- a plain string
@@ -275,6 +276,50 @@ def _esc(v) -> str:
     return html.escape(str(v or ""), quote=True)
 
 
+# --- Source-privacy redaction (added 2026-09-15) -------------------------------
+# An EGLE staffer asked to be kept anonymous on the public site (a courtesy for a
+# source who volunteered public-information media). The name(s) to redact come
+# from the REDACT_NAMES env var (comma-separated surnames) -- deliberately NOT
+# hardcoded here, so the name never lands in this public repo's source. In CI the
+# value is the REDACT_NAMES secret (wired in findings-feed.yml); locally, export
+# it to regenerate. Empty/unset -> no-op. Runs at render time on the title,
+# summary, and key data point, so it persists across the nightly regen.
+_REDACT_ROLE = "EGLE inspector"
+
+
+def _build_name_redactor():
+    surnames = [
+        n.strip().split()[-1]
+        for n in os.environ.get("REDACT_NAMES", "").split(",")
+        if n.strip()
+    ]
+    if not surnames:
+        return None
+    alt = "|".join(re.escape(s) for s in surnames)
+    # optional "EGLE inspector " prefix (collapse the doubled role) + optional
+    # Capitalized first name (case-sensitive, so it never eats a lowercase word
+    # such as "by") + the surname (case-insensitive via an inline-scoped flag).
+    return re.compile(rf"(?:EGLE\s+[Ii]nspector\s+)?(?:[A-Z][a-z]+\s+)?(?i:{alt})")
+
+
+_NAME_REDACTOR = _build_name_redactor()
+
+
+def redact_names(text):
+    """Replace any REDACT_NAMES person with a neutral role label; no-op when the
+    env var is empty. Capitalizes the article at a sentence start. Passes None
+    through unchanged (callers -esc the result, which already handles None)."""
+    if not text or _NAME_REDACTOR is None:
+        return text
+
+    def _sub(m):
+        prev = text[: m.start()].rstrip()
+        at_start = (prev == "") or prev.endswith((".", "!", "?", ":"))
+        return f"{'An' if at_start else 'an'} {_REDACT_ROLE}"
+
+    return _NAME_REDACTOR.sub(_sub, text)
+
+
 def render_entry(row: dict) -> str:
     """One finding as an HTML <article>. A blank optional field (summary, key
     data point) is left out of the markup entirely — never rendered as the
@@ -285,7 +330,7 @@ def render_entry(row: dict) -> str:
     rendered here -- they're this project's own internal case-file taxonomy,
     meaningless to a public reader with no legend to decode them against."""
     date = _esc(row.get("date_filed"))
-    name = _esc(strip_embedded_date(row.get("document_name") or "")) or "(untitled document)"
+    name = _esc(redact_names(strip_embedded_date(row.get("document_name") or ""))) or "(untitled document)"
     doc_type = _esc(row.get("type"))
     severity = _esc(row.get("severity"))
     facility = _esc(facility_display(row.get("facility") or ""))
@@ -304,8 +349,8 @@ def render_entry(row: dict) -> str:
     # original nSITE one -- see resolve_display_link; both are https.
     raw_link = row.get("link") or ""
     link = _esc(raw_link) if raw_link.startswith(("http://", "https://")) else ""
-    summary = _esc(row.get("summary"))
-    kdp = _esc(row.get("key_data_point"))
+    summary = _esc(redact_names(row.get("summary")))
+    kdp = _esc(redact_names(row.get("key_data_point")))
     # `source` (issuing/holding body) is present only on Hand-Curated rows
     # (see parse_handcurated_rows) -- auto/EGLE rows have no `source` key at
     # all, so they never show a Source tag. Surfacing it keeps the public

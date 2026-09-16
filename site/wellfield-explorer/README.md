@@ -18,7 +18,7 @@ tool makes no interpretive claims the data does not support.
 - **Clusters:** Eastern Hot Core / Western Warm Field, from single-linkage clustering at 400 ft
   of the wells that reached 131F or higher (identical to the thermal map). The two-cluster split
   is robust: re-run at 100/200/400 ft, across two coordinate sources, and per-year 2021-2026.
-- **Well types:** Kovalchick Well Master List (Unknown where not covered).
+- **Well types:** EGLE Well Master List (Unknown where not covered).
 
 ## Controls
 

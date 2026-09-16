@@ -44,6 +44,10 @@ jobs:
       - name: Regenerate the Findings feed
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          # Source-privacy: names to redact from public titles/summaries (a
+          # courtesy for a source who asked to be anonymous). Comma-separated
+          # surnames; findings_feed.redact_names() reads it. Unset -> no-op.
+          REDACT_NAMES: ${{ secrets.REDACT_NAMES }}
         run: python scripts/gen_findings_feed.py
       - name: Source-quality report (non-blocking)
         # Reports hand-curated rows missing a public source_public (they publish
