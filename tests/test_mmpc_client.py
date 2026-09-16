@@ -2,6 +2,7 @@
 Hermetic — a fake session returns scripted JSON/bytes, no network (same style
 as tests/test_nsite_download.py's fake session)."""
 import pytest
+import requests
 
 import mmpc_client as mc
 
@@ -227,3 +228,108 @@ def test_iter_new_files_empty_already_set_returns_everything():
 def _file_rec(file_id):
     return {"file_id": file_id, "type": "Minutes", "name": "x",
             "event_id": 1, "event_date": "2026-01-01T00:00:00Z"}
+
+
+# ---------------------------------------------------------------------------
+# _get_with_retry — transient-timeout retry with exponential backoff. Added
+# 2026-09-16 after CivicClerk read-timeouts (30s, mid-pagination) failed the
+# civicclerk-archive workflow on 2026-09-10 + 2026-09-14 despite the very next
+# run succeeding. Injected `sleep` keeps these hermetic AND instant (no real
+# backoff wait); the integration cases zero out _GET_BACKOFF_BASE instead,
+# since fetch_mmpc_files calls the wrapper with its default time.sleep.
+# ---------------------------------------------------------------------------
+
+
+class _ScriptedSession:
+    """Consumes one scripted action per .get() call: an Exception instance is
+    raised, anything else is returned as the response. URL is ignored but
+    recorded, so a test can assert exactly how many attempts happened."""
+
+    def __init__(self, actions):
+        self.actions = list(actions)
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append(url)
+        action = self.actions.pop(0)
+        if isinstance(action, Exception):
+            raise action
+        return action
+
+
+def _sleep_recorder():
+    waits = []
+    return waits, lambda secs: waits.append(secs)
+
+
+def test_get_with_retry_returns_first_success_without_sleeping():
+    resp = _Resp({"value": []})
+    sess = _ScriptedSession([resp])
+    waits, sleep = _sleep_recorder()
+    assert mc._get_with_retry(sess, "u", sleep=sleep) is resp
+    assert len(sess.calls) == 1
+    assert waits == []  # a clean first attempt never backs off
+
+
+def test_get_with_retry_retries_then_succeeds():
+    resp = _Resp({"value": []})
+    sess = _ScriptedSession([
+        requests.exceptions.ReadTimeout("blip 1"),
+        requests.exceptions.ReadTimeout("blip 2"),
+        resp,
+    ])
+    waits, sleep = _sleep_recorder()
+    assert mc._get_with_retry(sess, "u", sleep=sleep) is resp
+    assert len(sess.calls) == 3          # 2 failures + 1 success
+    assert waits == [1.0, 2.0]           # exponential backoff between attempts
+
+
+def test_get_with_retry_reraises_after_exhausting_retries():
+    # 4 total attempts (1 initial + 3 retries) all fail -> the LAST exception
+    # propagates unchanged, for the caller to wrap in MMPCFetchError.
+    sess = _ScriptedSession([requests.exceptions.ReadTimeout(f"t{i}") for i in range(4)])
+    waits, sleep = _sleep_recorder()
+    with pytest.raises(requests.exceptions.ReadTimeout):
+        mc._get_with_retry(sess, "u", sleep=sleep)
+    assert len(sess.calls) == 4          # initial + 3 retries, then give up
+    assert waits == [1.0, 2.0, 4.0]      # 3 backoff waits
+
+
+def test_get_with_retry_does_not_retry_on_http_status():
+    # A response that ARRIVES carrying a 5xx status is a server-side condition,
+    # not a network error — returned as-is (the caller does its own status
+    # check), never retried.
+    resp = _Resp(status=500)
+    sess = _ScriptedSession([resp])
+    waits, sleep = _sleep_recorder()
+    assert mc._get_with_retry(sess, "u", sleep=sleep) is resp
+    assert len(sess.calls) == 1
+    assert waits == []
+
+
+# --- integration: the wrapper is actually wired into the paged fetch ---
+
+
+def test_fetch_mmpc_files_retries_then_succeeds(monkeypatch):
+    monkeypatch.setattr(mc, "_GET_BACKOFF_BASE", 0.0)  # no real sleep in tests
+    body = {"value": [_event(4000, "2026-02-11T10:00:00Z", [_file(9000, "Agenda")])]}
+    sess = _ScriptedSession([requests.exceptions.ConnectionError("blip"), _Resp(body)])
+    files = mc.fetch_mmpc_files(sess, category_id=72)
+    assert [f["file_id"] for f in files] == [9000]
+    assert len(sess.calls) == 2          # one retry, then the page
+
+
+def test_fetch_mmpc_files_raises_MMPCFetchError_after_retries(monkeypatch):
+    monkeypatch.setattr(mc, "_GET_BACKOFF_BASE", 0.0)
+    sess = _ScriptedSession([requests.exceptions.ReadTimeout("t")] * 4)
+    with pytest.raises(mc.MMPCFetchError, match="failed"):
+        mc.fetch_mmpc_files(sess, category_id=72)
+    assert len(sess.calls) == 4          # exhausted all attempts before raising
+
+
+def test_fetch_mmpc_files_does_not_retry_http_500(monkeypatch):
+    monkeypatch.setattr(mc, "_GET_BACKOFF_BASE", 0.0)
+    sess = _ScriptedSession([_Resp(status=500)])
+    with pytest.raises(mc.MMPCFetchError, match="500"):
+        mc.fetch_mmpc_files(sess, category_id=72)
+    assert len(sess.calls) == 1          # 500 is not retried
