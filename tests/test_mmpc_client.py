@@ -333,3 +333,23 @@ def test_fetch_mmpc_files_does_not_retry_http_500(monkeypatch):
     with pytest.raises(mc.MMPCFetchError, match="500"):
         mc.fetch_mmpc_files(sess, category_id=72)
     assert len(sess.calls) == 1          # 500 is not retried
+
+
+def test_fetch_category_events_retries_then_succeeds(monkeypatch):
+    # The retry is wired into fetch_category_events too, not just fetch_mmpc_files.
+    monkeypatch.setattr(mc, "_GET_BACKOFF_BASE", 0.0)
+    body = {"value": [_event(4006, "2026-09-18T10:00:00Z", [_file(9500, "Agenda")])]}
+    sess = _ScriptedSession([requests.exceptions.ReadTimeout("blip"), _Resp(body)])
+    events = mc.fetch_category_events(sess, 72)
+    assert [e["id"] for e in events] == [4006]
+    assert len(sess.calls) == 2          # one retry, then the page
+
+
+def test_fetch_event_retries_then_succeeds(monkeypatch):
+    # ...and into the single-event fetch.
+    monkeypatch.setattr(mc, "_GET_BACKOFF_BASE", 0.0)
+    body = {"value": [_event(3953, "2026-09-16T19:00:00Z", [_file(9639, "Agenda")])]}
+    sess = _ScriptedSession([requests.exceptions.ConnectionError("blip"), _Resp(body)])
+    ev = mc.fetch_event(sess, 3953)
+    assert ev["id"] == 3953
+    assert len(sess.calls) == 2
