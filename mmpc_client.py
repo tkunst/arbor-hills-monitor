@@ -62,7 +62,7 @@ _GET_RETRIES = 3           # retries AFTER the first attempt -> up to 4 attempts
 _GET_BACKOFF_BASE = 1.0    # seconds; waits grow 1s, 2s, 4s between attempts
 
 
-def _get_with_retry(session, url, *, timeout=_GET_TIMEOUT, retries=_GET_RETRIES,
+def _get_with_retry(session, url, *, timeout=None, retries=None,
                     sleep=time.sleep) -> requests.Response:
     """GET `url`, retrying on a TRANSIENT network error (requests.RequestException
     — read timeout, dropped connection) up to `retries` times with exponential
@@ -71,12 +71,20 @@ def _get_with_retry(session, url, *, timeout=_GET_TIMEOUT, retries=_GET_RETRIES,
     MMPCFetchError exactly as before — the retry is invisible to the failure
     contract, and a genuinely sustained outage still raises.
 
+    `timeout`/`retries` default to the module constants and are resolved LIVE
+    (None -> _GET_TIMEOUT / _GET_RETRIES) rather than snapshotted as default-arg
+    values, so all three tunables (incl. _GET_BACKOFF_BASE, read live below)
+    behave consistently under a monkeypatch — no silent "patched the constant but
+    the default arg already captured the old value" footgun.
+
     Deliberately narrow: only the network-level EXCEPTION is retried. A response
     that arrives carrying a 4xx/5xx STATUS is returned as-is for the caller's own
     `status_code != 200 -> MMPCFetchError` check (unchanged) — a 5xx is a
     server-side condition distinct from the read-timeout this addresses, and
     retrying it is out of scope. `sleep` is injectable purely so tests stay
     hermetic (a no-op); production always uses time.sleep."""
+    timeout = _GET_TIMEOUT if timeout is None else timeout
+    retries = _GET_RETRIES if retries is None else retries
     for attempt in range(retries + 1):
         try:
             return session.get(url, timeout=timeout)
