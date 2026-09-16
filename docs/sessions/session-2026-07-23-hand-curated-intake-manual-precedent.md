@@ -180,8 +180,7 @@ Three rows appended (`Hand-Curated Files`, now 15 data rows total):
 
 1. `2024-07-10-arbor-hills-HOV-temperature-waiver-four-replacement-wells.pdf`
    (Drive id `1mT6yur9GjkmwMf5AHlei0UBqTDyL07-C`) — AQD **approved** HOV temperatures for
-   four newly-installed replacement WOI wells (AHW259R5/285R3/311R2/312R2); signed Diane
-   Kavanaugh Vetort. R8/ETLF evidence.
+   four newly-installed replacement WOI wells (AHW259R5/285R3/311R2/312R2); signed by EGLE AQD staff. R8/ETLF evidence.
 2. `2025-02-19-arbor-hills-HOV-temperature-waiver-AHW272R4-180F.pdf`
    (Drive id `16qC55hdB8s0SYSm1VJtCl-cYYuqqP5Z_`) — AQD **approved 180 deg F** for AHW272R4,
    explicitly noting it lets AHL operate above the 145 deg F MACT Subpart AAAA limit.
@@ -230,10 +229,10 @@ Both rows include `folded_into_public = public/arbor-hills-violations-enforcemen
 status") in the same session. Rows appended via `sheet_writer.append_rows()` (service
 account) using a standalone script, same pattern as prior addenda.
 
-## 2026-07-30 addendum #5 — Kovalchick well-head data, closes the Q1 2024 gap (5 rows)
+## 2026-07-30 addendum #5 — EGLE well-head data, closes the Q1 2024 gap (5 rows)
 
-Trisha-directed: hand-curate `documents/arbor-hills/source-docs/kovalchick-2026-07-30-well-heads/`
-(Lotext workbench) — six files EGLE AQD Senior Environmental Engineer Mike Kovalchick emailed David
+Trisha-directed: hand-curate the EGLE AQD well-head data folder (Lotext workbench source-docs)
+— six files an EGLE AQD Senior Environmental Engineer emailed David
 Drinan "per our recent phone call," forwarded to Trisha same day. Same manual `cp`-to-mount mechanism
 as every prior addendum (`GOAUTH_*` OAuth-as-user vars still `.env.example` placeholders;
 `GDRIVE_SA_KEY` live). Hit a new `dotenv.load_dotenv()` snag running from a `python3 <<'PYEOF'` heredoc
@@ -242,9 +241,9 @@ caller frame (stdin/heredoc execution); fixed by passing `dotenv_path` explicitl
 on auto-discovery. Worth a note for whoever eventually writes the real script if it ever runs via a
 similar non-file entry point.
 
-**Excluded, not curated:** `image001.jpg` (17K) — confirmed by content to be Kovalchick's email-signature
+**Excluded, not curated:** `image001.jpg` (17K) — confirmed by content to be the sender's email-signature
 graphic (MiEnviro Portal logo), not a standalone record. `Gmail - Fwd_ Well Head Data.pdf` (the cover
-email itself) — Trisha-directed exclusion; its provenance chain (Kovalchick → Drinan → Trisha, 2026-07-30)
+email itself) — Trisha-directed exclusion; its provenance chain (EGLE AQD → Drinan → Trisha, 2026-07-30)
 is instead carried in each row's `source` field rather than publishing the email itself. Read in full
 before excluding either — the email body is clean, official EGLE correspondence with no other content,
 excluded on relevance grounds (a cover note, not a record), not a content-risk finding.
@@ -276,7 +275,7 @@ existing public copy):
 4. `arbor-hills-gas-extraction-exceedance-general-2026-05.xlsx` (id `18pyXOpY9ieJ8wIE_RbmZlfo3rIC-B1RP`)
    — most recent reporting period on file, no prior public copy.
 5. `arbor-hills-well-master-list-with-coordinates-2026-07-30.xlsx` (id `1L83Cufub4IUZc1LHeUulEL55O39xo6M2`)
-   — well ID/type/lat-long master list (520 rows), sent by Kovalchick specifically for KML/map-building.
+   — well ID/type/lat-long master list (520 rows), sent by EGLE AQD staff specifically for KML/map-building.
 
 Spot-checked sharing on the largest upload (`anyone:reader` confirmed, inherited from the folder) before
 writing rows. File sizes verified identical to the Lotext-workbench originals via the Drive search
