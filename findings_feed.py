@@ -288,18 +288,23 @@ _REDACT_ROLE = "EGLE inspector"
 
 
 def _build_name_redactor():
-    surnames = [
-        n.strip().split()[-1]
-        for n in os.environ.get("REDACT_NAMES", "").split(",")
-        if n.strip()
-    ]
-    if not surnames:
+    # REDACT_NAMES is comma-separated FULL names (e.g. "First Last,First M Last").
+    # For each, match the full name down to the bare surname (trailing
+    # subsequences), longest-first, so the full form is preferred over a lone
+    # surname. An optional preceding "EGLE <role words> inspector" phrase is
+    # swallowed into the match so the substitute doesn't double it (e.g.
+    # "EGLE air-quality inspector an EGLE inspector").
+    variants = set()
+    for name in os.environ.get("REDACT_NAMES", "").split(","):
+        toks = name.strip().split()
+        for i in range(len(toks)):
+            variants.add(" ".join(toks[i:]))
+    if not variants:
         return None
-    alt = "|".join(re.escape(s) for s in surnames)
-    # optional "EGLE inspector " prefix (collapse the doubled role) + optional
-    # Capitalized first name (case-sensitive, so it never eats a lowercase word
-    # such as "by") + the surname (case-insensitive via an inline-scoped flag).
-    return re.compile(rf"(?:EGLE\s+[Ii]nspector\s+)?(?:[A-Z][a-z]+\s+)?(?i:{alt})")
+    alt = "|".join(re.escape(v) for v in sorted(variants, key=len, reverse=True))
+    return re.compile(
+        rf"(?:EGLE\s+(?:[\w.-]+\s+){{0,3}}?[Ii]nspector\s+)?(?i:{alt})"
+    )
 
 
 _NAME_REDACTOR = _build_name_redactor()
