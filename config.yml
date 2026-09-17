@@ -1379,7 +1379,9 @@ pfas_pws:
 # BOC-distribution question — see the Lotext strategy doc.
 alert_recipients:
   - arbor-hills@trishakunst.com          # alerts go to Trisha (Cloudflare catch-all → Gmail)
-  - hwangr@umich.edu                     # Roland Hwang — voting MMPC member (adjacent-community seat), Northville
+  # NOTE: additional recipients (e.g. Roland Hwang) are kept PRIVATE via the
+  # ALERT_RECIPIENTS_EXTRA secret, not committed here — see email_alerts.merge_extra_recipients()
+  # and tests/test_config_no_committed_emails.py. (Hwang moved out 2026-09-17, privacy pass.)
 
 # --- Weekly digest "Upcoming Activities" section (ADR 027) ---
 # The Sunday digest's calendar section is sourced from a SEPARATE, PRIVATE Sheet
