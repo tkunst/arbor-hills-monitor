@@ -632,6 +632,271 @@ def test_synthesize_pdf_zipbundle_dispatches_correctly(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# zip-of-forwarded-.msg (ADR 011 addendum, 2026-09-20): the real pathology
+# behind nSITE doc_id 4008289922215821067 — a zip of 11 forwarded Outlook
+# .msg emails synthesized a corrupt 1,087-page/16.7MB PDF that leaked raw
+# OLE2 stream bytes as text. Root cause: a .msg zip ENTRY (as opposed to a
+# .msg ATTACHMENT) was never recognized by _add_content_by_name, so it fell
+# through to the raw-bytes-decoded-as-text fallback. These synthesize a
+# multi-message zip in-process (no real .msg binary committed, per CLAUDE.md)
+# by dispatching a fake extract_msg.openMsg per zip entry's own bytes.
+# ---------------------------------------------------------------------------
+
+
+def _patch_msg_multi(monkeypatch, by_data: dict):
+    """Like _patch_msg, but for a zip bundle containing SEVERAL distinct
+    .msg entries — extract_msg.openMsg is patched to look up the right
+    _FakeMsg by the exact bytes it's called with, so each zip entry decodes
+    to its own distinct envelope/attachments rather than one fixed fake."""
+    import extract_msg
+
+    def _fake_open_msg_multi(data, **kw):
+        return _fake_open_msg(by_data[data])
+
+    monkeypatch.setattr(extract_msg, "openMsg", _fake_open_msg_multi)
+
+
+def test_zip_of_msg_entries_are_recursed_not_decoded_as_raw_bytes(monkeypatch):
+    # The exact old failure mode: a .msg zip entry used to fall through to
+    # the generic utf-8-decode-raw-bytes fallback, leaking OLE2 stream
+    # structure (Root Entry / __substg1.0_.../ __nameid_version...) as text.
+    msg1 = pde.OLE2_MAGIC + b"...email-one..."
+    msg2 = pde.OLE2_MAGIC + b"...email-two..."
+    _patch_msg_multi(monkeypatch, {
+        msg1: _FakeMsg(subject="First email", body="Please review the attached letter."),
+        msg2: _FakeMsg(subject="RE: First email", body="Acknowledged, thanks."),
+    })
+    zbytes = _make_zip({
+        "correspondence/First email.msg": msg1,
+        "correspondence/RE First email.msg": msg2,
+    })
+    doc, needs_ocr = pde._zipbundle_to_pdf(zbytes)
+    full_text = "\n".join(p.get_text() for p in doc)
+    assert "Please review the attached letter." in full_text
+    assert "Acknowledged, thanks." in full_text
+    assert "First email" in full_text  # real subject line, not garbage
+    # The old failure mode: raw OLE2 bytes decoded as text.
+    for marker in pde._OLE2_LEAK_MARKERS:
+        assert marker not in full_text
+    assert "PK\x03\x04" not in full_text
+    doc.close()
+
+
+def test_zip_of_msg_skips_inline_signature_images_but_keeps_real_attachments(monkeypatch):
+    msg_with_signature_and_letter = pde.OLE2_MAGIC + b"...msg-with-attachments..."
+    letter_pdf = _make_pdf_bytes("Wetland monitoring letter body text.")
+    logo_png = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 20, 20))
+    logo_png.clear_with(90)
+
+    fake = _FakeMsg(attachments=[
+        _FakeAttachment("image001.png", logo_png.tobytes("png")),
+        _FakeAttachment("image002.jpg", logo_png.tobytes("jpg")),
+        _FakeAttachment("Wetland Monitoring Letter.pdf", letter_pdf),
+    ])
+    _patch_msg_multi(monkeypatch, {msg_with_signature_and_letter: fake})
+    zbytes = _make_zip({"chain/email.msg": msg_with_signature_and_letter})
+    doc, needs_ocr = pde._zipbundle_to_pdf(zbytes)
+
+    full_text = "\n".join(p.get_text() for p in doc)
+    assert "Wetland monitoring letter body text." in full_text
+    # 1 envelope page + 1 merged letter page — the 2 imageNNN signature
+    # graphics contributed ZERO pages.
+    assert len(doc) == 2
+    assert needs_ocr is False
+    doc.close()
+
+
+def test_zip_of_msg_dedupes_repeated_attachment_across_forwarded_chain(monkeypatch):
+    # The real specimen repeats the same substantive PDF letter 3x and the
+    # same signature logos 4-6x across an 11-message forwarded chain — only
+    # the FIRST occurrence of identical content should land in the output.
+    letter_pdf = _make_pdf_bytes("Wetland monitoring letter, forwarded 3 times.")
+    msg_a = pde.OLE2_MAGIC + b"...forward-one..."
+    msg_b = pde.OLE2_MAGIC + b"...forward-two..."
+    msg_c = pde.OLE2_MAGIC + b"...forward-three..."
+
+    by_data = {
+        m: _FakeMsg(subject=s, attachments=[_FakeAttachment("letter.pdf", letter_pdf)])
+        for m, s in ((msg_a, "Original"), (msg_b, "FW: Original"), (msg_c, "FW: FW: Original"))
+    }
+    _patch_msg_multi(monkeypatch, by_data)
+    zbytes = _make_zip({
+        "chain/1 Original.msg": msg_a,
+        "chain/2 FW Original.msg": msg_b,
+        "chain/3 FW FW Original.msg": msg_c,
+    })
+    doc, needs_ocr = pde._zipbundle_to_pdf(zbytes)
+
+    full_text = "\n".join(p.get_text() for p in doc)
+    assert full_text.count("Wetland monitoring letter, forwarded 3 times.") == 1
+    # 3 envelope pages (one per message) + 1 merged letter page (deduped).
+    assert len(doc) == 4
+    doc.close()
+
+
+def test_synthesize_pdf_synthetic_zip_of_forwarded_msg_dedupes_attachments_and_images(monkeypatch, tmp_path):
+    # End-to-end MECHANISM test — NOT a page-count prediction for a real
+    # zip-of-forwarded-.msg. It replicates the real specimen's (nSITE doc_id
+    # 4008289922215821067) ATTACHMENT-side pathology: several forwarded .msg
+    # entries in one zip, each re-attaching the same substantive letter +
+    # several imageNNN signature logos — and proves dedup + signature-skip
+    # keep that side small. It does NOT replicate the real specimen's BODY-
+    # TEXT side: a real forwarded chain's msg.body carries growing quoted
+    # history (verified against the real 11 bodies: the two largest are
+    # 82-83% line-overlap with content already emitted by an earlier
+    # message), which content-hash dedup can't catch (restated text, not
+    # byte-identical). This fixture's bodies are one short distinct line each
+    # by design, so its own page count says nothing about real body-text
+    # volume — the real doc synthesizes to 42 pages (13 attachments + 29
+    # body text, much of the 29 redundant), not the ≤15 this test asserts.
+    # See docs/decisions/011's 2026-09-20 addendum for the real numbers and
+    # the open question of whether that redundancy is worth trimming.
+    # Real .msg binaries aren't committed (CLAUDE.md) — this builds the
+    # attachment-side SHAPE of the pathology in-process instead of shipping
+    # the actual zip.
+    letter_pdf = _make_pdf_bytes("The real substantive attachment.")
+    logo = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 10, 10))
+    logo.clear_with(200)
+
+    def _msg(n):
+        return pde.OLE2_MAGIC + f"...email-{n}...".encode()
+
+    by_data = {}
+    entries = {}
+    for n in range(1, 8):
+        data = _msg(n)
+        by_data[data] = _FakeMsg(
+            subject=f"Correspondence #{n}",
+            body=f"Message body #{n} in the thread.",
+            attachments=[
+                _FakeAttachment(f"image{n:03d}.png", logo.tobytes("png")),
+                _FakeAttachment("Substantive Letter.pdf", letter_pdf),
+            ],
+        )
+        entries[f"correspondence/email-{n}.msg"] = data
+    _patch_msg_multi(monkeypatch, by_data)
+    zbytes = _make_zip(entries)
+    dest = str(tmp_path / "out.pdf")
+    pde.synthesize_pdf(zbytes, dest)
+
+    doc = fitz.open(dest)
+    # 7 envelope pages + 1 merged letter page (deduped across all 7 forwards),
+    # zero pages from the 7 imageNNN signature logos — nowhere near the old
+    # 1,087-page pathology, comfortably under the sane ceiling.
+    assert doc.page_count <= 15
+    full_text = "\n".join(p.get_text() for p in doc).replace("\x00", "")
+    for marker in pde._OLE2_LEAK_MARKERS:
+        assert marker not in full_text
+    doc.close()
+
+
+# ---------------------------------------------------------------------------
+# post-synthesis sanity guard (_reject_if_corrupt / MAX_SANE_PAGES /
+# _OLE2_LEAK_MARKERS) — added 2026-09-20 so a future extraction defect of the
+# same shape (ballooning, or leaking raw stream bytes as text) can never be
+# saved and mirrored again, even if the dedup/filtering above has a gap.
+# ---------------------------------------------------------------------------
+
+
+def test_reject_if_corrupt_raises_on_too_many_pages():
+    doc = fitz.open()
+    for _ in range(pde.MAX_SANE_PAGES + 1):
+        doc.new_page()
+    with pytest.raises(pde.ExtractionError, match="pages"):
+        pde._reject_if_corrupt(doc)
+    doc.close()
+
+
+def test_reject_if_corrupt_allows_exactly_the_page_ceiling():
+    doc = fitz.open()
+    for _ in range(pde.MAX_SANE_PAGES):
+        doc.new_page()
+    pde._reject_if_corrupt(doc)  # must not raise
+    doc.close()
+
+
+def test_reject_if_corrupt_raises_on_leaked_ole2_marker():
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((50, 50), "Root Entry")
+    with pytest.raises(pde.ExtractionError, match="leaked"):
+        pde._reject_if_corrupt(doc)
+    doc.close()
+
+
+def test_reject_if_corrupt_raises_on_the_actual_utf16_interleaved_form():
+    # The real leak (nSITE doc_id 4008289922215821067) does NOT look like
+    # plain ASCII "Root Entry" on the page — raw OLE2 property/stream names
+    # are UTF-16LE internally, so decoding them via the generic
+    # raw.decode("utf-8", errors="ignore") fallback (as happened before .msg
+    # zip-entry recursion existed) produces every character NUL-interleaved:
+    # "__substg1.0_".encode("utf-16-le") -> "_\x00_\x00s\x00u\x00b\x00...".
+    # A naive `"__substg1.0_" in text` check does NOT match this form — only
+    # the NUL-stripping in _reject_if_corrupt does. This test fails if that
+    # one line is ever removed.
+    interleaved = "__substg1.0_".encode("utf-16-le").decode("utf-8", errors="ignore")
+    assert "__substg1.0_" not in interleaved  # sanity: the naive check really would miss it
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((50, 50), interleaved, fontsize=9)
+    with pytest.raises(pde.ExtractionError, match="leaked"):
+        pde._reject_if_corrupt(doc)
+    doc.close()
+
+
+def test_synthesize_pdf_rejects_the_real_utf16_ole2_leak_shape_end_to_end():
+    # End-to-end version of the above, through the public synthesize_pdf()
+    # API: a zip entry of a type with no dedicated handler (so it hits the
+    # generic decode-as-text fallback) whose raw bytes are the UTF-16LE
+    # encoding of an OLE2 stream name — the actual shape the real specimen's
+    # bug produced, not just an ASCII stand-in.
+    raw = "__nameid_version".encode("utf-16-le")
+    zbytes = _make_zip({"debug.dat": raw})
+    with pytest.raises(pde.ExtractionError, match="leaked"):
+        pde.synthesize_pdf(zbytes, "/dev/null")
+
+
+def test_reject_if_corrupt_only_scans_the_first_five_pages():
+    # A 40-page doc with the leak marker buried on page 39 is still corrupt in
+    # principle, but the guard is a fast sanity sample, not an exhaustive
+    # scan — documents the actual (sampled, not full) contract.
+    doc = fitz.open()
+    for _ in range(39):
+        doc.new_page()
+    page = doc.new_page()
+    page.insert_text((50, 50), "Root Entry")
+    pde._reject_if_corrupt(doc)  # must not raise — beyond the 5-page sample
+    doc.close()
+
+
+def test_synthesize_pdf_rejects_a_synthesis_that_balloons_past_the_page_ceiling(monkeypatch):
+    huge_body = "word " * 200000  # far more than MAX_SANE_PAGES pages can hold
+    _patch_msg(monkeypatch, _FakeMsg(body=huge_body))
+    with pytest.raises(pde.ExtractionError, match="pages"):
+        pde.synthesize_pdf(pde.OLE2_MAGIC + b"...", "/dev/null")
+
+
+def test_synthesize_pdf_rejects_a_synthesis_that_leaks_an_ole2_marker():
+    # A zip entry of a type this module has no dedicated handler for falls to
+    # the generic best-effort-text fallback — exactly how raw OLE2 stream
+    # bytes used to leak into a synthesized PDF before .msg recursion existed.
+    zbytes = _make_zip({"debug.dat": b"Root Entry" + b" filler bytes " * 5})
+    with pytest.raises(pde.ExtractionError, match="leaked"):
+        pde.synthesize_pdf(zbytes, "/dev/null")
+
+
+def test_synthesize_pdf_rejection_does_not_leave_a_saved_file(tmp_path):
+    # A rejected synthesis must not save dest_path at all — a caller checking
+    # os.path.exists(dest_path) after catching ExtractionError must see False.
+    dest = str(tmp_path / "out.pdf")
+    zbytes = _make_zip({"debug.dat": b"Root Entry" + b" filler bytes " * 5})
+    with pytest.raises(pde.ExtractionError):
+        pde.synthesize_pdf(zbytes, dest)
+    import os
+    assert not os.path.exists(dest)
+
+
+# ---------------------------------------------------------------------------
 # synthesize_pdf — dispatch / errors
 # ---------------------------------------------------------------------------
 

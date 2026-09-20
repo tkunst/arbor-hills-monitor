@@ -301,3 +301,139 @@ constant that `select_todo()` honors even under `RETRY_DOC_IDS`, so a manual
 retry can't waste a run on these. Deferred — documenting them here, at the
 one place a human consults before running `RETRY_DOC_IDS`, is the proportionate
 fix; the normal/retry-poisoned paths already skip them.)*
+
+## 2026-09-20 addendum — zip-of-forwarded-.msg over-produced a corrupt PDF (doc_id 4008289922215821067)
+
+**Evidenced, not inferred.** nSITE doc_id `4008289922215821067` ("Additional
+Arbor Hills WRP033733 correspondence") is natively a **ZIP of 11 forwarded
+Outlook `.msg` emails**. The archiver mirrored it as a **1,087-page, 16.7 MB
+corrupt PDF** that leaked raw `.msg`/OLE2 stream bytes (`Root Entry`,
+`__substg1.0_…`, `__nameid_version…`) rendered as text — confirmed live by
+re-running the pre-fix `synthesize_pdf()` against the exact zip (curl'd from
+`ncore/downloadfile/<id>`). That corrupt PDF drove a useless digest summary
+("extensive file corruption") and a link Trisha then hand-fixed on Drive
+(same URL, new file content — see `.claude/COORDINATION.md`'s 2026-09-20
+entries for the operational history).
+
+**Root cause:** `sniff_format()` correctly returned `"zipbundle"`, and
+`_zipbundle_to_pdf()` correctly routed every entry through
+`_add_content_by_name()` — but that dispatch had **no branch for a `.msg`
+zip entry** (as opposed to a `.msg` *attachment* on an already-open `.msg`,
+which this ADR's original design did handle). Every one of the 11 `.msg`
+entries fell through to the generic best-effort-text fallback at the bottom
+of `_add_content_by_name()`, which UTF-8-decodes the raw bytes — for an OLE2
+binary, that's raw stream/property-set structure, not readable text. Not a
+missing-format gap (`sniff_format` was right); a missing-*dispatch* gap one
+level down.
+
+**Fix, two parts:**
+
+1. **`.msg` zip entries (and `.msg`-in-`.msg` attachments with real byte
+   data) now recurse through `_msg_to_pdf()`** — `_add_content_by_name()`
+   gained a branch checking `name.endswith(".msg") or sniff_format(raw) ==
+   "msg"` before its PDF/image/docx/xlsx checks, merging the nested
+   envelope+attachments in as pages instead of falling to the raw-decode
+   fallback. **Content-hash dedup** (a `seen: set[str]` of SHA-256 digests,
+   created once per `synthesize_pdf()` call and threaded through every
+   nested call) collapses an attachment re-forwarded verbatim across the
+   chain to its first occurrence — the real specimen repeats one PDF letter
+   3× and several signature logos 4-6× each. **Inline signature/logo images**
+   (Outlook's auto-named `imageNNN.png`/`.jpg`/…, verified against every one
+   of the real specimen's ~90 image attachments — 100% match, 0 false
+   positives against the 2 substantive PDF attachments) are skipped entirely
+   rather than rasterized as pages — `_INLINE_SIGNATURE_IMAGE_RE`. A
+   deliberately/camera-named image attachment (`photo.jpg`, `IMG_1234.jpg`)
+   still gets a page, unaffected.
+
+   Result on the real specimen: **1,087 pages / 16.7 MB → 42 pages / 1.86 MB,
+   zero leaked OLE2 markers.** The 42 pages break down as 13 pages of
+   deduped substantive attachments (the 6-page Wetland Monitoring Letter +
+   the 7-page Encroachment Notification, each merged exactly once now) plus
+   29 pages of envelope/body text across the 11 messages — higher than this
+   task's original "~13 pages" estimate.
+
+   **⚠️ Open question for Trisha, not resolved here:** an earlier draft of
+   this addendum claimed those 29 pages were "real, non-redundant
+   correspondence content." That claim doesn't hold up — checked directly
+   against the real 11 bodies (line-level overlap vs. everything emitted by
+   earlier messages in the same synthesis): the two largest bodies (16,979
+   and 19,489 chars — a growing `RE:`/`FW:` chain on the same subject) are
+   **82.9% and 82.2% overlapping** with lines already on an earlier page.
+   Most of the extra volume beyond "~13" is the standard behavior of a
+   forwarded email thread quoting its own history, re-quoted, re-emitted
+   each hop. Content-hash dedup (fix above) can't catch this — it's the same
+   information restated with different line-wrap/whitespace each time, not
+   byte-identical. `synthesize_pdf()` ships as-is here (full per-message body
+   text, redundant quoting included) rather than attempting a quote-stripping
+   heuristic, which wasn't in this fix's scope and is its own fragile,
+   client-format-dependent problem (disclaimer/signature reflow, `>`-prefix
+   conventions that vary by mail client, none of which this doc exhibits
+   consistently). **Still correctly bounded** (42 ≪ `MAX_SANE_PAGES` = 60,
+   zero leaks) — this is a quality/redundancy tradeoff, not a correctness
+   bug. Two ways to close the gap if Trisha wants ~13 instead of 42: (a) emit
+   only the LATEST message's body per `.msg` entry-name "family" (heuristic,
+   fragile — not implemented); (b) a genuine quoted-history stripper
+   (`>`-prefix / `From:`-block detection, mail-client-dependent, real
+   engineering effort). Neither shipped this pass; flagged for Trisha's call
+   in the PR, not decided unilaterally.
+
+2. **Post-synthesis sanity guard (`_reject_if_corrupt`), independent of fix
+   #1.** Before `synthesize_pdf()` saves/returns, it now rejects (raises
+   `ExtractionError`, the same poison-strike contract as any other
+   extraction failure) any synthesis exceeding `MAX_SANE_PAGES = 60`, or
+   whose first 5 pages contain any of `_OLE2_LEAK_MARKERS` (`"Root Entry"`,
+   `"__substg1.0_"`, `"__nameid_version"`, `"__properties_version"` — checked
+   with embedded NUL bytes stripped first, since a raw-byte OLE2 leak often
+   decodes as interleaved UTF-16LE, e.g. `_\x00_\x00s\x00u\x00b\x00s\x00t...`,
+   which a naive substring check misses). This is a backstop for ANY future
+   extraction defect of this shape, not just this one root cause — checked
+   on the in-memory `fitz.Document` before it's saved to disk, so a rejected
+   synthesis never touches `dest_path` at all.
+
+3. **`nsite_client.download_pdf()` — `NativeFallbackError`.** When
+   `synthesize_pdf()` raises `ExtractionError` for a source that sniffed as
+   `"msg"`/`"zipbundle"` (including a `_reject_if_corrupt` rejection),
+   `download_pdf()` now raises `NativeFallbackError` (a `RuntimeError`
+   subclass) instead of the generic one, carrying `native_bytes` /
+   `native_name` / `native_mimetype` (`application/zip` for a zipbundle,
+   `application/vnd.ms-outlook` for a bare `.msg`) so a caller that wants to
+   preserve the document as-is — instead of losing it to a bare failure —
+   can. Because it's still a `RuntimeError`, every existing caller
+   (`watcher.py`/`backfill.py`'s generic except-and-record-a-poison-strike
+   handling around the whole download+parse block) behaves identically to
+   before this existed — zero behavior change for the classification
+   pipeline's error accounting.
+
+   **Deliberately NOT wired further this pass:** nothing in `archiver.py`,
+   `watcher.py`, or `backfill.py` currently catches `NativeFallbackError` to
+   actually mirror the native bytes to Drive. Investigated and shelved,
+   not overlooked: today, a doc that fails `download_pdf()` is never marked
+   `processed`, so it's never a candidate for `archiver.run()`'s nightly
+   catch-up (which only mirrors `did in processed`) and `mirror_one_now()`
+   is never reached in the same run (watcher.py's/backfill.py's
+   download→parse→mirror sequence short-circuits on the download failure).
+   Wiring "stays downloadable" all the way to a real Drive upload with the
+   right filename/mimetype means changing when/whether an unparseable doc
+   gets marked done — a bookkeeping decision that deserves its own review,
+   not a rider on this fix. `NativeFallbackError` exists so that follow-up
+   is a small, additive change (catch the specific exception, call
+   `archive_client.upload_file(..., e.native_name, e.native_mimetype, ...)`)
+   rather than a re-plumb.
+
+**Operational note:** doc_id `4008289922215821067` is already `processed`
+and already in `archived_doc_links` (pointing at the hand-fixed Drive file,
+`12mgaI2ieu47EtpLrWrCUMBlvm0UgmuE7`) — verified read-only against the live
+Sheet — so no automated path (`watcher.py` reprocessing, or `archiver.run()`'s
+catch-up) will re-touch it regardless of this fix. Only an explicit manual
+`RETRY_DOC_IDS`/force-reprocess would regenerate it, and should NOT be run
+against this doc_id until this fix is confirmed live (harmless either way
+once it is — the new code produces the correct 42-page output).
+
+**Test fixture note:** per this repo's no-committed-data-files rule (see
+`CLAUDE.md`), the real zip is NOT committed. `tests/test_poison_doc_extractor.py`
+synthesizes an in-process zip-of-.msg fixture of the same SHAPE (several
+`.msg` entries via a multi-message `extract_msg.openMsg` fake, a repeated
+substantive PDF attachment, several `imageNNN.png` signature attachments)
+to exercise the same regression; the real-specimen numbers above (1,087→42
+pages, 0 leaks) were verified by hand against the actual downloaded zip
+during this fix's development, not committed as a test asset.

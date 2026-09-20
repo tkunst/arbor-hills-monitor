@@ -1309,6 +1309,30 @@ def _maybe_gunzip(body: bytes) -> bytes:
     return body
 
 
+class NativeFallbackError(RuntimeError):
+    """Raised by download_pdf instead of a bare RuntimeError when the only
+    available content was a .msg/zipbundle source that
+    poison_doc_extractor.synthesize_pdf() could not safely turn into a PDF
+    (including a rejection from its post-synthesis sanity guard — see
+    poison_doc_extractor.MAX_SANE_PAGES / _OLE2_LEAK_MARKERS). Carries the
+    native source bytes plus a real filename/mimetype so a caller that wants
+    to preserve the document as-is (e.g. archiver.py mirroring it to Drive
+    natively instead of losing it) has everything needed to, without this
+    module reaching into Drive/archiving concerns itself.
+
+    IS-A RuntimeError deliberately: a caller that doesn't care about the
+    native-fallback bytes (watcher.py/backfill.py's generic
+    except-and-record-a-poison-strike handling around the whole
+    download+parse block) sees no behavior change at all — same exception
+    type, same retry/error accounting."""
+
+    def __init__(self, message: str, *, native_bytes: bytes, native_name: str, native_mimetype: str):
+        super().__init__(message)
+        self.native_bytes = native_bytes
+        self.native_name = native_name
+        self.native_mimetype = native_mimetype
+
+
 def download_pdf(session: requests.Session, doc: dict, dest_path: str, timeout: int = 120) -> str:
     """Download one document to dest_path as a PDF the parser can open. Returns
     dest_path; raises on HTTP error, empty body, or if no source yields a PDF.
@@ -1325,6 +1349,15 @@ def download_pdf(session: requests.Session, doc: dict, dest_path: str, timeout: 
     no render AND no extractor here — those still fail and accrue a poison
     strike, which is correct: the monitor can't read them without a .doc
     converter. See ADR 011 / the 2026-07-07 handoff.
+
+    If the last non-PDF source was a `.msg`/`zipbundle` (per
+    poison_doc_extractor.sniff_format) and synthesize_pdf() raises
+    ExtractionError — including its post-synthesis sanity guard rejecting a
+    ballooned or OLE2-leak-contaminated synthesis, ADR 011 addendum
+    2026-09-20 — this raises NativeFallbackError (a RuntimeError) instead of
+    the generic one below, carrying the native source bytes + a real
+    filename/mimetype for a caller that wants to preserve the document
+    as-is. Every other failure still raises a bare RuntimeError, unchanged.
 
     `native_download_url(doc_id)` (the same `downloadfile/<id>` endpoint used
     for stub links) is included explicitly as a final source, not just relied
@@ -1370,9 +1403,38 @@ def download_pdf(session: requests.Session, doc: dict, dest_path: str, timeout: 
             break
 
     if last_non_pdf_content is not None:
+        fmt = pde.sniff_format(last_non_pdf_content)
         try:
             return pde.synthesize_pdf(last_non_pdf_content, dest_path)
         except pde.ExtractionError as e:
             last_exc = e
+            if fmt in ("msg", "zipbundle"):
+                # synthesize_pdf's own post-synthesis sanity guard (added
+                # 2026-09-20, ADR 011 addendum) rejected this one rather than
+                # let a ballooned/leak-contaminated PDF get saved and mirrored
+                # (nSITE doc_id 4008289922215821067: a zip of 11 forwarded
+                # .msg emails synthesized a corrupt 1,087-page/16.7MB PDF
+                # leaking raw OLE2 stream bytes as text). The native source
+                # bytes are still perfectly good, real content — carry them on
+                # the exception (never written to disk here, so there's no
+                # orphaned temp file for a caller that doesn't use them) so a
+                # caller that wants to preserve the document as-is (e.g.
+                # mirroring it to Drive natively instead of losing it) can.
+                # Still a RuntimeError, so every existing caller's generic
+                # except-and-record-a-poison-strike handling (watcher.py,
+                # backfill.py) behaves exactly as it did before this existed.
+                native_ext = "zip" if fmt == "zipbundle" else "msg"
+                native_mimetype = (
+                    "application/zip" if fmt == "zipbundle"
+                    else "application/vnd.ms-outlook"
+                )
+                raise NativeFallbackError(
+                    f"download failed for doc {doc_id}: synthesis rejected "
+                    f"({e}); native {native_ext} bytes preserved on the "
+                    "exception for a caller that wants to mirror them",
+                    native_bytes=last_non_pdf_content,
+                    native_name=f"{doc_id}.{native_ext}",
+                    native_mimetype=native_mimetype,
+                ) from e
 
     raise RuntimeError(f"download failed for doc {doc_id}: {last_exc}")
