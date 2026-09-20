@@ -1,0 +1,55 @@
+name: route-hand-curated
+
+# Manual, attended-only trigger for routing a hand-curated document (dedupe-
+# curate intake) into the urgent/digest queue. Hand-Curated Files additions
+# never run through egle_doc_parser.parse_document(), so they have no other
+# path into either pending_digest or pending_urgent_recap — see
+# scripts/route_hand_curated.py and email_alerts.route_hand_curated_urgent_or_
+# digest() for why this exists (gap found 2026-09-20).
+#
+# A "severity": "urgent" entry sends a REAL same-day [URGENT] email to real
+# recipients. workflow_dispatch only — never scheduled, never triggered by
+# anything but a deliberate manual run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      docs_json:
+        description: "JSON array of {document_name, date_filed, doc_type, severity, risks, key_data_point, link}"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Route hand-curated document(s)
+        env:
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
+          # workflow_dispatch input, operator-supplied (not untrusted event
+          # data); read by Python via os.environ — never shell-evaluated.
+          HAND_CURATED_ROUTE_JSON: ${{ inputs.docs_json }}
+        run: python scripts/route_hand_curated.py
