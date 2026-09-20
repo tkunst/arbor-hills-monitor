@@ -25,22 +25,40 @@ this module existed. (Some real .doc specimens found 2026-07-23 are
 additionally genuinely RC4-encrypted at the FIB level — a distinct,
 human-judgment-call problem, not a parser gap; see the same audit.)
 
-.msg attachments are recursed into: a PDF attachment has its actual pages
-merged in (fitz.insert_pdf) rather than re-extracted as text — and if those
-merged pages are themselves a scan (no text layer), that's detected too, so
-the doc still gets OCR'd proactively; a .docx attachment is routed through
-the same _docx_body_text() extraction as a top-level .docx; .xls/.xlsx
-attachments become a text table (xlrd / openpyxl); image attachments are
-placed as a raster page and OCR'd proactively by synthesize_pdf() itself
-(see its docstring for why — a mixed text+image doc can't safely rely on
-parse_document()'s own whole-document classify() gate). Anything else (e.g.
-the tiny .txt sidecar files Outlook sometimes attaches for inline-image
-content-IDs) is decoded best-effort as text and included only if it carries
-real content.
+.msg attachments (and zip-bundle entries — the two share one dispatch,
+_add_content_by_name) are recursed into: a nested .msg (e.g. a zip of several
+forwarded emails exported individually, ADR 011 addendum 2026-09-20) gets its
+own envelope+attachments extracted the same way a top-level .msg does, merged
+in as pages rather than falling through to raw-bytes-as-text; a PDF attachment
+has its actual pages merged in (fitz.insert_pdf) rather than re-extracted as
+text — and if those merged pages are themselves a scan (no text layer),
+that's detected too, so the doc still gets OCR'd proactively; a .docx
+attachment is routed through the same _docx_body_text() extraction as a
+top-level .docx; .xls/.xlsx attachments become a text table (xlrd /
+openpyxl); image attachments are placed as a raster page and OCR'd
+proactively by synthesize_pdf() itself (see its docstring for why — a mixed
+text+image doc can't safely rely on parse_document()'s own whole-document
+classify() gate) — UNLESS the image is Outlook's own auto-named inline
+signature/logo graphic (imageNNN.png/.jpg/...; see
+_INLINE_SIGNATURE_IMAGE_RE), which is skipped as noise, not content. Every
+piece of content added this way is deduped by a content-hash `seen` set
+shared across the whole synthesis, so an attachment re-forwarded verbatim
+across a chain (the same letter, the same logo) is only included once (see
+_add_content_by_name's `seen` docstring). Anything else (e.g. the tiny .txt
+sidecar files Outlook sometimes attaches for inline-image content-IDs) is
+decoded best-effort as text and included only if it carries real content.
+
+A post-synthesis sanity gate (_reject_if_corrupt, ADR 011 addendum
+2026-09-20) rejects the final PDF — raising ExtractionError, the same poison
+strike as any other extraction failure — if it ballooned past MAX_SANE_PAGES
+or leaked raw OLE2 stream bytes as text, catching any future extraction
+defect of this shape even if the specific dedup/filtering above doesn't.
 """
 from __future__ import annotations
 
+import hashlib
 import io
+import re
 import textwrap
 import zipfile
 from typing import Optional
@@ -55,6 +73,30 @@ import fitz  # pymupdf
 
 OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 ZIP_MAGIC = b"PK\x03\x04"
+
+# Post-synthesis sanity ceiling (ADR 011 addendum, 2026-09-20): a correspondence
+# packet synthesized by this module is never legitimately 1000+ pages. Found
+# against a real specimen — nSITE doc_id 4008289922215821067, a zip of 11
+# forwarded .msg emails — whose OLD (pre-dedup/pre-signature-filter) synthesis
+# ballooned to 1,087 pages / 16.7 MB by rasterizing every inline signature logo
+# repeated across the forward chain and, separately (the more serious defect,
+# fixed below), by never recursing into .msg zip entries at all — each one fell
+# through to the raw-bytes-decoded-as-text fallback, leaking OLE2 stream
+# structure (Root Entry / __substg1.0_.../ __nameid_version...) onto the page
+# as garbage text. MAX_SANE_PAGES catches ANY future extraction defect of this
+# shape, not just this one root cause — see _reject_if_corrupt().
+MAX_SANE_PAGES = 60
+_OLE2_LEAK_MARKERS = ("Root Entry", "__substg1.0_", "__nameid_version", "__properties_version")
+
+# Outlook's auto-generated inline content-ID naming for signature/logo
+# graphics (imageNNN.png / imageNNN.jpg / ...) — verified against the real
+# WRP033733 specimen's 11 .msg files: every one of its ~90 image attachments
+# matches this pattern (100%), while its 2 substantive attachments (real PDF
+# letters) don't. A deliberately/camera-named attachment (photo.jpg,
+# site_photo.jpg, IMG_1234.jpg) never matches, so real image evidence attached
+# to a document is still included — this only catches Outlook's own
+# auto-numbered inline naming convention.
+_INLINE_SIGNATURE_IMAGE_RE = re.compile(r"^image\d+\.(jpe?g|png|gif|bmp|tiff?)$")
 
 _WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -153,6 +195,12 @@ def synthesize_pdf(data: bytes, dest_path: str) -> str:
         raise ExtractionError(f"{fmt or 'unknown'} extraction failed: {e}") from e
 
     try:
+        _reject_if_corrupt(doc)
+    except ExtractionError:
+        doc.close()
+        raise
+
+    try:
         doc.save(dest_path)
     finally:
         doc.close()
@@ -168,6 +216,35 @@ def synthesize_pdf(data: bytes, dest_path: str) -> str:
             print(f"[poison-doc-extractor] OCR pass failed for {dest_path}: {e}")
 
     return dest_path
+
+
+def _reject_if_corrupt(doc: fitz.Document) -> None:
+    """Post-synthesis sanity gate, checked on the in-memory doc BEFORE it's
+    saved/OCR'd (added 2026-09-20, after nSITE doc_id 4008289922215821067 — a
+    zip of 11 forwarded .msg emails — synthesized a corrupt 1,087-page /
+    16.7 MB PDF that leaked raw OLE2 stream bytes as text; see MAX_SANE_PAGES'
+    docstring). Raises ExtractionError (a poison strike, same as any other
+    extraction failure) rather than let a ballooned or leak-contaminated
+    synthesis get saved and mirrored. Checked BEFORE save so a huge corrupt
+    doc doesn't also pay for a save + proactive-OCR pass first.
+
+    The leak-marker scan strips NUL bytes before matching: OLE2 stream names
+    decoded as raw bytes often land in the PDF's text layer as UTF-16LE (every
+    ASCII byte followed by \\x00), so a naive substring check against
+    "__substg1.0_" misses the interleaved-NUL form actually produced by the
+    zip-of-.msg pathology this guard exists for."""
+    if doc.page_count > MAX_SANE_PAGES:
+        raise ExtractionError(
+            f"synthesized PDF rejected: {doc.page_count} pages exceeds the "
+            f"{MAX_SANE_PAGES}-page sane ceiling"
+        )
+    sample = "".join(doc[i].get_text() for i in range(min(5, doc.page_count)))
+    sample = sample.replace("\x00", "")
+    for marker in _OLE2_LEAK_MARKERS:
+        if marker in sample:
+            raise ExtractionError(
+                f"synthesized PDF rejected: leaked raw OLE2 stream marker {marker!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -258,9 +335,11 @@ def _image_to_pdf(data: bytes) -> tuple[fitz.Document, bool]:
 # ---------------------------------------------------------------------------
 
 
-def _msg_to_pdf(data: bytes) -> tuple[fitz.Document, bool]:
+def _msg_to_pdf(data: bytes, seen: Optional[set] = None) -> tuple[fitz.Document, bool]:
     import extract_msg
 
+    if seen is None:
+        seen = set()
     doc = fitz.open()
     needs_ocr = False
     with extract_msg.openMsg(data) as msg:
@@ -275,7 +354,7 @@ def _msg_to_pdf(data: bytes) -> tuple[fitz.Document, bool]:
         for att in msg.attachments:
             name = getattr(att, "longFilename", None) or getattr(att, "shortFilename", None) or "?"
             try:
-                if _add_attachment(doc, att):
+                if _add_attachment(doc, att, seen=seen):
                     needs_ocr = True
             except Exception as e:  # noqa: BLE001 — one bad attachment must not sink the whole doc
                 print(f"[poison-doc-extractor] attachment {name!r} skipped: {e}")
@@ -300,7 +379,7 @@ def _pdf_has_image_only_pages(attach: fitz.Document) -> bool:
     return False
 
 
-def _add_attachment(doc: fitz.Document, att) -> bool:
+def _add_attachment(doc: fitz.Document, att, seen: Optional[set] = None) -> bool:
     """Add one .msg attachment to `doc`. Returns True if the attachment needs
     the proactive OCR pass synthesize_pdf() runs (a raster image page, or a
     merged PDF attachment that's itself image-only)."""
@@ -308,15 +387,47 @@ def _add_attachment(doc: fitz.Document, att) -> bool:
     raw = getattr(att, "data", None)
     if not isinstance(raw, (bytes, bytearray)) or not raw:
         return False  # embedded-message / non-data attachments (MSG-in-MSG) — out of scope
-    return _add_content_by_name(doc, name, bytes(raw))
+    return _add_content_by_name(doc, name, bytes(raw), seen=seen)
 
 
-def _add_content_by_name(doc: fitz.Document, name: str, raw: bytes) -> bool:
+def _add_content_by_name(doc: fitz.Document, name: str, raw: bytes, seen: Optional[set] = None) -> bool:
     """The actual per-type dispatch — shared by _add_attachment (.msg
     attachments) and _zipbundle_to_pdf (generic zip-of-files nSITE records,
-    e.g. an nForm submission bundle). Returns True if `raw` needs the
-    proactive OCR pass synthesize_pdf() runs."""
+    e.g. an nForm submission bundle, or a zip-of-forwarded-.msg correspondence
+    packet). Returns True if `raw` needs the proactive OCR pass
+    synthesize_pdf() runs.
+
+    `seen`: a content-hash set SHARED across one synthesize_pdf() call (see
+    _zipbundle_to_pdf/_msg_to_pdf, which create it once and thread it through
+    every nested call), so an attachment byte-identical to one already added
+    is skipped rather than duplicated. Found against a real specimen (nSITE
+    doc_id 4008289922215821067): an 11-message forwarded chain re-attaches the
+    same substantive PDF letter 3x and the same inline signature logos 4-6x
+    each — without this, every repeat would re-merge its pages."""
+    if seen is None:
+        seen = set()
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest in seen:
+        return False  # identical content already included once this synthesis
+    seen.add(digest)
+
     name = name.lower()
+
+    if name.endswith(".msg") or sniff_format(raw) == "msg":
+        # A zip-of-forwarded-.msg entry, or a .msg-in-.msg attachment with
+        # real .data (as opposed to the embedded-message case _add_attachment
+        # already filters out for lacking bytes at all) — recurse through the
+        # same envelope+attachment extraction a top-level .msg gets, instead
+        # of falling through to the raw-bytes-as-text fallback below, which is
+        # what produced the OLE2-stream-leak garbage this module used to emit
+        # (Root Entry / __substg1.0_.../ __nameid_version... decoded as text).
+        sub_doc, sub_needs_ocr = _msg_to_pdf(raw, seen=seen)
+        try:
+            doc.insert_pdf(sub_doc)
+        finally:
+            sub_doc.close()
+        return sub_needs_ocr
+
     if name.endswith(".pdf") or raw[:4] == b"%PDF":
         with fitz.open(stream=raw, filetype="pdf") as attach:
             needs_ocr = _pdf_has_image_only_pages(attach)
@@ -324,6 +435,11 @@ def _add_content_by_name(doc: fitz.Document, name: str, raw: bytes) -> bool:
         return needs_ocr
 
     if name.endswith(_IMAGE_EXTS):
+        if _INLINE_SIGNATURE_IMAGE_RE.match(name):
+            return False  # Outlook auto-named inline signature/logo graphic,
+            # not substantive content — see _INLINE_SIGNATURE_IMAGE_RE's
+            # docstring; the dominant contributor to the historical page-count
+            # blowup (re-embedded on every forward in a chain).
         page = doc.new_page()
         try:
             page.insert_image(page.rect, stream=raw)
@@ -392,6 +508,11 @@ def _spreadsheet_to_text(raw: bytes, name: str) -> str:
 def _zipbundle_to_pdf(data: bytes) -> tuple[fitz.Document, bool]:
     doc = fitz.open()
     needs_ocr = False
+    # Shared across every entry in this bundle (incl. every attachment of
+    # every nested .msg entry) so a duplicate is caught no matter which entry
+    # or nesting level it first appeared at — see _add_content_by_name's
+    # `seen` docstring.
+    seen: set = set()
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         for info in z.infolist():
             if info.is_dir():
@@ -402,7 +523,7 @@ def _zipbundle_to_pdf(data: bytes) -> tuple[fitz.Document, bool]:
                 print(f"[poison-doc-extractor] zip entry {info.filename!r} unreadable: {e}")
                 continue
             try:
-                if _add_content_by_name(doc, info.filename, raw):
+                if _add_content_by_name(doc, info.filename, raw, seen=seen):
                     needs_ocr = True
             except Exception as e:  # noqa: BLE001 — same "one bad entry, not the whole doc" contract
                 print(f"[poison-doc-extractor] zip entry {info.filename!r} skipped: {e}")

@@ -209,6 +209,96 @@ def test_genuinely_unsupported_content_still_poisons(tmp_path, monkeypatch):
         nc.download_pdf(sess, _doc(f"{nc.DOWNLOAD_FILE_BASE}/12345"), dest)
 
 
+# ---------------------------------------------------------------------------
+# ADR 011 addendum, 2026-09-20: synthesize_pdf's post-synthesis sanity guard
+# can now reject a .msg/zipbundle synthesis it judges corrupt (ballooned past
+# MAX_SANE_PAGES, or leaking raw OLE2 stream bytes as text — the pathology
+# found on nSITE doc_id 4008289922215821067, a zip of 11 forwarded .msg
+# emails that synthesized a corrupt 1,087-page/16.7MB PDF). download_pdf must
+# raise NativeFallbackError (not a bare RuntimeError) in that specific case,
+# carrying the native bytes for a caller that wants to preserve the document.
+# ---------------------------------------------------------------------------
+
+
+def _make_zip_bundle(files: dict) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, data in files.items():
+            z.writestr(name, data)
+    return buf.getvalue()
+
+
+def test_rejected_msg_synthesis_raises_native_fallback_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(nc.time, "sleep", lambda *_: None)
+    dest = str(tmp_path / "out.pdf")
+    sess = _Session({"downloadfile/12345": _Resp(MSG), "downloadpdf/12345": _Resp(b"", 400)})
+
+    def _fake_synthesize(content, dest_path):
+        raise pde.ExtractionError("synthesized PDF rejected: 1087 pages exceeds the sane ceiling")
+
+    monkeypatch.setattr(pde, "synthesize_pdf", _fake_synthesize)
+    with pytest.raises(nc.NativeFallbackError, match="download failed") as exc_info:
+        nc.download_pdf(sess, _doc(f"{nc.DOWNLOAD_FILE_BASE}/12345"), dest)
+    err = exc_info.value
+    assert isinstance(err, RuntimeError)  # existing generic except-Exception callers unaffected
+    assert err.native_bytes == MSG
+    assert err.native_name == "12345.msg"
+    assert err.native_mimetype == "application/vnd.ms-outlook"
+
+
+def test_rejected_zipbundle_synthesis_raises_native_fallback_error_with_zip_mimetype(tmp_path, monkeypatch):
+    monkeypatch.setattr(nc.time, "sleep", lambda *_: None)
+    dest = str(tmp_path / "out.pdf")
+    zbytes = _make_zip_bundle({"correspondence/email.msg": MSG})
+    sess = _Session({"downloadfile/12345": _Resp(zbytes), "downloadpdf/12345": _Resp(b"", 400)})
+
+    def _fake_synthesize(content, dest_path):
+        raise pde.ExtractionError("synthesized PDF rejected: leaked raw OLE2 stream marker")
+
+    monkeypatch.setattr(pde, "synthesize_pdf", _fake_synthesize)
+    with pytest.raises(nc.NativeFallbackError):
+        nc.download_pdf(sess, _doc(f"{nc.DOWNLOAD_FILE_BASE}/12345"), dest)
+
+
+def test_rejected_zipbundle_synthesis_native_fallback_carries_real_zip_bytes(tmp_path, monkeypatch):
+    # Unmocked sniff_format: a genuine zip (not .msg-magic) must be recognized
+    # as "zipbundle" and get "application/zip" + a ".zip" native name — not
+    # the ".msg"/Outlook mimetype the OLE2-magic case gets.
+    monkeypatch.setattr(nc.time, "sleep", lambda *_: None)
+    dest = str(tmp_path / "out.pdf")
+    zbytes = _make_zip_bundle({"correspondence/email.msg": MSG})
+    sess = _Session({"downloadfile/12345": _Resp(zbytes), "downloadpdf/12345": _Resp(b"", 400)})
+
+    def _fake_synthesize(content, dest_path):
+        raise pde.ExtractionError("synthesized PDF rejected: 1087 pages exceeds the sane ceiling")
+
+    monkeypatch.setattr(pde, "synthesize_pdf", _fake_synthesize)
+    with pytest.raises(nc.NativeFallbackError) as exc_info:
+        nc.download_pdf(sess, _doc(f"{nc.DOWNLOAD_FILE_BASE}/12345"), dest)
+    err = exc_info.value
+    assert err.native_bytes == zbytes
+    assert err.native_name == "12345.zip"
+    assert err.native_mimetype == "application/zip"
+
+
+def test_native_fallback_error_not_raised_for_unsupported_format(tmp_path, monkeypatch):
+    # test_genuinely_unsupported_content_still_poisons (above) covers the
+    # unmocked path; this makes the NativeFallbackError angle explicit: MZ
+    # magic sniffs to None (neither "msg" nor "zipbundle"), so a plain
+    # RuntimeError — not NativeFallbackError — is still correct here (there
+    # are no native bytes worth preserving specially; this is genuinely
+    # unreadable content, same as before this existed).
+    monkeypatch.setattr(nc.time, "sleep", lambda *_: None)
+    dest = str(tmp_path / "out.pdf")
+    sess = _Session(
+        {"downloadfile/12345": _Resp(b"MZ\x90\x00legacy .doc-shaped bytes"),
+         "downloadpdf/12345": _Resp(b'{"errorCode":400}', 400)}
+    )
+    with pytest.raises(RuntimeError) as exc_info:
+        nc.download_pdf(sess, _doc(f"{nc.DOWNLOAD_FILE_BASE}/12345"), dest)
+    assert not isinstance(exc_info.value, nc.NativeFallbackError)
+
+
 def test_empty_doc_url_still_reaches_native_extraction_fallback(tmp_path, monkeypatch):
     # Bug found 2026-07-11: _normalize() falls back to the RENDER endpoint
     # (not the native one) when a record's own docMgmtDocurl is empty, so
