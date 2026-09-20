@@ -454,6 +454,40 @@ def test_purge_doc_rows_skips_absent_tabs():
     assert sw.TAB_WOI_SUMMARY not in counts and sw.TAB_EVIDENCE not in counts
 
 
+def test_purge_doc_rows_matches_a_drive_mirrored_row_via_archive_index():
+    """Regression (2026-09-20): once a doc is Drive-mirrored, its row's Link is
+    the Drive archive URL (…/view), which shares NO substring with the nSITE
+    doc_id -- `_link_doc_id` alone can never match it, so purge silently found 0
+    rows and a real FORCE_REPROCESS_APPLY would have appended a duplicate instead
+    of replacing the stale row. Fix: resolve doc_id -> archive_link via the
+    Archived PDFs index and match by exact equality too."""
+    drive_link = "https://drive.google.com/file/d/1abcXYZ/view?usp=drivesdk"
+    row = [""] * len(sw.FEED_HEADERS)
+    row[0], row[1], row[7] = "2026-04-30", "nForm Document", drive_link
+    archive_row = [""] * len(sw.ARCHIVE_HEADERS)
+    archive_row[0], archive_row[5] = _DID_A, drive_link
+    svc = FakeSheets({
+        sw.TAB_HISTORICAL: [sw.FEED_HEADERS, row],
+        sw.TAB_ARCHIVE: [sw.ARCHIVE_HEADERS, archive_row],
+    })
+
+    preview = sw.purge_doc_rows(svc, "SID", _DID_A, dry_run=True)
+    assert preview[sw.TAB_HISTORICAL] == 1        # was 0 before the fix
+
+    counts = sw.purge_doc_rows(svc, "SID", _DID_A)
+    assert counts[sw.TAB_HISTORICAL] == 1
+    hist = svc._values._tabs[sw.TAB_HISTORICAL]
+    assert hist == [sw.FEED_HEADERS]              # the mirrored row is gone, not duplicated
+
+
+def test_purge_doc_rows_unmirrored_doc_still_matches_by_nsite_link():
+    # No Archived PDFs tab at all -> archive_link resolves to None; the original
+    # nSITE-link match path (a doc that never got mirrored) must still work.
+    svc = _purge_fixture()
+    counts = sw.purge_doc_rows(svc, "SID", _DID_A)
+    assert counts[sw.TAB_HISTORICAL] == 2
+
+
 # ---------------------------------------------------------------------------
 # _wds_seen append-only backup + recovery log (ADR 024, Gap G1-C-1).
 # The live diff cursor stays in _meta.wds_seen (unchanged); this log makes it

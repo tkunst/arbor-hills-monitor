@@ -31,10 +31,15 @@ facilities:
   # Submissions quarterly tier (ADR 021 Decision 5).
 
 # --- Document classification ---
-# Haiku is the deliberate cost choice for the 754-doc backfill (~$2-4 total);
-# routine monitoring is a few docs/day, essentially free. Override here if you
-# want a more capable model for live monitoring vs. backfill.
-anthropic_model: "claude-haiku-4-5"
+# Haiku was the deliberate cost choice for the 754-doc backfill (~$2-4 total);
+# routine monitoring is a few docs/day, essentially free either way. Bumped to
+# Sonnet 5 (2026-09-20, Trisha-directed) after a large keyword-windowed doc (the
+# 875-page Q1 2026 VGC Well Report) produced a digest summary that reported only
+# the compliant-well count and silently dropped ~2/3 non-compliant wells. Model
+# quality alone doesn't fix the windowing (large_doc_page_threshold/
+# large_doc_max_keyword_pages below still caps what the classifier ever sees),
+# but a stronger model is a free upgrade for the pages it IS shown.
+anthropic_model: "claude-sonnet-5"
 # Output cap for the classification call. Generous enough that measurements[]
 # on a multi-well WOI report isn't truncated mid-JSON. If a doc ever fails with
 # "Classification truncated at max_tokens", raise this.
