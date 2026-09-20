@@ -466,6 +466,73 @@ def send_urgent_alert(parsed, metadata: dict, link: str, cfg: dict) -> bool:
     return send_email(subject, format_urgent_body(parsed, metadata, link), cfg)
 
 
+def route_hand_curated_urgent_or_digest(
+    *, document_name: str, date_filed: str, doc_type: str, severity: str,
+    risks: list | None, key_data_point: str, link: str, cfg: dict, state: dict,
+    sent_at: str,
+) -> bool:
+    """Route a hand-curated document (dedupe-curate intake — never runs through
+    egle_doc_parser.parse_document(), so it has no `measurements`/`full_text`)
+    into the SAME urgent-vs-digest decision the live nSITE watcher uses, via the
+    is_urgent()/send_urgent_alert() this module already exposes.
+
+    Gap this closes (found 2026-09-20): Hand-Curated Files additions otherwise
+    have NO path into either `pending_digest` or `pending_urgent_recap` at all —
+    two severe YCUA PFOS Notices of Violation sat hand-curated with no same-day
+    alert and had to be manually spliced into `pending_digest` by hand, one of
+    them TWICE incorrectly the first time (see that session's history). Mirrors
+    watcher.py's `_route_urgent_or_digest`, adapted for a record with no
+    structured `measurements` — `is_urgent()`'s temperature-threshold path can
+    never fire for a hand-curated doc, so routing here rests entirely on the
+    caller's own `severity` judgment ("urgent" or not; hand-curation has no
+    classifier to call `is_urgent()`'s other branch instead).
+
+    Mutates `state["pending_digest"]` or `state["pending_urgent_recap"]` in
+    place (creating either key if absent); does NOT persist `state` to the
+    Sheet — same contract as watcher.py's own routing function, so the caller
+    writes it via sheet_writer.write_meta() afterward, in the same
+    Sheet-row-then-state crash-safety order the rest of this codebase uses.
+
+    `sent_at` is caller-supplied (not computed here, e.g. via datetime.now())
+    so this function stays pure and deterministically testable, matching this
+    module's existing style (compare `_urgent_recap_record` in watcher.py,
+    which takes `sent_at` from the caller's own `_now()` call).
+
+    A failed OR skipped urgent send (SMTP unconfigured / no recipients) is
+    dropped from BOTH queues — matches `_route_urgent_or_digest`'s documented
+    behavior: an alert that never went out has nothing to recap.
+
+    Returns True iff a real urgent email was actually sent."""
+    from egle_doc_parser import ParsedDoc  # local import: avoids a module-load-time
+
+    # dependency from email_alerts.py (imported by every watcher) onto the
+    # heavier egle_doc_parser.py (which imports fitz/pymupdf) — ParsedDoc is
+    # only needed inside this one function.
+    parsed = ParsedDoc(
+        summary=key_data_point, key_data_point=key_data_point, doc_type=doc_type,
+        risks=list(risks or []), severity=severity, full_text="",
+        ocr_applied=False, page_count=0, measurements=[],
+    )
+    metadata = {"document_name": document_name, "date_filed": date_filed}
+    record = {
+        "date_filed": date_filed, "document_name": document_name,
+        "doc_type": doc_type, "severity": severity, "risks": list(risks or []),
+        "key_data_point": key_data_point, "link": link,
+    }
+    state.setdefault("pending_digest", [])
+    state.setdefault("pending_urgent_recap", [])
+
+    if not is_urgent(parsed, cfg):
+        state["pending_digest"].append(record)
+        return False
+
+    sent = send_urgent_alert(parsed, metadata, link, cfg)
+    if sent:
+        record["urgent_sent_at"] = sent_at
+        state["pending_urgent_recap"].append(record)
+    return sent
+
+
 def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = None) -> None:
     """The weekly digest goes to resolve_recipients(cfg) PLUS anyone in
     DIGEST_RECIPIENTS_EXTRA (comma/semicolon-separated env, private — not
