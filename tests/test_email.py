@@ -263,3 +263,68 @@ def test_send_urgent_alert_propagates_send_email_bool(monkeypatch):
 
     monkeypatch.setattr(ea, "send_email", lambda subj, body, c, recipients=None: True)
     assert ea.send_urgent_alert(_doc(severity="urgent"), {"document_name": "x"}, "http://x", _DIGEST_CFG) is True
+
+
+# --- route_hand_curated_urgent_or_digest (added 2026-09-20) -----------------
+# Hand-Curated Files additions (dedupe-curate intake) never run through
+# egle_doc_parser.parse_document(), so they had NO path into pending_digest or
+# pending_urgent_recap at all before this — a severe hand-curated finding could
+# only reach the Sunday digest via manual Sheet surgery. This gives them the
+# same routing the live nSITE watcher's _route_urgent_or_digest uses.
+
+
+def _hc_kwargs(**overrides):
+    kwargs = dict(
+        document_name="Test Doc", date_filed="2026-09-20", doc_type="evidence",
+        severity="notable", risks=["R5"], key_data_point="k", link="http://x",
+        cfg=_DIGEST_CFG, state={}, sent_at="2026-09-20T00:00:00",
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_route_hand_curated_not_urgent_queues_to_pending_digest(monkeypatch):
+    sent = []
+    monkeypatch.setattr(ea, "send_email", lambda *a, **k: sent.append(1) or True)
+    state = {}
+    result = ea.route_hand_curated_urgent_or_digest(**_hc_kwargs(state=state))
+    assert result is False
+    assert sent == []  # no email attempted at all for a non-urgent doc
+    assert len(state["pending_digest"]) == 1
+    assert state["pending_digest"][0]["document_name"] == "Test Doc"
+    assert "urgent_sent_at" not in state["pending_digest"][0]
+    assert state["pending_urgent_recap"] == []
+
+
+def test_route_hand_curated_urgent_sends_and_recaps(monkeypatch):
+    sent = []
+    monkeypatch.setattr(ea, "send_email", lambda subj, body, c, recipients=None: sent.append(subj) or True)
+    state = {}
+    result = ea.route_hand_curated_urgent_or_digest(**_hc_kwargs(severity="urgent", state=state))
+    assert result is True
+    assert len(sent) == 1 and sent[0].startswith("[URGENT]")
+    assert state["pending_digest"] == []
+    assert len(state["pending_urgent_recap"]) == 1
+    recap = state["pending_urgent_recap"][0]
+    assert recap["urgent_sent_at"] == "2026-09-20T00:00:00"
+    assert recap["severity"] == "urgent"
+
+
+def test_route_hand_curated_urgent_failed_send_queues_nowhere(monkeypatch):
+    # SMTP unconfigured / no recipients -> send_urgent_alert returns False.
+    # Matches _route_urgent_or_digest: an alert that never went out has
+    # nothing to recap, and it must NOT silently fall back into the digest
+    # either (that would misrepresent a routine item as one that "almost" fired).
+    monkeypatch.setattr(ea, "send_email", lambda *a, **k: False)
+    state = {}
+    result = ea.route_hand_curated_urgent_or_digest(**_hc_kwargs(severity="urgent", state=state))
+    assert result is False
+    assert state["pending_digest"] == []
+    assert state["pending_urgent_recap"] == []
+
+
+def test_route_hand_curated_preserves_existing_state_entries(monkeypatch):
+    monkeypatch.setattr(ea, "send_email", lambda *a, **k: True)
+    state = {"pending_digest": [{"document_name": "Earlier Doc"}], "pending_urgent_recap": []}
+    ea.route_hand_curated_urgent_or_digest(**_hc_kwargs(state=state))
+    assert [r["document_name"] for r in state["pending_digest"]] == ["Earlier Doc", "Test Doc"]
