@@ -48,7 +48,16 @@ jobs:
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          # SMTP_FROM matters: without it send_email() falls back to SMTP_USER
+          # as the envelope/header From address, which the relay rejects
+          # outright ("Bad sender address syntax") — caught 2026-09-20 when
+          # this workflow's first run omitted it and crashed before sending.
+          # Every other production workflow that can call send_email already
+          # sets this (daily.yml, gfl-air.yml, every nsite-*-watch.yml, ...).
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
           ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
+          MONITOR_OWNER_EMAILS: ${{ secrets.MONITOR_OWNER_EMAILS }}
+          UNSUBSCRIBED_EMAILS: ${{ secrets.UNSUBSCRIBED_EMAILS }}
           # workflow_dispatch input, operator-supplied (not untrusted event
           # data); read by Python via os.environ — never shell-evaluated.
           HAND_CURATED_ROUTE_JSON: ${{ inputs.docs_json }}

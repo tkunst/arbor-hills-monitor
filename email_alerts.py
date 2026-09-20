@@ -498,9 +498,17 @@ def route_hand_curated_urgent_or_digest(
     module's existing style (compare `_urgent_recap_record` in watcher.py,
     which takes `sent_at` from the caller's own `_now()` call).
 
-    A failed OR skipped urgent send (SMTP unconfigured / no recipients) is
-    dropped from BOTH queues — matches `_route_urgent_or_digest`'s documented
-    behavior: an alert that never went out has nothing to recap.
+    A failed OR skipped urgent send (SMTP unconfigured / no recipients, OR a
+    mid-send SMTP exception — send_email's own docstring: "A mid-send SMTP
+    failure still raises (unchanged)") is dropped from BOTH queues — matches
+    `_route_urgent_or_digest`'s documented behavior: an alert that never went
+    out has nothing to recap. watcher.py's routing function wraps its own
+    send_urgent_alert() call in a try/except for exactly this reason; this
+    function mirrors that (caught missing here 2026-09-20 on a real send: a
+    misconfigured workflow env — SMTP_FROM omitted, so send_email fell back to
+    SMTP_USER as the From address, which the relay rejected with "Bad sender
+    address syntax" — crashed this function uncaught, unlike the watcher's own
+    routing path).
 
     Returns True iff a real urgent email was actually sent."""
     from egle_doc_parser import ParsedDoc  # local import: avoids a module-load-time
@@ -526,7 +534,14 @@ def route_hand_curated_urgent_or_digest(
         state["pending_digest"].append(record)
         return False
 
-    sent = send_urgent_alert(parsed, metadata, link, cfg)
+    try:
+        sent = send_urgent_alert(parsed, metadata, link, cfg)
+    except Exception as ae:  # noqa: BLE001 — notification is best-effort, same
+        # scope/reasoning as watcher.py's _route_urgent_or_digest: a send
+        # failure must not crash the caller, and there is nothing to recap
+        # for an alert that never went out.
+        print(f"  URGENT ALERT FAILED to send: {document_name[:50]}: {ae}")
+        return False
     if sent:
         record["urgent_sent_at"] = sent_at
         state["pending_urgent_recap"].append(record)

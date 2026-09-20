@@ -73,6 +73,14 @@ jobs:
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          # backfill.py itself never calls send_email (see this file's own
+          # docstring), so this block is currently dormant -- included for
+          # parity with every other workflow that can reach send_email, so a
+          # future alert path added here doesn't silently omit it the way
+          # route-hand-curated.yml did on its first run (2026-09-20, "Bad
+          # sender address syntax" -- SMTP_FROM missing, fell back to
+          # SMTP_USER, which isn't a valid From address at this relay).
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
           # Default false; set true via "Run workflow" to re-attempt poison docs.
           RETRY_POISONED: ${{ inputs.retry_poisoned }}
           # Default empty; set via "Run workflow" for a one-time targeted retry.
