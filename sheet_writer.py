@@ -2728,8 +2728,21 @@ def _link_doc_id(link) -> str:
 
 def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False) -> dict:
     """Delete every row belonging to `doc_id` from the human feed / evidence /
-    measurement / WOI-summary tabs (matched by the doc_id being the final path
-    segment of the row's Link), returning {tab: rows_matched}.
+    measurement / WOI-summary tabs, returning {tab: rows_matched}.
+
+    A row's Link column holds one of two things: the raw nSITE URL
+    (…/downloadpdf/<doc_id> or …/downloadfile/<doc_id>, matched by `_link_doc_id`
+    pulling the final path segment) if the doc was never mirrored, OR — the common
+    case — the Drive archive URL once `archiver.mirror_one_now()` succeeds, which
+    carries no trace of the nSITE doc_id at all (its final path segment is just
+    "view"). A row matched ONLY by `_link_doc_id` therefore silently missed every
+    already-mirrored doc: a dry-run reported 0 matches, and a real
+    FORCE_REPROCESS_APPLY would append a fresh row alongside the untouched stale
+    one instead of replacing it (caught 2026-09-20 on a real re-extract attempt
+    before anything was deleted). Fixed by also resolving `doc_id` to its Drive
+    link via `archived_doc_links()` (the Archived PDFs index) and matching a row
+    by exact equality against that link — the same idempotent-by-doc_id mapping
+    the archiver itself already relies on to avoid re-uploading.
 
     Used by backfill's FORCE_REPROCESS_DOC_IDS path so a re-extract of an already-
     processed doc is CLEAN — the stale windowed rows are removed before the fresh
@@ -2744,6 +2757,7 @@ def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False) -
     meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     gid = {s["properties"]["title"]: s["properties"]["sheetId"]
            for s in meta.get("sheets", [])}
+    archive_link = archived_doc_links(service, sheet_id).get(doc_id)
 
     requests: list[dict] = []
     counts: dict[str, int] = {}
@@ -2761,7 +2775,10 @@ def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False) -
         # aligned for any row that actually carries a Link.
         matched = [
             i + 1 for i, r in enumerate(values)
-            if len(r) > link_col and r[link_col] and _link_doc_id(r[link_col]) == doc_id
+            if len(r) > link_col and r[link_col] and (
+                _link_doc_id(r[link_col]) == doc_id
+                or (archive_link and r[link_col] == archive_link)
+            )
         ]
         counts[tab] = len(matched)
         if not dry_run:
