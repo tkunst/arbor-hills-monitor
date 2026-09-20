@@ -323,6 +323,23 @@ def test_route_hand_curated_urgent_failed_send_queues_nowhere(monkeypatch):
     assert state["pending_urgent_recap"] == []
 
 
+def test_route_hand_curated_urgent_smtp_exception_does_not_crash(monkeypatch):
+    # Regression (2026-09-20): send_email's own docstring says "A mid-send SMTP
+    # failure still raises (unchanged)" -- watcher.py's _route_urgent_or_digest
+    # already wraps its send_urgent_alert() call for exactly this reason. This
+    # function must do the same (a misconfigured workflow env caused a REAL
+    # smtplib.SMTPSenderRefused to propagate uncaught and crash the caller
+    # before it ever reached the second document in the batch).
+    def _boom(*a, **k):
+        raise __import__("smtplib").SMTPSenderRefused(501, b"Error: Bad sender address syntax", "x")
+    monkeypatch.setattr(ea, "send_email", _boom)
+    state = {}
+    result = ea.route_hand_curated_urgent_or_digest(**_hc_kwargs(severity="urgent", state=state))
+    assert result is False
+    assert state["pending_digest"] == []
+    assert state["pending_urgent_recap"] == []
+
+
 def test_route_hand_curated_preserves_existing_state_entries(monkeypatch):
     monkeypatch.setattr(ea, "send_email", lambda *a, **k: True)
     state = {"pending_digest": [{"document_name": "Earlier Doc"}], "pending_urgent_recap": []}
