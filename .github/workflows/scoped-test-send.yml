@@ -1,0 +1,45 @@
+name: scoped-test-send
+
+# Manual, attended-only trigger for a [TEST] email to exactly ONE address --
+# see scripts/send_scoped_test.py. Unlike daily.yml's send_test input (which
+# hits the WHOLE resolved recipient list every time), this reaches only the
+# address given, so repeated footer/config checks don't re-notify everyone
+# else on the alert list. workflow_dispatch only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      recipient:
+        description: "Single email address to send the scoped test to"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Send scoped test email
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          MONITOR_OWNER_EMAILS: ${{ secrets.MONITOR_OWNER_EMAILS }}
+          UNSUBSCRIBED_EMAILS: ${{ secrets.UNSUBSCRIBED_EMAILS }}
+          # workflow_dispatch input, operator-supplied (not untrusted event
+          # data); read by Python via os.environ — never shell-evaluated.
+          SCOPED_TEST_RECIPIENT: ${{ inputs.recipient }}
+        run: python scripts/send_scoped_test.py
