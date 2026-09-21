@@ -41,7 +41,7 @@ ARMED = {
     "unsubscribe": {
         "mailto": MAILTO,
         "postal_address": POSTAL,
-        "sender_identity": "Arbor Hills Landfill Monitor",
+        "sender_identity": "Arbor Hills Monitor",
         "owner_addresses": [OWNER],
         "owner_domains": ["trishakunst.com"],
     },
@@ -153,7 +153,7 @@ def test_build_list_unsubscribe_is_wellformed():
 def test_unsubscribe_footer_has_identity_postal_and_mailto():
     footer = ea.unsubscribe_footer(ARMED, MAILTO, POSTAL, ALLY)
     assert footer.startswith("\n\n-- \n")          # standard signature separator
-    assert "Arbor Hills Landfill Monitor" in footer  # sender identity
+    assert "Arbor Hills Monitor" in footer  # sender identity
     assert POSTAL in footer                          # physical postal address
     assert MAILTO in footer                          # opt-out method
     assert ALLY in footer                            # this recipient's address
@@ -163,7 +163,7 @@ def test_unsubscribe_footer_omits_postal_when_unset():
     # Production config (Trisha 2026-09-13): no postal address. The footer still
     # carries identity + opt-out; it just omits the postal line.
     footer = ea.unsubscribe_footer(ARMED, MAILTO, "", ALLY)
-    assert "Arbor Hills Landfill Monitor" in footer   # sender identity
+    assert "Arbor Hills Monitor" in footer   # sender identity
     assert MAILTO in footer                            # opt-out method
     assert ALLY in footer                              # this recipient's address
     assert POSTAL not in footer                        # none configured

@@ -294,9 +294,9 @@ def build_list_unsubscribe(mailto: str, recipient: str) -> str:
     right address to UNSUBSCRIBED_EMAILS without guessing from headers."""
     from urllib.parse import quote
     addr = quote(mailto, safe="@")   # SEC-003: encode the address, like subj/body
-    subj = quote("Unsubscribe: Arbor Hills Landfill Monitor")
+    subj = quote("Unsubscribe: Arbor Hills Monitor")
     body = quote(
-        "Unsubscribe this address from all Arbor Hills Landfill Monitor "
+        "Unsubscribe this address from all Arbor Hills Monitor "
         f"emails: {recipient}"
     )
     return f"<mailto:{addr}?subject={subj}&body={body}>"
@@ -309,15 +309,15 @@ def unsubscribe_footer(cfg: dict, mailto: str, postal: str, recipient: str) -> s
     alerts; the postal line is optional and omitted when unset (Trisha's call).
     Uses the standard '-- ' signature separator."""
     u = cfg.get("unsubscribe") or {}
-    sender = (u.get("sender_identity") or "Arbor Hills Landfill Monitor").strip()
+    sender = (u.get("sender_identity") or "Arbor Hills Monitor").strip()
     reason = (u.get("receiving_reason")
               or "You are receiving this because your address was added to the "
-                 "Arbor Hills Landfill Monitor alert list.").strip()
+                 "Arbor Hills Monitor alert list.").strip()
     postal_line = f"{postal}\n" if postal else ""
     return (
         "\n\n-- \n"
         f"{reason}\n"
-        f"To unsubscribe from all Arbor Hills Landfill Monitor emails, reply to "
+        f"To unsubscribe from all Arbor Hills Monitor emails, reply to "
         f"this message or email {mailto} (this address: {recipient}).\n"
         f"{sender}\n"
         f"{postal_line}"
