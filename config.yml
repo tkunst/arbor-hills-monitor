@@ -1456,10 +1456,10 @@ unsubscribe:
   postal_address: ""
   # Clear sender identity printed in the footer (neutral, per the data-layer
   # posture — this is the monitor, not any advocacy org).
-  sender_identity: "Arbor Hills Landfill Monitor"
+  sender_identity: "Arbor Hills Monitor"
   # Why the recipient is getting the email (footer line). Recipients are added
   # manually (there is no signup form), so this says "added," not "subscribed."
-  receiving_reason: "You are receiving this because your address was added to the Arbor Hills Landfill Monitor alert list."
+  receiving_reason: "You are receiving this because your address was added to the Arbor Hills Monitor alert list."
   # Trisha's OWN addresses — never suppressed, never held, never footered. The
   # non-sensitive catch-all lives here (it is already public in alert_recipients);
   # PRIVATE addresses (proton / gmail) go in the MONITOR_OWNER_EMAILS *secret*,

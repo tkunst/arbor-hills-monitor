@@ -48,7 +48,7 @@ def _repo_root(start):
 REPO = _repo_root(__file__)
 OUTDIR = os.path.dirname(os.path.abspath(__file__))   # emit outputs next to this script
 OUT = os.path.join(OUTDIR, "topology.json")
-SYSTEM = "Arbor Hills Landfill Monitor"
+SYSTEM = "Arbor Hills Monitor"
 
 # --- Layer 3 curated tables (documented derivations) -----------------------
 
