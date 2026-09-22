@@ -437,3 +437,23 @@ substantive PDF attachment, several `imageNNN.png` signature attachments)
 to exercise the same regression; the real-specimen numbers above (1,087→42
 pages, 0 leaks) were verified by hand against the actual downloaded zip
 during this fix's development, not committed as a test asset.
+
+**Historical-corpus validation (post-review, 2026-09-21):** `_reject_if_corrupt`'s
+`MAX_SANE_PAGES = 60` ceiling applies to every `synthesize_pdf()` call, not just
+the zip-of-`.msg` case — a code review of this fix flagged an unvalidated
+regression risk: any already-`processed` document that went through this
+extractor before this fix, if it legitimately exceeds 60 pages, would newly
+fail on any future manual retry/backfill of that doc_id. Checked directly
+against the live Sheet + Drive: pulled the 14 `RETRY_DOC_IDS` from this ADR's
+own "Activation" section (the RA `.msg`/`.docx` hand-pull specimens — every
+ADR-documented document known to have gone through this extractor) plus
+doc_id `4008289922215821067` itself, downloaded each one's archived Drive
+PDF, and measured page counts directly: **0 of 15 exceed 60 pages** (largest
+is 29, an "Analytical data" `.msg` with attached lab tables; most are 1-4
+pages). The new ceiling would not have newly rejected any of them. Caveat
+stated plainly: there's no recorded "went through the extractor" flag on any
+Sheet row, so this covers every ADR-documented specimen but isn't a
+mathematical proof against the full ~1,735-document corpus — given the
+extractor only fires as a last resort (both the primary link and render
+endpoint must fail first) and every known specimen sits nowhere near the
+ceiling, this risk is treated as resolved rather than open.
