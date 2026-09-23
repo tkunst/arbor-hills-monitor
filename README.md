@@ -600,8 +600,9 @@ docs/day) is essentially free. Model is configurable in `config.yml`.
 licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/): reuse
 freely, crediting "Arbor Hills Monitor" with a link to the dataset page. The
 underlying readings are public regulatory records; the license covers this
-project's compilation, parsing, and documentation of them. It does not cover
-the code in this repository.
+project's compilation, parsing, and documentation of them. The full license
+text is in [`LICENSE`](LICENSE); despite GitHub's repo-wide license badge, it
+is applied to the datasets, not to the code in this repository.
 
 Public regulatory-data tooling — useful to other Great Lakes advocacy groups.
 The parser (`egle_doc_parser.py`) is intentionally domain-agnostic.
