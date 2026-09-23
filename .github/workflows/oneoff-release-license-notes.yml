@@ -1,7 +1,7 @@
 name: oneoff-release-license-notes
 
 # ONE-OFF (deleted in the next commit, never merged to main): append a CC BY 4.0
-# license statement to the notes of the four dataset releases. Idempotent: a
+# license statement to the notes of all six dataset releases. Idempotent: a
 # release whose notes already link the CC BY 4.0 URL is skipped.
 on:
   push:
@@ -26,7 +26,7 @@ jobs:
 
           **License:** [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Reuse freely, crediting "Arbor Hills Monitor" with a link to the dataset page on [arborhillsmonitor.org/data/](https://arborhillsmonitor.org/data/). The underlying readings are public regulatory records; the license covers this project's compilation, parsing, and documentation.
           EOF
-          for tag in wellfield-data-2026-08-24 wellhead-h2s-annual-2026-09-05 perimeter-air-data-2026-08-04 flagged-wells-2026-08-07; do
+          for tag in wellfield-data-2026-09-16 wellfield-data-2026-07-30 wellhead-h2s-annual-2026-09-05 perimeter-air-data-2026-08-04 flagged-wells-2026-08-07 neshap-data-2026-08-29; do
             body="$(gh release view "$tag" --json body -q .body)"
             if grep -q 'creativecommons.org/licenses/by/4.0' <<<"$body"; then
               echo "$tag: already has the license statement, skipping"
