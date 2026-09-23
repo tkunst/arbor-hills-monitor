@@ -49,6 +49,11 @@ jobs:
           # surnames; findings_feed.redact_names() reads it. Unset -> no-op.
           REDACT_NAMES: ${{ secrets.REDACT_NAMES }}
         run: python scripts/gen_findings_feed.py
+      - name: Regenerate sitemap.xml
+        # Lists every page with a canonical tag -- including every page-N.html
+        # of the feed just written -- so search engines get the full archive
+        # manifest the same day a new page appears. Stdlib only, no creds.
+        run: python scripts/gen_sitemap.py
       - name: Source-quality report (non-blocking)
         # Reports hand-curated rows missing a public source_public (they publish
         # as "Source: not stated"). Always exits 0 -- informational only.
@@ -70,7 +75,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add site/public-records
+          git add site/public-records site/sitemap.xml
           # Every page's footer carries a fresh "Generated <timestamp>" line on
           # every run (see findings_feed.render_page), so a bare
           # `git diff --cached --quiet` would NEVER be quiet -- it would commit
@@ -79,7 +84,7 @@ jobs:
           # so only a REAL content change (a new/changed document) counts.
           if git diff --cached --quiet -I'^<p>Generated .* UTC from the monitor'; then
             echo "No change to the Public Records feed (beyond the regeneration timestamp)."
-            git restore --staged --worktree site/public-records
+            git restore --staged --worktree site/public-records site/sitemap.xml
           else
             git commit -m "chore(findings): regenerate the public Findings feed"
             git push

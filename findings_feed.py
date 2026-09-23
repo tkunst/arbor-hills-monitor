@@ -433,15 +433,22 @@ def page_filename(page_num: int) -> str:
     return "index.html" if page_num == 1 else f"page-{page_num}.html"
 
 
+def page_href(page_num: int) -> str:
+    """Relative link to a page, in the same URL form as its canonical: page 1 is
+    the directory (`./` -> /public-records/), never `index.html`, so links,
+    canonical tags and sitemap.xml all name one URL per page."""
+    return "./" if page_num == 1 else page_filename(page_num)
+
+
 def render_page(page_rows: list[dict], page_num: int, total_pages: int,
                  total_count: int, generated_at: str) -> str:
     entries = "\n".join(render_entry(r) for r in page_rows) or "<p>No documents found.</p>"
 
     nav_bits = []
     if page_num > 1:
-        nav_bits.append(f'<a href="{page_filename(page_num - 1)}">&larr; Newer</a>')
+        nav_bits.append(f'<a href="{page_href(page_num - 1)}">&larr; Newer</a>')
     if page_num < total_pages:
-        nav_bits.append(f'<a href="{page_filename(page_num + 1)}">Older &rarr;</a>')
+        nav_bits.append(f'<a href="{page_href(page_num + 1)}">Older &rarr;</a>')
     nav = " &middot; ".join(nav_bits)
 
     if page_num == 1:
@@ -493,7 +500,7 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
 <body>
 <div class="wrap">
 
-<p><a href="../index.html">&larr; Arbor Hills Monitor</a></p>
+<p><a href="../">&larr; Arbor Hills Monitor</a></p>
 
 <h1>Public Records on Arbor Hills</h1>
 {intro}<p class="findings-count">{total_count:,} documents &middot; page {page_num} of {total_pages}</p>
