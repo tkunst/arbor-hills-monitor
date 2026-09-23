@@ -396,7 +396,7 @@ def test_build_pages_nav_links_correct_on_each_page():
     assert 'href="page-2.html"' in pages["index.html"]
 
     # Middle page: both directions, pointing at the right neighbors.
-    assert 'href="index.html"' in pages["page-2.html"]
+    assert 'href="./"' in pages["page-2.html"]
     assert 'href="page-3.html"' in pages["page-2.html"]
 
     # Last page: only "Newer", no "Older".
