@@ -27,6 +27,7 @@ facilities:
   - {srn: "BORE15", name: "Arbor Hills 2015 soil-boring JPA (WRP000808)", id: "-4454026774380249654"}   # ADR 049: Advanced Disposal/Golder, 11 hydrogeologic boreholes in Sec. 12 w/ temporary wetland crossings; GP Category Q, 2015-11-17..2020-11-17 (Expired); 8 docs incl. borehole+wetland map and adjacent-owner list
   - {srn: "FP89",  name: "Floodplain elevation request, 8627 Napier Rd (89-11-0108-FP)", id: "7284130751247156626"}   # ADR 049: historical WRD floodplain elevation calculation request (1989 per ref format), parcel next to the landfill in Sec. 12; 0 docs today
   - {srn: "MITIG", name: "Arbor Hills Mitigation Site", id: "6707784663696162097"}   # ADR 050: identified by Trisha 2026-09-25; empty on every nSITE profile at add time. Expected home of the wetland-mitigation filings tied to the 2026 Wetland 1 JPA (conceptual mitigation plan).
+  - {srn: "CHUBB18", name: "8110 Chubb Rd wetland-fill VN site (VN-008432)", id: "604563607848499529"}   # ADR 051: 2018 WRD complaint + Violation Notice (Request Information), unpermitted fill in regulated wetland + driveway to a stream, parcel A-01-12-300-012 (Sec. 12, not GFL-owned); closed 2018-06-05; 1 doc
   # NOT TRACKED (Documents pipeline) — the other 13 sites resolved in ADR 021
   # are polled for Submissions ONLY, at their tier's cadence — see
   # `nsite_sites` + `nsite_submissions.tiers` below (ADR 022). They are near-zero/zero-Documents-history
@@ -727,6 +728,7 @@ nsite_sites:
   - {srn: "BORE15", name: "Arbor Hills 2015 soil-boring JPA (WRP000808)", id: "-4454026774380249654"}   # ADR 049 (Advanced Disposal/Golder, 11 hydrogeologic boreholes in Sec. 12 w/ temporary wetland crossings; GP Category Q, 2015-11-17..2020-11-17 (Expired); 8 docs incl. borehole+wetland map and adjacent-owner list
   - {srn: "FP89",  name: "Floodplain elevation request, 8627 Napier Rd (89-11-0108-FP)", id: "7284130751247156626"}   # ADR 049 (historical WRD floodplain elevation calculation request (1989 per ref format), parcel next to the landfill in Sec. 12; 0 docs today
   - {srn: "MITIG", name: "Arbor Hills Mitigation Site", id: "6707784663696162097"}   # ADR 050 — identified by Trisha 2026-09-25; empty on every nSITE profile at add time. Expected home of the wetland-mitigation filings tied to the 2026 Wetland 1 JPA (conceptual mitigation plan).
+  - {srn: "CHUBB18", name: "8110 Chubb Rd wetland-fill VN site (VN-008432)", id: "604563607848499529"}   # ADR 051 — 2018 WRD complaint + Violation Notice (Request Information), unpermitted fill in regulated wetland + driveway to a stream, parcel A-01-12-300-012 (Sec. 12, not GFL-owned); closed 2018-06-05; 1 doc
 
 # --- nSITE Submissions watch (Stream K, ADR 020; tiered cadence ADR 021; site identity moved to nsite_sites above, ADR 022) ---
 # Watch on the "Submissions" profile (application / service-request intake: a
@@ -794,6 +796,7 @@ nsite_submissions:
     BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
     FP89: quarterly      # ADR 049 (1989 floodplain request)
     MITIG: biweekly      # ADR 050 (Arbor Hills Mitigation Site)
+    CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
 
 # --- nSITE Violations watch (Stream L, ADR 023) ---
 # Watch on the "Violations" profile — EGLE's OWN ENFORCEMENT RECORD (a formal
@@ -873,6 +876,7 @@ nsite_violations:
     BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
     FP89: quarterly      # ADR 049 (1989 floodplain request)
     MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
+    CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
 
 # --- nSITE Compliance Actions watch (Stream M, ADR 028) ---
 # Watch on the "Compliance Actions" profile — the formal actions EGLE takes in
@@ -955,6 +959,7 @@ nsite_compliance_actions:
     BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
     FP89: quarterly      # ADR 049 (1989 floodplain request)
     MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
+    CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
 
 # --- nSITE Evaluations watch (Stream N, ADR 029) ---
 # Watch on the "Evaluations" profile — the underlying INSPECTION record a
@@ -1036,6 +1041,7 @@ nsite_evaluations:
     BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
     FP89: quarterly      # ADR 049 (1989 floodplain request)
     MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
+    CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
 
 # --- nSITE Permits watch (Stream O, ADR 030) ---
 # Watch on the "Permits" profile — a facility's permit lifecycle (issued ->
@@ -1128,6 +1134,7 @@ nsite_permits:
     BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
     FP89: quarterly      # ADR 049 (1989 floodplain request)
     MITIG: biweekly      # ADR 050 (Arbor Hills Mitigation Site)
+    CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
 
 # --- nSITE Complaints watch (Stream P, ADR 031) ---
 # Watch on the "Complaints" profile — citizen/agency reports filed against a
@@ -1226,6 +1233,7 @@ nsite_complaints:
     BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
     FP89: quarterly      # ADR 049 (1989 floodplain request)
     MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
+    CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
 
 # --- nSITE Active Public Notices watch (Stream Q, ADR 032) ---
 # Watch on the "Active Public Notices" profile — the formal comment-window
@@ -1325,6 +1333,7 @@ nsite_public_notices:
     BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
     FP89: quarterly      # ADR 049 (1989 floodplain request)
     MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
+    CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
 
 # --- GFL "informational website" change-watch (Stream S, ADR 041, added 2026-09-11) ---
 # OFF BY DEFAULT. A daily snapshot + change-diff watch on the OPERATOR's own
