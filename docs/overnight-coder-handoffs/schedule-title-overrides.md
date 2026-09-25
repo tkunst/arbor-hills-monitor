@@ -74,7 +74,7 @@ Apply the override + re-summary to the 8 existing rows (New Documents / Historic
 Archived PDFs). **Live-Sheet writes are gated on Trisha's explicit go** (the case-file Sheet is a
 public surface). Prepare the change; do not write cells until cleared.
 
-## Rename map — the 8 confirmed docs (all N2688; verified 2026-09-01, read-only)
+## Rename map — the 8 confirmed docs (+ 1 nForm addition below, 2026-09-25) (all N2688; verified 2026-09-01, read-only)
 
 | doc_id | filed | current title | true content | proposed display name |
 |---|---|---|---|---|
@@ -86,6 +86,14 @@ public surface). Prepare the change; do not write cells until cleared.
 | `-4679635065984934930` | 2025-03-06 | Schedule - CJ-2020-0593-CE General Report | EGLE cover email transmitting the VGC extension-request approval (pairs with the 29-well letter) | EGLE cover email: Consent Judgement extension-request approval |
 | `8510351745791368151` | 2026-04-02 | Schedule - Air General Compliance Report | Apr 7 2026 AQD letter: 2-year renewal (to May 1 2028) of HOV temperature waivers for 16 WOI wells/sumps; sets semi-annual WOI reporting | EGLE letter: 2-year HOV temperature-waiver renewal (16 WOI wells/sumps) |
 | `-2935564993291663255` | 2026-04-07 | Schedule - Air General Compliance Report | EGLE cover email transmitting the HOV temperature-waiver renewal approval | EGLE cover email: HOV temperature-waiver renewal approval letter |
+
+### Addition 2026-09-25 (Trisha-directed): generic "nForm Document" titles too
+
+Same problem, different generic label. nSITE files big CJ submission attachments as "nForm Document", so the feed hides what they are. The override map (part a) should cover these by doc_id. Leave the "Schedule -..." classifier (part b) as scoped; this entry only needs the display-name override.
+
+| doc_id | filed | current title | true content | proposed display name |
+|---|---|---|---|---|
+| `7045536706099143566` | 2026-07-29 | nForm Document | GFL's 2026 Second Quarter CJ report (CJ No. 2020-0593-CE), 949 pp, cover letter Jul 30 2026 to EGLE AQD Jackson District; submission HQQ-DCFW-VETN7. Already annotated in Hand-Curated Files (2026-09-25). | GFL Consent Judgment report: 2026 Second Quarter (CJ No. 2020-0593-CE) |
 
 *(Proposed names use plain hyphens only; the EGLE source subject lines use en-dashes, deliberately
 not copied. No em-dashes.)*
