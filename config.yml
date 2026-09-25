@@ -33,6 +33,8 @@ facilities:
   - {srn: "BDPH", name: "7374 Chubb Rd stormwater outfalls (WRP038206)", id: "-1974820987593684099"}   # ADR 052: Part 303 permit 2023-07-26..2028-07-26 to BD Property Holdings: 2 storm outfalls discharging to wetland, Sec. 13; 29 docs
   - {srn: "ASB26", name: "Asbestos contractor registration (ASB-00009055)", id: "6658906756287014686"}   # ADR 052: AQD Asbestos New Contractor Registration, received 2026-01-21, In Process; 0 docs
   - {srn: "CMP23", name: "WRD-NPDES complaint site (HPY-5JZ9-JFEQE)", id: "8106421448071964642"}   # ADR 052: one WRD-NPDES complaint, 2023-10-05; 0 docs
+  - {srn: "PTEX", name: "Plymouth Township Exchange, Five Mile Rd (WRP037948)", id: "-1034065027376918328"}   # ADR 053: JD 5 Mile LLC (Jones Development); Part 301/303 permit In Effect 2025-08-06..2028-06-26 w/ 2025 minor revisions; temp wetland impacts + Johnson Drain crossing; agent Barr Engineering; 2022 WIP + pre-app, 2023 JPA; 45 docs
+  - {srn: "H95", name: "1995 resources permit 95-13-0412-P", id: "-6102479567065163659"}   # ADR 053: historical Conversion Resources Application, General Permit 1995-09-28..1996-12-31 (Expired); 0 docs
   # NOT TRACKED (Documents pipeline) — the other 13 sites resolved in ADR 021
   # are polled for Submissions ONLY, at their tier's cadence — see
   # `nsite_sites` + `nsite_submissions.tiers` below (ADR 022). They are near-zero/zero-Documents-history
@@ -739,6 +741,8 @@ nsite_sites:
   - {srn: "BDPH", name: "7374 Chubb Rd stormwater outfalls (WRP038206)", id: "-1974820987593684099"}   # ADR 052 — Part 303 permit 2023-07-26..2028-07-26 to BD Property Holdings: 2 storm outfalls discharging to wetland, Sec. 13; 29 docs
   - {srn: "ASB26", name: "Asbestos contractor registration (ASB-00009055)", id: "6658906756287014686"}   # ADR 052 — AQD Asbestos New Contractor Registration, received 2026-01-21, In Process; 0 docs
   - {srn: "CMP23", name: "WRD-NPDES complaint site (HPY-5JZ9-JFEQE)", id: "8106421448071964642"}   # ADR 052 — one WRD-NPDES complaint, 2023-10-05; 0 docs
+  - {srn: "PTEX", name: "Plymouth Township Exchange, Five Mile Rd (WRP037948)", id: "-1034065027376918328"}   # ADR 053 — JD 5 Mile LLC (Jones Development); Part 301/303 permit In Effect 2025-08-06..2028-06-26 w/ 2025 minor revisions; temp wetland impacts + Johnson Drain crossing; agent Barr Engineering; 2022 WIP + pre-app, 2023 JPA; 45 docs
+  - {srn: "H95", name: "1995 resources permit 95-13-0412-P", id: "-6102479567065163659"}   # ADR 053 — historical Conversion Resources Application, General Permit 1995-09-28..1996-12-31 (Expired); 0 docs
 
 # --- nSITE Submissions watch (Stream K, ADR 020; tiered cadence ADR 021; site identity moved to nsite_sites above, ADR 022) ---
 # Watch on the "Submissions" profile (application / service-request intake: a
@@ -812,6 +816,8 @@ nsite_submissions:
     BDPH: biweekly      # ADR 052
     ASB26: biweekly     # ADR 052
     CMP23: quarterly    # ADR 052
+    PTEX: biweekly      # ADR 053
+    H95: quarterly      # ADR 053
 
 # --- nSITE Violations watch (Stream L, ADR 023) ---
 # Watch on the "Violations" profile — EGLE's OWN ENFORCEMENT RECORD (a formal
@@ -897,6 +903,8 @@ nsite_violations:
     BDPH: quarterly     # ADR 052
     ASB26: quarterly    # ADR 052
     CMP23: quarterly    # ADR 052
+    PTEX: quarterly     # ADR 053
+    H95: quarterly      # ADR 053
 
 # --- nSITE Compliance Actions watch (Stream M, ADR 028) ---
 # Watch on the "Compliance Actions" profile — the formal actions EGLE takes in
@@ -985,6 +993,8 @@ nsite_compliance_actions:
     BDPH: quarterly     # ADR 052
     ASB26: quarterly    # ADR 052
     CMP23: quarterly    # ADR 052
+    PTEX: quarterly     # ADR 053
+    H95: quarterly      # ADR 053
 
 # --- nSITE Evaluations watch (Stream N, ADR 029) ---
 # Watch on the "Evaluations" profile — the underlying INSPECTION record a
@@ -1072,6 +1082,8 @@ nsite_evaluations:
     BDPH: quarterly     # ADR 052
     ASB26: quarterly    # ADR 052
     CMP23: quarterly    # ADR 052
+    PTEX: quarterly     # ADR 053
+    H95: quarterly      # ADR 053
 
 # --- nSITE Permits watch (Stream O, ADR 030) ---
 # Watch on the "Permits" profile — a facility's permit lifecycle (issued ->
@@ -1170,6 +1182,8 @@ nsite_permits:
     BDPH: biweekly      # ADR 052
     ASB26: quarterly    # ADR 052
     CMP23: quarterly    # ADR 052
+    PTEX: biweekly      # ADR 053
+    H95: quarterly      # ADR 053
 
 # --- nSITE Complaints watch (Stream P, ADR 031) ---
 # Watch on the "Complaints" profile — citizen/agency reports filed against a
@@ -1274,6 +1288,8 @@ nsite_complaints:
     BDPH: quarterly     # ADR 052
     ASB26: quarterly    # ADR 052
     CMP23: quarterly    # ADR 052
+    PTEX: quarterly     # ADR 053
+    H95: quarterly      # ADR 053
 
 # --- nSITE Active Public Notices watch (Stream Q, ADR 032) ---
 # Watch on the "Active Public Notices" profile — the formal comment-window
@@ -1379,6 +1395,8 @@ nsite_public_notices:
     BDPH: quarterly     # ADR 052
     ASB26: quarterly    # ADR 052
     CMP23: quarterly    # ADR 052
+    PTEX: quarterly     # ADR 053
+    H95: quarterly      # ADR 053
 
 # --- GFL "informational website" change-watch (Stream S, ADR 041, added 2026-09-11) ---
 # OFF BY DEFAULT. A daily snapshot + change-diff watch on the OPERATOR's own
