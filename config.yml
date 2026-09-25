@@ -35,6 +35,10 @@ facilities:
   - {srn: "CMP23", name: "WRD-NPDES complaint site (HPY-5JZ9-JFEQE)", id: "8106421448071964642"}   # ADR 052: one WRD-NPDES complaint, 2023-10-05; 0 docs
   - {srn: "PTEX", name: "Plymouth Township Exchange, Five Mile Rd (WRP037948)", id: "-1034065027376918328"}   # ADR 053: JD 5 Mile LLC (Jones Development); Part 301/303 permit In Effect 2025-08-06..2028-06-26 w/ 2025 minor revisions; temp wetland impacts + Johnson Drain crossing; agent Barr Engineering; 2022 WIP + pre-app, 2023 JPA; 45 docs
   - {srn: "H95", name: "1995 resources permit 95-13-0412-P", id: "-6102479567065163659"}   # ADR 053: historical Conversion Resources Application, General Permit 1995-09-28..1996-12-31 (Expired); 0 docs
+  - {srn: "LUMB", name: "7480 Napier Rd lumber facility, Five Mile & Napier (WRP039817)", id: "-138923829872982091"}   # ADR 054: new commercial lumber facility, Northville Twp (Wayne); Part 303 Individual Permit In Effect 2024-04-23..2029-04-23; 2023 after-the-fact VN-015316 (unauthorized activity still Active-Addressed not Resolved); 24 docs
+  - {srn: "DTE5M", name: "DTE work, N side of Five Mile Napier to Ridge (WRP039922)", id: "-3197747421558034961"}   # ADR 054: DTE Energy (One Energy Plaza); Individual Permit In Effect 2023-12-20..2028-12-20; 2021 pre-app + 2023 JPA; 37 docs
+  - {srn: "FMCOM", name: "Five Mile Rd E of Napier commercial pre-app (HQG-PB0D-FXQ6N)", id: "4473941391942993502"}   # ADR 054: 2025-11-03 pre-application meeting for a new commercial development, N side of Five Mile W of Ridge, Sec. 18 Northville Twp; permit application expected; 5 docs
+  - {srn: "NTWP", name: "Northville Twp site, NW corner Five Mile & Ridge (WRP037947)", id: "1136159897475661963"}   # ADR 054: Charter Township of Northville; Part 303 minor permit In Effect 2023-06-26..2028-06-26 (sibling number to PTEX WRP037948); construction stormwater MIR117693 (2023, expired) + new NOC 2026-05-08 On Hold; 25 docs
   # NOT TRACKED (Documents pipeline) — the other 13 sites resolved in ADR 021
   # are polled for Submissions ONLY, at their tier's cadence — see
   # `nsite_sites` + `nsite_submissions.tiers` below (ADR 022). They are near-zero/zero-Documents-history
@@ -743,6 +747,10 @@ nsite_sites:
   - {srn: "CMP23", name: "WRD-NPDES complaint site (HPY-5JZ9-JFEQE)", id: "8106421448071964642"}   # ADR 052 — one WRD-NPDES complaint, 2023-10-05; 0 docs
   - {srn: "PTEX", name: "Plymouth Township Exchange, Five Mile Rd (WRP037948)", id: "-1034065027376918328"}   # ADR 053 — JD 5 Mile LLC (Jones Development); Part 301/303 permit In Effect 2025-08-06..2028-06-26 w/ 2025 minor revisions; temp wetland impacts + Johnson Drain crossing; agent Barr Engineering; 2022 WIP + pre-app, 2023 JPA; 45 docs
   - {srn: "H95", name: "1995 resources permit 95-13-0412-P", id: "-6102479567065163659"}   # ADR 053 — historical Conversion Resources Application, General Permit 1995-09-28..1996-12-31 (Expired); 0 docs
+  - {srn: "LUMB", name: "7480 Napier Rd lumber facility, Five Mile & Napier (WRP039817)", id: "-138923829872982091"}   # ADR 054 — new commercial lumber facility, Northville Twp (Wayne); Part 303 Individual Permit In Effect 2024-04-23..2029-04-23; 2023 after-the-fact VN-015316 (unauthorized activity still Active-Addressed not Resolved); 24 docs
+  - {srn: "DTE5M", name: "DTE work, N side of Five Mile Napier to Ridge (WRP039922)", id: "-3197747421558034961"}   # ADR 054 — DTE Energy (One Energy Plaza); Individual Permit In Effect 2023-12-20..2028-12-20; 2021 pre-app + 2023 JPA; 37 docs
+  - {srn: "FMCOM", name: "Five Mile Rd E of Napier commercial pre-app (HQG-PB0D-FXQ6N)", id: "4473941391942993502"}   # ADR 054 — 2025-11-03 pre-application meeting for a new commercial development, N side of Five Mile W of Ridge, Sec. 18 Northville Twp; permit application expected; 5 docs
+  - {srn: "NTWP", name: "Northville Twp site, NW corner Five Mile & Ridge (WRP037947)", id: "1136159897475661963"}   # ADR 054 — Charter Township of Northville; Part 303 minor permit In Effect 2023-06-26..2028-06-26 (sibling number to PTEX WRP037948); construction stormwater MIR117693 (2023, expired) + new NOC 2026-05-08 On Hold; 25 docs
 
 # --- nSITE Submissions watch (Stream K, ADR 020; tiered cadence ADR 021; site identity moved to nsite_sites above, ADR 022) ---
 # Watch on the "Submissions" profile (application / service-request intake: a
@@ -818,6 +826,10 @@ nsite_submissions:
     CMP23: quarterly    # ADR 052
     PTEX: biweekly      # ADR 053
     H95: quarterly      # ADR 053
+    LUMB: quarterly     # ADR 054
+    DTE5M: quarterly    # ADR 054
+    FMCOM: biweekly     # ADR 054
+    NTWP: biweekly      # ADR 054
 
 # --- nSITE Violations watch (Stream L, ADR 023) ---
 # Watch on the "Violations" profile — EGLE's OWN ENFORCEMENT RECORD (a formal
@@ -905,6 +917,10 @@ nsite_violations:
     CMP23: quarterly    # ADR 052
     PTEX: quarterly     # ADR 053
     H95: quarterly      # ADR 053
+    LUMB: biweekly      # ADR 054
+    DTE5M: quarterly    # ADR 054
+    FMCOM: quarterly    # ADR 054
+    NTWP: quarterly     # ADR 054
 
 # --- nSITE Compliance Actions watch (Stream M, ADR 028) ---
 # Watch on the "Compliance Actions" profile — the formal actions EGLE takes in
@@ -995,6 +1011,10 @@ nsite_compliance_actions:
     CMP23: quarterly    # ADR 052
     PTEX: quarterly     # ADR 053
     H95: quarterly      # ADR 053
+    LUMB: quarterly     # ADR 054
+    DTE5M: quarterly    # ADR 054
+    FMCOM: quarterly    # ADR 054
+    NTWP: quarterly     # ADR 054
 
 # --- nSITE Evaluations watch (Stream N, ADR 029) ---
 # Watch on the "Evaluations" profile — the underlying INSPECTION record a
@@ -1084,6 +1104,10 @@ nsite_evaluations:
     CMP23: quarterly    # ADR 052
     PTEX: quarterly     # ADR 053
     H95: quarterly      # ADR 053
+    LUMB: quarterly     # ADR 054
+    DTE5M: quarterly    # ADR 054
+    FMCOM: quarterly    # ADR 054
+    NTWP: quarterly     # ADR 054
 
 # --- nSITE Permits watch (Stream O, ADR 030) ---
 # Watch on the "Permits" profile — a facility's permit lifecycle (issued ->
@@ -1184,6 +1208,10 @@ nsite_permits:
     CMP23: quarterly    # ADR 052
     PTEX: biweekly      # ADR 053
     H95: quarterly      # ADR 053
+    LUMB: biweekly      # ADR 054
+    DTE5M: biweekly     # ADR 054
+    FMCOM: biweekly     # ADR 054
+    NTWP: biweekly      # ADR 054
 
 # --- nSITE Complaints watch (Stream P, ADR 031) ---
 # Watch on the "Complaints" profile — citizen/agency reports filed against a
@@ -1290,6 +1318,10 @@ nsite_complaints:
     CMP23: quarterly    # ADR 052
     PTEX: quarterly     # ADR 053
     H95: quarterly      # ADR 053
+    LUMB: quarterly     # ADR 054
+    DTE5M: quarterly    # ADR 054
+    FMCOM: quarterly    # ADR 054
+    NTWP: quarterly     # ADR 054
 
 # --- nSITE Active Public Notices watch (Stream Q, ADR 032) ---
 # Watch on the "Active Public Notices" profile — the formal comment-window
@@ -1397,6 +1429,10 @@ nsite_public_notices:
     CMP23: quarterly    # ADR 052
     PTEX: quarterly     # ADR 053
     H95: quarterly      # ADR 053
+    LUMB: quarterly     # ADR 054
+    DTE5M: quarterly    # ADR 054
+    FMCOM: quarterly    # ADR 054
+    NTWP: quarterly     # ADR 054
 
 # --- GFL "informational website" change-watch (Stream S, ADR 041, added 2026-09-11) ---
 # OFF BY DEFAULT. A daily snapshot + change-diff watch on the OPERATOR's own
