@@ -156,7 +156,7 @@ def gh(*args: str, capture: bool = True) -> str:
 
 
 def md5(b: bytes) -> str:
-    return hashlib.md5(b).hexdigest()
+    return hashlib.md5(b, usedforsecurity=False).hexdigest()
 
 
 def repack_zip(zbytes: bytes, readme_path: str, note: dict, guards: dict) -> tuple[bytes, bool]:
