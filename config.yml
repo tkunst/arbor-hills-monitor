@@ -24,6 +24,8 @@ facilities:
   - {srn: "NAPR",  name: "GFL Napier Rd culvert (WRP034436)", id: "-4552820604746245548"}   # EGLE WRD Resources permit WRP034436 (issued 2022-08-01, expires 2027-08-01): GFL box culvert + fill in an unnamed Johnson Creek tributary, Napier Rd between 5 and 6 Mile, Northville Twp (Wayne Co). 12 docs (2022 JPA + permit packet). Found by Trisha 2026-09-25; ADR 044
   - {srn: "WIP19", name: "Salem Springs wetland ID, 6255 Napier Rd (HNP-75WK-9JX94)", id: "6076539015117221381"}   # ADR 048: 2019 EGLE Level 3 WIP, ~91 ac, 25.51 ac regulated wetland, Salem Springs Owner LLC (Schostak), Sec. 25; 4 docs
   - {srn: "PTI87", name: "1987 Air PTI applications (C-7567, C-7568)", id: "-3813933512584804016"}   # ADR 048: historical, 0 docs on nSITE today; tracked so any later-posted document is archived
+  - {srn: "BORE15", name: "Arbor Hills 2015 soil-boring JPA (WRP000808)", id: "-4454026774380249654"}   # ADR 049: Advanced Disposal/Golder, 11 hydrogeologic boreholes in Sec. 12 w/ temporary wetland crossings; GP Category Q, 2015-11-17..2020-11-17 (Expired); 8 docs incl. borehole+wetland map and adjacent-owner list
+  - {srn: "FP89",  name: "Floodplain elevation request, 8627 Napier Rd (89-11-0108-FP)", id: "7284130751247156626"}   # ADR 049: historical WRD floodplain elevation calculation request (1989 per ref format), parcel next to the landfill in Sec. 12; 0 docs today
   # NOT TRACKED (Documents pipeline) — the other 13 sites resolved in ADR 021
   # are polled for Submissions ONLY, at their tier's cadence — see
   # `nsite_sites` + `nsite_submissions.tiers` below (ADR 022). They are near-zero/zero-Documents-history
@@ -721,6 +723,8 @@ nsite_sites:
   - {srn: "WIP15", name: "Wetland Identification request site (294-E9PM-E16P)", id: "1335503966479023299"}   # ADR 047: one WRD-Resources Wetland Identification Program request (294-E9PM-E16P, 2015-08-26, Completed); no documents on nSITE. Very likely the 2015 WIP of the Salem Springs land (see WIP19 / ADR 048), not landfill property
   - {srn: "WIP19", name: "Salem Springs wetland ID, 6255 Napier Rd (HNP-75WK-9JX94)", id: "6076539015117221381"}   # ADR 048
   - {srn: "PTI87", name: "1987 Air PTI applications (C-7567, C-7568)", id: "-3813933512584804016"}   # ADR 048
+  - {srn: "BORE15", name: "Arbor Hills 2015 soil-boring JPA (WRP000808)", id: "-4454026774380249654"}   # ADR 049 (Advanced Disposal/Golder, 11 hydrogeologic boreholes in Sec. 12 w/ temporary wetland crossings; GP Category Q, 2015-11-17..2020-11-17 (Expired); 8 docs incl. borehole+wetland map and adjacent-owner list
+  - {srn: "FP89",  name: "Floodplain elevation request, 8627 Napier Rd (89-11-0108-FP)", id: "7284130751247156626"}   # ADR 049 (historical WRD floodplain elevation calculation request (1989 per ref format), parcel next to the landfill in Sec. 12; 0 docs today
 
 # --- nSITE Submissions watch (Stream K, ADR 020; tiered cadence ADR 021; site identity moved to nsite_sites above, ADR 022) ---
 # Watch on the "Submissions" profile (application / service-request intake: a
@@ -785,6 +789,8 @@ nsite_submissions:
     WIP15: quarterly     # ADR 047 (2015 wetland ID request)
     WIP19: quarterly     # ADR 048 (Salem Springs 2019 WIP)
     PTI87: quarterly     # ADR 048 (1987 air PTIs)
+    BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
+    FP89: quarterly      # ADR 049 (1989 floodplain request)
 
 # --- nSITE Violations watch (Stream L, ADR 023) ---
 # Watch on the "Violations" profile — EGLE's OWN ENFORCEMENT RECORD (a formal
@@ -861,6 +867,8 @@ nsite_violations:
     WIP15: quarterly     # ADR 047 (2015 wetland ID request)
     WIP19: quarterly     # ADR 048 (Salem Springs 2019 WIP)
     PTI87: quarterly     # ADR 048 (1987 air PTIs)
+    BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
+    FP89: quarterly      # ADR 049 (1989 floodplain request)
 
 # --- nSITE Compliance Actions watch (Stream M, ADR 028) ---
 # Watch on the "Compliance Actions" profile — the formal actions EGLE takes in
@@ -940,6 +948,8 @@ nsite_compliance_actions:
     WIP15: quarterly     # ADR 047 (2015 wetland ID request)
     WIP19: quarterly     # ADR 048 (Salem Springs 2019 WIP)
     PTI87: quarterly     # ADR 048 (1987 air PTIs)
+    BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
+    FP89: quarterly      # ADR 049 (1989 floodplain request)
 
 # --- nSITE Evaluations watch (Stream N, ADR 029) ---
 # Watch on the "Evaluations" profile — the underlying INSPECTION record a
@@ -1018,6 +1028,8 @@ nsite_evaluations:
     WIP15: quarterly     # ADR 047 (2015 wetland ID request)
     WIP19: quarterly     # ADR 048 (Salem Springs 2019 WIP)
     PTI87: quarterly     # ADR 048 (1987 air PTIs)
+    BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
+    FP89: quarterly      # ADR 049 (1989 floodplain request)
 
 # --- nSITE Permits watch (Stream O, ADR 030) ---
 # Watch on the "Permits" profile — a facility's permit lifecycle (issued ->
@@ -1107,6 +1119,8 @@ nsite_permits:
     WIP15: quarterly     # ADR 047 (2015 wetland ID request)
     WIP19: quarterly     # ADR 048 (Salem Springs 2019 WIP)
     PTI87: quarterly     # ADR 048 (1987 air PTIs)
+    BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
+    FP89: quarterly      # ADR 049 (1989 floodplain request)
 
 # --- nSITE Complaints watch (Stream P, ADR 031) ---
 # Watch on the "Complaints" profile — citizen/agency reports filed against a
@@ -1202,6 +1216,8 @@ nsite_complaints:
     WIP15: quarterly     # ADR 047 (2015 wetland ID request)
     WIP19: quarterly     # ADR 048 (Salem Springs 2019 WIP)
     PTI87: quarterly     # ADR 048 (1987 air PTIs)
+    BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
+    FP89: quarterly      # ADR 049 (1989 floodplain request)
 
 # --- nSITE Active Public Notices watch (Stream Q, ADR 032) ---
 # Watch on the "Active Public Notices" profile — the formal comment-window
@@ -1298,6 +1314,8 @@ nsite_public_notices:
     WIP15: quarterly     # ADR 047 (2015 wetland ID request)
     WIP19: quarterly     # ADR 048 (Salem Springs 2019 WIP)
     PTI87: quarterly     # ADR 048 (1987 air PTIs)
+    BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
+    FP89: quarterly      # ADR 049 (1989 floodplain request)
 
 # --- GFL "informational website" change-watch (Stream S, ADR 041, added 2026-09-11) ---
 # OFF BY DEFAULT. A daily snapshot + change-diff watch on the OPERATOR's own
