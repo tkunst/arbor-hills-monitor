@@ -714,6 +714,7 @@ nsite_sites:
   - {srn: "SANL",  name: "Arbor Hills Sanitary Landfill-Northville",  id: "-3993454880491964634"}
   - {srn: "ERNGX", name: "EMERALD RNG, LLC (no-SRN sibling)",         id: "-1194242252385100852"}   # supersedes the old ADR-008 Documents-side exclusion above — still no Documents tracking, now covered here
   - {srn: "NAPR",  name: "GFL Napier Rd culvert (WRP034436)",        id: "-4552820604746245548"}   # ADR 044: 1 submission (2022 JPA, Completed), 1 permit (In Effect to 2027-08-01), 0 violations/CAs/evaluations/complaints/notices at add time
+  - {srn: "LFLO",  name: "Low Flow Discharge Request site (Lflow-7643)", id: "-8293528710588524646"}   # ADR 045: WRD-Resources "Low Flow Discharge Request" service request (Lflow-7643, 2011-01-18, Completed) is its only record; Trisha: these requests recur about every 5 years for this location. Quarterly everywhere = catches the next one.
 
 # --- nSITE Submissions watch (Stream K, ADR 020; tiered cadence ADR 021; site identity moved to nsite_sites above, ADR 022) ---
 # Watch on the "Submissions" profile (application / service-request intake: a
@@ -773,6 +774,7 @@ nsite_submissions:
     SANL: quarterly
     ERNGX: quarterly
     NAPR: biweekly       # ADR 044 (WRP034436 Napier Rd culvert)
+    LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
 
 # --- nSITE Violations watch (Stream L, ADR 023) ---
 # Watch on the "Violations" profile — EGLE's OWN ENFORCEMENT RECORD (a formal
@@ -844,6 +846,7 @@ nsite_violations:
     SANL: quarterly
     ERNGX: quarterly
     NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
+    LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
 
 # --- nSITE Compliance Actions watch (Stream M, ADR 028) ---
 # Watch on the "Compliance Actions" profile — the formal actions EGLE takes in
@@ -918,6 +921,7 @@ nsite_compliance_actions:
     SANL: quarterly
     ERNGX: quarterly
     NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
+    LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
 
 # --- nSITE Evaluations watch (Stream N, ADR 029) ---
 # Watch on the "Evaluations" profile — the underlying INSPECTION record a
@@ -991,6 +995,7 @@ nsite_evaluations:
     SANL: quarterly
     ERNGX: quarterly
     NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
+    LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
 
 # --- nSITE Permits watch (Stream O, ADR 030) ---
 # Watch on the "Permits" profile — a facility's permit lifecycle (issued ->
@@ -1075,6 +1080,7 @@ nsite_permits:
     AHE2: quarterly
     ERNGX: quarterly
     NAPR: biweekly       # ADR 044 (WRP034436 Napier Rd culvert)
+    LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
 
 # --- nSITE Complaints watch (Stream P, ADR 031) ---
 # Watch on the "Complaints" profile — citizen/agency reports filed against a
@@ -1165,6 +1171,7 @@ nsite_complaints:
     SANL: quarterly
     ERNGX: quarterly
     NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
+    LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
 
 # --- nSITE Active Public Notices watch (Stream Q, ADR 032) ---
 # Watch on the "Active Public Notices" profile — the formal comment-window
@@ -1256,6 +1263,7 @@ nsite_public_notices:
     SANL: quarterly
     ERNGX: quarterly
     NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
+    LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
 
 # --- GFL "informational website" change-watch (Stream S, ADR 041, added 2026-09-11) ---
 # OFF BY DEFAULT. A daily snapshot + change-diff watch on the OPERATOR's own
