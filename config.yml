@@ -715,6 +715,8 @@ nsite_sites:
   - {srn: "ERNGX", name: "EMERALD RNG, LLC (no-SRN sibling)",         id: "-1194242252385100852"}   # supersedes the old ADR-008 Documents-side exclusion above — still no Documents tracking, now covered here
   - {srn: "NAPR",  name: "GFL Napier Rd culvert (WRP034436)",        id: "-4552820604746245548"}   # ADR 044: 1 submission (2022 JPA, Completed), 1 permit (In Effect to 2027-08-01), 0 violations/CAs/evaluations/complaints/notices at add time
   - {srn: "LFLO",  name: "Low Flow Discharge Request site (Lflow-7643)", id: "-8293528710588524646"}   # ADR 045: WRD-Resources "Low Flow Discharge Request" service request (Lflow-7643, 2011-01-18, Completed) is its only record; Trisha: these requests recur about every 5 years for this location. Quarterly everywhere = catches the next one.
+  - {srn: "DTEN",  name: "DTE Nitro Substation Napier Rd & 5 Mile Conduit (MI0060368)", id: "-4327269113100269233"}   # ADR 046: NPDES Industrial/Commercial IP MI0060368 (In Effect 2024-08-28..2028-10-01), ~1.1 MGD discharge w/ PFAS monitoring, 8 DMR limit exceedances 2025-11..2026-04 (Active - Not Reviewed), ownership-transfer notice 2026-09-17 In Process. Profile watchers only (Trisha option a) — NOT in facilities: (213 docs; classification cost vs the Anthropic cap)
+  - {srn: "WIP15", name: "Wetland Identification request site (294-E9PM-E16P)", id: "1335503966479023299"}   # ADR 047: one WRD-Resources Wetland Identification Program request (294-E9PM-E16P, 2015-08-26, Completed); no documents on nSITE
 
 # --- nSITE Submissions watch (Stream K, ADR 020; tiered cadence ADR 021; site identity moved to nsite_sites above, ADR 022) ---
 # Watch on the "Submissions" profile (application / service-request intake: a
@@ -775,6 +777,8 @@ nsite_submissions:
     ERNGX: quarterly
     NAPR: biweekly       # ADR 044 (WRP034436 Napier Rd culvert)
     LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
+    DTEN: daily          # ADR 046 (DTE Nitro NPDES MI0060368)
+    WIP15: quarterly     # ADR 047 (2015 wetland ID request)
 
 # --- nSITE Violations watch (Stream L, ADR 023) ---
 # Watch on the "Violations" profile — EGLE's OWN ENFORCEMENT RECORD (a formal
@@ -847,6 +851,8 @@ nsite_violations:
     ERNGX: quarterly
     NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
     LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
+    DTEN: daily          # ADR 046 (DTE Nitro NPDES MI0060368)
+    WIP15: quarterly     # ADR 047 (2015 wetland ID request)
 
 # --- nSITE Compliance Actions watch (Stream M, ADR 028) ---
 # Watch on the "Compliance Actions" profile — the formal actions EGLE takes in
@@ -922,6 +928,8 @@ nsite_compliance_actions:
     ERNGX: quarterly
     NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
     LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
+    DTEN: biweekly       # ADR 046 (DTE Nitro NPDES MI0060368)
+    WIP15: quarterly     # ADR 047 (2015 wetland ID request)
 
 # --- nSITE Evaluations watch (Stream N, ADR 029) ---
 # Watch on the "Evaluations" profile — the underlying INSPECTION record a
@@ -996,6 +1004,8 @@ nsite_evaluations:
     ERNGX: quarterly
     NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
     LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
+    DTEN: biweekly       # ADR 046 (DTE Nitro NPDES MI0060368)
+    WIP15: quarterly     # ADR 047 (2015 wetland ID request)
 
 # --- nSITE Permits watch (Stream O, ADR 030) ---
 # Watch on the "Permits" profile — a facility's permit lifecycle (issued ->
@@ -1081,6 +1091,8 @@ nsite_permits:
     ERNGX: quarterly
     NAPR: biweekly       # ADR 044 (WRP034436 Napier Rd culvert)
     LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
+    DTEN: daily          # ADR 046 (DTE Nitro NPDES MI0060368)
+    WIP15: quarterly     # ADR 047 (2015 wetland ID request)
 
 # --- nSITE Complaints watch (Stream P, ADR 031) ---
 # Watch on the "Complaints" profile — citizen/agency reports filed against a
@@ -1172,6 +1184,8 @@ nsite_complaints:
     ERNGX: quarterly
     NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
     LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
+    DTEN: quarterly      # ADR 046 (DTE Nitro NPDES MI0060368)
+    WIP15: quarterly     # ADR 047 (2015 wetland ID request)
 
 # --- nSITE Active Public Notices watch (Stream Q, ADR 032) ---
 # Watch on the "Active Public Notices" profile — the formal comment-window
@@ -1264,6 +1278,8 @@ nsite_public_notices:
     ERNGX: quarterly
     NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
     LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
+    DTEN: biweekly       # ADR 046 (DTE Nitro NPDES MI0060368)
+    WIP15: quarterly     # ADR 047 (2015 wetland ID request)
 
 # --- GFL "informational website" change-watch (Stream S, ADR 041, added 2026-09-11) ---
 # OFF BY DEFAULT. A daily snapshot + change-diff watch on the OPERATOR's own
