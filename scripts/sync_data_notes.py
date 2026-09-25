@@ -83,7 +83,7 @@ def apply_markers(src: str, notes: dict) -> str:
     return MARK_RE.sub(sub, src)
 
 
-FAQ_DIV_RE = re.compile(r'<div class="faq">\s*<h2>(?P<q>.*?)</h2>(?P<body>.*?)</div>', re.S)
+FAQ_DIV_RE = re.compile(r'<div class="faq"[^>]*>\s*<h2[^>]*>(?P<q>.*?)</h2>(?P<body>.*?)</div>', re.S)
 
 
 def sync_faq_jsonld(src: str) -> str:

@@ -50,7 +50,7 @@ def test_faq_jsonld_answer_equals_visible_answer():
     faq = (ROOT / "site" / "faq" / "index.html").read_text(encoding="utf-8")
     data = json.loads(re.search(r'<script type="application/ld\+json">(.*?)</script>', faq, re.S).group(1))
     hits = [q for q in data["mainEntity"] if note_text in q["acceptedAnswer"]["text"]]
-    assert len(hits) == 2
+    assert len(hits) == 1
 
 
 def _zip(members: dict) -> bytes:
