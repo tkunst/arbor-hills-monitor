@@ -1,0 +1,73 @@
+# Perimeter H2S data-quality note — the SINGLE SOURCE OF TRUTH.
+#
+# Edit this file, then run:
+#     .venv/bin/python scripts/sync_data_notes.py --pages          # rewrite the site pages
+#     .venv/bin/python scripts/sync_data_notes.py --release        # release notes + zip README (needs `gh`)
+# (`--all` does both.) tests/test_sync_data_notes.py fails CI if any site page drifts from
+# this file. Pushing a change to this file to `main` also runs the release sync
+# automatically (.github/workflows/data-notes.yml).
+#
+# Two parts, on purpose:
+#   * `html` / `footer_html` — what the website says about the LIVE feed today.
+#   * `release_md` — what the downloadable dataset's release notes and zip README say.
+#     It scopes the suspect ranges to the bundle's own date range, and labels anything
+#     after the bundle's cutoff as live-feed status, so nobody is told that rows they hold
+#     are bad when those rows were fine.
+#
+# Times are Eastern (America/Detroit). Source for every figure: GFL's public perimeter feed
+# (Barr Engineering FeatureServer, layer 4), queried 2026-09-25 ~10:40 ET.
+
+id: perimeter-h2s
+as_of: "September 25, 2026, 10:00 a.m. ET"
+
+# Rendered inside <p class="data-quality-note"> (variant "callout") on every page.
+html: >-
+  <strong>Data-quality note (updated September 25, 2026):</strong> only two of the six
+  fence-line stations, MS-3 and MS-4, are currently producing usable hydrogen-sulfide
+  readings. MS-2, historically the station with the most exceedances, reported a flat
+  0.0&nbsp;ppb from June 30, 2025 until two small readings (0.1 and 0.5&nbsp;ppb) on
+  September 24&ndash;25, 2026; whether its sensor has been repaired is not yet clear.
+  MS-5 reported a flat 0.0&nbsp;ppb from May 28, 2025 and has sent no data since
+  September 16, 2026. MS-6 has reported a flat 3.0&nbsp;ppb since June 11, 2026
+  (3.1&nbsp;ppb since September 23). MS-1 was working normally but has sent no data
+  since September 17, 2026. A working sensor produces small, fluctuating values, not an
+  unbroken run of one number, so these flat stretches point to non-responsive or
+  uncalibrated sensors rather than clean air, and a quiet record at those stations is
+  not verified compliance. The working stations did record readings above the 30&nbsp;ppb
+  level on September 14, 2026. Status as of September 25, 2026, 10:00&nbsp;a.m.&nbsp;ET.
+  Source: GFL's own public perimeter feed (Barr Engineering).
+
+# Rendered as the text of a page footer (variant "footer").
+footer_html: >-
+  An independent project. Ambient fence-line readings (ppb) are what reach the property
+  boundary; as of September 25, 2026, only two of the six stations are producing usable
+  hydrogen-sulfide readings. Source data is the operator's public perimeter feed
+  (Barr Engineering).
+
+# Markdown for the GitHub release notes and the README inside the release zip.
+release_md: |-
+  **Data-quality note (updated 2026-09-25).** Several stations' hydrogen-sulfide (H2S) channels have reported a single constant value for long stretches while the station kept reporting and its methane channel kept varying. That is a constant value on a live station, not a data gap. A working H2S sensor produces small, fluctuating values even in clean air, so a continuous identical value is consistent with a non-responsive or uncalibrated sensor.
+
+  *Affects the data in this bundle (which ends 2026-09-06 00:00 UTC):*
+
+  - **MS-2** `h2s_ppb` is a constant `0.0` from 2025-06-30 07:00 ET onward (last non-zero reading 2025-06-30 06:00 ET). Treat as suspect.
+  - **MS-5** `h2s_ppb` is a constant `0.0` from 2025-05-28 16:00 ET onward (last non-zero reading 2025-05-28 15:00 ET). Treat as suspect.
+  - **MS-6** `h2s_ppb` is a constant `3.0` from 2026-06-11 15:00 ET onward (last varying reading 2026-06-11 14:00 ET, 0.5 ppb). Treat as suspect.
+  - **MS-1, MS-3 and MS-4** vary normally through the end of this bundle.
+
+  Do not read the absence of H2S exceedances at MS-2, MS-5 or MS-6 in those periods as verified clean air.
+
+  *Live feed after this bundle's cutoff (status as of 2026-09-25 10:00 ET; these readings are not in this bundle):* MS-1 has sent no data since 2026-09-17 12:00 ET and MS-5 none since 2026-09-16 21:00 ET. MS-6 moved to a constant `3.1` on 2026-09-23. MS-2 reported 0.1 ppb (2026-09-24 23:00 ET) and 0.5 ppb (2026-09-25 05:00 ET), its first non-zero values since June 2025; whether the sensor has been repaired is not yet clear. That leaves MS-3 and MS-4 as the only stations currently producing usable H2S data. On 2026-09-14 the working stations recorded hourly H2S above 30 ppb: MS-1 153.4 ppb (13:00 ET), MS-3 65.4 ppb (14:00 ET), and MS-4 67.9 ppb (14:00 ET) and 46.8 ppb (15:00 ET).
+
+  These are observations from the operator's self-reported feed; the cause has not been publicly confirmed by EGLE or Barr Engineering.
+
+# Where the release copy lives, and the integrity guard for re-packing the zip.
+release:
+  tag: perimeter-air-data-2026-08-04
+  repo: tkunst/arbor-hills-monitor
+  zip_asset: arbor-hills-perimeter-air-2022-2026.zip
+  zip_readme_path: arbor-hills-perimeter-air-2022-2026/README.md
+  # The re-packed zip must keep these members byte-identical, or the upload is aborted.
+  zip_member_md5:
+    arbor-hills-perimeter-air-2022-2026/arbor-hills-perimeter-air-enriched-2022-2026.csv: e319e1ddc6d758ccd6a054200f63e54a
+    arbor-hills-perimeter-air-2022-2026/arbor-hills-perimeter-air-raw-2022-2026.csv: 244615de27873007a840e6bbd5ff5993

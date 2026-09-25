@@ -37,7 +37,8 @@
 <p class="tagline">Fence-line methane and hydrogen-sulfide readings from the six-station perimeter network (MS-1 through MS-6) around the Arbor Hills Landfill, May 2022 to September 2026. Published with a raw snapshot so the enriched table can be rebuilt and checked offline.</p>
 </header>
 
-<p class="lede">This is the ambient, at-the-boundary record behind the monitor's <a href="../../hydrogen-sulfide/">hydrogen sulfide page</a> &mdash; the concentrations that actually reach the property line, in parts per billion, as distinct from the far stronger in-gas readings inside the wells. A data-quality note: since mid-2025 two of the six stations (MS-2 and MS-5) have reported a flat 0.0 ppb of hydrogen sulfide while their methane sensors keep varying, which points to a non-responsive sensor rather than clean air; the dataset carries the raw values so this is visible.</p>
+<p class="lede">This is the ambient, at-the-boundary record behind the monitor's <a href="../../hydrogen-sulfide/">hydrogen sulfide page</a> &mdash; the concentrations that actually reach the property line, in parts per billion, as distinct from the far stronger in-gas readings inside the wells. The dataset carries the raw values, so the sensor problems described below are visible in it.</p>
+<!-- dq-note:perimeter-h2s:callout --><p class="data-quality-note"><strong>Data-quality note (updated September 25, 2026):</strong> only two of the six fence-line stations, MS-3 and MS-4, are currently producing usable hydrogen-sulfide readings. MS-2, historically the station with the most exceedances, reported a flat 0.0&nbsp;ppb from June 30, 2025 until two small readings (0.1 and 0.5&nbsp;ppb) on September 24&ndash;25, 2026; whether its sensor has been repaired is not yet clear. MS-5 reported a flat 0.0&nbsp;ppb from May 28, 2025 and has sent no data since September 16, 2026. MS-6 has reported a flat 3.0&nbsp;ppb since June 11, 2026 (3.1&nbsp;ppb since September 23). MS-1 was working normally but has sent no data since September 17, 2026. A working sensor produces small, fluctuating values, not an unbroken run of one number, so these flat stretches point to non-responsive or uncalibrated sensors rather than clean air, and a quiet record at those stations is not verified compliance. The working stations did record readings above the 30&nbsp;ppb level on September 14, 2026. Status as of September 25, 2026, 10:00&nbsp;a.m.&nbsp;ET. Source: GFL's own public perimeter feed (Barr Engineering).</p><!-- /dq-note:perimeter-h2s -->
 
 <table class="meta-grid">
 <tr><th>Subject</th><td>Arbor Hills Landfill perimeter, Salem Township, Washtenaw County, Michigan (SRN N2688)</td></tr>
@@ -60,7 +61,7 @@
 </div>
 
 <footer class="site-footer">
-<p>An independent project. Ambient fence-line readings (ppb) are what reach the property boundary; two of the six stations have not produced valid hydrogen-sulfide readings since mid-2025. Source data is the operator's public perimeter feed (Barr Engineering).</p>
+<p><!-- dq-note:perimeter-h2s:footer -->An independent project. Ambient fence-line readings (ppb) are what reach the property boundary; as of September 25, 2026, only two of the six stations are producing usable hydrogen-sulfide readings. Source data is the operator's public perimeter feed (Barr Engineering).<!-- /dq-note:perimeter-h2s --></p>
 </footer>
 
 <script type="application/ld+json">
@@ -68,7 +69,7 @@
   "@context": "https://schema.org",
   "@type": "Dataset",
   "name": "Arbor Hills Landfill perimeter air-monitoring dataset (May 2022-September 2026)",
-  "description": "Fence-line methane and hydrogen-sulfide readings from the six-station perimeter network (MS-1 through MS-6) around the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688), May 2022 to September 2026, from GFL's public perimeter feed operated by Barr Engineering. A raw snapshot is bundled so the enriched table can be reproduced offline. Note: since mid-2025 two stations (MS-2, MS-5) report a flat 0.0 ppb of hydrogen sulfide, a non-responsive-sensor pattern preserved in the raw values.",
+  "description": "Fence-line methane and hydrogen-sulfide readings from the six-station perimeter network (MS-1 through MS-6) around the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688), May 2022 to September 2026, from GFL's public perimeter feed operated by Barr Engineering. A raw snapshot is bundled so the enriched table can be reproduced offline. Note: several stations' hydrogen-sulfide channels report a constant value for long periods, a non-responsive-sensor pattern preserved in the raw values; see the data-quality note on the dataset page.",
   "url": "https://arborhillsmonitor.org/data/perimeter-air/",
   "keywords": ["Arbor Hills Landfill","perimeter air monitoring","fence line","hydrogen sulfide","methane","H2S","Barr Engineering","Salem Township","Washtenaw County","Michigan"],
   "creator": {"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},

@@ -1,0 +1,40 @@
+name: data-notes
+
+# When a data-quality note in data-notes/ changes on main, copy it into the GitHub
+# release notes and the README inside the release zip (scripts/sync_data_notes.py).
+# The site pages are synced in the same commit by the author (`--pages`); the
+# pytest guard tests/test_sync_data_notes.py fails CI if they are not.
+# The script refuses to re-upload the zip unless the CSV members are byte-identical
+# to the published MD5s listed in the note's YAML.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'data-notes/**'
+      - 'scripts/sync_data_notes.py'
+      - '.github/workflows/data-notes.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # edit release notes + upload the re-packed zip asset
+
+concurrency:
+  group: data-notes-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install pyyaml
+      - name: Site pages in sync (guard)
+        run: python scripts/sync_data_notes.py --check
+      - name: Sync release notes + zip README
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/sync_data_notes.py --release
