@@ -26,6 +26,7 @@ facilities:
   - {srn: "PTI87", name: "1987 Air PTI applications (C-7567, C-7568)", id: "-3813933512584804016"}   # ADR 048: historical, 0 docs on nSITE today; tracked so any later-posted document is archived
   - {srn: "BORE15", name: "Arbor Hills 2015 soil-boring JPA (WRP000808)", id: "-4454026774380249654"}   # ADR 049: Advanced Disposal/Golder, 11 hydrogeologic boreholes in Sec. 12 w/ temporary wetland crossings; GP Category Q, 2015-11-17..2020-11-17 (Expired); 8 docs incl. borehole+wetland map and adjacent-owner list
   - {srn: "FP89",  name: "Floodplain elevation request, 8627 Napier Rd (89-11-0108-FP)", id: "7284130751247156626"}   # ADR 049: historical WRD floodplain elevation calculation request (1989 per ref format), parcel next to the landfill in Sec. 12; 0 docs today
+  - {srn: "MITIG", name: "Arbor Hills Mitigation Site", id: "6707784663696162097"}   # ADR 050: identified by Trisha 2026-09-25; empty on every nSITE profile at add time. Expected home of the wetland-mitigation filings tied to the 2026 Wetland 1 JPA (conceptual mitigation plan).
   # NOT TRACKED (Documents pipeline) — the other 13 sites resolved in ADR 021
   # are polled for Submissions ONLY, at their tier's cadence — see
   # `nsite_sites` + `nsite_submissions.tiers` below (ADR 022). They are near-zero/zero-Documents-history
@@ -725,6 +726,7 @@ nsite_sites:
   - {srn: "PTI87", name: "1987 Air PTI applications (C-7567, C-7568)", id: "-3813933512584804016"}   # ADR 048
   - {srn: "BORE15", name: "Arbor Hills 2015 soil-boring JPA (WRP000808)", id: "-4454026774380249654"}   # ADR 049 (Advanced Disposal/Golder, 11 hydrogeologic boreholes in Sec. 12 w/ temporary wetland crossings; GP Category Q, 2015-11-17..2020-11-17 (Expired); 8 docs incl. borehole+wetland map and adjacent-owner list
   - {srn: "FP89",  name: "Floodplain elevation request, 8627 Napier Rd (89-11-0108-FP)", id: "7284130751247156626"}   # ADR 049 (historical WRD floodplain elevation calculation request (1989 per ref format), parcel next to the landfill in Sec. 12; 0 docs today
+  - {srn: "MITIG", name: "Arbor Hills Mitigation Site", id: "6707784663696162097"}   # ADR 050 — identified by Trisha 2026-09-25; empty on every nSITE profile at add time. Expected home of the wetland-mitigation filings tied to the 2026 Wetland 1 JPA (conceptual mitigation plan).
 
 # --- nSITE Submissions watch (Stream K, ADR 020; tiered cadence ADR 021; site identity moved to nsite_sites above, ADR 022) ---
 # Watch on the "Submissions" profile (application / service-request intake: a
@@ -791,6 +793,7 @@ nsite_submissions:
     PTI87: quarterly     # ADR 048 (1987 air PTIs)
     BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
     FP89: quarterly      # ADR 049 (1989 floodplain request)
+    MITIG: biweekly      # ADR 050 (Arbor Hills Mitigation Site)
 
 # --- nSITE Violations watch (Stream L, ADR 023) ---
 # Watch on the "Violations" profile — EGLE's OWN ENFORCEMENT RECORD (a formal
@@ -869,6 +872,7 @@ nsite_violations:
     PTI87: quarterly     # ADR 048 (1987 air PTIs)
     BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
     FP89: quarterly      # ADR 049 (1989 floodplain request)
+    MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
 
 # --- nSITE Compliance Actions watch (Stream M, ADR 028) ---
 # Watch on the "Compliance Actions" profile — the formal actions EGLE takes in
@@ -950,6 +954,7 @@ nsite_compliance_actions:
     PTI87: quarterly     # ADR 048 (1987 air PTIs)
     BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
     FP89: quarterly      # ADR 049 (1989 floodplain request)
+    MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
 
 # --- nSITE Evaluations watch (Stream N, ADR 029) ---
 # Watch on the "Evaluations" profile — the underlying INSPECTION record a
@@ -1030,6 +1035,7 @@ nsite_evaluations:
     PTI87: quarterly     # ADR 048 (1987 air PTIs)
     BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
     FP89: quarterly      # ADR 049 (1989 floodplain request)
+    MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
 
 # --- nSITE Permits watch (Stream O, ADR 030) ---
 # Watch on the "Permits" profile — a facility's permit lifecycle (issued ->
@@ -1121,6 +1127,7 @@ nsite_permits:
     PTI87: quarterly     # ADR 048 (1987 air PTIs)
     BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
     FP89: quarterly      # ADR 049 (1989 floodplain request)
+    MITIG: biweekly      # ADR 050 (Arbor Hills Mitigation Site)
 
 # --- nSITE Complaints watch (Stream P, ADR 031) ---
 # Watch on the "Complaints" profile — citizen/agency reports filed against a
@@ -1218,6 +1225,7 @@ nsite_complaints:
     PTI87: quarterly     # ADR 048 (1987 air PTIs)
     BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
     FP89: quarterly      # ADR 049 (1989 floodplain request)
+    MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
 
 # --- nSITE Active Public Notices watch (Stream Q, ADR 032) ---
 # Watch on the "Active Public Notices" profile — the formal comment-window
@@ -1316,6 +1324,7 @@ nsite_public_notices:
     PTI87: quarterly     # ADR 048 (1987 air PTIs)
     BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
     FP89: quarterly      # ADR 049 (1989 floodplain request)
+    MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
 
 # --- GFL "informational website" change-watch (Stream S, ADR 041, added 2026-09-11) ---
 # OFF BY DEFAULT. A daily snapshot + change-diff watch on the OPERATOR's own
