@@ -21,6 +21,7 @@ facilities:
   - {srn: "P1488", name: "Emerald RNG",                   id: "-5064275074930604158"}   # OPAL/GFL RNG plant (16 docs)
   - {srn: "N2688", name: "Arbor Hills Landfill",         id: "8094300008956198244"}    # the landfill — backfill complete (all processed); new filings now handled by the daily watcher
   - {srn: "AHLI",  name: "Arbor Hills Landfill, Inc.",   id: "643581439310101662"}     # bare duplicate nSITE record surfaced 2026-07-24 resolving all 19 MiEnviro subscriptions (ADR 021); genuine Dec-2025 activity (4 docs) — deliberate, standalone addition, not a side effect of the submissions-cadence build below
+  - {srn: "NAPR",  name: "GFL Napier Rd culvert (WRP034436)", id: "-4552820604746245548"}   # EGLE WRD Resources permit WRP034436 (issued 2022-08-01, expires 2027-08-01): GFL box culvert + fill in an unnamed Johnson Creek tributary, Napier Rd between 5 and 6 Mile, Northville Twp (Wayne Co). 12 docs (2022 JPA + permit packet). Found by Trisha 2026-09-25; ADR 044
   # NOT TRACKED (Documents pipeline) — the other 13 sites resolved in ADR 021
   # are polled for Submissions ONLY, at their tier's cadence — see
   # `nsite_sites` + `nsite_submissions.tiers` below (ADR 022). They are near-zero/zero-Documents-history
@@ -712,6 +713,7 @@ nsite_sites:
   - {srn: "AHE2",  name: "Arbor Hills Energy, LLC (bare)",            id: "6005499155163438362"}
   - {srn: "SANL",  name: "Arbor Hills Sanitary Landfill-Northville",  id: "-3993454880491964634"}
   - {srn: "ERNGX", name: "EMERALD RNG, LLC (no-SRN sibling)",         id: "-1194242252385100852"}   # supersedes the old ADR-008 Documents-side exclusion above — still no Documents tracking, now covered here
+  - {srn: "NAPR",  name: "GFL Napier Rd culvert (WRP034436)",        id: "-4552820604746245548"}   # ADR 044: 1 submission (2022 JPA, Completed), 1 permit (In Effect to 2027-08-01), 0 violations/CAs/evaluations/complaints/notices at add time
 
 # --- nSITE Submissions watch (Stream K, ADR 020; tiered cadence ADR 021; site identity moved to nsite_sites above, ADR 022) ---
 # Watch on the "Submissions" profile (application / service-request intake: a
@@ -770,6 +772,7 @@ nsite_submissions:
     AHE2: quarterly
     SANL: quarterly
     ERNGX: quarterly
+    NAPR: biweekly       # ADR 044 (WRP034436 Napier Rd culvert)
 
 # --- nSITE Violations watch (Stream L, ADR 023) ---
 # Watch on the "Violations" profile — EGLE's OWN ENFORCEMENT RECORD (a formal
@@ -840,6 +843,7 @@ nsite_violations:
     AHE2: quarterly
     SANL: quarterly
     ERNGX: quarterly
+    NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
 
 # --- nSITE Compliance Actions watch (Stream M, ADR 028) ---
 # Watch on the "Compliance Actions" profile — the formal actions EGLE takes in
@@ -913,6 +917,7 @@ nsite_compliance_actions:
     AHE2: quarterly
     SANL: quarterly
     ERNGX: quarterly
+    NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
 
 # --- nSITE Evaluations watch (Stream N, ADR 029) ---
 # Watch on the "Evaluations" profile — the underlying INSPECTION record a
@@ -985,6 +990,7 @@ nsite_evaluations:
     AHE2: quarterly
     SANL: quarterly
     ERNGX: quarterly
+    NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
 
 # --- nSITE Permits watch (Stream O, ADR 030) ---
 # Watch on the "Permits" profile — a facility's permit lifecycle (issued ->
@@ -1068,6 +1074,7 @@ nsite_permits:
     AHE1: quarterly
     AHE2: quarterly
     ERNGX: quarterly
+    NAPR: biweekly       # ADR 044 (WRP034436 Napier Rd culvert)
 
 # --- nSITE Complaints watch (Stream P, ADR 031) ---
 # Watch on the "Complaints" profile — citizen/agency reports filed against a
@@ -1157,6 +1164,7 @@ nsite_complaints:
     AHE2: quarterly
     SANL: quarterly
     ERNGX: quarterly
+    NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
 
 # --- nSITE Active Public Notices watch (Stream Q, ADR 032) ---
 # Watch on the "Active Public Notices" profile — the formal comment-window
@@ -1247,6 +1255,7 @@ nsite_public_notices:
     AHE2: quarterly
     SANL: quarterly
     ERNGX: quarterly
+    NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
 
 # --- GFL "informational website" change-watch (Stream S, ADR 041, added 2026-09-11) ---
 # OFF BY DEFAULT. A daily snapshot + change-diff watch on the OPERATOR's own
