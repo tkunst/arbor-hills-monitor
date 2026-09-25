@@ -28,6 +28,11 @@ facilities:
   - {srn: "FP89",  name: "Floodplain elevation request, 8627 Napier Rd (89-11-0108-FP)", id: "7284130751247156626"}   # ADR 049: historical WRD floodplain elevation calculation request (1989 per ref format), parcel next to the landfill in Sec. 12; 0 docs today
   - {srn: "MITIG", name: "Arbor Hills Mitigation Site", id: "6707784663696162097"}   # ADR 050: identified by Trisha 2026-09-25; empty on every nSITE profile at add time. Expected home of the wetland-mitigation filings tied to the 2026 Wetland 1 JPA (conceptual mitigation plan).
   - {srn: "CHUBB18", name: "8110 Chubb Rd wetland-fill VN site (VN-008432)", id: "604563607848499529"}   # ADR 051: 2018 WRD complaint + Violation Notice (Request Information), unpermitted fill in regulated wetland + driveway to a stream, parcel A-01-12-300-012 (Sec. 12, not GFL-owned); closed 2018-06-05; 1 doc
+  - {srn: "CHUBBRD", name: "Chubb Rd + Five Mile Rd reconstruction (WRP013195)", id: "-5141175505123096250"}   # ADR 052: 2018 JPA + construction stormwater (MIR115382); 2 SESC violations 2020 still Active-Addressed not Resolved; 23 docs
+  - {srn: "WIP25", name: "7506 Chubb Rd wetland ID (HQ3-NSC0-TP7FT)", id: "-8179920515493197813"}   # ADR 052: 2025 Level 3 WIP, ~13 ac, parcel A-01-13-300-012, Sec. 13 (Anglin Civil / Dalice Co.); 2024 pre-app withdrawn; 22 docs
+  - {srn: "BDPH", name: "7374 Chubb Rd stormwater outfalls (WRP038206)", id: "-1974820987593684099"}   # ADR 052: Part 303 permit 2023-07-26..2028-07-26 to BD Property Holdings: 2 storm outfalls discharging to wetland, Sec. 13; 29 docs
+  - {srn: "ASB26", name: "Asbestos contractor registration (ASB-00009055)", id: "6658906756287014686"}   # ADR 052: AQD Asbestos New Contractor Registration, received 2026-01-21, In Process; 0 docs
+  - {srn: "CMP23", name: "WRD-NPDES complaint site (HPY-5JZ9-JFEQE)", id: "8106421448071964642"}   # ADR 052: one WRD-NPDES complaint, 2023-10-05; 0 docs
   # NOT TRACKED (Documents pipeline) — the other 13 sites resolved in ADR 021
   # are polled for Submissions ONLY, at their tier's cadence — see
   # `nsite_sites` + `nsite_submissions.tiers` below (ADR 022). They are near-zero/zero-Documents-history
@@ -729,6 +734,11 @@ nsite_sites:
   - {srn: "FP89",  name: "Floodplain elevation request, 8627 Napier Rd (89-11-0108-FP)", id: "7284130751247156626"}   # ADR 049 (historical WRD floodplain elevation calculation request (1989 per ref format), parcel next to the landfill in Sec. 12; 0 docs today
   - {srn: "MITIG", name: "Arbor Hills Mitigation Site", id: "6707784663696162097"}   # ADR 050 — identified by Trisha 2026-09-25; empty on every nSITE profile at add time. Expected home of the wetland-mitigation filings tied to the 2026 Wetland 1 JPA (conceptual mitigation plan).
   - {srn: "CHUBB18", name: "8110 Chubb Rd wetland-fill VN site (VN-008432)", id: "604563607848499529"}   # ADR 051 — 2018 WRD complaint + Violation Notice (Request Information), unpermitted fill in regulated wetland + driveway to a stream, parcel A-01-12-300-012 (Sec. 12, not GFL-owned); closed 2018-06-05; 1 doc
+  - {srn: "CHUBBRD", name: "Chubb Rd + Five Mile Rd reconstruction (WRP013195)", id: "-5141175505123096250"}   # ADR 052 — 2018 JPA + construction stormwater (MIR115382); 2 SESC violations 2020 still Active-Addressed not Resolved; 23 docs
+  - {srn: "WIP25", name: "7506 Chubb Rd wetland ID (HQ3-NSC0-TP7FT)", id: "-8179920515493197813"}   # ADR 052 — 2025 Level 3 WIP, ~13 ac, parcel A-01-13-300-012, Sec. 13 (Anglin Civil / Dalice Co.); 2024 pre-app withdrawn; 22 docs
+  - {srn: "BDPH", name: "7374 Chubb Rd stormwater outfalls (WRP038206)", id: "-1974820987593684099"}   # ADR 052 — Part 303 permit 2023-07-26..2028-07-26 to BD Property Holdings: 2 storm outfalls discharging to wetland, Sec. 13; 29 docs
+  - {srn: "ASB26", name: "Asbestos contractor registration (ASB-00009055)", id: "6658906756287014686"}   # ADR 052 — AQD Asbestos New Contractor Registration, received 2026-01-21, In Process; 0 docs
+  - {srn: "CMP23", name: "WRD-NPDES complaint site (HPY-5JZ9-JFEQE)", id: "8106421448071964642"}   # ADR 052 — one WRD-NPDES complaint, 2023-10-05; 0 docs
 
 # --- nSITE Submissions watch (Stream K, ADR 020; tiered cadence ADR 021; site identity moved to nsite_sites above, ADR 022) ---
 # Watch on the "Submissions" profile (application / service-request intake: a
@@ -797,6 +807,11 @@ nsite_submissions:
     FP89: quarterly      # ADR 049 (1989 floodplain request)
     MITIG: biweekly      # ADR 050 (Arbor Hills Mitigation Site)
     CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
+    CHUBBRD: quarterly  # ADR 052
+    WIP25: biweekly     # ADR 052
+    BDPH: biweekly      # ADR 052
+    ASB26: biweekly     # ADR 052
+    CMP23: quarterly    # ADR 052
 
 # --- nSITE Violations watch (Stream L, ADR 023) ---
 # Watch on the "Violations" profile — EGLE's OWN ENFORCEMENT RECORD (a formal
@@ -877,6 +892,11 @@ nsite_violations:
     FP89: quarterly      # ADR 049 (1989 floodplain request)
     MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
     CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
+    CHUBBRD: biweekly   # ADR 052
+    WIP25: quarterly    # ADR 052
+    BDPH: quarterly     # ADR 052
+    ASB26: quarterly    # ADR 052
+    CMP23: quarterly    # ADR 052
 
 # --- nSITE Compliance Actions watch (Stream M, ADR 028) ---
 # Watch on the "Compliance Actions" profile — the formal actions EGLE takes in
@@ -960,6 +980,11 @@ nsite_compliance_actions:
     FP89: quarterly      # ADR 049 (1989 floodplain request)
     MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
     CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
+    CHUBBRD: quarterly  # ADR 052
+    WIP25: quarterly    # ADR 052
+    BDPH: quarterly     # ADR 052
+    ASB26: quarterly    # ADR 052
+    CMP23: quarterly    # ADR 052
 
 # --- nSITE Evaluations watch (Stream N, ADR 029) ---
 # Watch on the "Evaluations" profile — the underlying INSPECTION record a
@@ -1042,6 +1067,11 @@ nsite_evaluations:
     FP89: quarterly      # ADR 049 (1989 floodplain request)
     MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
     CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
+    CHUBBRD: quarterly  # ADR 052
+    WIP25: quarterly    # ADR 052
+    BDPH: quarterly     # ADR 052
+    ASB26: quarterly    # ADR 052
+    CMP23: quarterly    # ADR 052
 
 # --- nSITE Permits watch (Stream O, ADR 030) ---
 # Watch on the "Permits" profile — a facility's permit lifecycle (issued ->
@@ -1135,6 +1165,11 @@ nsite_permits:
     FP89: quarterly      # ADR 049 (1989 floodplain request)
     MITIG: biweekly      # ADR 050 (Arbor Hills Mitigation Site)
     CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
+    CHUBBRD: quarterly  # ADR 052
+    WIP25: biweekly     # ADR 052
+    BDPH: biweekly      # ADR 052
+    ASB26: quarterly    # ADR 052
+    CMP23: quarterly    # ADR 052
 
 # --- nSITE Complaints watch (Stream P, ADR 031) ---
 # Watch on the "Complaints" profile — citizen/agency reports filed against a
@@ -1234,6 +1269,11 @@ nsite_complaints:
     FP89: quarterly      # ADR 049 (1989 floodplain request)
     MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
     CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
+    CHUBBRD: quarterly  # ADR 052
+    WIP25: quarterly    # ADR 052
+    BDPH: quarterly     # ADR 052
+    ASB26: quarterly    # ADR 052
+    CMP23: quarterly    # ADR 052
 
 # --- nSITE Active Public Notices watch (Stream Q, ADR 032) ---
 # Watch on the "Active Public Notices" profile — the formal comment-window
@@ -1334,6 +1374,11 @@ nsite_public_notices:
     FP89: quarterly      # ADR 049 (1989 floodplain request)
     MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
     CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
+    CHUBBRD: quarterly  # ADR 052
+    WIP25: quarterly    # ADR 052
+    BDPH: quarterly     # ADR 052
+    ASB26: quarterly    # ADR 052
+    CMP23: quarterly    # ADR 052
 
 # --- GFL "informational website" change-watch (Stream S, ADR 041, added 2026-09-11) ---
 # OFF BY DEFAULT. A daily snapshot + change-diff watch on the OPERATOR's own
