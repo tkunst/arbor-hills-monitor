@@ -41,6 +41,8 @@ facilities:
   - {srn: "NTWP", name: "Northville Twp site, NW corner Five Mile & Ridge (WRP037947)", id: "1136159897475661963"}   # ADR 054: Charter Township of Northville; Part 303 minor permit In Effect 2023-06-26..2028-06-26 (sibling number to PTEX WRP037948); construction stormwater MIR117693 (2023, expired) + new NOC 2026-05-08 On Hold; 25 docs
   - {srn: "JCDR", name: "Johnson Creek Intercounty Drain Restoration (HPG-9289-R76GQ)", id: "-9161999632999417877"}   # ADR 055: 2022-05-18 JPA, On Hold; consultant ECT; >2,000 cy dredging, EGLE 2022 correction request on sediment (contaminant) testing + in-stream BMPs; downstream of the landfill discharge; 45 docs
   - {srn: "TOLL", name: "Toll Brothers Coldwater Ridge aquatic herbicide COC (ANC9430361)", id: "-5940520217246576583"}   # ADR 056: WRD Aquatic Nuisance Control: Niswander Environmental COC under the Great Lakes Invasives general permit, In Effect 2025-09-02..2028-12-31, Johnson Drain stretch (Wayne); 11 docs incl. treatment map
+  - {srn: "COLDR", name: "Coldwater Ridge residential development, Ridge Rd (WRP041048)", id: "1591666718366793099"}   # ADR 057: Individual Permit In Effect 2024-05-01..2029-05-01: box culvert + fill in an unnamed Johnson Drain tributary, wetland boardwalk, force main + sanitary bores under wetland/stream, 0.68-ac storm basin outletting to wetland, 378 cy fill / 1,212 cy cut in Johnson Drain floodplain; N of Five Mile, W side of Ridge; 25 docs
+  - {srn: "RIDGE", name: "Ridge Rd structure replacement over Johnson Drain (WRP017601)", id: "-5712439741250995543"}   # ADR 057: public-transportation JPAs 2017-2019; permits WRP010908 (2018-23) + WRP017601 (2019-24), both Expired; 2024-04-10 Stream Relocation Plan approval letter; Sec. 18 Northville Twp; 15 docs
   # NOT TRACKED (Documents pipeline) — the other 13 sites resolved in ADR 021
   # are polled for Submissions ONLY, at their tier's cadence — see
   # `nsite_sites` + `nsite_submissions.tiers` below (ADR 022). They are near-zero/zero-Documents-history
@@ -755,6 +757,8 @@ nsite_sites:
   - {srn: "NTWP", name: "Northville Twp site, NW corner Five Mile & Ridge (WRP037947)", id: "1136159897475661963"}   # ADR 054 — Charter Township of Northville; Part 303 minor permit In Effect 2023-06-26..2028-06-26 (sibling number to PTEX WRP037948); construction stormwater MIR117693 (2023, expired) + new NOC 2026-05-08 On Hold; 25 docs
   - {srn: "JCDR", name: "Johnson Creek Intercounty Drain Restoration (HPG-9289-R76GQ)", id: "-9161999632999417877"}   # ADR 055 — 2022-05-18 JPA, On Hold; consultant ECT; >2,000 cy dredging, EGLE 2022 correction request on sediment (contaminant) testing + in-stream BMPs; downstream of the landfill discharge; 45 docs
   - {srn: "TOLL", name: "Toll Brothers Coldwater Ridge aquatic herbicide COC (ANC9430361)", id: "-5940520217246576583"}   # ADR 056 — WRD Aquatic Nuisance Control: Niswander Environmental COC under the Great Lakes Invasives general permit, In Effect 2025-09-02..2028-12-31, Johnson Drain stretch (Wayne); 11 docs incl. treatment map
+  - {srn: "COLDR", name: "Coldwater Ridge residential development, Ridge Rd (WRP041048)", id: "1591666718366793099"}   # ADR 057 — Individual Permit In Effect 2024-05-01..2029-05-01: box culvert + fill in an unnamed Johnson Drain tributary, wetland boardwalk, force main + sanitary bores under wetland/stream, 0.68-ac storm basin outletting to wetland, 378 cy fill / 1,212 cy cut in Johnson Drain floodplain; N of Five Mile, W side of Ridge; 25 docs
+  - {srn: "RIDGE", name: "Ridge Rd structure replacement over Johnson Drain (WRP017601)", id: "-5712439741250995543"}   # ADR 057 — public-transportation JPAs 2017-2019; permits WRP010908 (2018-23) + WRP017601 (2019-24), both Expired; 2024-04-10 Stream Relocation Plan approval letter; Sec. 18 Northville Twp; 15 docs
 
 # --- nSITE Submissions watch (Stream K, ADR 020; tiered cadence ADR 021; site identity moved to nsite_sites above, ADR 022) ---
 # Watch on the "Submissions" profile (application / service-request intake: a
@@ -836,6 +840,8 @@ nsite_submissions:
     NTWP: biweekly      # ADR 054
     JCDR: biweekly      # ADR 055
     TOLL: biweekly      # ADR 056
+    COLDR: biweekly     # ADR 057
+    RIDGE: biweekly     # ADR 057
 
 # --- nSITE Violations watch (Stream L, ADR 023) ---
 # Watch on the "Violations" profile — EGLE's OWN ENFORCEMENT RECORD (a formal
@@ -929,6 +935,8 @@ nsite_violations:
     NTWP: quarterly     # ADR 054
     JCDR: quarterly     # ADR 055
     TOLL: quarterly     # ADR 056
+    COLDR: quarterly    # ADR 057
+    RIDGE: quarterly    # ADR 057
 
 # --- nSITE Compliance Actions watch (Stream M, ADR 028) ---
 # Watch on the "Compliance Actions" profile — the formal actions EGLE takes in
@@ -1025,6 +1033,8 @@ nsite_compliance_actions:
     NTWP: quarterly     # ADR 054
     JCDR: quarterly     # ADR 055
     TOLL: quarterly     # ADR 056
+    COLDR: quarterly    # ADR 057
+    RIDGE: quarterly    # ADR 057
 
 # --- nSITE Evaluations watch (Stream N, ADR 029) ---
 # Watch on the "Evaluations" profile — the underlying INSPECTION record a
@@ -1120,6 +1130,8 @@ nsite_evaluations:
     NTWP: quarterly     # ADR 054
     JCDR: quarterly     # ADR 055
     TOLL: quarterly     # ADR 056
+    COLDR: quarterly    # ADR 057
+    RIDGE: quarterly    # ADR 057
 
 # --- nSITE Permits watch (Stream O, ADR 030) ---
 # Watch on the "Permits" profile — a facility's permit lifecycle (issued ->
@@ -1226,6 +1238,8 @@ nsite_permits:
     NTWP: biweekly      # ADR 054
     JCDR: biweekly      # ADR 055
     TOLL: biweekly      # ADR 056
+    COLDR: biweekly     # ADR 057
+    RIDGE: quarterly    # ADR 057
 
 # --- nSITE Complaints watch (Stream P, ADR 031) ---
 # Watch on the "Complaints" profile — citizen/agency reports filed against a
@@ -1338,6 +1352,8 @@ nsite_complaints:
     NTWP: quarterly     # ADR 054
     JCDR: quarterly     # ADR 055
     TOLL: quarterly     # ADR 056
+    COLDR: quarterly    # ADR 057
+    RIDGE: quarterly    # ADR 057
 
 # --- nSITE Active Public Notices watch (Stream Q, ADR 032) ---
 # Watch on the "Active Public Notices" profile — the formal comment-window
@@ -1451,6 +1467,8 @@ nsite_public_notices:
     NTWP: quarterly     # ADR 054
     JCDR: quarterly     # ADR 055
     TOLL: quarterly     # ADR 056
+    COLDR: quarterly    # ADR 057
+    RIDGE: quarterly    # ADR 057
 
 # --- GFL "informational website" change-watch (Stream S, ADR 041, added 2026-09-11) ---
 # OFF BY DEFAULT. A daily snapshot + change-diff watch on the OPERATOR's own
