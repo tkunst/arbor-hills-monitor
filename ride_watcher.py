@@ -11,12 +11,15 @@ Contaminants list changing, or a new Open_Release on the GFL UST is early,
 citable signal for the case file. Statuses change rarely, so this watch is
 near-silent in steady state.
 
-SIX watched items, derived from TWO fetches (one per layer):
+SEVEN watched items, derived from TWO fetches (one per layer):
   - ride:<SiteID>      one item per Part 201 site's Layer-0 record —
                        81000033 Salem Landfill, 81000004 Arbor Hills - East,
                        81000835 7667 Chubb Rd, 81000840 7941 Salem Rd,
                        82008712 MITC Corridor.
-  - ride:<FacilityID>  the GFL Part 211 UST's Layer-1 record — 00040223.
+  - ride:<FacilityID>  one item per Part 211 UST facility's Layer-1 record —
+                       00040223 (GFL, 7811 Chubb Rd) and 00038889 (Arbor Hills
+                       Landfill Inc / Advanced Disposal, 10690 W Six Mile; a
+                       closed 2016 LUST, added 2026-09-28).
 
 WHAT IT DOES per item (mirrors mmd_watcher/rop_watcher exactly):
   - build a canonical snapshot + hash it,
@@ -75,6 +78,7 @@ _KNOWN_SITE_NAMES = {
 }
 _KNOWN_FACILITY_NAMES = {
     "00040223": "GFL Environmental USA, LLC — Part 211 UST",
+    "00038889": "Arbor Hills Landfill Inc (Advanced Disposal) — closed 2016 LUST",
 }
 
 

@@ -163,3 +163,44 @@ copy, then flip `enabled: true` in `config.yml` (no secret to provision —
 keyless, same as MMD/ROP). First enabled run baselines all 6 items silently.
 Pause = flip back to `enabled: false` (tab state survives); resume re-diffs
 against the last recorded snapshots.
+
+## Addendum 2026-09-28 — UST 00038889 added; the "no anonymous document API" premise corrected
+
+### Watched set: `00038889` joins `00040223`
+
+`ride.facility_ids` now also carries Layer-1 FacilityID **`00038889`** — "Arbor
+Hills Landfill Inc" (Advanced Disposal), 10690 W Six Mile Rd, the 2016
+leaking-UST release + closure (Leak C-0076-16). The facility was not on the
+watch list, so a re-open or a status change on it would have gone unseen.
+RIDE lists it under the same location (`locationId` 2085) as Part 201 site
+`81000004` (Arbor Hills - East), shown as `00038889 - 81000004`.
+
+The shipped `ride:` stream was already `enabled: true`, so this was a live-path
+edit. Real-specimen check (live layer-1 query, 2026-09-28):
+
+- `00038889` returns one record — `FacilityName` "Arbor Hills Landfill Inc",
+  `RiskCondition` "No Longer A Facility", `Open_Release` 0, `LastUpdated`
+  2024-04-26 — with the same fields the canonical view already reads.
+- `00040223` still returns its documented record unchanged.
+- The watcher's first-sighting path records a silent `baseline` row for an id
+  with no prior row, so adding it to an already-baselined stream alerts on
+  nothing (pinned by `test_adding_a_new_ust_to_an_established_watch_baselines_only_it_silently`).
+
+The item key stays `ride:<FacilityID>`; `00038889` cannot collide with any
+Part 201 `SiteID` (those are `8100xxxx`/`8200xxxx`).
+
+### Correction: RIDE does have an anonymous DOCUMENT channel
+
+The Context section above (and worker #69's 7/2026 recon it cites) says RIDE is
+"auth-walled, no anonymous document API". That was right about the **status**
+data this stream watches and wrong as a statement about RIDE as a whole.
+Re-checked 2026-09-28 with a headless browser, **no credentials and no login
+click**: the public Inventory of Facilities page provisions every anonymous
+visitor a "Public User" session on its own, and its own front end then calls
+JSON endpoints that list a facility's files and return the PDFs. See ADR 058
+for the endpoints, the document watch built on them (`ride_docs_*`, shipped
+`enabled: false`), and the privacy handling.
+
+This stream is unchanged by that finding: it still watches only RRDOpenData's
+status layers. The document watch is a separate stream because it has a
+different source, key (file `uri`, not `SiteID`), and sensitivity.

@@ -12,7 +12,9 @@ I's MMD watch, just a different service and, here, two layers instead of one):
     SiteID — the 5 Arbor Hills-area sites (Salem Landfill, Arbor Hills - East,
     7667 Chubb Rd, 7941 Salem Rd, MITC Corridor).
   - Layer 1 "USTs" (Part 211 underground storage tanks), key field
-    FacilityID — the GFL Environmental USA UST at 7811 Chubb Rd.
+    FacilityID — the GFL Environmental USA UST at 7811 Chubb Rd (00040223)
+    and the Advanced Disposal / Arbor Hills Landfill Inc UST facility at
+    10690 W Six Mile (00038889, closed 2016 LUST).
 
 This is a STATUS watch, not a measurement poller: the service returns per-site
 strings (RiskCondition, Contaminants) and a per-facility open-release count,
@@ -56,8 +58,10 @@ DEFAULT_LAYER1_URL = f"{_BASE}/1/query"
 
 # The 5 Arbor Hills-area Part 201 sites (worker #69's recon).
 DEFAULT_SITE_IDS = ("81000033", "81000004", "81000835", "81000840", "82008712")
-# The GFL Part 211 UST at 7811 Chubb Rd.
-DEFAULT_FACILITY_IDS = ("00040223",)
+# The GFL Part 211 UST at 7811 Chubb Rd, plus the Advanced Disposal / Arbor
+# Hills Landfill Inc UST facility at 10690 W Six Mile (closed 2016 LUST
+# C-0076-16; ADR 019 addendum 2026-09-28).
+DEFAULT_FACILITY_IDS = ("00040223", "00038889")
 
 # The canonical Layer-0 record: every watched field EXCEPT OID/geometry (never
 # fetched at all — see module docstring) and ProjectManaager (fetched only if

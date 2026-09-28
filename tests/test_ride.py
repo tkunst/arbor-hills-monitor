@@ -50,6 +50,10 @@ _SITE_ATTRS = [
 _UST_ATTRS = [
     {"FacilityID": "00040223", "FacilityName": "GFL Environmental USA, LLC",
      "RiskCondition": "No Known Risks", "Open_Release": 0, "LastUpdated": 1738108800000},
+    # Real live specimen (queried 2026-09-28): the Advanced Disposal / Arbor Hills
+    # Landfill Inc UST facility, a closed 2016 LUST. Added to the watch 2026-09-28.
+    {"FacilityID": "00038889", "FacilityName": "Arbor Hills Landfill Inc",
+     "RiskCondition": "No Longer A Facility", "Open_Release": 0, "LastUpdated": 1714089600000},
 ]
 
 
@@ -104,8 +108,8 @@ def test_fetch_site_records_returns_attribute_dicts(monkeypatch):
 def test_fetch_ust_records_returns_attribute_dicts(monkeypatch):
     _wire_opener(monkeypatch, _arcgis_payload(ust_records(), rc.LAYER1_FIELDS))
     records = rc.fetch_ust_records()
-    assert len(records) == 1
-    assert records[0]["FacilityID"] == "00040223"
+    assert len(records) == 2
+    assert {r["FacilityID"] for r in records} == {"00040223", "00038889"}
 
 
 def test_fetch_http_error_is_fetch_error(monkeypatch):
@@ -265,6 +269,7 @@ def test_format_change_body_mentions_label_and_note():
 def test_site_label_and_ust_label_include_known_names():
     assert "Salem Landfill" in rw.site_label("81000033")
     assert "GFL" in rw.ust_label("00040223")
+    assert "Arbor Hills Landfill Inc" in rw.ust_label("00038889")
     assert rw.site_label("99999999") == "RIDE Part 201 — Site 99999999"  # unknown id: no crash
 
 
@@ -276,7 +281,7 @@ RIDE_CFG = {
     "ride": {
         "enabled": True,
         "site_ids": ["81000033", "81000004", "81000835", "81000840", "82008712"],
-        "facility_ids": ["00040223"],
+        "facility_ids": ["00040223", "00038889"],
         "recipients": ["trisha@example.org"],
     }
 }
@@ -322,24 +327,53 @@ def test_disabled_run_is_noop_touches_nothing(monkeypatch):
     assert rw.run() == 0
 
 
-def test_first_run_baselines_all_six_items_silently(monkeypatch):
+def test_first_run_baselines_all_seven_items_silently(monkeypatch):
     fake, sent = _wire(monkeypatch)
     assert rw.run() == 0
     rows = _data_rows(fake)
-    assert len(rows) == 6
+    assert len(rows) == 7
     assert {r[1] for r in rows} == {
         "ride:81000033", "ride:81000004", "ride:81000835",
-        "ride:81000840", "ride:82008712", "ride:00040223",
+        "ride:81000840", "ride:82008712", "ride:00040223", "ride:00038889",
     }
     assert all(r[3] == "baseline" for r in rows)
     assert sent == []
+
+
+def test_adding_a_new_ust_to_an_established_watch_baselines_only_it_silently(monkeypatch):
+    """The LIVE-path scenario for 00038889: the watch already holds baselines for
+    the original six items; adding one facility id must write exactly ONE new
+    baseline row for it, leave the other six 'unchanged', and send no email."""
+    old_cfg = copy.deepcopy(RIDE_CFG)
+    old_cfg["ride"]["facility_ids"] = ["00040223"]
+    fake, sent = _wire(monkeypatch, cfg=old_cfg)
+    assert rw.run() == 0
+    assert len(_data_rows(fake)) == 6
+
+    monkeypatch.setattr(rw, "load_config", lambda: copy.deepcopy(RIDE_CFG))  # +00038889
+    assert rw.run() == 0
+    rows = _data_rows(fake)
+    assert len(rows) == 7
+    new_rows = [r for r in rows if r[1] == "ride:00038889"]
+    assert len(new_rows) == 1 and new_rows[0][3] == "baseline"
+    assert not any(r[3] == "changed" for r in rows)
+    assert sent == []
+
+
+def test_live_config_watches_the_2016_lust_facility():
+    """Pin the shipped config: 00038889 (closed 2016 LUST) is in ride.facility_ids
+    alongside the original GFL UST, and the client's fallback default matches."""
+    from config_loader import load_config
+    facility_ids = [str(f) for f in load_config()["ride"]["facility_ids"]]
+    assert "00038889" in facility_ids and "00040223" in facility_ids
+    assert set(rc.DEFAULT_FACILITY_IDS) == {"00040223", "00038889"}
 
 
 def test_second_run_unchanged_is_noop(monkeypatch):
     fake, sent = _wire(monkeypatch)
     assert rw.run() == 0
     assert rw.run() == 0
-    assert len(_data_rows(fake)) == 6  # no new rows
+    assert len(_data_rows(fake)) == 7  # no new rows
     assert sent == []
 
 
@@ -380,7 +414,7 @@ def test_site_fetch_failure_after_baseline_is_skip_and_warn(monkeypatch):
                         lambda site_ids=None, url=None, timeout=60:
                         (_ for _ in ()).throw(rc.RideFetchError("blip")))
     assert rw.run() == 0                     # quiet skip — baselines exist
-    assert len(_data_rows(fake)) == 6         # nothing appended (UST still ran)
+    assert len(_data_rows(fake)) == 7         # nothing appended (UST still ran)
     assert sent == []
 
 
