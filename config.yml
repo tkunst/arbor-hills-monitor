@@ -98,6 +98,25 @@ large_doc_max_keyword_pages: 10
 woi:
   auto_route: true
 
+# --- Named single-well temperature trip-wires (ADR 058, well_watch.py) ---
+# Fires a dedicated email naming the well when a newly processed WOI-format
+# filing shows it at/above threshold_f. `pattern` matches the well NUMBER across
+# redrills/prefix/zero-pad drift; `since` ignores re-printed history rows.
+well_watch:
+  recipients:
+    - arbor-hills@trishakunst.com        # Trisha only
+  wells:
+    - label: "AHW263R5 (Cell 1D, north; SSO-tagged)"
+      pattern: '^AHW{1,2}0*263R\d*$'
+      threshold_f: 145
+      since: "2026-05-01"
+      note: >-
+        145F is the federal MACT Subpart AAAA wellhead limit. AHW263R5 got a
+        170F HOV on 7/23/2025 (letter states no end date) but is NOT in the
+        4/7/2026 16-well HOV renewal (through 5/1/2028), so whether a waiver
+        still covers it is unconfirmed. Through 6/30/2026 it held at
+        142.1-144.2F.
+
 # --- Backfill ---
 backfill_batch_size: 50          # docs per nightly run
 
