@@ -21,7 +21,7 @@ be lost to an exception after its rows were written:
      `partial` marker and asks for a CSV export ONCE. A `nomatch` request (returned by the
      site's OR search but failing `require`) is upgraded to matched if a term that matches
      it later finds it. A zero-row result is believed only with the grid's own "No data to
-     display" marker; if EVERY keyword comes back empty while the tab holds requests, that
+     display" marker; if EVERY keyword comes back empty (even on the activation run), that
      is a structural error, not "no news".
   2. CSV DROP       an optional Drive folder (shared with the service account) where
      Trisha drops a gridView CSV exported in a real browser; runs AFTER the sweep, so
@@ -69,7 +69,7 @@ RESIDUAL (accepted, ADR 059): the one report email is sent after staging, so a H
 (SIGKILL / the job timeout) during a long staging phase could still lose it (staging ships
 off and is time-budgeted; an exception never can); released files are listed when a request
 is new or changes status; attachments posted later to an already-terminal request are not seen; requests
-baselined by a first sweep or a CSV are history and are not listed.
+baselined by a first sweep, a CSV or a watch_requests first sighting are history and are not listed.
 
 ACCURACY: alerts are source-labeled listing events ("EGLE's archive shows request X with
 status Y"); file contents are never read by this job.
@@ -503,9 +503,11 @@ class Run:
 
     def list_pending_row(self, no: str) -> list:
         """The marker that says this request's released files still have to be listed. Written in
-        the SAME append as the row that made the request 'released', so no crash can separate them."""
+        the SAME append as the row that made the request new / status-changed, so no crash can
+        separate them. A fresh event also restarts the failed-attempt count (as a reload would)."""
         self.state["list_pending"].add(no)
-        return _row(self.today, f"list:{no}", "list-pending", note="released — attachment list to be read")
+        self.state["list_fails"].pop(no, None)
+        return _row(self.today, f"list:{no}", "list-pending", note="new or status-changed — attachment list to be read")
 
     # -- phase 1: keyword sweep ---------------------------------------------
     def phase_sweep(self):
@@ -756,8 +758,8 @@ class Run:
             if not rid:                                       # the grid row had no details link: ask by number
                 try:
                     row = self.backoff(lambda: session.lookup(no), f"lookup {no}")
-                except gq.GovqaStructuralError as e:
-                    print(f"[govqa] STRUCTURAL: {gq.scrub(e)}")
+                except (gq.GovqaStructuralError, ValueError) as e:      # ValueError: a hand-edited, malformed key
+                    print(f"[govqa] STRUCTURAL: {type(e).__name__}: {gq.scrub(e)}")
                     self.list_strike(no, f"lookup: {gq.scrub(e, 120)}")
                     continue
                 rid = row["rid"] if row else None
@@ -769,8 +771,8 @@ class Run:
                 continue
             try:
                 det = self.backoff(lambda: session.details(rid, expect_reference=no), f"details {no}", on_retry=session.reset)
-            except gq.GovqaStructuralError as e:
-                print(f"[govqa] STRUCTURAL: {gq.scrub(e)}")
+            except (gq.GovqaStructuralError, ValueError) as e:          # ValueError: a hand-edited, non-numeric rid
+                print(f"[govqa] STRUCTURAL: {type(e).__name__}: {gq.scrub(e)}")
                 self.list_strike(no, gq.scrub(e, 150))
                 continue
             rq["closed"] = det.get("closed", "")
@@ -838,7 +840,7 @@ class Run:
                 try:
                     det = self.backoff(lambda: session.details(rid, expect_reference=request_no), f"details {request_no}",
                                        on_retry=session.reset)
-                except gq.GovqaStructuralError as e:
+                except (gq.GovqaStructuralError, ValueError) as e:
                     self.problem(f"details {request_no}: {gq.scrub(e)}")
                     continue
                 targets: dict[str, list[str]] = defaultdict(list)

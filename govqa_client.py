@@ -215,8 +215,9 @@ def _label_value(page_html: str, label: str) -> str:
 def parse_detail(page_html: str) -> dict:
     """A request's detail page: {reference, created, description, closed, files}
     where files = [{target, name}] (`target` is the __doPostBack event target that
-    downloads it). Raises GovqaStructuralError if the reference number isn't there
-    (an error page / a logged-out shell)."""
+    downloads it). Raises GovqaStructuralError if the reference number isn't there (an error
+    page / a logged-out shell), or if the page carries a different number of attachment
+    postback links than names were read (a short list must never pass for the whole release)."""
     ref = _label_value(page_html, "Reference No:")
     if not E_NUMBER.match(ref):
         raise GovqaStructuralError("detail page has no Reference No — page shape changed or an error page")

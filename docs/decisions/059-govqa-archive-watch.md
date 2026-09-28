@@ -97,7 +97,7 @@ pager text is impossible and fails the keyword; a first sweep that reads a FULL 
 rows with no pager text cannot tell whether older pages exist, so it is marked `partial`
 (the marker's note names which cause)
 and a CSV is requested (a false alarm for a term with exactly 10 results — accepted). If
-every keyword comes back empty while requests are on record, that is reported as a broken
+every keyword comes back empty (with or without requests on record), that is reported as a broken
 read and nothing is recorded. The `rid` that opens a request's detail page is read only
 from the row's details-link tag (never from request text), and the detail page's own
 `Reference No` must equal the request it was opened for.
@@ -209,7 +209,7 @@ loudly at the redirect allowlist).
 matched on text the grid doesn't show; file contents are never read; **released files are
 listed when a request is new or changes status — attachments posted later to an
 already-terminal request are not seen** (a possible follow-up: re-list until the close
-date plus N days); requests already released when first seen (a first sweep or a CSV)
+date plus N days); requests already released when first seen (a first sweep, a CSV or a `watch_requests` first sighting)
 are not listed; `PARTIAL` is not terminal, so such a request is re-checked until it
 closes; statuses this code has never seen (e.g. `UTLR`) count as open and re-check
 daily — enough of them fill the `max_open_rechecks` cap and turn the truncation notice
