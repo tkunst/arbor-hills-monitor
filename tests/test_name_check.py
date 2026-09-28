@@ -33,7 +33,8 @@ def test_heuristic_skips_org_and_term_parentheticals():
     for txt in ("EGLE SSO (Subsurface Oxidation) Records-Review Email",
                 "'Notation - WDS Link' reference record (Waste Data System)",
                 "Air Quality Division (Jackson District Office)",
-                "compliance filing (GFL)"):
+                "compliance filing (GFL)",
+                "Sauk Trail Hills Landfill sampling letter (Republic Services)"):
         assert nc.find_heuristic_hits(txt) == [], txt
 
 

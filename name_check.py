@@ -79,6 +79,7 @@ ORG_ALLOWLIST = [
     "WDS", "ETLF", "RNG", "PFAS", "GCCS", "JPA", "ACO", "RA", "USEPA", "NSPS",
     "Tetra Tech", "Golder", "Golder Associates", "Midwestern Consulting",
     "Crandell", "Crandell Environmental", "Advanced Disposal", "Onyx",
+    "Republic Services", "Sauk Trail Hills",
     "Salem Township", "Jackson District", "Jackson District Office",
     "Solid Waste Section", "Air Quality Division", "Materials Management",
     "Materials Management Division", "Arbor Hills", "Washtenaw", "Michigan",
