@@ -15,7 +15,7 @@ name: govqa-watch
 # keyword search regardless of the flag and writes nothing.
 on:
   schedule:
-    - cron: "0 18 * * *"    # 2pm ET (6pm UTC); after ride-watch / ride-docs-watch.
+    - cron: "0 18 * * *"    # 6pm UTC (2pm EDT / 1pm EST — DST drift of +/-1h is acceptable); after ride-watch / ride-docs-watch.
   workflow_dispatch:
     inputs:
       probe:
@@ -54,7 +54,7 @@ jobs:
       - name: Install the headless browser (only when enabled or probing)
         if: steps.gate.outputs.enabled == 'true' || inputs.probe == true
         run: |
-          pip install playwright
+          pip install playwright==1.58.0
           playwright install --with-deps chromium
       - name: Write service-account key to a temp file
         env:

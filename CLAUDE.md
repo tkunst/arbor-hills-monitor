@@ -474,29 +474,34 @@ external users but no sensitive data). Public repo.
   raw value+analyte+date is actionable; see ADR 042). Recipients scoped verbatim
   (Trisha to start). Gated on `pfas_pws.enabled` (ships `false`). See ADR 042.
 
-- `govqa_client.py` — Stream U: fetch + parse for EGLE's PUBLIC FOIA archive on
-  GovQA (ADR 059), following the handoff's §1C-bis method. KEYWORD LIST via lazily
-  imported headless Playwright (`PlaywrightGrid`; NOT in requirements.txt — the
-  workflow installs it only when enabled/probing): one term per search, newest
-  first, paged with `ASPx.GVPagerOnClick`, `sweep_term` stops at the first page
-  holding a known request and flags `overflow`; `with_backoff` = fresh context +
-  30 s/2 min retries, then a structural error and move on (never hang). ONE REQUEST
-  BY NUMBER via a plain `requests` cookie session (`ArchiveSession`: lookup ->
-  details -> streamed download that re-POSTs the form and follows the 302 by hand,
-  host-allowlisted to the archive + its Azure blob store). `parse_gridview_csv` for
-  a human-exported CSV. Pure parsers; never writes anywhere.
-- `govqa_watcher.py` — Stream U: daily sweep of each configured keyword + re-check
-  of open/watched requests by number; a new matching request or a status change
-  alerts; a keyword's first sweep baselines silently (`term:` marker written last);
-  released files are listed and — if `download_attachments` and a private staging
-  folder are set — staged with SHA-256 + MD5; an optional CSV-drop folder is the
-  backfill fallback (the run STOPS AND ASKS for one on overflow). **HARD RULE:
-  private only** — rows go to `GSHEET_ID_PRIVATE` (fails closed if unset or equal to
-  `GSHEET_ID`; the workflow never receives the public id), files to a private folder
-  that must not equal any other `GOAUTH_*_FOLDER_ID`, nothing feeds `findings_feed`;
-  EMPTY `recipients` = display-only. Unknown request statuses count as OPEN.
-  `--probe` = pre-activation check. Gated on `govqa.enabled` (ships `false`). See
-  ADR 059.
+- `govqa_client.py` — Stream U: fetch + parse for EGLE's PUBLIC FOIA archive on GovQA (ADR 059),
+  following the handoff's §1C-bis method. KEYWORD LIST via lazily imported headless Playwright
+  (`PlaywrightGrid`; NOT in requirements.txt — the workflow installs a pinned version only when
+  enabled/probing; any launch error becomes a structural error): one term per search, newest first,
+  paged with `ASPx.GVPagerOnClick`; `sweep_term` stops at the first page whose requests are ALL
+  already known (mixed pages keep reading) and flags `overflow`; `with_backoff` = fresh context +
+  30 s/2 min retries, then a structural error and move on. A zero-row grid is believed only with
+  its "No data to display" marker (`parse_grid_state`). ONE REQUEST BY NUMBER via a plain
+  `requests` cookie session (`ArchiveSession`: lookup -> details (opens the session itself if
+  needed) -> streamed download that re-POSTs the form and follows the 302 by hand, https-only to
+  EXACTLY the archive host and the state's Azure storage account; size cap = `GovqaTooLargeError`).
+  Cells are parsed by aria-label. `scrub()` strips URLs from every message that can reach a log.
+  `parse_gridview_csv` for a human-exported CSV. Never writes anywhere.
+- `govqa_watcher.py` — Stream U: daily, in GUARDED phases with the report sent from a `finally`
+  (a crash can never lose an alert): keyword sweep (a keyword's first sweep reads all pages to
+  `max_pages_per_term`, baselines silently, `term:` marker last; a page-cap hit writes a `partial`
+  marker and asks for a CSV once; `nomatch` rows are upgradeable), CSV drop (AFTER the sweep; keyed
+  by Drive id + content hash), re-check of watched/open requests by number (unknown status = open;
+  truncation and mass-misses are reported), file listing (duplicate names keyed by occurrence), and
+  optional staging under CONTENT-ADDRESSED names `<E>__<sha16>.<ext>` (attachment names never reach
+  Drive queries/logs; in-run retry; 5 strikes then reported). Circuit breaker + wall-clock budget.
+  **HARD RULE: private only** — rows to `GSHEET_ID_PRIVATE` (fails closed if unset, equal to
+  `GSHEET_ID`, or — the CI-effective check — the spreadsheet already holds public case-file tabs);
+  staging folder != any other `GOAUTH_*_FOLDER_ID`; nothing feeds `findings_feed`; EMPTY
+  `recipients` = display-only; a report that can't be sent makes the run red. stdout is public: no
+  print interpolates request text or an attachment name (AST-pinned), googleapiclient's retry logger
+  is silenced, `main()` prints class + scrubbed message only. `--probe`. Gated on `govqa.enabled`
+  (ships `false`). See ADR 059.
 
 ## Forbidden patterns (do not do these)
 

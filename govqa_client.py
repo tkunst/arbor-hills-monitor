@@ -62,8 +62,10 @@ DEFAULT_MAX_ATTEMPTS = 3                 # "after 3 failures, log a structural e
 E_NUMBER = re.compile(r"^E\d{6}-\d{6}$")
 _E_NUMBER_IN_TEXT = re.compile(r"E\d{6}-\d{6}")
 
-# Redirect targets a download may follow: the archive itself and its Azure blob store.
-_ALLOWED_HOST_SUFFIXES = ("michiganegle.govqa.us", ".blob.core.usgovcloudapi.net", ".blob.core.windows.net")
+# Redirect targets a download may follow: EXACTLY the archive and the state's own Azure blob
+# storage account (observed 2026-09-28). A changed storage account fails loudly (a fetch
+# error), which is better than following a redirect to any account on a shared cloud suffix.
+_ALLOWED_HOSTS = ("michiganegle.govqa.us", "1michigandeq.blob.core.usgovcloudapi.net")
 
 # Request statuses that mean EGLE is done with the request. Anything else — including
 # statuses this code has never seen — is treated as OPEN and re-checked (fail-safe).
@@ -76,6 +78,11 @@ class GovqaFetchError(RuntimeError):
     (an HTML answer where file bytes were expected), an unreachable page."""
 
 
+class GovqaTooLargeError(Exception):
+    """A download exceeds the configured cap. Not transient and not structural: the
+    watcher records the file as skipped once and never retries it."""
+
+
 class GovqaStructuralError(RuntimeError):
     """The client gave up (max attempts exhausted), or the page no longer has the
     shape this parser needs, or the run needs a human (a backfill too large to
@@ -83,7 +90,9 @@ class GovqaStructuralError(RuntimeError):
     run moves on to the next one."""
 
 
-_URL_IN_TEXT = re.compile(r"https?://\S+")
+# `requests` connection errors print a SCHEMELESS "Max retries exceeded with url: /path?query",
+# so 'url: <token>' is scrubbed as well as anything starting http(s)://.
+_URL_IN_TEXT = re.compile(r"(?:https?://|\burl:\s*)\S+", re.I)
 
 
 def scrub(text, limit: int = 200) -> str:
@@ -107,7 +116,9 @@ def normalize_status(status: str) -> str:
     replacement separator becomes ' – ' so the same status never diffs against
     itself between the grid and a CSV."""
     s = htmllib.unescape(str(status or "")).strip()
-    s = re.sub(r"\s*[–—\-�]\s*", " – ", s)
+    # An en/em dash or a replacement char is a separator wherever it sits; a plain hyphen
+    # only when it has whitespace on BOTH sides (so a hyphen inside a word is untouched).
+    s = re.sub(r"\s*[\u2013\u2014\ufffd]\s*|\s+-\s+", " \u2013 ", s)
     return re.sub(r"\s+", " ", s).strip()
 
 
@@ -126,24 +137,45 @@ def _clean(cell_html: str) -> str:
 
 def parse_rows(page_html: str) -> list[dict]:
     """Every request row on a grid page, newest first as shown:
-    [{request_no, created, summary, status, rid}]. `rid` is the internal id
-    (redirectInfo('714629')); None if the row has no details link. Rows whose first
-    cell isn't an E-number are ignored."""
+    [{request_no, created, summary, status, rid}]. Cells are read by their real
+    `aria-label="Request Number: …"` / `Create Date` / `Summary` / `Request Status`
+    prefixes, so an EMPTY cell can never shift the others; if a row carries no aria-labels
+    the non-empty cells are read positionally. `rid` is the internal id
+    (redirectInfo('714629')); None if the row has no details link. Rows whose request
+    number isn't an E-number are ignored."""
     rows = []
     for tr in re.findall(r"<tr[^>]*dxgvDataRow[^>]*>(.*?)</tr>", page_html, re.S):
-        cells = [_clean(c) for c in re.findall(r"<td[^>]*>(.*?)</td>", tr, re.S)]
-        cells = [c for c in cells if c]
-        if not cells or not E_NUMBER.match(cells[0]):
+        by_label: dict[str, str] = {}
+        for td in re.findall(r"<td[^>]*>.*?</td>", tr, re.S):
+            m = re.search(r'aria-label="(Request Number|Create Date|Summary|Request Status):', td)
+            if m:
+                by_label[m.group(1)] = _clean(re.sub(r"^<td[^>]*>|</td>$", "", td))
+        if "Request Number" in by_label:
+            no, created, summary, status = (by_label.get("Request Number", ""), by_label.get("Create Date", ""),
+                                            by_label.get("Summary", ""), by_label.get("Request Status", ""))
+        else:
+            cells = [c for c in (_clean(c) for c in re.findall(r"<td[^>]*>(.*?)</td>", tr, re.S)) if c]
+            no = cells[0] if cells else ""
+            created, summary, status = (cells[1] if len(cells) > 1 else "", cells[2] if len(cells) > 2 else "",
+                                        cells[3] if len(cells) > 3 else "")
+        if not E_NUMBER.match(no):
             continue
         rid = re.search(r"(?:redirectInfo|OnMoreInfoClick)\((?:this,\s*)?(?:&#39;|')?(\d+)", tr)
-        rows.append({
-            "request_no": cells[0],
-            "created": cells[1] if len(cells) > 1 else "",
-            "summary": cells[2] if len(cells) > 2 else "",
-            "status": normalize_status(cells[3]) if len(cells) > 3 else "",
-            "rid": rid.group(1) if rid else None,
-        })
+        rows.append({"request_no": no, "created": created, "summary": summary,
+                     "status": normalize_status(status), "rid": rid.group(1) if rid else None})
     return rows
+
+
+def parse_grid_state(page_html: str) -> str:
+    """'rows' (at least one data row), 'empty' (the grid POSITIVELY says it has no data:
+    its 'No data to display' empty-row), or 'unknown' (neither — the page did not render,
+    a challenge/error page, or the markup changed). A zero-row result is only ever
+    believed when it is 'empty'."""
+    if re.search(r"<tr[^>]*dxgvDataRow", page_html):
+        return "rows"
+    if re.search(r"dxgvEmptyDataRow|No data to display", page_html):
+        return "empty"
+    return "unknown"
 
 
 def parse_pager(text: str) -> tuple[int, int, int] | None:
@@ -288,9 +320,7 @@ def _pace() -> None:
 
 def _host_allowed(url: str) -> bool:
     p = urlparse(url)
-    host = (p.hostname or "").lower()
-    return p.scheme == "https" and any(host == s.lstrip(".") or host.endswith(s if s.startswith(".") else "." + s)
-                                       for s in _ALLOWED_HOST_SUFFIXES)
+    return p.scheme == "https" and (p.hostname or "").lower() in _ALLOWED_HOSTS
 
 
 class ArchiveSession:
@@ -337,6 +367,8 @@ class ArchiveSession:
         for row in parse_rows(r.text):
             if row["request_no"] == request_no:
                 return row
+        if parse_grid_state(r.text) == "unknown":
+            raise GovqaFetchError("lookup answer is neither a grid nor an empty grid — page did not render")
         return None
 
     def details(self, rid: str) -> dict:
@@ -344,12 +376,13 @@ class ArchiveSession:
         download()."""
         if not str(rid).isdigit():
             raise ValueError(f"not a numeric rid: {rid!r}")
-        base = self._summary_page_url.rsplit("/", 1)[0] if self._summary_page_url else self.summary_url.rsplit("/", 1)[0]
-        url = f"{base}/RequestArchiveDetails.aspx?rid={rid}&view=1"
-        r = self._req("GET", url, timeout=180)
+        if not self._summary_page_url:
+            self._open_summary()               # a fresh session needs the (S(...)) session URL first
+        base = self._summary_page_url.rsplit("/", 1)[0]
+        r = self._req("GET", f"{base}/RequestArchiveDetails.aspx?rid={rid}&view=1", timeout=180)
         if r.status_code != 200:
             raise GovqaFetchError(f"details GET returned HTTP {r.status_code}")
-        self._detail_url, self._detail_html = url, r.text
+        self._detail_url, self._detail_html = r.url or f"{base}/RequestArchiveDetails.aspx?rid={rid}&view=1", r.text
         return parse_detail(r.text)
 
     def download(self, target: str, dest_path: str, max_bytes: int) -> dict:
@@ -358,7 +391,8 @@ class ArchiveSession:
         md5, content_type}. Follows the 302 to the Azure blob by hand, allowlisting
         the host. Raises GovqaFetchError on a non-file (text/html = expired session)
         answer, an empty body, or a transport error; ValueError if the file is over
-        `max_bytes` (the caller records it as skipped); never leaves a partial file."""
+        `max_bytes` (GovqaTooLargeError — the caller records it as skipped); never leaves a
+        partial file."""
         if not self._detail_html:
             raise GovqaFetchError("download() before details()")
         if not re.fullmatch(r"rptAttachments\$ctl\d+\$lnkStreamCloud", target):
@@ -397,7 +431,7 @@ def _stream_to_file(r, dest_path: str, max_bytes: int) -> dict:
             raise GovqaFetchError("download answered text/html — session expired or blocked")
         declared = r.headers.get("content-length")
         if declared and declared.isdigit() and int(declared) > max_bytes:
-            raise ValueError(f"{int(declared)} bytes > cap {max_bytes}")
+            raise GovqaTooLargeError(f"{int(declared)} bytes > cap {max_bytes}")
         sha, md5, size = hashlib.sha256(), hashlib.md5(usedforsecurity=False), 0
         try:
             with open(dest_path, "wb") as fh:
@@ -406,7 +440,7 @@ def _stream_to_file(r, dest_path: str, max_bytes: int) -> dict:
                         continue
                     size += len(chunk)
                     if size > max_bytes:
-                        raise ValueError(f"exceeded cap {max_bytes} bytes while streaming")
+                        raise GovqaTooLargeError(f"exceeded cap {max_bytes} bytes while streaming")
                     sha.update(chunk)
                     md5.update(chunk)
                     fh.write(chunk)
@@ -443,11 +477,13 @@ class SweepResult:
 
 
 def sweep_term(grid, term: str, is_known, max_pages: int) -> SweepResult:
-    """Read `term`'s results newest-first, one page at a time, and STOP as soon as a
-    page contains an E-number `is_known` (everything older was seen on a previous
-    run) — the incremental daily run of 1C-bis. `grid` needs .search(term) and
+    """Read `term`'s results newest-first, one page at a time, and STOP at the first page
+    whose E-numbers are ALL `is_known` (everything older was seen on a previous run) — the
+    incremental daily run of 1C-bis ("a page contains only E-numbers already in the tab").
+    A page that mixes known and unknown rows is read AND the next page is read too, so a
+    new request that ties on date with a known one across a page boundary is not missed. `grid` needs .search(term) and
     .next_page(), each returning (rows, pager). Marks `overflow` when max_pages
-    pages were read, none held a known row, and more pages remain (the caller treats
+    pages were read, none was entirely known, and more pages remain (the caller treats
     that as 'a backfill too large to scrape — ask for a CSV export')."""
     out = SweepResult()
     rows, pager = grid.search(term)
@@ -458,8 +494,8 @@ def sweep_term(grid, term: str, is_known, max_pages: int) -> SweepResult:
             out.total_pages, out.total_items = pager[1], pager[2]
         else:
             out.total_pages, out.total_items = 1, len(rows)
-        if any(is_known(r["request_no"]) for r in rows):
-            out.stopped_on_known = True
+        if rows and all(is_known(r["request_no"]) for r in rows):
+            out.stopped_on_known = True                  # nothing on this page is new: everything older was seen already
             return out
         if not pager or pager[0] >= pager[1]:
             return out                                   # last page
@@ -486,12 +522,19 @@ class PlaywrightGrid:
         except ImportError as e:
             raise GovqaStructuralError(
                 "playwright is not installed (pip install playwright && playwright install chromium)") from e
-        self._pw = sync_playwright().start()
         try:
-            self._browser = self._pw.chromium.launch(channel="chrome", headless=self.headless)
-        except Exception:  # noqa: BLE001 — no system Chrome: the bundled chromium
-            self._browser = self._pw.chromium.launch(headless=self.headless)
-        self.restart()
+            self._pw = sync_playwright().start()
+            try:
+                self._browser = self._pw.chromium.launch(channel="chrome", headless=self.headless)
+            except Exception:  # noqa: BLE001 — no system Chrome: the bundled chromium
+                self._browser = self._pw.chromium.launch(headless=self.headless)
+            self.restart()
+        except GovqaFetchError as e:
+            self.close()
+            raise GovqaStructuralError(f"browser could not be started: {scrub(e)}") from e
+        except Exception as e:  # noqa: BLE001 — Playwright's own Error types, a missing browser, etc.
+            self.close()
+            raise GovqaStructuralError(f"browser could not be started: {type(e).__name__}: {scrub(e)}") from e
         return self
 
     def __exit__(self, *exc):
@@ -518,11 +561,17 @@ class PlaywrightGrid:
                 self._ctx.close()
         except Exception:  # noqa: BLE001
             pass
-        self._ctx = self._browser.new_context()
-        self.page = self._ctx.new_page()
+        try:
+            self._ctx = self._browser.new_context()
+            self.page = self._ctx.new_page()
+        except Exception as e:  # noqa: BLE001
+            raise GovqaFetchError(f"could not open a fresh browser context: {scrub(e)}") from e
 
     def _read(self):
         html = self.page.content()
+        state = parse_grid_state(html)
+        if state == "unknown":
+            raise GovqaFetchError("the grid did not render (no data rows and no 'No data to display' marker)")
         try:
             text = self.page.inner_text("body")
         except Exception:  # noqa: BLE001

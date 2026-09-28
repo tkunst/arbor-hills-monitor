@@ -5,56 +5,77 @@ See docs/decisions/059-govqa-archive-watch.md and govqa_client.py (the method).
 
 WHY: EGLE answers other people's FOIA requests — the landfill operator's law firm,
 neighbors, peer-landfill watchers — and posts what it released on a public archive.
-E614007 (a 8/2026 request by defense counsel, released 8/20/2026) put ~45 RRD
+E614007 (an 8/2026 request by outside counsel, closed 8/20/2026) put ~45 RRD
 documents in front of us we had never seen. Nothing watched for the next one.
 
-WHAT IT DOES (daily):
-  1. KEYWORD SWEEP  each configured keyword, ONE per search, newest first, stopping
-     the moment a page holds a request already in the tab (incremental). A request
-     whose number is new and that passes the keyword's `require` phrase(s) is
-     recorded and ALERTED (`new`); a keyword's very first sweep records its rows
-     silently (`baseline`) and then writes a `term:` marker (rows first, marker last:
-     a crash re-baselines silently instead of alerting on history). A row that came
-     back from the site's OR-of-tokens search but lacks the required phrase is
-     recorded `nomatch` (so the incremental stop still works) with no excerpt.
+WHAT IT DOES (daily), in guarded phases — a failure in one phase is reported and the
+next still runs, and the REPORT is always sent last (a `finally`), so an alert can never
+be lost to a crash after its rows were written:
+  1. KEYWORD SWEEP  each configured keyword, ONE per search, newest first (Playwright,
+     the handoff's §1C-bis method), stopping at the first page whose E-numbers are ALL
+     already in the tab. A request that is new and passes the keyword's optional `require`
+     phrase(s) is recorded and ALERTED (`new`); a keyword's very FIRST sweep reads every
+     page up to `max_pages_per_term`, records what it finds silently (`baseline`) and then
+     writes a `term:` marker (rows first, marker last: a crash re-baselines silently
+     instead of alerting on history). Hitting the page cap on a first sweep writes a
+     `partial` marker and asks for a CSV export ONCE. A `nomatch` request (returned by the
+     site's OR search but failing `require`) is upgraded to matched if a term that matches
+     it later finds it. A zero-row result is believed only with the grid's own "No data to
+     display" marker; if EVERY keyword comes back empty while the tab holds requests, that
+     is a structural error, not "no news".
   2. CSV DROP       an optional Drive folder (shared with the service account) where
-     Trisha drops a gridView CSV exported in a real browser; new E-numbers matching
-     the keywords are ingested silently. The fallback for a backfill too big to
-     scrape — the run STOPS AND ASKS for one rather than loop on timeouts.
-  3. RE-CHECK       every configured `watch_requests` number plus every recorded
-     request that is not yet in a terminal status, by E-number over a plain cookie
-     session (no browser): a status change alerts (so a law firm's release is caught
-     the day it posts). Unknown statuses count as OPEN (fail-safe).
-  4. FILES          for a new or status-changed request that says records were
-     released, the attachment list is recorded (`file-listed`); if enabled and a
-     private staging folder is configured, the files are downloaded, hashed
-     (SHA-256 + MD5) and copied there (`file-staged`), skipping any whose MD5 matches
-     a configured "already held" folder (`file-held`).
+     Trisha drops a gridView CSV exported in a real browser; runs AFTER the sweep, so
+     anything genuinely new was already alerted by the sweep and the CSV only fills older
+     history, silently. A file is identified by its Drive id AND content hash, so a file
+     replaced in place is re-read; a CSV with no parseable rows is reported.
+  3. RE-CHECK       every configured `watch_requests` number (an explicit watch also
+     overrides a `nomatch`) plus every recorded matched request not yet in a terminal
+     status, by E-number over a plain cookie session (no browser); a status change alerts.
+     Unknown statuses count as OPEN. A truncated re-check list, or lookups that keep
+     returning nothing, are reported.
+  4. FILES          for a new or status-changed request that says records were released,
+     the attachment list is recorded (`file-listed`, duplicate names keyed by occurrence).
+  5. STAGING        if `download_attachments` and a private staging folder are set, files are
+     downloaded, hashed (SHA-256 + MD5) and uploaded under a CONTENT-ADDRESSED name
+     (`<E-number>__<sha256[:16]>.<ext>` — the attachment's own name, which can name a
+     resident, is kept only in the private Sheet and never goes into a Drive query or log),
+     skipping any whose MD5 matches a configured "already held" folder.
 
 HARD RULES (ADR 059) — pinned by tests/test_govqa.py:
-  - NEVER PUBLISHES. Rows go to the PRIVATE Sheet (GSHEET_ID_PRIVATE), never the
-    public case-file Sheet (GSHEET_ID); attachments go only to a private staging
-    folder that must not equal any other GOAUTH_*_FOLDER_ID; nothing here imports
-    findings_feed / gen_findings_feed / any archiver. FOIA releases can contain
-    residents' names and addresses, and items EGLE marked privileged. They route to
-    Trisha's hand-curation (`dedupe-curate`) queue only.
-  - Recipients scoped VERBATIM (Trisha only); EMPTY = display-only, never the
-    coalition alert list. Fails CLOSED when GSHEET_ID_PRIVATE is unset or equals
-    GSHEET_ID.
+  - NEVER PUBLISHES. Rows go to the PRIVATE Sheet (GSHEET_ID_PRIVATE), never the public
+    case-file Sheet; attachments go only to a private staging folder that must not equal
+    any other GOAUTH_*_FOLDER_ID; nothing here imports findings_feed / gen_findings_feed /
+    any archiver. FOIA releases can contain residents' names and addresses, and items EGLE
+    marked privileged. They route to Trisha's hand-curation (`dedupe-curate`) queue only.
+  - Fails CLOSED: GSHEET_ID_PRIVATE unset -> refuse; equal to GSHEET_ID -> refuse; and —
+    the check that works in CI, where GSHEET_ID is not even set — the target spreadsheet
+    already holding a public case-file tab (New Documents / Evidence by Risk / Measurements)
+    -> refuse, before any write.
+  - Recipients scoped VERBATIM (Trisha only); EMPTY = display-only, never the coalition
+    list. A configured recipient whose report could not be SENT makes the run red.
+  - stdout is a PUBLIC log: nothing prints request text or attachment names; every
+    exception message is URL-scrubbed (govqa_client.scrub); googleapiclient's retry logger
+    (which prints request URLs) is silenced; `main()` reports an uncaught error as class +
+    scrubbed message only.
 
-ACCURACY: alerts are source-labeled listing events ("EGLE's archive shows request X
-with status Y"); they say nothing about what a release contains — file contents are
-never read by this job.
+RESIDUAL (accepted, ADR 059): released files are listed when a request is new or changes
+status; attachments posted later to an already-terminal request are not seen.
 
-GATED on govqa.enabled (a brand-new external source; ships false). `--probe` runs
-one real lookup and one real keyword search regardless of the flag and writes nothing.
+ACCURACY: alerts are source-labeled listing events ("EGLE's archive shows request X with
+status Y"); file contents are never read by this job.
+
+GATED on govqa.enabled (a brand-new external source; ships false). `--probe` runs one real
+lookup and one real keyword search regardless of the flag and writes nothing.
 """
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
 import re
 import sys
 import tempfile
+import time
 from collections import defaultdict
 from datetime import datetime
 
@@ -73,9 +94,12 @@ from config_loader import load_config
 
 STAGING_ENV_DEFAULT = "GOAUTH_GOVQA_STAGING_FOLDER_ID"
 CSV_ENV_DEFAULT = "GOAUTH_GOVQA_CSV_FOLDER_ID"
-_MAX_FILE_FAILS = 3
+_MAX_FILE_FAILS = 5
 _EMAIL_LIST_CAP = 25
 _EXCERPT_CHARS = 300
+_CIRCUIT_BREAKER = 3                # consecutive structural failures that abort a phase
+_DEFAULT_TIME_BUDGET_MIN = 40
+_PUBLIC_TABS = ("TAB_NEW", "TAB_EVIDENCE", "TAB_MEASUREMENTS")   # sheet_writer names of PUBLIC case-file tabs
 
 # Column indexes of sw.GOVQA_HEADERS.
 (C_DATE, C_KEY, C_EVENT, C_CREATED, C_CLOSED, C_STATUS, C_TERMS, C_RID, C_EXCERPT,
@@ -97,15 +121,26 @@ def _should_run(cfg: dict) -> tuple[bool, str]:
 
 
 def _private_sheet_id() -> str | None:
-    """The PRIVATE Sheet id, or None (this run must not write): unset -> None; equal
-    to the public GSHEET_ID -> None, so a misconfigured secret can never route other
-    people's request text onto the public Sheet."""
+    """The PRIVATE Sheet id, or None (this run must not write): unset -> None; equal to the
+    public GSHEET_ID -> None (only meaningful locally — the workflow does not receive the
+    public id; see `looks_like_public_sheet` for the check that works in CI)."""
     priv = (os.environ.get("GSHEET_ID_PRIVATE") or "").strip()
     if not priv:
         return None
     if priv == (os.environ.get("GSHEET_ID") or "").strip():
         return None
     return priv
+
+
+def looks_like_public_sheet(service, sheet_id: str) -> bool:
+    """True when the spreadsheet already holds any of the PUBLIC case-file's tabs (New
+    Documents / Evidence by Risk / Measurements). A GSHEET_ID_PRIVATE secret that was
+    copy-pasted from the public id would pass the env comparison in CI (the workflow never
+    sets GSHEET_ID), but it cannot pass THIS: the public Sheet has those tabs, the private
+    one never does. Runs before any write, so the tab helpers never touch a public Sheet."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=dc.GOOGLE_API_NUM_RETRIES)
+    titles = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    return bool(titles & {getattr(sw, name) for name in _PUBLIC_TABS})
 
 
 def _staging_folder_id(env_name: str) -> str | None:
@@ -136,21 +171,21 @@ def _keywords(cfg: dict) -> list[dict]:
 
 
 def keyword_matches(kw: dict, summary: str) -> bool:
-    """A row the site returned for `kw` counts as a match when every `require`
-    phrase appears in its summary (no `require` = trust the site's own search,
-    which also matches text this grid doesn't show)."""
+    """A row the site returned for `kw` counts as a match when every `require` phrase
+    appears in its summary (no `require` = trust the site's own search, which also matches
+    text this grid doesn't show)."""
     return all(gq.phrase_in(summary, r) for r in kw["require"])
 
 
 def bare_term(term: str) -> str:
-    """The search term without its surrounding double quotes: the site treats a quoted
-    term as an exact phrase, but the request text never contains the quote marks."""
+    """The search term without its surrounding double quotes: the site treats a quoted term
+    as an exact phrase, but the request text never contains the quote marks."""
     return term.strip().strip('"').strip()
 
 
 def csv_row_matches(keywords: list[dict], summary: str) -> bool:
-    """A CSV row (no site search behind it) matches when ANY keyword's bare term appears
-    in the summary and that keyword's `require` holds."""
+    """A CSV row (no site search behind it) matches when ANY keyword's bare term appears in
+    the summary and that keyword's `require` holds."""
     return any(gq.phrase_in(summary, bare_term(kw["term"])) and keyword_matches(kw, summary) for kw in keywords)
 
 
@@ -163,13 +198,22 @@ def _cell(row: list, idx: int) -> str:
     return row[idx] if idx < len(row) else ""
 
 
+_FILE_KEY = re.compile(r"^file:(E\d{6}-\d{6}):(.*?)(?:#(\d+))?$", re.S)
+
+
+def file_key(request_no: str, name: str, occurrence: int = 1) -> str:
+    """`file:<E>:<name>` for the first attachment with that name, `…#2`, `…#3` for repeats
+    (a request can carry several files called `image001.png`)."""
+    return f"file:{request_no}:{name}" + (f"#{occurrence}" if occurrence > 1 else "")
+
+
 def build_state(rows: list[list]) -> dict:
     """Fold the append-only tab into state (the LAST row for a key wins):
-      requests[E]  {status, created, closed, rid, matched, terms, released_seen}
-      files[key]   {request, name, state: listed|staged|held|skipped, fails}
-      terms        set of keywords with a first-sweep baseline marker
-      csvs         set of CSV Drive file ids already ingested
-    """
+      requests[E]  {status, created, closed, rid, matched, terms}
+      files[key]   {request, name, occ, state: listed|staged|held|skipped, fails}
+      terms        keywords with a first-sweep marker (baseline OR partial)
+      csvs         '<Drive id>:<content hash>' of CSV files already ingested
+    Tolerates rows Sheets returned with trailing empty cells stripped."""
     st = {"requests": {}, "files": {}, "terms": set(), "csvs": set()}
     for r in rows:
         key, event = _cell(r, C_KEY), _cell(r, C_EVENT)
@@ -178,10 +222,14 @@ def build_state(rows: list[list]) -> dict:
         elif key.startswith("csv:"):
             st["csvs"].add(key[4:])
         elif key.startswith("file:"):
-            _, request, name = key.split(":", 2) if key.count(":") >= 2 else ("file", "", key[5:])
-            f = st["files"].setdefault(key, {"request": request, "name": name, "state": "listed", "fails": 0})
+            m = _FILE_KEY.match(key)
+            if not m:
+                continue
+            f = st["files"].setdefault(key, {"request": m.group(1), "name": m.group(2), "occ": int(m.group(3) or 1),
+                                             "state": "listed", "fails": 0})
             if event == "file-listed":
-                f["state"] = "listed" if f["state"] not in ("staged", "held") else f["state"]
+                if f["state"] not in ("staged", "held"):
+                    f["state"] = "listed"
             elif event == "file-staged":
                 f["state"], f["fails"] = "staged", 0
             elif event == "file-held":
@@ -213,6 +261,15 @@ def excerpt(text: str) -> str:
     return t if len(t) <= _EXCERPT_CHARS else t[:_EXCERPT_CHARS - 1].rstrip() + "…"
 
 
+def staged_name(request_no: str, sha256: str, file_name: str) -> str:
+    """The Drive name for a staged file: '<E-number>__<sha256[:16]>[.<ext>]'. Content-
+    addressed, so two files can never collide, identical content dedupes, and the
+    attachment's own name (which can name a resident) never enters a Drive query or a log."""
+    ext = re.sub(r"[^A-Za-z0-9]", "", file_name.rpartition(".")[2])[:8].lower() if "." in file_name else ""
+    no = request_no if gq.E_NUMBER.match(request_no or "") else "E000000-000000"
+    return f"{no}__{sha256[:16]}" + (f".{ext}" if ext else "")
+
+
 # ---------------------------------------------------------------------------
 # Rows + alert copy (pure)
 # ---------------------------------------------------------------------------
@@ -238,43 +295,52 @@ _NOTE = ("These are source-labeled listing events from EGLE's public FOIA archiv
          "your private folder. Publishing anything is a hand-curation decision (dedupe-curate).")
 
 
+def _capped(items: list, render, what: str) -> str:
+    shown = items[:_EMAIL_LIST_CAP]
+    more = f"\n(+ {len(items) - len(shown)} more {what} — see the GovQA Archive Watch tab.)" if len(items) > len(shown) else ""
+    return "\n".join(render(x) for x in shown) + more
+
+
 def format_report(new: list[dict], changed: list[tuple[dict, str]], staged: list[dict],
                   problems: list[str]) -> str:
     """The one email per run. Sections appear only when non-empty. Pure."""
     parts = []
     if new:
-        shown = new[:_EMAIL_LIST_CAP]
-        more = f"\n(+ {len(new) - len(shown)} more — see the GovQA Archive Watch tab.)" if len(new) > len(shown) else ""
-        parts.append(f"NEW requests matching your keywords ({len(new)}):\n\n" + "\n".join(_describe(r) for r in shown) + more)
+        parts.append(f"NEW requests matching your keywords ({len(new)}):\n\n" + _capped(new, _describe, "request(s)"))
     if changed:
-        lines = [f"- {r['request_no']}: {old or '(none)'} → {r['status']}"
-                 + (f" (closed {r['closed']})" if r.get("closed") else "")
-                 + (f" | {r['n_files']} file(s) listed" if r.get("n_files") else "")
-                 + f"\n    “{excerpt(r['summary'])}”" for r, old in changed[:_EMAIL_LIST_CAP]]
-        parts.append(f"STATUS CHANGES ({len(changed)}):\n\n" + "\n".join(lines))
+        def line(pair):
+            r, old = pair
+            return (f"- {r['request_no']}: {old or '(none)'} → {r['status']}"
+                    + (f" (closed {r['closed']})" if r.get("closed") else "")
+                    + (f" | {r['n_files']} file(s) listed" if r.get("n_files") else "")
+                    + f"\n    “{excerpt(r['summary'])}”")
+        parts.append(f"STATUS CHANGES ({len(changed)}):\n\n" + _capped(changed, line, "change(s)"))
     if staged:
-        parts.append(f"FILES STAGED to the private folder ({len(staged)}):\n\n" +
-                     "\n".join(f"- {s['request']}: {s['name']} ({s['size']:,} bytes; SHA-256 {s['sha256'][:16]}…)"
-                               for s in staged[:_EMAIL_LIST_CAP]))
+        parts.append(f"FILES STAGED to the private folder ({len(staged)}):\n\n" + _capped(
+            staged, lambda s: f"- {s['request']}: {s['size']:,} bytes; SHA-256 {s['sha256'][:16]}… "
+                              "(file names are in the Sheet)", "file(s)"))
     if problems:
         parts.append("NEEDS ATTENTION:\n\n" + "\n".join(f"- {p}" for p in problems))
     return "\n\n".join(parts) + "\n\n" + _NOTE + "\n"
 
 
-def _send(recipients: list[str], subject: str, body: str, cfg: dict) -> None:
-    """Best-effort alert. EMPTY recipients = display-only: send_email would fall back
-    to the whole coalition list on an empty list, so it is never called."""
+def _send(recipients: list[str], subject: str, body_fn, cfg: dict) -> str:
+    """Best-effort alert -> 'sent' | 'display-only' | 'failed'. `body_fn` runs INSIDE the
+    guard so a formatting bug cannot escape. EMPTY recipients = display-only: send_email
+    would fall back to the whole coalition list, so it is never called."""
     if not recipients:
         print(f"[govqa] display-only (no recipients): {subject}")
-        return
+        return "display-only"
     try:
-        ea.send_email(subject, body, cfg, recipients=recipients)
+        body = body_fn()
+        return "sent" if ea.send_email(subject, body, cfg, recipients=recipients) else "failed"
     except Exception as e:  # noqa: BLE001 — rows are already recorded
-        print(f"[govqa] alert email FAILED (rows are recorded): {subject}: {gq.scrub(e)}")
+        print(f"[govqa] alert could not be prepared/sent (rows are recorded): {type(e).__name__}: {gq.scrub(e, 120)}")
+        return "failed"
 
 
 # ---------------------------------------------------------------------------
-# Drive helpers (SA read for CSV drop + held MD5s; OAuth write for staging)
+# Drive helpers (SA read for CSV drop + held MD5s)
 # ---------------------------------------------------------------------------
 
 
@@ -306,8 +372,8 @@ def _held_folder_ids(gcfg: dict) -> list[str]:
 
 
 def run_probe(cfg: dict, make_grid=None, make_session=None) -> int:
-    """`--probe`: one real by-E-number lookup + details, and one real keyword search
-    with the browser. Reads only; runs regardless of the enabled flag."""
+    """`--probe`: one real by-E-number lookup + details, and one real keyword search with the
+    browser. Reads only; runs regardless of the enabled flag."""
     make_grid = make_grid or gq.PlaywrightGrid
     make_session = make_session or gq.ArchiveSession
     gcfg = cfg.get("govqa") or {}
@@ -319,7 +385,8 @@ def run_probe(cfg: dict, make_grid=None, make_session=None) -> int:
             print(f"[govqa] PROBE: lookup of {known} found nothing")
             return 1
         det = s.details(row["rid"]) if row.get("rid") else {"files": []}
-        print(f"[govqa] probe: lookup {known} -> status {row['status']!r}, {len(det['files'])} file(s) (no browser)")
+        status, n_files = row["status"], len(det["files"])
+        print(f"[govqa] probe: lookup {known} -> status {status!r}, {n_files} file(s) (no browser)")
         kws = _keywords(cfg)
         term = kws[0]["term"] if kws else "Holloway"
         with make_grid() as grid:
@@ -338,7 +405,434 @@ def run_probe(cfg: dict, make_grid=None, make_session=None) -> int:
 # ---------------------------------------------------------------------------
 
 
-def run(argv: list[str] | None = None, make_grid=None, make_session=None, sleep=None) -> int:
+class Run:
+    """One watcher run: config, the Sheet, state, and the things the final report needs."""
+
+    def __init__(self, cfg, sheets, priv_id, state, make_grid, make_session, sleep, clock):
+        g = cfg.get("govqa") or {}
+        self.cfg, self.gcfg, self.sheets, self.priv_id, self.state = cfg, g, sheets, priv_id, state
+        self.make_grid, self.make_session, self.sleep = make_grid, make_session, sleep
+        self.keywords = _keywords(cfg)
+        self.recipients = [r for r in (g.get("recipients") or []) if str(r or "").strip()]
+        self.max_pages = int(g.get("max_pages_per_term", 12))
+        self.max_rechecks = int(g.get("max_open_rechecks", 25))
+        self.max_attempts = int(g.get("max_attempts", gq.DEFAULT_MAX_ATTEMPTS))
+        self.do_download = bool(g.get("download_attachments", False))
+        self.max_dl = int(g.get("max_downloads_per_run", 10))
+        self.max_bytes = int(float(g.get("max_file_mb", 200)) * 1024 * 1024)
+        self.deadline = clock() + float(g.get("time_budget_minutes", _DEFAULT_TIME_BUDGET_MIN)) * 60
+        self.clock = clock
+        self.today = _today()
+        self.exit_code = 0
+        self.problems: list[str] = []
+        self.counts: dict[str, int] = defaultdict(int)
+        self.new_reqs: list[dict] = []
+        self.changed: list[tuple[dict, str]] = []
+        self.staged: list[dict] = []
+        self.to_list_files: list[dict] = []
+        self.fresh: set[str] = set()                 # requests discovered THIS run
+        self.session = None
+        # watch_requests: validated once; a malformed entry is a reported problem, never a crash
+        self.watch = []
+        for w in (str(x).strip() for x in (g.get("watch_requests") or [])):
+            if gq.E_NUMBER.match(w):
+                self.watch.append(w)
+            else:
+                self.problem(f"watch_requests entry {w!r} is not a full E-number (E######-MMDDYY) — ignored")
+
+    # -- plumbing -----------------------------------------------------------
+    def write(self, rows):
+        if rows:
+            sw.append_govqa_rows(self.sheets, self.priv_id, rows)
+
+    def problem(self, msg: str, fatal: bool = True):
+        self.problems.append(msg)
+        if fatal:
+            self.exit_code = 1
+
+    def out_of_time(self) -> bool:
+        return self.clock() > self.deadline
+
+    def get_session(self):
+        if self.session is None:
+            self.session = self.make_session()
+        return self.session
+
+    def guard(self, name: str, fn):
+        """Run one phase; any exception becomes a reported problem (class + scrubbed text) and
+        the run moves on — the final report is still sent."""
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001
+            print(f"[govqa] {name} phase failed: {type(e).__name__}: {gq.scrub(e, 120)}")
+            self.problem(f"{name} phase failed: {type(e).__name__}: {gq.scrub(e, 150)}")
+
+    def backoff(self, fn, what, on_retry=None):
+        return gq.with_backoff(fn, what, max_attempts=self.max_attempts, sleep=self.sleep, on_retry=on_retry)
+
+    # -- phase 1: keyword sweep ---------------------------------------------
+    def phase_sweep(self):
+        if not self.keywords:
+            return
+        try:
+            grid_cm = self.make_grid()
+            grid = grid_cm.__enter__()
+        except Exception as e:  # noqa: BLE001 — a missing/failed browser: loud, but the by-number phases still run
+            print(f"[govqa] keyword sweep unavailable: {type(e).__name__}: {gq.scrub(e, 120)}")
+            self.problem(f"keyword sweep unavailable: {type(e).__name__}: {gq.scrub(e, 150)}")
+            return
+        found: dict[str, dict] = {}
+        partial_terms, swept_ok, empties, structural_in_a_row = [], [], 0, 0
+        try:
+            for kw in self.keywords:
+                if self.out_of_time():
+                    self.problem("time budget reached during the keyword sweep — remaining keywords skipped")
+                    break
+                term = kw["term"]
+                first = term not in self.state["terms"]
+                known = self.state["requests"]
+                is_known = (lambda n: False) if first else (lambda n: n in known)   # a first sweep reads pages, up to the cap
+                try:
+                    res = self.backoff(lambda: gq.sweep_term(grid, term, is_known, self.max_pages),
+                                       f"sweep {term!r}", on_retry=grid.restart)
+                except gq.GovqaStructuralError as e:
+                    print(f"[govqa] STRUCTURAL: {gq.scrub(e)}")
+                    self.problem(f"keyword {term!r}: {gq.scrub(e)}")
+                    structural_in_a_row += 1
+                    if structural_in_a_row >= _CIRCUIT_BREAKER:
+                        self.problem(f"circuit breaker: {structural_in_a_row} keywords in a row failed — sweep aborted")
+                        break
+                    continue
+                structural_in_a_row = 0
+                print(f"[govqa] keyword {term!r}: {len(res.rows)} row(s) over {res.pages_read}/{res.total_pages} "
+                      f"page(s) of {res.total_items} item(s){' — stopped at a fully-known page' if res.stopped_on_known else ''}.")
+                if res.total_items == 0:
+                    empties += 1
+                for r in res.rows:
+                    entry = found.setdefault(r["request_no"], {"row": r, "terms": [], "matched_by": [], "first": True})
+                    entry["terms"].append(term)
+                    if keyword_matches(kw, r["summary"]):
+                        entry["matched_by"].append(term)
+                    if not first:
+                        entry["first"] = False          # any already-baselined term makes it alertable
+                if res.overflow:
+                    self.problem(f"keyword {term!r} has {res.total_items} items across {res.total_pages} pages — more than "
+                                 f"max_pages_per_term={self.max_pages} without reaching a fully-known page. Export the grid to "
+                                 "CSV in a real browser and drop it in the CSV folder, then rerun.")
+                    print(f"[govqa] NEEDS CSV EXPORT: keyword {term!r} ({res.total_items} items, {res.total_pages} pages).")
+                    if first:
+                        partial_terms.append(term)      # ask ONCE; what was read is recorded below
+                else:
+                    swept_ok.append(term)
+        finally:
+            try:
+                grid_cm.__exit__(None, None, None)
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Sanity: every keyword empty while the tab holds recorded requests is a broken read, not "no news".
+        if self.keywords and empties == len(self.keywords) and self.state["requests"]:
+            self.problem("every keyword returned zero rows although requests are on record — the archive or its markup "
+                         "may have changed; nothing was recorded and no keyword marker was written")
+            return
+
+        rows = []
+        for no, entry in found.items():
+            prev = self.state["requests"].get(no)
+            if prev is not None and (prev["matched"] or not entry["matched_by"]):
+                continue                                 # known, and nothing to upgrade
+            r = entry["row"]
+            if prev is None:
+                self.fresh.add(no)
+            if not entry["matched_by"]:
+                rows.append(_row(self.today, no, "nomatch", created=r["created"], status=r["status"], rid=r["rid"] or "",
+                                 note="site search hit without the required phrase"))
+                self.state["requests"][no] = {"status": r["status"], "created": r["created"], "closed": "",
+                                              "rid": r["rid"] or "", "matched": False, "terms": ""}
+                self.counts["nomatch"] += 1
+                continue
+            event = "baseline" if entry["first"] else "new"
+            terms = ";".join(entry["matched_by"])
+            rows.append(_row(self.today, no, event, created=r["created"], status=r["status"], terms=terms, rid=r["rid"] or "",
+                             text=excerpt(r["summary"]),
+                             note=("upgraded from no-match; " if prev is not None else "")
+                                  + ("first sweep of this keyword (no alert)" if event == "baseline" else "new request")))
+            self.state["requests"][no] = {"status": r["status"], "created": r["created"], "closed": "",
+                                          "rid": r["rid"] or "", "matched": True, "terms": terms}
+            self.counts[event] += 1
+            if event == "new":
+                self.new_reqs.append({"request_no": no, "status": r["status"], "created": r["created"],
+                                      "summary": r["summary"], "terms": terms, "rid": r["rid"]})
+                if gq.is_released(r["status"]):
+                    self.to_list_files.append(self.new_reqs[-1])
+        self.write(rows)
+        markers = ([_row(self.today, f"term:{t}", "baseline", note="keyword baselined")
+                    for t in swept_ok if t not in self.state["terms"]]
+                   + [_row(self.today, f"term:{t}", "partial",
+                           note=f"first sweep stopped at max_pages_per_term={self.max_pages}: older history NOT read — "
+                                "export a CSV to backfill it") for t in partial_terms])
+        self.write(markers)                              # markers LAST: a crash re-baselines silently
+        self.state["terms"].update(swept_ok)
+        self.state["terms"].update(partial_terms)
+
+    # -- phase 2: CSV drop (after the sweep) ---------------------------------
+    def phase_csv(self):
+        csv_env = self.gcfg.get("csv_folder_env", CSV_ENV_DEFAULT)
+        folder = os.environ.get(csv_env or "")
+        if not folder:
+            return
+        drive = dc.drive_service()
+        with tempfile.TemporaryDirectory() as tmp:
+            for f in dc.list_files(drive, folder):
+                if not f["name"].lower().endswith(".csv"):
+                    continue
+                path = dc.download_file(drive, f["id"], os.path.join(tmp, "in.csv"))
+                with open(path, "rb") as fh:
+                    data = fh.read()
+                marker = f"{f['id']}:{hashlib.sha256(data).hexdigest()[:16]}"
+                if marker in self.state["csvs"]:
+                    continue
+                parsed = gq.parse_gridview_csv(data)
+                if not parsed:
+                    self.problem("a CSV in the drop folder has no parseable rows (expected the gridView export's "
+                                 "'Request Number, Create Date, Summary, Request Status' columns) — not ingested")
+                    continue
+                rows, n = [], 0
+                for r in parsed:
+                    if r["request_no"] in self.state["requests"] or not csv_row_matches(self.keywords, r["summary"]):
+                        continue
+                    rows.append(_row(self.today, r["request_no"], "baseline", created=r["created"], status=r["status"],
+                                     terms="csv", text=excerpt(r["summary"]), note="ingested from a CSV export (history; no alert)"))
+                    self.state["requests"][r["request_no"]] = {"status": r["status"], "created": r["created"], "closed": "",
+                                                                "rid": "", "matched": True, "terms": "csv"}
+                    n += 1
+                rows.append(_row(self.today, f"csv:{marker}", "ingested", note=f"{n} new request(s) of {len(parsed)} parsed"))
+                self.write(rows)                         # requests first, the csv marker last
+                self.state["csvs"].add(marker)
+                self.counts["csv_ingested"] += n
+                print(f"[govqa] CSV drop: ingested {n} new request(s) of {len(parsed)} silently.")
+
+    # -- phase 3: re-check open + watched requests by number -----------------
+    def phase_recheck(self):
+        g_state = self.state["requests"]
+        open_recorded = sorted((n for n, v in g_state.items() if v["matched"] and is_open(v["status"]) and n not in self.fresh
+                                and n not in self.watch), reverse=True)
+        chosen = open_recorded[:self.max_rechecks]
+        if len(open_recorded) > len(chosen):
+            self.problem(f"{len(open_recorded) - len(chosen)} open request(s) were not re-checked this run "
+                         f"(max_open_rechecks={self.max_rechecks}); raise the cap if this persists", fatal=False)
+        targets = list(dict.fromkeys(self.watch + chosen))
+        if not targets:
+            return
+        session = self.get_session()
+        nothing, structural_in_a_row = 0, 0
+        for no in targets:
+            if self.out_of_time():
+                self.problem("time budget reached during the re-check — remaining requests skipped")
+                break
+            try:
+                row = self.backoff(lambda: session.lookup(no), f"lookup {no}")
+            except gq.GovqaStructuralError as e:
+                print(f"[govqa] STRUCTURAL: {gq.scrub(e)}")
+                self.problem(f"re-check {no}: {gq.scrub(e)}")
+                structural_in_a_row += 1
+                if structural_in_a_row >= _CIRCUIT_BREAKER:
+                    self.problem(f"circuit breaker: {structural_in_a_row} lookups in a row failed — re-check aborted")
+                    break
+                continue
+            structural_in_a_row = 0
+            if row is None:
+                nothing += 1
+                continue
+            prev = g_state.get(no)
+            if prev is None or (not prev["matched"] and no in self.watch):
+                self.write([_row(self.today, no, "baseline", created=row["created"], status=row["status"], terms="watch",
+                                 rid=row["rid"] or "", text=excerpt(row["summary"]), note="watch-list request (no alert)")])
+                g_state[no] = {"status": row["status"], "created": row["created"], "closed": "", "rid": row["rid"] or "",
+                               "matched": True, "terms": "watch"}
+                self.counts["baseline"] += 1
+                continue
+            if not prev["matched"]:
+                continue
+            if row["status"] != prev["status"]:
+                rq = {"request_no": no, "status": row["status"], "created": row["created"], "summary": row["summary"],
+                      "terms": prev["terms"], "rid": row["rid"] or prev["rid"], "closed": ""}
+                old = prev["status"]
+                self.write([_row(self.today, no, "status", created=row["created"], status=row["status"], terms=prev["terms"],
+                                 rid=rq["rid"], text=excerpt(row["summary"]), note=f"status {old!r} -> {row['status']!r}")])
+                prev.update(status=row["status"], rid=rq["rid"])
+                self.changed.append((rq, old))
+                self.counts["status"] += 1
+                if gq.is_released(row["status"]):
+                    self.to_list_files.append(rq)
+        if nothing >= 3 and nothing * 2 >= len(targets):
+            self.problem(f"the archive returned nothing for {nothing} of {len(targets)} recorded/watched requests — "
+                         "an outage or a markup change?")
+
+    # -- phase 4: list the released files ------------------------------------
+    def phase_list_files(self):
+        for rq in self.to_list_files:
+            if not rq.get("rid"):
+                continue
+            if self.out_of_time():
+                self.problem("time budget reached while listing files — remaining requests skipped")
+                break
+            session = self.get_session()
+            try:
+                det = self.backoff(lambda: session.details(rq["rid"]), f"details {rq['request_no']}")
+            except gq.GovqaStructuralError as e:
+                print(f"[govqa] STRUCTURAL: {gq.scrub(e)}")
+                self.problem(f"details {rq['request_no']}: {gq.scrub(e)}")
+                continue
+            rq["closed"] = det.get("closed", "")
+            rq["n_files"] = len(det["files"])
+            seen: dict[str, int] = defaultdict(int)
+            rows = []
+            for f in det["files"]:
+                seen[f["name"]] += 1
+                key = file_key(rq["request_no"], f["name"], seen[f["name"]])
+                if key not in self.state["files"]:
+                    rows.append(_row(self.today, key, "file-listed", status=rq["status"], closed=rq["closed"],
+                                     file_name=f["name"], note="attachment listed on the request's detail page"))
+                    self.state["files"][key] = {"request": rq["request_no"], "name": f["name"], "occ": seen[f["name"]],
+                                                "state": "listed", "fails": 0}
+            self.write(rows)
+            self.counts["files_listed"] += len(rows)
+
+    # -- phase 5: stage the attachments (private folder) ----------------------
+    def phase_stage(self):
+        if not self.do_download:
+            return
+        staging_env = self.gcfg.get("staging_folder_env", STAGING_ENV_DEFAULT)
+        try:
+            folder = _staging_folder_id(staging_env)
+        except RuntimeError as e:
+            print(f"[govqa] STAGING REFUSED: {gq.scrub(e)}")
+            self.problem(gq.scrub(e))
+            return
+        pending = [(k, f) for k, f in self.state["files"].items() if f["state"] == "listed" and f["fails"] < _MAX_FILE_FAILS]
+        if folder is None:
+            n_pending = len(pending)
+            if n_pending:
+                print(f"[govqa] staging not configured ({staging_env}/OAuth unset) — {n_pending} listed file(s) not downloaded.")
+            return
+        if not pending:
+            return
+        pending.sort(key=lambda kf: (kf[1]["fails"], kf[0]))
+        held: set[str] = set()
+        held_ids = _held_folder_ids(self.gcfg)
+        if held_ids:
+            try:
+                held = _held_md5s(dc.drive_service(), held_ids)
+            except Exception as e:  # noqa: BLE001 — the hold check is an optimisation
+                print(f"[govqa] held-folder listing failed (continuing without it): {type(e).__name__}: {gq.scrub(e, 100)}")
+        drive_up = ac.oauth_drive_service()
+        session = self.get_session()
+        by_request: dict[str, list] = defaultdict(list)
+        for k, f in pending[:self.max_dl]:
+            by_request[f["request"]].append((k, f))
+        with tempfile.TemporaryDirectory() as tmp:
+            for request_no, items in by_request.items():
+                rid = (self.state["requests"].get(request_no) or {}).get("rid")
+                if not rid:
+                    continue
+                if self.out_of_time():
+                    self.problem("time budget reached while staging files — remaining files left for the next run")
+                    return
+                try:
+                    det = self.backoff(lambda: session.details(rid), f"details {request_no}")
+                except gq.GovqaStructuralError as e:
+                    self.problem(f"details {request_no}: {gq.scrub(e)}")
+                    continue
+                targets: dict[str, list[str]] = defaultdict(list)
+                for f in det["files"]:
+                    targets[f["name"]].append(f["target"])
+                for key, f in items:
+                    tl = targets.get(f["name"], [])
+                    if f["occ"] > len(tl):
+                        self._strike(key, f, "no longer listed on the detail page")
+                        continue
+                    self._stage_one(session, drive_up, folder, held, tmp, request_no, rid, key, f, tl[f["occ"] - 1], targets)
+
+    def _stage_one(self, session, drive_up, folder, held, tmp, request_no, rid, key, f, target, targets):
+        local = os.path.join(tmp, f"dl-{hashlib.sha256(key.encode()).hexdigest()[:12]}.bin")
+        info = None
+        try:
+            for attempt in (1, 2):
+                try:
+                    info = session.download(target, local, self.max_bytes)
+                    break
+                except gq.GovqaTooLargeError:
+                    raise
+                except gq.GovqaFetchError:
+                    if attempt == 2:
+                        raise
+                    # an expired session / transient answer: reload the detail page once and retry in-run
+                    det = session.details(rid)
+                    tl = [x["target"] for x in det["files"] if x["name"] == f["name"]]
+                    if f["occ"] > len(tl):
+                        raise
+                    target = tl[f["occ"] - 1]
+            if info is None:                              # unreachable (attempt 2 raises), but explicit
+                raise gq.GovqaFetchError("download did not complete")
+            if info["md5"] in held:
+                self.write([_row(self.today, key, "file-held", file_name=f["name"], size=str(info["size"]), sha=info["sha256"],
+                                 md5=info["md5"], note="identical (MD5) to a file in a configured held folder")])
+                f["state"] = "held"
+                self.counts["held"] += 1
+                return
+            name = staged_name(request_no, info["sha256"], f["name"])
+            link = ac.upload_file(drive_up, local, name,
+                                  "application/pdf" if f["name"].lower().endswith(".pdf") else "application/octet-stream", folder)
+            self.write([_row(self.today, key, "file-staged", file_name=f["name"], size=str(info["size"]), sha=info["sha256"],
+                             md5=info["md5"], link=link, note=f"staged to the private folder as {name}")])
+            f["state"] = "staged"
+            self.staged.append({"request": request_no, "size": info["size"], "sha256": info["sha256"]})
+            self.counts["staged"] += 1
+        except gq.GovqaTooLargeError as e:
+            self.write([_row(self.today, key, "file-skipped", file_name=f["name"], note=f"not staged: {gq.scrub(e)}")])
+            f["state"] = "skipped"
+        except Exception as e:  # noqa: BLE001 — one bad file must not stop the rest
+            # NOT the file name or the raw error: this line goes to a public Actions log.
+            attempt_no = f["fails"] + 1
+            print(f"[govqa] {request_no}: a file failed to stage ({type(e).__name__}, attempt {attempt_no}).")
+            self._strike(key, f, f"attempt {attempt_no} failed: {type(e).__name__}: {gq.scrub(e)}")
+        finally:
+            try:
+                os.remove(local)                          # never hold up to max_dl x max_file_mb on disk
+            except OSError:
+                pass
+
+    def _strike(self, key: str, f: dict, note: str):
+        f["fails"] += 1
+        gave_up = f["fails"] >= _MAX_FILE_FAILS
+        self.write([_row(self.today, key, "file-skipped" if gave_up else "file-failed", file_name=f["name"], note=note)])
+        if gave_up:
+            f["state"] = "skipped"
+            self.problem(f"a file on {f['request']} gave up after {_MAX_FILE_FAILS} failed staging attempts "
+                         "(recorded as file-skipped in the Sheet)", fatal=False)
+
+    # -- report --------------------------------------------------------------
+    def report(self):
+        if not (self.new_reqs or self.changed or self.staged or self.problems):
+            return
+        bits = []
+        if self.new_reqs:
+            bits.append(f"{len(self.new_reqs)} new request(s)")
+        if self.changed:
+            bits.append(f"{len(self.changed)} status change(s)")
+        if self.staged:
+            bits.append(f"{len(self.staged)} file(s) staged")
+        if self.problems and not bits:
+            bits.append("needs attention")
+        result = _send(self.recipients, "[GovQA] " + ", ".join(bits) + " — EGLE FOIA archive",
+                       lambda: format_report(self.new_reqs, self.changed, self.staged, self.problems), self.cfg)
+        if result == "failed":
+            print("[govqa] the report could not be sent — failing the run so it is not silent")
+            self.exit_code = 1
+
+
+def run(argv: list[str] | None = None, make_grid=None, make_session=None, sleep=None, clock=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     cfg = load_config()
     if "--probe" in argv:
@@ -353,326 +847,36 @@ def run(argv: list[str] | None = None, make_grid=None, make_session=None, sleep=
               "other people's FOIA request text belongs ONLY on the private Sheet.")
         return 1
 
-    make_grid = make_grid or gq.PlaywrightGrid
-    make_session = make_session or gq.ArchiveSession
-    sleep = sleep or __import__("time").sleep
-
-    gcfg = cfg.get("govqa") or {}
-    keywords = _keywords(cfg)
-    recipients = list(gcfg.get("recipients") or [])
-    max_pages = int(gcfg.get("max_pages_per_term", 12))
-    max_rechecks = int(gcfg.get("max_open_rechecks", 25))
-    max_attempts = int(gcfg.get("max_attempts", gq.DEFAULT_MAX_ATTEMPTS))
-    watch_requests = [str(x) for x in (gcfg.get("watch_requests") or [])]
-    do_download = bool(gcfg.get("download_attachments", False))
-    max_dl = int(gcfg.get("max_downloads_per_run", 10))
-    max_bytes = int(float(gcfg.get("max_file_mb", 200)) * 1024 * 1024)
-
     sheets = dc.sheets_service()
+    if looks_like_public_sheet(sheets, priv_id):
+        print("[govqa] the GSHEET_ID_PRIVATE spreadsheet holds public case-file tabs — refusing to run "
+              "(check the secret: it looks like the PUBLIC Sheet).")
+        return 1
     sw.ensure_govqa_tabs(sheets, priv_id)
     state = build_state(sw.read_govqa_rows(sheets, priv_id))
-    today = _today()
-    exit_code = 0
-    problems: list[str] = []
-    counts = defaultdict(int)
-
-    def write(rows):
-        if rows:
-            sw.append_govqa_rows(sheets, priv_id, rows)
-
-    new_reqs: list[dict] = []          # for the alert (matched, non-baseline)
-    changed: list[tuple[dict, str]] = []
-    swept_ok_terms: list[str] = []
-
-    # ---- 1. CSV drop (optional) -------------------------------------------------
-    csv_env = gcfg.get("csv_folder_env", CSV_ENV_DEFAULT)
-    csv_folder = os.environ.get(csv_env or "")
-    if csv_folder:
-        try:
-            drive = dc.drive_service()
-            with tempfile.TemporaryDirectory() as tmp:
-                for f in dc.list_files(drive, csv_folder):
-                    if not f["name"].lower().endswith(".csv") or f["id"] in state["csvs"]:
-                        continue
-                    path = dc.download_file(drive, f["id"], os.path.join(tmp, "in.csv"))
-                    with open(path, "rb") as fh:
-                        parsed = gq.parse_gridview_csv(fh.read())
-                    rows = []
-                    for r in parsed:
-                        if r["request_no"] in state["requests"] or not csv_row_matches(keywords, r["summary"]):
-                            continue
-                        rows.append(_row(today, r["request_no"], "baseline", created=r["created"], status=r["status"],
-                                         terms="csv", text=excerpt(r["summary"]), note=f"ingested from CSV {f['name']}"))
-                        state["requests"][r["request_no"]] = {"status": r["status"], "created": r["created"], "closed": "",
-                                                              "rid": "", "matched": True, "terms": "csv"}
-                    rows.append(_row(today, f"csv:{f['id']}", "ingested", note=f"{f['name']}: {len(rows)} new request(s)"))
-                    write(rows)                       # requests first, the csv marker last (same order as terms)
-                    state["csvs"].add(f["id"])
-                    counts["csv_ingested"] += len(rows) - 1
-                    print(f"[govqa] CSV drop: ingested {len(rows) - 1} new request(s) silently.")
-        except Exception as e:  # noqa: BLE001 — the CSV drop is a fallback; never sink the run
-            print(f"[govqa] CSV drop skipped: {gq.scrub(e)}")
-            problems.append(f"CSV drop folder unreadable: {gq.scrub(e, 150)}")
-            exit_code = 1
-
-    # ---- 2. keyword sweeps (one browser, one term at a time) ----------------------
-    found: dict[str, dict] = {}        # request_no -> {row, terms:[...], first_time: bool}
-    partial_terms: list[str] = []      # first sweep hit the page cap: history beyond it was NOT read
-    if keywords:
-        try:
-            grid_cm = make_grid()
-            grid = grid_cm.__enter__()
-        except (gq.GovqaStructuralError, gq.GovqaFetchError) as e:
-            print(f"[govqa] keyword sweep unavailable: {gq.scrub(e)}")
-            problems.append(f"keyword sweep unavailable: {gq.scrub(e, 150)}")
-            grid_cm = grid = None
-            exit_code = 1
-        if grid is not None:
-            try:
-                for kw in keywords:
-                    term = kw["term"]
-                    first = term not in state["terms"]
-                    is_known = lambda n: n in state["requests"]  # noqa: E731
-                    try:
-                        res = gq.with_backoff(
-                            lambda: gq.sweep_term(grid, term, is_known, max_pages), f"sweep {term!r}",
-                            max_attempts=max_attempts, sleep=sleep, on_retry=grid.restart)
-                    except gq.GovqaStructuralError as e:
-                        print(f"[govqa] STRUCTURAL: {gq.scrub(e)}")
-                        problems.append(f"keyword {term!r}: {gq.scrub(e)}")
-                        exit_code = 1
-                        continue
-                    print(f"[govqa] keyword {term!r}: {len(res.rows)} row(s) over {res.pages_read}/{res.total_pages} "
-                          f"page(s) of {res.total_items} item(s){' — stopped at a known request' if res.stopped_on_known else ''}.")
-                    for r in res.rows:
-                        entry = found.setdefault(r["request_no"], {"row": r, "terms": [], "matched_by": [], "first": True})
-                        entry["terms"].append(term)
-                        if keyword_matches(kw, r["summary"]):
-                            entry["matched_by"].append(term)
-                        if not first:
-                            entry["first"] = False         # any already-baselined term makes it alertable
-                    if res.overflow:
-                        msg = (f"keyword {term!r} has {res.total_items} items across {res.total_pages} pages — "
-                               f"more than max_pages_per_term={max_pages} without reaching a known request. Export the "
-                               "grid to CSV in a real browser and drop it in the CSV folder, then rerun.")
-                        print(f"[govqa] NEEDS CSV EXPORT: keyword {term!r} ({res.total_items} items, {res.total_pages} pages).")
-                        problems.append(msg)
-                        exit_code = 1
-                        if first:
-                            partial_terms.append(term)     # ask ONCE; the newest max_pages*10 rows are recorded
-                    else:
-                        swept_ok_terms.append(term)
-            finally:
-                try:
-                    grid_cm.__exit__(None, None, None)
-                except Exception:  # noqa: BLE001
-                    pass
-
-    # record newly discovered requests (rows first; term markers only after)
-    rows = []
-    fresh: set[str] = set()                # discovered THIS run: their status was just read, nothing to re-check
-    for no, entry in found.items():
-        if no in state["requests"]:
-            continue
-        fresh.add(no)
-        r = entry["row"]
-        if not entry["matched_by"]:
-            rows.append(_row(today, no, "nomatch", created=r["created"], status=r["status"], rid=r["rid"] or "",
-                             terms=";".join(entry["terms"]), note="site search hit without the required phrase"))
-            state["requests"][no] = {"status": r["status"], "created": r["created"], "closed": "", "rid": r["rid"] or "",
-                                     "matched": False, "terms": ""}
-            counts["nomatch"] += 1
-            continue
-        event = "baseline" if entry["first"] else "new"
-        terms = ";".join(entry["matched_by"])
-        rows.append(_row(today, no, event, created=r["created"], status=r["status"], terms=terms, rid=r["rid"] or "",
-                         text=excerpt(r["summary"]),
-                         note="first sweep of this keyword (no alert)" if event == "baseline" else "new request"))
-        state["requests"][no] = {"status": r["status"], "created": r["created"], "closed": "", "rid": r["rid"] or "",
-                                 "matched": True, "terms": terms}
-        counts[event] += 1
-        if event == "new":
-            new_reqs.append({"request_no": no, "status": r["status"], "created": r["created"], "summary": r["summary"],
-                             "terms": terms, "rid": r["rid"]})
-    write(rows)
-    write([_row(today, f"term:{t}", "baseline", note="keyword baselined") for t in swept_ok_terms
-           if t not in state["terms"]]
-          + [_row(today, f"term:{t}", "partial",
-                  note=f"first sweep stopped at max_pages_per_term={max_pages}: older history NOT read — "
-                       "export a CSV to backfill it") for t in partial_terms])
-    state["terms"].update(swept_ok_terms)
-    state["terms"].update(partial_terms)
-
-    # ---- 3. re-check open + watched requests by number (no browser) -----------------
-    session = None
-    open_recorded = sorted((n for n, v in state["requests"].items()
-                           if v["matched"] and is_open(v["status"]) and n not in fresh), reverse=True)
-    targets = list(dict.fromkeys(watch_requests + open_recorded[:max_rechecks]))
-    to_list_files: list[dict] = []     # requests whose released-file list we should record now
-    if targets:
-        session = make_session()
-    for no in targets:
-        try:
-            row = gq.with_backoff(lambda: session.lookup(no), f"lookup {no}", max_attempts=max_attempts,
-                                  sleep=sleep, on_retry=lambda: None)
-        except gq.GovqaStructuralError as e:
-            print(f"[govqa] STRUCTURAL: {gq.scrub(e)}")
-            problems.append(f"re-check {no}: {gq.scrub(e)}")
-            exit_code = 1
-            continue
-        if row is None:
-            print(f"[govqa] {no}: not shown by the archive (skipped).")
-            continue
-        prev = state["requests"].get(no)
-        if prev is None:                                            # a configured watch request, first sighting
-            write([_row(today, no, "baseline", created=row["created"], status=row["status"], terms="watch", rid=row["rid"] or "",
-                        text=excerpt(row["summary"]), note="watch-list request (no alert)")])
-            state["requests"][no] = {"status": row["status"], "created": row["created"], "closed": "", "rid": row["rid"] or "",
-                                     "matched": True, "terms": "watch"}
-            counts["baseline"] += 1
-            continue
-        if not prev["matched"]:
-            continue
-        if row["status"] != prev["status"]:
-            rq = {"request_no": no, "status": row["status"], "created": row["created"], "summary": row["summary"],
-                  "terms": prev["terms"], "rid": row["rid"] or prev["rid"], "closed": ""}
-            old = prev["status"]
-            write([_row(today, no, "status", created=row["created"], status=row["status"], terms=prev["terms"],
-                        rid=rq["rid"], text=excerpt(row["summary"]), note=f"status {old!r} -> {row['status']!r}")])
-            prev.update(status=row["status"], rid=rq["rid"])
-            changed.append((rq, old))
-            counts["status"] += 1
-            if gq.is_released(row["status"]):
-                to_list_files.append(rq)
-    for r in new_reqs:
-        if gq.is_released(r["status"]):
-            to_list_files.append(r)
-
-    # ---- 4. list the released files (and record them) ---------------------------------
-    for rq in to_list_files:
-        if not rq.get("rid"):
-            continue
-        session = session or make_session()
-        try:
-            det = gq.with_backoff(lambda: session.details(rq["rid"]), f"details {rq['request_no']}",
-                                  max_attempts=max_attempts, sleep=sleep, on_retry=lambda: None)
-        except gq.GovqaStructuralError as e:
-            print(f"[govqa] STRUCTURAL: {gq.scrub(e)}")
-            problems.append(f"details {rq['request_no']}: {gq.scrub(e)}")
-            exit_code = 1
-            continue
-        rq["closed"] = det.get("closed", "")
-        rq["n_files"] = len(det["files"])
-        rows = []
-        for f in det["files"]:
-            key = f"file:{rq['request_no']}:{f['name']}"
-            if key not in state["files"]:
-                rows.append(_row(today, key, "file-listed", status=rq["status"], file_name=f["name"],
-                                 note="attachment listed on the request's detail page"))
-                state["files"][key] = {"request": rq["request_no"], "name": f["name"], "state": "listed", "fails": 0}
-        write(rows)
-        counts["files_listed"] += len(rows)
-
-    # ---- 5. stage the attachments (private folder), if configured -------------------------
-    staged: list[dict] = []
-    if do_download:
-        staging_env = gcfg.get("staging_folder_env", STAGING_ENV_DEFAULT)
-        try:
-            folder = _staging_folder_id(staging_env)
-        except RuntimeError as e:
-            print(f"[govqa] STAGING REFUSED: {gq.scrub(e)}")
-            problems.append(gq.scrub(e))
-            exit_code = 1
-            folder = None
-        pending = [(k, f) for k, f in state["files"].items() if f["state"] == "listed" and f["fails"] < _MAX_FILE_FAILS]
-        if folder is None:
-            if pending and exit_code == 0:
-                print(f"[govqa] staging not configured ({staging_env}/OAuth unset) — {len(pending)} listed file(s) not downloaded.")
-        elif pending:
-            pending.sort(key=lambda kf: (kf[1]["fails"], kf[0]), reverse=False)
-            held = set()
-            held_ids = _held_folder_ids(gcfg)
-            if held_ids:
-                try:
-                    held = _held_md5s(dc.drive_service(), held_ids)
-                except Exception as e:  # noqa: BLE001 — the hold check is an optimisation
-                    print(f"[govqa] held-folder listing failed (continuing without it): {gq.scrub(e)}")
-            drive_up = ac.oauth_drive_service()
-            session = session or make_session()
-            by_request: dict[str, list] = defaultdict(list)
-            for k, f in pending[:max_dl]:
-                by_request[f["request"]].append((k, f))
-            with tempfile.TemporaryDirectory() as tmp:
-                for request_no, items in by_request.items():
-                    rid = (state["requests"].get(request_no) or {}).get("rid")
-                    if not rid:
-                        continue
-                    try:
-                        det = gq.with_backoff(lambda: session.details(rid), f"details {request_no}", max_attempts=max_attempts,
-                                              sleep=sleep, on_retry=lambda: None)
-                    except gq.GovqaStructuralError as e:
-                        problems.append(f"details {request_no}: {gq.scrub(e)}")
-                        exit_code = 1
-                        continue
-                    targets_by_name = {f["name"]: f["target"] for f in det["files"]}
-                    for key, f in items:
-                        target = targets_by_name.get(f["name"])
-                        if target is None:
-                            write([_row(today, key, "file-failed", file_name=f["name"], note="no longer listed on the detail page")])
-                            f["fails"] += 1
-                            continue
-                        local = os.path.join(tmp, gq.safe_filename(request_no, f["name"]))
-                        try:
-                            info = session.download(target, local, max_bytes)
-                            if info["md5"] in held:
-                                write([_row(today, key, "file-held", file_name=f["name"], size=str(info["size"]),
-                                            sha=info["sha256"], md5=info["md5"], note="identical (MD5) to a file in a configured held folder")])
-                                f["state"] = "held"
-                                counts["held"] += 1
-                                continue
-                            link = ac.upload_file(drive_up, local, gq.safe_filename(request_no, f["name"]),
-                                                  "application/pdf" if f["name"].lower().endswith(".pdf") else "application/octet-stream",
-                                                  folder)
-                            write([_row(today, key, "file-staged", file_name=f["name"], size=str(info["size"]),
-                                        sha=info["sha256"], md5=info["md5"], link=link, note="staged to the private folder")])
-                            f["state"] = "staged"
-                            staged.append({"request": request_no, "name": f["name"], "size": info["size"], "sha256": info["sha256"]})
-                            counts["staged"] += 1
-                        except ValueError as e:
-                            write([_row(today, key, "file-skipped", file_name=f["name"], note=f"not staged: {gq.scrub(e)}")])
-                            f["state"] = "skipped"
-                        except Exception as e:  # noqa: BLE001 — one bad file must not stop the rest
-                            f["fails"] += 1
-                            event = "file-skipped" if f["fails"] >= _MAX_FILE_FAILS else "file-failed"
-                            write([_row(today, key, event, file_name=f["name"], note=f"attempt {f['fails']} failed: {gq.scrub(e)}")])
-                            # NOT the file name or the raw error: this line goes to a public Actions log.
-                            print(f"[govqa] {request_no}: a file failed to stage ({type(e).__name__}, attempt {f['fails']}).")
-
-    # ---- 6. one report per run ----------------------------------------------------------------
-    if new_reqs or changed or staged or problems:
-        subject_bits = []
-        if new_reqs:
-            subject_bits.append(f"{len(new_reqs)} new request(s)")
-        if changed:
-            subject_bits.append(f"{len(changed)} status change(s)")
-        if staged:
-            subject_bits.append(f"{len(staged)} file(s) staged")
-        if problems and not subject_bits:
-            subject_bits.append("needs attention")
-        _send(recipients, "[GovQA] " + ", ".join(subject_bits) + " — EGLE FOIA archive",
-              format_report(new_reqs, changed, staged, problems), cfg)
-
-    print(f"[govqa] done — {counts['baseline']} baselined, {counts['new']} new, {counts['nomatch']} no-match, "
-          f"{counts['status']} status change(s), {counts['files_listed']} file(s) listed, {counts['staged']} staged, "
-          f"{counts['csv_ingested']} from CSV.")
-    return exit_code
+    r = Run(cfg, sheets, priv_id, state, make_grid or gq.PlaywrightGrid, make_session or gq.ArchiveSession,
+            sleep or time.sleep, clock or time.monotonic)
+    try:
+        r.guard("keyword sweep", r.phase_sweep)          # newest requests first, so genuinely new ones alert...
+        r.guard("CSV drop", r.phase_csv)                 # ...then the CSV fills OLDER history silently
+        r.guard("re-check", r.phase_recheck)
+        r.guard("file listing", r.phase_list_files)
+        r.guard("staging", r.phase_stage)
+    finally:
+        r.report()                                       # ALWAYS: rows are written, so the alert must go out
+    c = r.counts
+    print(f"[govqa] done — {c['baseline']} baselined, {c['new']} new, {c['nomatch']} no-match, {c['status']} status "
+          f"change(s), {c['files_listed']} file(s) listed, {c['staged']} staged, {c['csv_ingested']} from CSV.")
+    return r.exit_code
 
 
 def main() -> int:
-    """Entry point. An unhandled exception is reported as its class + scrubbed message
-    only: a raw traceback can carry a URL (Azure blob links hold attachment file names;
-    Drive API errors embed the query, which holds file names) into a WORLD-READABLE
-    Actions log. Exit 1 either way, so a real failure is still red."""
+    """Entry point. An unhandled exception is reported as its class + scrubbed message only
+    (a raw traceback can carry a URL into a WORLD-READABLE Actions log), and googleapiclient's
+    retry logger — which prints the full request URL, Drive query included — is silenced.
+    Exit 1 either way, so a real failure is still red."""
+    logging.getLogger("googleapiclient").setLevel(logging.CRITICAL)
+    logging.getLogger("googleapiclient.http").setLevel(logging.CRITICAL)
     try:
         return run()
     except Exception as e:  # noqa: BLE001
