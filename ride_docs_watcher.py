@@ -82,6 +82,7 @@ FOLDER_ENV = "GOAUTH_RRD_FOLDER_ID"
 _MAX_MIRROR_FAILS = 3          # then a file is recorded `mirror-skipped` until its record changes
 _DEFAULT_STALE_SKIPS = 3       # consecutive skipped runs for a baselined location before ONE liveness alert
 _EMAIL_LIST_CAP = 25           # lines per alert body; every file still gets its own Sheet row
+_CAUSE_RE = re.compile(r"skipped \[(\w+)\]")    # the cause code in a fetch-skipped note
 _PUBLIC_TABS = ("TAB_NEW", "TAB_EVIDENCE", "TAB_MEASUREMENTS")   # sheet_writer names of PUBLIC case-file tabs
 
 # Column indexes of sw.RRD_DOCS_HEADERS (kept next to the only code that reads them).
@@ -174,17 +175,27 @@ def _cell(row: list, idx: int) -> str:
 
 def build_state(rows: list[list]) -> tuple[dict, dict]:
     """(files, locs). files[`rrd:<uri>`] = {location_id, hash, removed, mirror_link,
-    skipped, fails, title}; locs[`loc:<lid>`] = {program, skips} where `skips` is the
-    number of CONSECUTIVE `fetch-skipped` rows since the last baseline/`fetch-ok`. The LAST row for a key wins,
-    with mirror bookkeeping reset whenever the record itself (re)appears/changes."""
+    skipped, fails, title}; locs[`loc:<lid>`] = {program, skips, cause, current} where
+    `skips` is the number of CONSECUTIVE `fetch-skipped` rows since the last
+    baseline/`fetch-ok`, `cause` is the last skip's cause code ("" when not skipping),
+    and `current` is False for a location SUPERSEDED by a later `loc:` baseline for the
+    same program (an accepted relocation). The LAST row for a key wins, with mirror
+    bookkeeping reset whenever the record itself (re)appears/changes."""
     files: dict[str, dict] = {}
     locs: dict[str, dict] = {}
+    latest: dict[str, str] = {}          # program -> loc key of its most recent baseline
     for r in rows:
         key, event = _cell(r, C_KEY), _cell(r, C_EVENT)
         if key.startswith("loc:"):
             prev = locs.get(key, {"skips": 0})
-            skips = prev["skips"] + 1 if event == "fetch-skipped" else 0   # baseline / fetch-ok reset it
-            locs[key] = {"program": _cell(r, C_PROGRAM), "skips": skips}
+            if event == "fetch-skipped":
+                m = _CAUSE_RE.match(_cell(r, C_NOTE))
+                skips, cause = prev["skips"] + 1, (m.group(1) if m else "fetch")
+            else:                                          # baseline / fetch-ok reset it
+                skips, cause = 0, ""
+            locs[key] = {"program": _cell(r, C_PROGRAM), "skips": skips, "cause": cause, "current": True}
+            if event == "baseline":
+                latest[_cell(r, C_PROGRAM)] = key
             continue
         if not key.startswith("rrd:"):
             continue
@@ -203,14 +214,18 @@ def build_state(rows: list[list]) -> tuple[dict, dict]:
             st["skipped"] = True
         elif event == "mirror-failed":
             st["fails"] += 1
+    for key, st in locs.items():
+        st["current"] = latest.get(st["program"], key) == key
     return files, locs
 
 
 def diff_location(location_id: int, views: dict[str, dict], files_state: dict,
-                  baselined: bool) -> dict:
+                  baselined: bool, owned: set[str] | None = None) -> dict:
     """Classify one location's current files against stored state. Pure.
     Returns {baseline, new, changed, removed}; the latter three are empty on a
-    first sighting (everything is `baseline`)."""
+    first sighting (everything is `baseline`). `owned` = the location ids whose
+    files this listing now answers for (itself plus any location it superseded by
+    an accepted relocation), for the removal check."""
     out = {"baseline": [], "new": [], "changed": [], "removed": []}
     if not baselined:
         out["baseline"] = list(views.values())
@@ -221,9 +236,9 @@ def diff_location(location_id: int, views: dict[str, dict], files_state: dict,
             out["new"].append(view)
         elif st["hash"] != rdc.record_hash(view):
             out["changed"].append((st, view))
-    lid = str(location_id)
+    owned = owned or {str(location_id)}
     for key, st in files_state.items():
-        if st["location_id"] == lid and not st["removed"] and key[4:] not in views:
+        if st["location_id"] in owned and not st["removed"] and key[4:] not in views:
             out["removed"].append((key[4:], st))      # (uri, last stored state)
     return out
 
@@ -246,8 +261,11 @@ def _row(today: str, key: str, event: str, loc: dict, program: str, view: dict |
     ]
 
 
-def location_label(loc: dict) -> str:
-    name = f" {loc['name']}" if loc.get("name") else ""
+def location_label(loc: dict, with_name: bool = False) -> str:
+    """Subjects and log lines use ids only (with_name=False): subjects are printed to
+    the public Actions log, and a RIDE facility name can be a street address. Email
+    BODIES (never printed) add the name."""
+    name = f" {loc['name']}" if with_name and loc.get("name") else ""
     return f"RIDE location {loc['location_id']} — Part 201 site {loc['program_num']}{name}"
 
 
@@ -369,24 +387,26 @@ def _mirror_pass(session, service, priv_id, today, todo, folder_id, max_bytes, c
 
 
 def _note_skip(sheets, priv_id, today, loc_key, locs_state, err, recipients, cfg, threshold,
-               first_alert: tuple[str, str] | None = None) -> None:
+               first_alert: tuple[str, str] | None = None, cause: str = "fetch") -> None:
     """A baselined location was not diffed this run (a fetch failure, an empty listing
     where files were listed before, a program that stopped resolving or moved). Records
     a `fetch-skipped` row and, on the run that makes it `threshold` CONSECUTIVE skips,
     sends ONE liveness alert — so a persistent outage (RIDE's bot defense starting
     to challenge the runner, an endpoint moved to a non-JSON error) can never go
     quiet forever. Fires exactly once per outage; a later `fetch-ok` row resets it.
-    `first_alert` (subject, body) is sent on the FIRST skip of an outage, for causes
-    that need a human now rather than after `threshold` runs."""
+    `first_alert` (subject, body) is sent on the first skip WITH THIS CAUSE (a cause
+    change mid-streak alerts too), for causes that need a human now rather than after
+    `threshold` runs. `cause` is recorded in the note as `[cause]`."""
     st = locs_state[loc_key]
     lid = loc_key[4:]
     loc = {"location_id": lid, "program_num": st["program"], "name": ""}
     err = _err(err) if isinstance(err, BaseException) else str(err)
     st["skips"] += 1
+    prev_cause, st["cause"] = st.get("cause", ""), cause
     sw.append_rrd_docs_rows(sheets, priv_id, [_row(
         today, loc_key, "fetch-skipped", loc, st["program"], None,
-        note=f"skipped (consecutive: {st['skips']}): {err[:200]}")])
-    if first_alert and st["skips"] == 1:
+        note=f"skipped [{cause}] (consecutive: {st['skips']}): {err[:200]}")])
+    if first_alert and cause != prev_cause:
         _send(recipients, first_alert[0], first_alert[1], cfg)
     if st["skips"] == threshold:
         _send(recipients, f"[RIDE docs] RIDE file listing unreachable for {threshold} runs: location {lid}",
@@ -410,7 +430,7 @@ def run_probe(cfg: dict) -> int:
         return 1
     missing = []
     for r in results:
-        where = f"location {r['location_id']} ({r['name']}), {r['n_files']} file(s)" \
+        where = f"location {r['location_id']}, {r['n_files']} file(s)" \
             if r["location_id"] is not None else "NOT in RIDE's inventory"
         print(f"[ride-docs] probe: program {r['program_num']} -> {where}")
         if r["location_id"] is None:
@@ -468,17 +488,24 @@ def run(argv: list[str] | None = None) -> int:
     exit_code = 0
     counts = defaultdict(int)
 
-    def skip_program(pn, err, first_alert=None):
-        for loc_key, st in list(locs_state.items()):
-            if st["program"] == pn:
-                _note_skip(sheets, priv_id, today, loc_key, locs_state, err, recipients, cfg,
-                           stale_after, first_alert)
+    # Skips only ever land on the CURRENT location of a CONFIGURED program: a location
+    # superseded by an accepted relocation, or one whose program was dropped from the
+    # config, is never listed again, so a skip counter there could only climb to a false
+    # "going UNSEEN" alert.
+    def watched_keys(pn=None):
+        return [k for k, st in locs_state.items()
+                if st["current"] and st["program"] in programs and (pn is None or st["program"] == pn)]
+
+    def skip_program(pn, err, first_alert=None, cause="fetch"):
+        for loc_key in watched_keys(pn):
+            _note_skip(sheets, priv_id, today, loc_key, locs_state, err, recipients, cfg,
+                       stale_after, first_alert, cause)
 
     try:
         session = rdc.open_session()
     except rdc.RideDocsFetchError as e:
-        # Every baselined location gets its skip row (liveness), whatever else is true.
-        for loc_key in list(locs_state):
+        # Every watched location gets its skip row (liveness), whatever else is true.
+        for loc_key in watched_keys():
             _note_skip(sheets, priv_id, today, loc_key, locs_state, e, recipients, cfg, stale_after)
         if set(programs) <= baselined_programs:
             print(f"[ride-docs] session could not be opened, skipping this run "
@@ -515,12 +542,15 @@ def run(argv: list[str] | None = None) -> int:
                     f"[RIDE docs] Part 201 site {pn} no longer found in RIDE's inventory",
                     f"RIDE's facility lookup no longer returns Part 201 site {pn}, which the RRD "
                     "document watch had baselined. Its files are NOT being checked until it "
-                    "resolves again. RIDE does not say why (renumbered, merged, or withdrawn).\n"))
+                    "resolves again. RIDE does not say why (renumbered, merged, or withdrawn).\n"),
+                    cause="unresolved")
             else:
                 print(f"[ride-docs] program {pn}: not in RIDE's public inventory (nothing to watch).")
             continue
-        prior = sorted(k for k, st in locs_state.items() if st["program"] == pn)
-        if pn in baselined_programs and f"loc:{loc['location_id']}" not in locs_state:
+        prior = watched_keys(pn)
+        known = locs_state.get(f"loc:{loc['location_id']}")
+        if pn in baselined_programs and prior and (
+                known is None or (known["program"] == pn and not known["current"])):
             # The program now resolves to a DIFFERENT location. Baselining it silently would
             # absorb any genuinely new file; refuse, alert once, and fail the run.
             why = (f"program {pn} now resolves to RIDE location {loc['location_id']} "
@@ -535,7 +565,8 @@ def run(argv: list[str] | None = None) -> int:
                 f"To accept the new location, append one row to the RRD Documents tab: Key "
                 f"`loc:{loc['location_id']}`, Event `baseline`, Location ID {loc['location_id']}, "
                 f"Program {pn}. The next run then diffs it against every known file, so anything "
-                "not seen before alerts as new.\n"))
+                "not seen before alerts as new.\n"),
+                cause="relocated")
             exit_code = 1
             continue
         by_loc.setdefault(loc["location_id"], loc)
@@ -562,8 +593,12 @@ def run(argv: list[str] | None = None) -> int:
 
         views = {v["uri"]: v for v in (rdc.file_view(r) for r in records)}
         baselined = loc_key in locs_state
+        # This listing answers for its own files AND those recorded under any location it
+        # superseded by an accepted relocation (their rows still carry the old id).
+        owned = {str(lid)} | {k[4:] for k, st in locs_state.items()
+                              if st["program"] == program and not st["current"]}
         live = sum(1 for st in files_state.values()
-                   if st["location_id"] == str(lid) and not st["removed"])
+                   if st["location_id"] in owned and not st["removed"])
         if baselined and not views and live:
             # An EMPTY listing where files were listed before is far likelier a RIDE-side
             # glitch than every file withdrawn at once. Diffing it would write N `removed`
@@ -571,13 +606,15 @@ def run(argv: list[str] | None = None) -> int:
             # a persistent empty listing surfaces through the liveness alert.
             why = f"file listing came back EMPTY although {live} file(s) were listed before"
             print(f"[ride-docs] {location_label(loc)}: {why} — not diffed; counted as a skipped run.")
-            _note_skip(sheets, priv_id, today, loc_key, locs_state, why, recipients, cfg, stale_after)
+            _note_skip(sheets, priv_id, today, loc_key, locs_state, why, recipients, cfg, stale_after,
+                       cause="empty")
             continue
-        d = diff_location(lid, views, files_state, baselined)
+        d = diff_location(lid, views, files_state, baselined, owned)
         label = location_label(loc)
+        body_label = location_label(loc, with_name=True)
 
-        # Durable rows FIRST (file rows, then the loc marker: a crash between them
-        # re-baselines silently next run rather than alerting on the whole list).
+        # Durable rows FIRST, in ONE append (file rows and the loc marker together, so a
+        # baseline is all-or-nothing), then the alerts.
         rows = []
         for v in d["baseline"]:
             rows.append(_row(today, f"rrd:{v['uri']}", "baseline", loc, program, v,
@@ -612,17 +649,19 @@ def run(argv: list[str] | None = None) -> int:
         new_state, new_locs = build_state(rows)
         for k, v in new_state.items():
             files_state[k] = v
+        for uri, _ in d["removed"]:            # build_state(rows) alone can't see these keys
+            files_state[f"rrd:{uri}"]["removed"] = True
         locs_state.update(new_locs)
 
         if d["new"]:
             _send(recipients, f"[RIDE docs] {len(d['new'])} new RRD file(s): {label}",
-                  format_new_body(label, d["new"]), cfg)
+                  format_new_body(body_label, d["new"]), cfg)
         if d["changed"]:
             _send(recipients, f"[RIDE docs] RRD file record changed: {label}",
-                  format_changed_body(label, d["changed"]), cfg)
+                  format_changed_body(body_label, d["changed"]), cfg)
         if d["removed"]:
             _send(recipients, f"[RIDE docs] RRD file(s) no longer listed: {label}",
-                  format_removed_body(label, d["removed"]), cfg)
+                  format_removed_body(body_label, d["removed"]), cfg)
 
         for v in views.values():
             st = files_state.get(f"rrd:{v['uri']}")

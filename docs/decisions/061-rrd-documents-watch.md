@@ -76,9 +76,9 @@ to blank, never shown or hashed as a 1900 date.
 `mirrored`, `mirror-skipped`, `mirror-failed`, `fetch-skipped`, `fetch-ok`); the
 LAST row for a key (`rrd:<uri>` or `loc:<locationId>`) is its state, so nothing
 races (the ADR 019 idiom). First sighting of a location writes silent `baseline`
-rows for all its files plus one `loc:` marker, **file rows first and the marker
-last**: a crash between them re-baselines silently next run instead of alerting on
-the whole list. A `new` uri, a `changed` record, or a `removed` uri (a public
+rows for all its files plus one `loc:` marker in **one append**, so a baseline is
+all-or-nothing (a failed write re-baselines silently next run, never alerts on the
+whole list). A `new` uri, a `changed` record, or a `removed` uri (a public
 record disappearing is signal) alerts; a `removed` uri that returns is `new`
 again. The Sheet read is **not** error-swallowing (unlike the other tabs'
 helpers): a swallowed transient read error would look like "never baselined" and
@@ -115,7 +115,9 @@ in the Arbor Hills East listing). So:
   `HttpError` embeds the request URL, Drive query included; the full text goes
   only to the private-Sheet note. `main()` silences googleapiclient's retry
   logger (it prints the request URL) and reports an unhandled exception as its
-  class only.
+  class only. Alert subjects (which `send_email` prints) and log lines carry
+  location and program ids only, never RIDE's facility name (which can be a
+  street address); the name appears only in email bodies.
 - Recipients are scoped verbatim (Trisha only). An **empty** list means
   display-only — rows, no email — and the watcher never calls `send_email` then,
   because `send_email` would fall back to the whole coalition list.
@@ -161,9 +163,18 @@ also a `fetch-skipped` run (counting toward the liveness alert), never a diff:
   first run it happens.
 - **A program that resolves to a different `locationId`.** Baselining the new
   location silently would absorb any genuinely new file, so the run is red
-  (exit 1) and alerts on the first occurrence, naming the one manual row that
-  accepts the move (`loc:<new id>`, event `baseline`); the next run then diffs
-  the new location against every known uri, so anything unseen alerts as new.
+  (exit 1) and alerts, naming the one manual row that accepts the move
+  (`loc:<new id>`, event `baseline`). That row SUPERSEDES the old location: the
+  next run diffs the new location against every known uri (anything unseen alerts
+  as new), its removal and empty-listing checks also cover files first recorded
+  under the old id, and the old location never accrues skips again.
+
+Each skip row records its cause (`[fetch]`, `[empty]`, `[unresolved]`,
+`[relocated]`). The cause-specific alert fires when the cause CHANGES, so a
+relocation during an ongoing outage still sends its instructions. Skips land only
+on the current location of a configured program (a superseded location, or one
+whose program left the config, is never listed again and would only climb to a
+false liveness alert).
 
 A session that cannot be opened records a skip for every baselined location, and
 is loud as well when some program has no baseline yet. `stale_alert_after_skips`

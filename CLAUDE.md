@@ -524,7 +524,7 @@ external users but no sensitive data). Public repo.
 - `ride_docs_watcher.py` — Stream T: daily watch on the DOCUMENTS RRD lists for the
   `ride:` Part 201 sites (95 files across 5 locations at build). Events append to
   the `RRD Documents` tab (last row per key = state): silent baseline per location
-  (file rows first, `loc:` marker last), then new / changed / removed alerts, a
+  (file rows + `loc:` marker in one append), then new / changed / removed alerts, a
   bounded PRIVATE Drive mirror, and a liveness alert after N consecutive skipped
   runs; an EMPTY listing where files were listed, a baselined program that stops
   resolving, or one that resolves to a different locationId is a skipped run (never

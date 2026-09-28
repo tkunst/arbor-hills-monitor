@@ -222,6 +222,7 @@ def test_fetch_location_files_pages_until_total(monkeypatch):
     ({"data": [], }, "no totalRows"),
     ({"totalRows": 2, "data": [raw(5), raw(5)]}, "duplicate uri"),
     ({"totalRows": 1, "data": [dict(raw(5), uri=None)]}, "record without uri"),
+    ({"totalRows": 1, "data": [dict(raw(5), uri="5a")]}, "non-numeric uri"),
 ])
 def test_fetch_location_files_structural_problems_are_parse_errors(payload, why):
     s = FakeSession({"ForLocationFilesTable": FakeResp(payload=payload)})
@@ -328,7 +329,7 @@ def test_build_state_last_row_wins_and_record_change_resets_mirror():
         _row("rrd:4", "baseline", rec_hash="h4"), _row("rrd:4", "removed"),
         _row("rrd:9", "mirrored", link="ORPHAN"),                       # never seen: ignored
     ])
-    assert locs == {"loc:2085": {"program": "81000004", "skips": 0}}
+    assert locs == {"loc:2085": {"program": "81000004", "skips": 0, "cause": "", "current": True}}
     assert files["rrd:1"]["mirror_link"] == "LINK" and files["rrd:1"]["title"] == "T"
     assert files["rrd:2"]["fails"] == 2 and not files["rrd:2"]["skipped"]
     assert files["rrd:3"]["skipped"] and files["rrd:4"]["removed"] and "rrd:9" not in files
@@ -902,6 +903,96 @@ def test_program_that_moves_to_a_new_location_is_loud_never_silently_rebaselined
     new = _rows(fake, "new")
     assert [r[rdw.C_KEY] for r in new] == ["rrd:35715099"]  # the unseen file alerts; known ones don't
     assert "1 new RRD file" in sent[-1][0]
+
+
+def _move_2085_to_4242(world, fake):
+    world.locations["81000004"] = dict(LOC, location_id=4242)
+    world.files[4242] = world.files.pop(2085)
+
+
+def _accept(fake, lid="4242"):
+    fake._values._tabs[sw.TAB_RRD_DOCS].append(_row(f"loc:{lid}", "baseline", lid=lid))
+
+
+def test_after_an_accepted_relocation_removals_are_still_detected(monkeypatch, tmp_path):
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    assert rdw.run([]) == 0
+    _move_2085_to_4242(world, fake)
+    assert rdw.run([]) == 1
+    _accept(fake)
+    assert rdw.run([]) == 0 and _rows(fake, "new") == []    # known files: no noise
+    world.files[4242].pop(0)                               # a file first recorded under 2085 vanishes
+    assert rdw.run([]) == 0
+    assert [r[rdw.C_KEY] for r in _rows(fake, "removed")] == ["rrd:35715058"]
+    world.files[4242] = []                                 # and an empty listing is still a skip
+    assert rdw.run([]) == 0
+    assert len(_rows(fake, "removed")) == 1 and "[empty]" in _rows(fake, "fetch-skipped")[-1][rdw.C_NOTE]
+
+
+def test_a_superseded_location_never_accrues_skips_or_a_false_liveness_alert(monkeypatch, tmp_path):
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    assert rdw.run([]) == 0
+    _move_2085_to_4242(world, fake)
+    assert rdw.run([]) == 1 and rdw.run([]) == 1           # 2085 at 2 skips ([relocated])
+    _accept(fake)
+    assert rdw.run([]) == 0
+    n = len(sent)
+    world.session_error = rdc_fetch_error()
+    assert rdw.run([]) == 0
+    skipped = [r[rdw.C_KEY] for r in _rows(fake, "fetch-skipped")]
+    assert skipped[-1] == "loc:4242" and skipped.count("loc:2085") == 2
+    assert len(sent) == n                                  # no "2085 unreachable for 3 runs"
+
+
+def test_a_dropped_program_stops_accruing_skips(monkeypatch, tmp_path):
+    cfg = copy.deepcopy(CFG)
+    world, fake, sent = _wire(monkeypatch, tmp_path, cfg=cfg)
+    assert rdw.run([]) == 0
+    cfg2 = copy.deepcopy(CFG)
+    cfg2["ride"]["site_ids"] = ["81000033"]
+    monkeypatch.setattr(rdw, "load_config", lambda: copy.deepcopy(cfg2))
+    world.session_error = rdc_fetch_error()
+    for _ in range(4):
+        rdw.run([])
+    assert _rows(fake, "fetch-skipped") == [] and sent == []
+
+
+def test_a_cause_change_mid_streak_still_sends_the_cause_alert(monkeypatch, tmp_path):
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    assert rdw.run([]) == 0
+    world.list_error = rdc_fetch_error()
+    for _ in range(3):
+        rdw.run([])
+    assert len(sent) == 1                                  # the generic liveness alert
+    world.list_error = None
+    _move_2085_to_4242(world, fake)
+    assert rdw.run([]) == 1
+    assert len(sent) == 2 and "moved to a different RIDE location" in sent[-1][0]
+    assert rdw.run([]) == 1 and len(sent) == 2             # same cause: not repeated
+
+
+def test_a_uri_moving_between_watched_locations_in_one_run_is_not_double_alerted(monkeypatch, tmp_path):
+    cfg = copy.deepcopy(CFG)
+    cfg["ride"]["site_ids"] = ["81000004", "81000033"]
+    world, fake, sent = _wire(monkeypatch, tmp_path, cfg=cfg)
+    world.locations["81000033"] = dict(LOC, location_id=9549, program_num="81000033")
+    world.files[9549] = [raw(40000001, "Salem Doc")]
+    assert rdw.run([]) == 0
+    world.files[9549].append(world.files[2085].pop(0))     # A (2085) is processed first
+    assert rdw.run([]) == 0
+    n_alerts = len(sent)
+    assert rdw.run([]) == 0 and len(sent) == n_alerts      # no "reappeared" alert the next run
+
+
+def test_subjects_and_logs_carry_ids_not_ride_facility_names(monkeypatch, tmp_path, capsys):
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    world.locations["81000004"]["name"] = "123 Private Lane"
+    assert rdw.run([]) == 0
+    world.files[2085].append(raw(35715099, "Brand New Report"))
+    assert rdw.run([]) == 0
+    subj, body, _ = sent[0]
+    assert "Private Lane" not in subj and "Private Lane" in body
+    assert "Private Lane" not in capsys.readouterr().out
 
 
 def test_session_failure_with_an_unbaselined_program_still_records_skips(monkeypatch, tmp_path):

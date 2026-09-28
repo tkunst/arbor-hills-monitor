@@ -207,6 +207,8 @@ def fetch_location_files(session: requests.Session, location_id: int,
             raise RideDocsParseError(f"location {location_id}: a file record is not an object")
         if rec.get("uri") in (None, ""):
             raise RideDocsParseError(f"location {location_id}: a file record has no 'uri'")
+        if not re.fullmatch(r"[0-9]+", str(rec["uri"]).strip()):
+            raise RideDocsParseError(f"location {location_id}: a file 'uri' is not numeric")
         uris.append(str(rec["uri"]))
     if len(set(uris)) != len(uris):
         raise RideDocsParseError(
