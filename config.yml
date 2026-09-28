@@ -745,7 +745,7 @@ ride:
 # PRIVATE Drive folder and set the GOAUTH_RRD_FOLDER_ID secret (mirroring is
 # skipped without it), then flip `enabled`.
 ride_docs:
-  enabled: false
+  enabled: true                # activated 2026-09-28 (Trisha: "Public User" is not logging in; runner probe OK, 5 locations / 95 files)
   # Part 201 program numbers to watch. Omit to reuse `ride.site_ids` (the same 5
   # Arbor Hills-area sites). UST facility ids (`ride.facility_ids`) are not RIDE
   # inventory programs; 00038889's files are listed under 81000004's location.

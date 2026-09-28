@@ -538,7 +538,7 @@ external users but no sensitive data). Public repo.
   `main()` silences googleapiclient's retry logger. Alerts show BOTH document date
   and added-to-RIDE date (backlog digitization). `--probe` = pre-activation runner
   check (exit 1 if any program doesn't resolve). Gated on
-  `ride_docs.enabled` (ships `false`). See ADR 061.
+  `ride_docs.enabled` (shipped `false`; ACTIVATED 2026-09-28). See ADR 061.
 
 ## Forbidden patterns (do not do these)
 
