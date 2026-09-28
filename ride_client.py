@@ -17,7 +17,7 @@ I's MMD watch, just a different service and, here, two layers instead of one):
   - Layer 1 "USTs" (Part 211 underground storage tanks), key field
     FacilityID — the GFL Environmental USA UST at 7811 Chubb Rd (00040223)
     and the Advanced Disposal / Arbor Hills Landfill Inc UST facility at
-    10690 W Six Mile (00038889, closed 2016 LUST).
+    10690 W Six Mile (00038889; registry status "No Longer A Facility").
 
 This is a STATUS watch, not a measurement poller: the service returns per-site
 strings (RiskCondition, Contaminants) and a per-facility open-release count,
@@ -62,8 +62,8 @@ DEFAULT_LAYER1_URL = f"{_BASE}/1/query"
 # The 5 Arbor Hills-area Part 201 sites (worker #69's recon).
 DEFAULT_SITE_IDS = ("81000033", "81000004", "81000835", "81000840", "82008712")
 # The GFL Part 211 UST at 7811 Chubb Rd, plus the Advanced Disposal / Arbor
-# Hills Landfill Inc UST facility at 10690 W Six Mile (closed 2016 LUST
-# C-0076-16; ADR 019 addendum 2026-09-28).
+# Hills Landfill Inc UST facility at 10690 W Six Mile (a 2016 leaking-UST
+# release, per EGLE FOIA E614007; ADR 019 addendum 2026-09-28).
 DEFAULT_FACILITY_IDS = ("00040223", "00038889")
 
 # The canonical Layer-0 record: every watched field EXCEPT OID/geometry (never

@@ -52,7 +52,8 @@ _UST_ATTRS = [
     {"FacilityID": "00040223", "FacilityName": "GFL Environmental USA, LLC",
      "RiskCondition": "No Known Risks", "Open_Release": 0, "LastUpdated": 1738108800000},
     # Real live specimen (queried 2026-09-28): the Advanced Disposal / Arbor Hills
-    # Landfill Inc UST facility, a closed 2016 LUST. Added to the watch 2026-09-28.
+    # Landfill Inc UST facility (registry status "No Longer A Facility"). Added to the
+    # watch 2026-09-28.
     {"FacilityID": "00038889", "FacilityName": "Arbor Hills Landfill Inc",
      "RiskCondition": "No Longer A Facility", "Open_Release": 0, "LastUpdated": 1714089600000},
 ]
@@ -292,8 +293,8 @@ requested_facility_ids: list[list[str]] = []  # the facility_ids each fake Layer
 
 
 def _wire(monkeypatch, cfg=RIDE_CFG, sites=None, usts=None,
-          site_error=None, ust_error=None):
-    fake = FakeSheets()
+          site_error=None, ust_error=None, fake=None):
+    fake = fake or FakeSheets()
     sent = []
     requested_facility_ids.clear()
     monkeypatch.setenv("GSHEET_ID", "SID")
@@ -313,7 +314,12 @@ def _wire(monkeypatch, cfg=RIDE_CFG, sites=None, usts=None,
         requested_facility_ids.append(list(facility_ids))
         if ust_error is not None:
             raise ust_error
-        return copy.deepcopy(usts if usts is not None else ust_records())
+        if usts is not None:
+            return copy.deepcopy(usts)
+        # Like the real service: only the REQUESTED facilities come back, so a
+        # config change genuinely changes the response (1 record -> 2 records).
+        wanted = {str(f) for f in facility_ids}
+        return copy.deepcopy([r for r in _UST_ATTRS if r["FacilityID"] in wanted])
     monkeypatch.setattr(rw.rc, "fetch_ust_records", _fetch_usts)
 
     return fake, sent
@@ -362,8 +368,10 @@ def test_adding_a_new_ust_to_an_established_watch_baselines_only_it_silently(mon
     assert len(rows) == 7
     new_rows = [r for r in rows if r[1] == "ride:00038889"]
     assert len(new_rows) == 1 and new_rows[0][3] == "baseline"
-    assert not any(r[3] == "changed" for r in rows)
+    assert not any(r[3] == "changed" for r in rows)   # 00040223 stays unchanged
     assert sent == []
+    # The transition is real: Layer 1 answered with ONE record, then with TWO.
+    assert requested_facility_ids == [["00040223"], ["00040223", "00038889"]]
 
 
 def test_run_asks_layer1_for_every_configured_facility_id(monkeypatch):
@@ -373,6 +381,11 @@ def test_run_asks_layer1_for_every_configured_facility_id(monkeypatch):
     fake, sent = _wire(monkeypatch)
     assert rw.run() == 0
     assert requested_facility_ids == [["00040223", "00038889"]]
+    only_gfl = copy.deepcopy(RIDE_CFG)
+    only_gfl["ride"]["facility_ids"] = ["00040223"]           # non-default: must NOT fall back to the defaults
+    fake, sent = _wire(monkeypatch, cfg=only_gfl)
+    assert rw.run() == 0
+    assert requested_facility_ids == [["00040223"]]
 
 
 def test_fetch_ust_records_puts_every_id_in_the_where_clause(monkeypatch):
@@ -389,24 +402,56 @@ def test_fetch_ust_records_puts_every_id_in_the_where_clause(monkeypatch):
     assert where == "FacilityID IN ('00040223','00038889')"
 
 
-def test_new_ust_first_run_fetch_error_is_loud_not_silent(monkeypatch):
-    """Adding an id to an established watch: until its first successful run the
-    'all baselined' gate is false, so a Layer-1 fetch error on that very first
-    run exits loud (red) rather than skip-and-warn. Documented in the ADR 019
-    addendum as the accepted activation-time behaviour."""
+def test_ust_fetch_error_is_skip_when_fully_baselined_but_loud_for_a_new_id(monkeypatch):
+    """Control + treatment. With every watched item baselined, a Layer-1 fetch
+    error is skip-and-warn (exit 0, nothing written). Adding 00038889 makes the
+    'all baselined' gate false until its first successful run, so the SAME error
+    on that very first run exits loud (red) — the documented activation-time
+    rule (ADR 019 addendum), self-healing on the next good run."""
     old_cfg = copy.deepcopy(RIDE_CFG)
     old_cfg["ride"]["facility_ids"] = ["00040223"]
-    fake, sent = _wire(monkeypatch, cfg=old_cfg)
+    shared = FakeSheets()
+    _wire(monkeypatch, cfg=old_cfg, fake=shared)
     assert rw.run() == 0                                   # six baselines exist
-    fake2, sent2 = _wire(monkeypatch, ust_error=rc.RideFetchError("blip"))
-    fake2._values._tabs.update(fake._values._tabs)         # same Sheet as the first run
-    assert rw.run() == 1                                   # +00038889 has no baseline -> loud
-    assert sent2 == []
-    assert len([r for r in _data_rows(fake2) if r[1] == "ride:00038889"]) == 0
+    n = len(_data_rows(shared))
+
+    _, sent = _wire(monkeypatch, cfg=old_cfg, fake=shared, ust_error=rc.RideFetchError("blip"))
+    assert rw.run() == 0                                   # control: quiet skip
+    assert len(_data_rows(shared)) == n
+
+    _, sent = _wire(monkeypatch, fake=shared, ust_error=rc.RideFetchError("blip"))   # +00038889
+    assert rw.run() == 1                                   # treatment: loud
+    assert sent == [] and not [r for r in _data_rows(shared) if r[1] == "ride:00038889"]
+
+
+def test_status_change_on_the_new_ust_itself_alerts(monkeypatch):
+    fake, sent = _wire(monkeypatch)
+    assert rw.run() == 0
+    reopened = ust_records()
+    reopened[1].update(RiskCondition="Risks Present", Open_Release=1)   # index 1 = 00038889
+    monkeypatch.setattr(rw.rc, "fetch_ust_records",
+                        lambda facility_ids=None, url=None, timeout=60: copy.deepcopy(reopened))
+    assert rw.run() == 0
+    changed = [r for r in _data_rows(fake) if r[3] == "changed"]
+    assert [r[1] for r in changed] == ["ride:00038889"]
+    assert len(sent) == 1 and "00038889" in sent[0][0]
+    assert "Open_Release=1" in sent[0][1] and sent[0][2] == ["trisha@example.org"]
+
+
+def test_new_ust_dropping_out_of_the_layer_alerts_no_longer_listed(monkeypatch):
+    fake, sent = _wire(monkeypatch)
+    assert rw.run() == 0
+    monkeypatch.setattr(rw.rc, "fetch_ust_records",
+                        lambda facility_ids=None, url=None, timeout=60: copy.deepcopy(ust_records()[:1]))
+    assert rw.run() == 0
+    changed = [r for r in _data_rows(fake) if r[3] == "changed"]
+    assert [r[1] for r in changed] == ["ride:00038889"]
+    assert "NO LONGER LISTED" in changed[0][5]
+    assert len(sent) == 1
 
 
 def test_live_config_watches_the_2016_lust_facility():
-    """Pin the shipped config: 00038889 (closed 2016 LUST) is in ride.facility_ids
+    """Pin the shipped config: 00038889 (Arbor Hills Landfill Inc UST) is in ride.facility_ids
     alongside the original GFL UST, and the client's fallback default matches."""
     from config_loader import load_config
     facility_ids = [str(f) for f in load_config()["ride"]["facility_ids"]]

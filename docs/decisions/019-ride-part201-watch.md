@@ -170,7 +170,7 @@ against the last recorded snapshots.
 
 `ride.facility_ids` now also carries Layer-1 FacilityID **`00038889`** — the
 registry's own `FacilityName` is "Arbor Hills Landfill Inc". Per the
-overnight-coder handoff (drawn from EGLE's FOIA release E614007) it is the
+overnight-coder handoff `docs/overnight-coder-handoffs/rrd-mpart-records.md` (drawn from EGLE's FOIA release E614007) it is the
 leaking-UST release and closure Leak C-0076-16 at 10690 W Six Mile Rd; RIDE's
 own file list for the location carries a 2016 Confirmed Release Report and
 Closure Report. The facility was not on the watch list, so a re-open or a status
@@ -207,7 +207,7 @@ click**:
   session on its own (`GET /RIDE/Home/GetAppSettings` returns `userName`
   "Public1").
 - Its own front end then calls JSON endpoints that a plain HTTP client can
-  replay once it has the session cookies (a bare `POST` returns 405):
+  replay once it has the session cookies (a `POST` without them returns 405):
   `POST api/Location/GetFacilitiesTable` (program number -> `locationId`),
   `POST api/ContentManagerFile/GetContentManagerFilesForLocationFilesTable`
   (the location's file list; 37 files for 81000004, each with a unique `uri`),
@@ -227,6 +227,11 @@ first successful run. If that very first run hits a transient Layer-1 fetch
 error, the run exits loud (red) instead of skip-and-warn — the documented
 activation-time rule. It self-heals on the next successful run; nothing is
 alerted or lost.
+
+The snapshot hash includes `LastUpdated`, so a routine EGLE re-stamp of a dormant
+record (`00038889`, like every watched item) emails a date-only change; the body
+prints the old and new values, so it is recognizable at a glance. Pre-existing
+behaviour, accepted.
 
 If EGLE ever drops `00038889` from the open-data layer (its live
 `RiskCondition` is "No Longer A Facility"), the watch will send an accurate

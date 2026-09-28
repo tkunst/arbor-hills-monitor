@@ -717,10 +717,10 @@ ride:
     - "82008712"   # MITC Corridor
   facility_ids:                      # Layer 1 (Part 211 UST) — key field FacilityID
     - "00040223"   # GFL Environmental USA, LLC, 7811 Chubb Rd
-    - "00038889"   # Arbor Hills Landfill Inc (Advanced Disposal), 10690 W Six Mile Rd — the 2016 leaking-UST
-                   # release + closure (Leak C-0076-16). Same RIDE location (id 2085) as Part 201 site 81000004.
-                   # Live RiskCondition "No Longer A Facility", 0 open releases — watched so a re-open or a
-                   # status change is caught (added 2026-09-28; ADR 019 addendum).
+    - "00038889"   # Arbor Hills Landfill Inc, 10690 W Six Mile Rd — a 2016 leaking-UST release (Leak C-0076-16,
+                   # per EGLE FOIA E614007). Registry status today: RiskCondition "No Longer A Facility", 0 open
+                   # releases — watched so a re-open or a status change is caught. RIDE lists it under the same
+                   # location as Part 201 site 81000004 (observed 2026-09-28). Added 2026-09-28; ADR 019 addendum.
   # Recipient override: Trisha only to start (Meeting Watch/MMD precedent for
   # a brand-new stream). Delete/comment this block to send to the full
   # alert_recipients list once the alert copy has been seen in the wild.
