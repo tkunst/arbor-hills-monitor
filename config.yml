@@ -1594,6 +1594,59 @@ pfas_pws:
   recipients:
     - arbor-hills@trishakunst.com
 
+# --- EGLE GovQA public FOIA archive watch (Stream U, ADR 059) ---
+# EGLE answers other people's FOIA requests — the operator's law firm, neighbors,
+# peer-landfill watchers — and posts the requests and what it released on a PUBLIC
+# archive (michiganegle.govqa.us). E614007 (8/2026) surfaced ~45 RRD files we had
+# never seen that way. Daily: sweep each keyword newest-first (headless browser,
+# one term per search, stopping at the first known request), re-check open/watched
+# requests by number (plain session, no browser), and alert on a new matching
+# request or a status change (e.g. "Cost estimate sent" -> "Closed").
+# HARD RULES (pinned by tests): rows go ONLY to the PRIVATE Sheet
+# (GSHEET_ID_PRIVATE) — request text and attachment names can name residents and
+# street addresses; attachments (when enabled) go ONLY to a private staging Drive
+# folder; nothing is ever published; an EMPTY `recipients` = display-only.
+# Ships DISABLED. To activate: (1) share the private Sheet with the service account
+# as EDITOR; (2) run the workflow with probe=true (checks the browser + the runner);
+# (3) optional: a private staging folder (GOAUTH_GOVQA_STAGING_FOLDER_ID) + set
+# download_attachments: true; (4) flip `enabled`. The first sweep of each keyword
+# baselines silently. A backfill too large to scrape makes the run STOP AND ASK for
+# a gridView CSV export (drop it in the folder named by GOAUTH_GOVQA_CSV_FOLDER_ID,
+# shared with the service account) rather than loop on timeouts.
+govqa:
+  enabled: false
+  # ONE term per site search. Observed 2026-09-28: the site ORs the words of an UNQUOTED
+  # multi-word term (Great Lakes Recycling -> 213 items, Arbor Hills -> 97, mostly "Ann
+  # Arbor …"), but honours a DOUBLE-QUOTED phrase (-> 1 and 13 items) and also matches
+  # text its grid doesn't show. So multi-word terms are quoted; `require` (every listed
+  # phrase must appear in the request text) is an optional extra filter, used only for
+  # "Six Mile" to keep to the Salem-area road.
+  keywords:
+    - {term: '"Arbor Hills"'}
+    - {term: "Holloway"}
+    - {term: "10690"}
+    - {term: '"Six Mile"', require: ["Salem"]}
+    - {term: "Napier"}
+    - {term: '"Great Lakes Recycling"'}
+    - {term: "10833"}            # 10833 Five Mile Rd (the number is the distinctive part; a quoted "10833 Five Mile" returns 1,637 items)
+    - {term: "N2688"}
+    - {term: "475946"}
+    - {term: "81000004"}
+  # E-numbers to track by number regardless of keywords (e.g. a peer site's open
+  # request: E614606, Liddle Sheets / Pine Tree). First sighting baselines silently.
+  watch_requests: []
+  max_pages_per_term: 12       # a term needing more pages than this without reaching a known request => "export a CSV"
+  max_open_rechecks: 25        # recorded open requests re-checked per run, newest first
+  max_attempts: 3              # per term / request: retry with a fresh session (30 s, 2 min), then report and move on
+  download_attachments: false  # stage released files to the PRIVATE folder (needs the staging secret)
+  max_downloads_per_run: 10
+  max_file_mb: 200
+  staging_folder_env: GOAUTH_GOVQA_STAGING_FOLDER_ID
+  csv_folder_env: GOAUTH_GOVQA_CSV_FOLDER_ID
+  held_folder_envs: []         # env names of Drive folders (read by the service account) whose files are "already held" by MD5; e.g. [GOAUTH_ARCHIVE_FOLDER_ID]
+  recipients:                  # Trisha only; EMPTY = display-only (rows, no email)
+    - arbor-hills@trishakunst.com
+
 # --- Alerts ---
 # Add/remove addresses by editing this list — no code change needed.
 # NOTE (2026-08-21, Trisha's direction): this list is committed to a PUBLIC repo,
