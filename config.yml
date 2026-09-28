@@ -700,7 +700,8 @@ ride:
     - "00040223"   # GFL Environmental USA, LLC, 7811 Chubb Rd
     - "00038889"   # Registry FacilityName "Arbor Hills Landfill Inc" (RegulatoryProgram 213, ReleaseStatus
                    # Closed, RiskCondition "No Longer A Facility", 0 open releases as of 2026-09-28). Added
-                   # 2026-09-28 so a re-open or status change is caught; see the ADR 019 addendum.
+                   # 2026-09-28 so a change to RiskCondition / Open_Release / LastUpdated is caught (NOT a
+                   # ReleaseStatus flip or the tank/release counters -- those aren't fetched); see ADR 019.
   # Recipient override: Trisha only to start (Meeting Watch/MMD precedent for
   # a brand-new stream). Delete/comment this block to send to the full
   # alert_recipients list once the alert copy has been seen in the wild.
