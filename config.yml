@@ -1620,6 +1620,8 @@ alert_recipients:
 # a new/changed/removed row alerts. The public-water-supply layer is NOT re-watched here
 # (Stream R owns it; adding more WSSNs is a `pfas_pws.wssns` edit, not this block).
 # New and changed surface-water rows are SCREENED against the thresholds below.
+# EGLE describes both layers as STATIC PULLS (surface water last pulled 2/2025; fish 1/14/2026,
+# updated annually), so expect long quiet stretches and a burst when EGLE re-pulls.
 # Ships DISABLED (a brand-new external source): review the alert copy, then flip
 # `enabled`. Keyless — nothing to provision.
 mpart:
@@ -1636,11 +1638,19 @@ mpart:
     name_like: "Arbor Hills"      # plus every site inside the box
   # Rule 57 NON-DRINKING-WATER human non-cancer values, ng/L (Johnson Drain / Johnson Creek
   # is a non-drink water body). Source: EGLE's Rule 57 values spreadsheet as saved
-  # 2026-09-26; PFOS verified 2014, PFOA 2022, PFHxS/PFNA 2023 — the alert says it is a
-  # screening comparison and to cite the value in force at the sample date. A 'K' flag
-  # (non-detect; the value is the method detection limit) is never compared.
+  # 2026-09-26. Alerts call this a SCREENING comparison. A sample collected before the year
+  # a value was verified is NOT screened (no such value was in force: PFOA's value replaced
+  # an older one in 2022; PFHxS and PFNA were added in 2023), a 'K' flag (below the method
+  # detection limit; the value shown is the limit) is never compared, and a unit that does
+  # not read as ng/L is never compared. Keys must be PFOS/PFOA/PFHxS/PFNA (a typo raises).
   thresholds_ng_l: {PFOS: 12, PFOA: 170, PFHxS: 210, PFNA: 30}
-  stale_alert_after_skips: 3      # ONE liveness alert after this many consecutive unreadable runs
+  thresholds_verified_year: {PFOS: 2014, PFOA: 2022, PFHxS: 2023, PFNA: 2023}
+  stale_alert_after_skips: 3      # a liveness alert after this many consecutive unreadable runs (repeated weekly)
+  # A SUCCESSFUL response that is empty, or smaller than this fraction of what was recorded,
+  # is treated as a republish glitch (recorded as a skip, not diffed) until it persists
+  # `accept_shrink_after_skips` runs — so it cannot fire "REMOVED (17)" then re-announce all.
+  max_shrink_fraction: 0.5
+  accept_shrink_after_skips: 2
   recipients:                     # Trisha only; EMPTY = display-only (rows, no email)
     - arbor-hills@trishakunst.com
 

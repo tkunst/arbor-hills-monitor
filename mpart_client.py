@@ -30,11 +30,28 @@ named employee, and reassignment churn) out of the canonical record entirely.
 Each layer's canonical view is one small string dict; `row_hash` (16 hex chars) is
 its change detector, and the watcher snapshots {key: row_hash} per layer.
 
-Values are printed VERBATIM in alerts. Flag vocabulary (observed 2026-09-28 on the
-surface-water layer): 'K' (non-detect; the value is the method detection limit),
-'J' (estimated), 'Q', combinations such as 'J, Q', and stray padding (' J', ' ').
-Fish PFOS is in ppb (fillet); the code 'I' means NO VALUE PUBLISHED and is never a
-detection. Stdlib only (urllib), like the sibling ArcGIS clients.
+Values are printed AS PUBLISHED in alerts (whitespace collapsed; numbers to 10
+significant digits) — flags and codes are never re-sorted or re-cased. What EGLE
+itself says about them (the layers' ArcGIS item descriptions, saved in Lotext
+`documents/arbor-hills/source-docs/egle-mpart-pfas-gis-app-2026-09-26/`):
+
+  - Both layers are STATIC PULLS: surface water "last pulled 2/2025"; fish "a static
+    pull … on 01/14/2026 … updated annually". A new row therefore means EGLE
+    republished the layer, not that sampling just happened — the collection date says
+    when.
+  - Surface-water flags are "a note from the analytical laboratory"; a flag of "Not
+    Measured" means that analyte was not part of the analysis. Qualifier definitions
+    include K (amount detected is below the method detection limit — Vista), J
+    (below the reporting limit / LOQ), Q (ion-transition ratio outside acceptance
+    criteria), B (also in the method blank), E (above the calibration range), I
+    (chemical interference; EMPC for Eurofins) and IDA01 (estimated/suspect); "the
+    definition varies by report". Observed K rows carry value == MDL.
+  - Fish: "K" = not detected, the method detection limit is displayed; "J" = an
+    estimated concentration; "I" = analytical interference was present, so a
+    concentration could not be determined; "QNS" = not enough sample remained. Only
+    edible-portion data are shown. PFOS is in ppb.
+
+Stdlib only (urllib), like the sibling ArcGIS clients.
 """
 from __future__ import annotations
 
@@ -117,10 +134,12 @@ def bbox_where(bbox, lon: str, lat: str) -> str:
 
 
 def _fetch(url: str, where: str, fields: tuple[str, ...], timeout: int) -> list[dict]:
+    if not str(url).lower().startswith("https://"):
+        raise MpartParseError("layer URL must be https:// (config error)")   # urllib would also open file:// / ftp://
     params = urllib.parse.urlencode({"where": where, "outFields": ",".join(fields),
                                      "returnGeometry": "false", "f": "json"})
     try:
-        r = _opener().open(f"{url}?{params}", timeout=timeout)  # nosec B310 — https constant + escaped params
+        r = _opener().open(f"{url}?{params}", timeout=timeout)  # nosec B310 — https-only (checked above) + escaped params
         status = getattr(r, "status", None) or r.getcode()
         body = r.read()
     except Exception as e:  # noqa: BLE001 — network / HTTP -> transient
@@ -134,6 +153,11 @@ def _fetch(url: str, where: str, fields: tuple[str, ...], timeout: int) -> list[
     if not isinstance(payload, dict):
         raise MpartFetchError(f"GET {url} returned non-object JSON")
     if "error" in payload:
+        err = payload["error"] if isinstance(payload["error"], dict) else {}
+        if err.get("code") == 400:
+            # ArcGIS answers a rejected query (a renamed field in the where clause, a bad layer id)
+            # as 200 + {"error": {"code": 400}}. That persists across runs: structural, not a blip.
+            raise MpartParseError(f"ArcGIS rejected the query at {url}: {str(err)[:200]} — the layer may have changed")
         raise MpartFetchError(f"ArcGIS error from {url}: {str(payload['error'])[:200]}")
     if "features" not in payload:
         raise MpartParseError(f"query response from {url} has no 'features' — the service may have changed")
@@ -194,24 +218,43 @@ def _num(v) -> str:
         return _s(v)
 
 
+def flag_text(raw) -> str:
+    """A flag/code cell AS PUBLISHED, whitespace collapsed: ' J' -> 'J', 'J, Q' ->
+    'J, Q', 'Not Measured' -> 'Not Measured', ' ' / None -> ''. Never re-cased or
+    re-sorted, so what an alert prints is what EGLE published."""
+    return _s(raw)
+
+
 def flag_tokens(raw) -> tuple[str, ...]:
-    """A flag cell as a sorted tuple of upper-case tokens: ' J' -> ('J',), 'J, Q' ->
-    ('J','Q'), ' ' or None -> ()."""
+    """A flag cell as a sorted tuple of upper-case tokens, for LOGIC only (never for
+    display): ' J' -> ('J',), 'J, Q' -> ('J','Q'), ' ' or None -> ()."""
     return tuple(sorted(t for t in re.split(r"[\s,;]+", _s(raw).upper()) if t))
 
 
+def normalize_unit(unit: str) -> str:
+    """'ng/L' / 'ppt' / 'parts per trillion' (any case, any spacing) -> 'ng/L'; anything
+    else is returned unchanged. The layer's Unit is "provided by the analytical
+    laboratory", so a screen against an ng/L value requires it to read as ng/L."""
+    u = re.sub(r"\s+", "", str(unit or "")).lower()
+    return "ng/L" if u in ("ng/l", "ppt", "partspertrillion", "ng/l.") else str(unit or "")
+
+
 def surface_water_view(attrs: dict) -> dict:
-    """Canonical view of one surface-water row (SW_VIEW). The key is the lab sample id
-    (unique across the layer, and stable across republishes — unlike GlobalID);
-    a row with no id falls back to site|date|duplicate."""
+    """Canonical view of one surface-water row (SW_VIEW). The key is COMPOSITE —
+    LabSampleId|SiteCode|date|Duplicate — because the lab id alone is not globally
+    unique: the live layer mixes Eurofins ids (`240-169452-6`) with short, site-derived
+    Vista labels (`UT-0100`, `JD-0100`) that a later lab job at the same site could
+    reuse. All four parts are business fields, stable across republishes (unlike
+    GlobalID / OBJECTID)."""
     date = epoch_ms_to_date(attrs.get("CollectionDate"))
-    key = _s(attrs.get("LabSampleId")) or f"{_s(attrs.get('SiteCode'))}|{date}|{_s(attrs.get('Duplicate'))}"
+    key = "|".join((_s(attrs.get("LabSampleId")) or "no-lab-id", _s(attrs.get("SiteCode")), date,
+                    _s(attrs.get("Duplicate"))))
     v = {"key": key, "site": _s(attrs.get("SiteCode")), "waterbody": _s(attrs.get("Waterbody")),
          "description": _s(attrs.get("Description")), "date": date,
          "sample_type": _s(attrs.get("SampleType")), "unit": _s(attrs.get("Unit"))}
     for name, col in ANALYTES.items():
         v[name] = _num(attrs.get(col))
-        v[f"{name}_flag"] = ",".join(flag_tokens(attrs.get(f"{col}Flag")))
+        v[f"{name}_flag"] = flag_text(attrs.get(f"{col}Flag"))
         v[f"{name}_mdl"] = _num(attrs.get(f"{col}Mdl"))
     return v
 
@@ -223,10 +266,29 @@ def fish_view(attrs: dict) -> dict:
         station = str(int(float(station)))
     except (TypeError, ValueError):
         station = _s(station)
-    return {"key": _s(attrs.get("SampleID")), "fish_id": _s(attrs.get("FishID")), "station": station,
+    date = epoch_ms_to_date(attrs.get("CollectionDate"))
+    key = _s(attrs.get("SampleID")) or "|".join(("no-sample-id", _s(attrs.get("FishID")), station, date))
+    return {"key": key, "fish_id": _s(attrs.get("FishID")), "station": station,
             "waterbody": _s(attrs.get("WaterBody")), "location": _s(attrs.get("SamplingLocation")),
-            "date": epoch_ms_to_date(attrs.get("CollectionDate")), "species": _s(attrs.get("Species")),
-            "pfos_ppb": _num(attrs.get("PFOSppb")), "pfos_code": _s(attrs.get("PFOScode"))}
+            "date": date, "species": _s(attrs.get("Species")),
+            "pfos_ppb": _num(attrs.get("PFOSppb")), "pfos_code": flag_text(attrs.get("PFOScode"))}
+
+
+FISH_CODE_MEANING = {
+    "K": "not detected — the value shown is the method detection limit",
+    "J": "estimated concentration",
+    "I": "analytical interference was present; a concentration could not be determined",
+    "QNS": "not enough sample remained to analyze",
+}
+
+
+def fish_code_meaning(code: str) -> str:
+    """EGLE's own wording for the fish result codes it defines (K, J, I, QNS); any other
+    code (the layer also carries e.g. 'NA') is returned verbatim, uninterpreted."""
+    toks = flag_tokens(code)
+    known = [f"{t}: {FISH_CODE_MEANING[t]}" for t in toks if t in FISH_CODE_MEANING]
+    other = [t for t in toks if t not in FISH_CODE_MEANING]
+    return "; ".join(known + ([f"code {', '.join(other)} (not defined here)"] if other else []))
 
 
 def sites_view(attrs: dict) -> dict:
@@ -248,25 +310,75 @@ def row_hash(view: dict, fields: tuple[str, ...]) -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
-def index_rows(views: list[dict], fields: tuple[str, ...], what: str) -> dict[str, str]:
-    """{key: row_hash}. A blank or DUPLICATE key raises MpartParseError — the diff is
-    keyed on it, so a collision would silently lose a row (the ADR 018 partial-key lesson)."""
-    out: dict[str, str] = {}
+def index_rows(views: list[dict], fields: tuple[str, ...], what: str) -> tuple[dict[str, str], int]:
+    """({key: row_hash}, n_disambiguated). A blank key raises MpartParseError (the diff
+    is keyed on it). A DUPLICATE key does NOT fail the layer — that would leave the very
+    sample that collided permanently unwatched — its rows are ordered by row hash and
+    suffixed `#1`, `#2`, ... (deterministic whatever order the service returns them in);
+    the count is returned so the watcher records it visibly."""
+    groups: dict[str, list[str]] = {}
     for v in views:
         k = v["key"]
-        if not k or k in out:
-            raise MpartParseError(f"{what}: blank or duplicate row key {k!r} — the diff key is unsound")
-        out[k] = row_hash(v, fields)
+        if not k:
+            raise MpartParseError(f"{what}: a row has a blank key — the diff key is unsound")
+        groups.setdefault(k, []).append(row_hash(v, fields))
+    out: dict[str, str] = {}
+    dups = 0
+    for k, hashes in groups.items():
+        if len(hashes) == 1:
+            out[k] = hashes[0]
+            continue
+        dups += len(hashes) - 1
+        for n, h in enumerate(sorted(hashes), 1):
+            out[f"{k}#{n}"] = h
+    return out, dups
+
+
+def views_by_index_key(views: list[dict], fields: tuple[str, ...]) -> dict[str, dict]:
+    """{index key: canonical view}, in step with index_rows' disambiguation: a duplicated
+    key `k` becomes `k#1`, `k#2`, … ordered by row hash (identical rows are interchangeable,
+    so the assignment is deterministic whatever order the service returned them in)."""
+    groups: dict[str, list[dict]] = {}
+    for v in views:
+        groups.setdefault(v["key"], []).append(v)
+    out: dict[str, dict] = {}
+    for k, vs in groups.items():
+        if len(vs) == 1:
+            out[k] = vs[0]
+            continue
+        for n, v in enumerate(sorted(vs, key=lambda x: row_hash(x, fields)), 1):
+            out[f"{k}#{n}"] = v
     return out
 
 
-def snapshot_json(index: dict[str, str]) -> str:
-    """The stored snapshot: compact sorted JSON of {key: row_hash}. Raises
-    MpartParseError above MAX_SNAPSHOT_CHARS (a Sheets cell truncates silently)."""
-    s = json.dumps({"rows": index}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+SNAPSHOT_VERSION = 1
+
+
+def snapshot_json(index: dict[str, str], hits=()) -> str:
+    """The stored snapshot: compact sorted JSON {"v", "rows": {key: row_hash}, "hits":
+    [...]}. `hits` are the (row key|analyte) pairs currently above a screening value, so
+    an already-announced hit is never re-announced as new. Raises MpartParseError above
+    MAX_SNAPSHOT_CHARS (a Sheets cell truncates silently)."""
+    doc = {"v": SNAPSHOT_VERSION, "rows": index}
+    if hits:
+        doc["hits"] = sorted(hits)
+    s = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     if len(s) > MAX_SNAPSHOT_CHARS:
         raise MpartParseError(f"snapshot is {len(s):,} chars (> {MAX_SNAPSHOT_CHARS:,}) — refusing to truncate")
     return s
+
+
+def parse_snapshot(snapshot: str):
+    """(index, hits) from a stored snapshot, or None if it is unreadable OR was written
+    by a different SNAPSHOT_VERSION (the caller re-baselines silently and says so —
+    diffing against a differently-shaped snapshot would flag every row as changed)."""
+    try:
+        doc = json.loads(snapshot)
+        if not isinstance(doc, dict) or doc.get("v") != SNAPSHOT_VERSION or not isinstance(doc.get("rows"), dict):
+            return None
+        return ({str(k): str(v) for k, v in doc["rows"].items()}, {str(h) for h in doc.get("hits", [])})
+    except (ValueError, TypeError):
+        return None
 
 
 def snapshot_hash(snapshot: str) -> str:

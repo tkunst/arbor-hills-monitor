@@ -1,16 +1,28 @@
+def test_a_blank_row_key_is_structural_and_loud(monkeypatch):
+    world, fake, sent = _wire(monkeypatch)
+    original = mc.fish_view
+    monkeypatch.setattr(mw.mc, "fish_view", lambda a: dict(original(a), key=""))
+    assert mw.run([]) == 1 and rows_of(fake, "mpart:fish") == []
+    assert len(rows_of(fake, "mpart:sw", "baseline")) == 1                # the other items were unaffected
+
+
 """mpart_client.py / mpart_watcher.py (Stream V, ADR 060) — the MPART PFAS open-data
 layers watch.
 
 Attribute fixtures are shaped like the REAL ArcGIS responses (live-verified
 2026-09-28): the surface-water layer's `CAS…_PFOS / …Flag / …Mdl` column groups with
-its messy flags (`'K'`, `' J'`, `'J, Q'`, `' '`), the fish table's `PFOScode` ('I' =
-no value published), and the sites layer. Values for the Napier Rd 2021-08-05 sample
+its messy flags (`'K'`, `' J'`, `'J, Q'`, `' '`) and REAL lab sample ids (short Vista
+labels such as `UT-0100` next to Eurofins ids such as `240-169452-6`), the fish table's
+`PFOScode` (EGLE: K = not detected/MDL shown, J = estimated, I = analytical interference,
+QNS = not enough sample), and the sites layer. Values for the Napier Rd 2021-08-05 sample
 (PFOS 16.5 ng/L, no flag — the one real Rule 57 exceedance in the area data) and the
 Johnson Drain fish rows are the published ones. No JSON/CSV/PDF is committed (data-guard).
 """
 import copy
 import json
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -19,6 +31,8 @@ import mpart_client as mc
 import mpart_watcher as mw
 import sheet_writer as sw
 from test_pfas_watcher import FakeSheets
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def ms(day: str) -> int:
@@ -31,22 +45,26 @@ def ms(day: str) -> int:
 
 
 def sw_row(sample, site, date, water, desc, pfos=None, pfos_flag=None, pfos_mdl=None, pfoa=None, pfoa_flag=None,
-           pfhxs=None, pfna=None, unit="ng/L"):
+           pfhxs=None, pfna=None, pfna_flag=None, unit="ng/L", dup=0, sample_type=None):
     return {
         "LabSampleId": sample, "SiteCode": site, "Waterbody": water, "Description": desc,
-        "CollectionDate": ms(date), "SampleType": None, "Unit": unit, "Duplicate": 0,
+        "CollectionDate": ms(date), "SampleType": sample_type, "Unit": unit, "Duplicate": dup,
         "CAS1763231_PFOS": pfos, "CAS1763231_PFOSFlag": pfos_flag, "CAS1763231_PFOSMdl": pfos_mdl,
         "CAS335671_PFOA": pfoa, "CAS335671_PFOAFlag": pfoa_flag, "CAS335671_PFOAMdl": 0.5,
         "CAS355464_PFHxS": pfhxs, "CAS355464_PFHxSFlag": None, "CAS355464_PFHxSMdl": 0.5,
-        "CAS375951_PFNA": pfna, "CAS375951_PFNAFlag": None, "CAS375951_PFNAMdl": 0.25,
+        "CAS375951_PFNA": pfna, "CAS375951_PFNAFlag": pfna_flag, "CAS375951_PFNAMdl": 0.25,
     }
+
+
+NAPIER = "UT-0100|19-UUTJD-0010|2021-08-05|0"          # the composite key of the real Napier Rd row
 
 
 def sw_rows():
     return [
         sw_row("240-169452-6", "19-JD-0105", "2022-07-06", "Johnson Drain", "u/s 6 Mile Rd", 3.1, " ", 0.5, 3.6, "", 1.4, 0.48),
-        sw_row("L-NAPIER-1", "19-UUTJD-0010", "2021-08-05", "Unnamed Trib to an Unnamed Trib", "Napier Rd", 16.5, "", 1.03, 17.2, "", 26.3, 1.04),
-        sw_row("L-JD-100", "19-JD-0100", "2021-08-05", "Johnson Drain ", "6 Mile Rd", 1.03, "K", 1.03, None, None, None, None),
+        sw_row("UT-0100", "19-UUTJD-0010", "2021-08-05", "Unnamed Trib to an Unnamed Trib", "Napier Rd", 16.5, "", 1.03, 17.2, "",
+               26.3, 1.04, "J"),
+        sw_row("JD-0100", "19-JD-0100", "2021-08-05", "Johnson Drain ", "6 Mile Rd", 1.03, "K", 1.03, None, None, None, None),
     ]
 
 
@@ -76,7 +94,7 @@ def site_rows():
 
 
 # ==============================================================================
-# Client — query construction (pure)
+# Client — query construction + fetch guards
 # ==============================================================================
 
 
@@ -117,6 +135,16 @@ def wire_opener(monkeypatch, body, status=200, seen=None):
     monkeypatch.setattr(mc, "_opener", lambda: _Op())
 
 
+def test_fetch_happy_path_returns_the_attribute_dicts(monkeypatch):
+    wire_opener(monkeypatch, payload(sw_rows(), mc.SW_OUT_FIELDS))
+    rows = mc.fetch_surface_water()
+    assert [r["LabSampleId"] for r in rows] == ["240-169452-6", "UT-0100", "JD-0100"]
+    wire_opener(monkeypatch, payload(fish_rows(), mc.FISH_OUT_FIELDS))
+    assert len(mc.fetch_fish()) == 3
+    wire_opener(monkeypatch, payload(site_rows(), mc.SITES_OUT_FIELDS))
+    assert len(mc.fetch_sites()) == 2
+
+
 def test_every_fetch_asks_for_explicit_fields_and_no_geometry_or_staff_contacts(monkeypatch):
     seen = []
     wire_opener(monkeypatch, payload([], mc.SW_OUT_FIELDS), seen=seen)
@@ -151,7 +179,8 @@ def test_fish_where_coerces_station_ids_and_the_sites_like_is_sanitized(monkeypa
     (b"gone", 503, mc.MpartFetchError),
     (b"<html>bot wall</html>", 200, mc.MpartFetchError),
     (b"[1,2]", 200, mc.MpartFetchError),
-    (json.dumps({"error": {"code": 400}}).encode(), 200, mc.MpartFetchError),
+    (json.dumps({"error": {"code": 503}}).encode(), 200, mc.MpartFetchError),               # a server-side blip
+    (json.dumps({"error": {"code": 400}}).encode(), 200, mc.MpartParseError),               # a REJECTED query: persists
     (json.dumps({"fields": []}).encode(), 200, mc.MpartParseError),                         # no features
     (payload([], mc.SW_OUT_FIELDS, exceededTransferLimit=True), 200, mc.MpartParseError),   # truncated
     (payload([], mc.SW_OUT_FIELDS[:-1]), 200, mc.MpartParseError),                          # schema lost a field
@@ -160,6 +189,15 @@ def test_fetch_guards_split_transient_from_structural(monkeypatch, body, status,
     wire_opener(monkeypatch, body, status)
     with pytest.raises(exc):
         mc.fetch_surface_water()
+
+
+@pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://example.com/x", "http://insecure.example/x", ""])
+def test_a_non_https_layer_url_is_refused_before_any_request(monkeypatch, url):
+    def boom():
+        raise AssertionError("must not open")
+    monkeypatch.setattr(mc, "_opener", boom)
+    with pytest.raises(mc.MpartParseError):
+        mc.fetch_surface_water(url=url)
 
 
 def test_network_errors_are_fetch_errors_and_carry_no_url(monkeypatch):
@@ -177,29 +215,61 @@ def test_network_errors_are_fetch_errors_and_carry_no_url(monkeypatch):
 # ==============================================================================
 
 
-def test_flag_tokens_normalize_padding_and_combinations():
-    assert mc.flag_tokens(" J") == ("J",) and mc.flag_tokens("J, Q") == ("J", "Q") and mc.flag_tokens("Q,J") == ("J", "Q")
-    assert mc.flag_tokens(" ") == () and mc.flag_tokens(None) == () and mc.flag_tokens("k") == ("K",)
+def test_flag_text_is_verbatim_and_tokens_are_for_logic_only():
+    assert mc.flag_text(" J") == "J" and mc.flag_text("J, Q") == "J, Q" and mc.flag_text("Not Measured") == "Not Measured"
+    assert mc.flag_text(" ") == "" and mc.flag_text(None) == "" and mc.flag_text("k") == "k"     # never re-cased
+    assert mc.flag_tokens("J, Q") == ("J", "Q") and mc.flag_tokens("Q,J") == ("J", "Q") and mc.flag_tokens("k") == ("K",)
+    assert mc.flag_tokens("Not Measured") == ("MEASURED", "NOT") and mc.flag_tokens(None) == ()
 
 
-def test_surface_water_view_canonicalizes_real_messy_values():
+@pytest.mark.parametrize("raw,norm", [("ng/L", "ng/L"), (" NG/L ", "ng/L"), ("ppt", "ng/L"), ("Parts Per Trillion", "ng/L"),
+                                      ("ug/L", "ug/L"), ("ppb", "ppb"), (None, ""), ("", "")])
+def test_normalize_unit(raw, norm):
+    assert mc.normalize_unit(raw) == norm
+
+
+def test_surface_water_view_uses_a_composite_key_and_verbatim_flags():
     v = mc.surface_water_view(sw_rows()[0])
-    assert v["key"] == "240-169452-6" and v["date"] == "2022-07-06" and v["site"] == "19-JD-0105"
+    assert v["key"] == "240-169452-6|19-JD-0105|2022-07-06|0" and v["date"] == "2022-07-06" and v["site"] == "19-JD-0105"
     assert v["PFOS"] == "3.1" and v["PFOS_flag"] == "" and v["PFOS_mdl"] == "0.5" and v["unit"] == "ng/L"
-    assert mc.surface_water_view(sw_rows()[2])["waterbody"] == "Johnson Drain"           # trailing space stripped
-    assert mc.surface_water_view(sw_rows()[2])["PFOS_flag"] == "K" and mc.surface_water_view(sw_rows()[2])["PFOA"] == ""
-    assert mc.surface_water_view(dict(sw_rows()[0], CAS1763231_PFOSFlag="J, Q"))["PFOS_flag"] == "J,Q"
+    assert mc.surface_water_view(sw_rows()[1])["key"] == NAPIER
+    k = mc.surface_water_view(sw_rows()[2])
+    assert k["waterbody"] == "Johnson Drain" and k["PFOS_flag"] == "K" and k["PFOA"] == ""      # trailing space stripped
+    assert mc.surface_water_view(dict(sw_rows()[0], CAS1763231_PFOSFlag="J, Q"))["PFOS_flag"] == "J, Q"
+    assert mc.surface_water_view(dict(sw_rows()[0], CAS1763231_PFOSFlag="Not Measured"))["PFOS_flag"] == "Not Measured"
 
 
-def test_surface_water_key_falls_back_when_the_lab_id_is_missing():
-    v = mc.surface_water_view(dict(sw_rows()[0], LabSampleId=None))
-    assert v["key"] == "19-JD-0105|2022-07-06|0"
+def test_a_reused_short_lab_label_does_not_collide():
+    """Vista labels are short and site-derived (`JD-0100`); a later job at the same site can
+    reuse one. The composite key keeps them distinct — so the layer can never wedge."""
+    a = mc.surface_water_view(sw_row("JD-0100", "19-JD-0100", "2021-08-05", "Johnson Drain", "6 Mile Rd", 1.0, "K", 1.0))
+    b = mc.surface_water_view(sw_row("JD-0100", "19-JD-0100", "2026-05-01", "Johnson Drain", "6 Mile Rd", 2.0, "", 0.5))
+    c = mc.surface_water_view(sw_row("JD-0100", "19-JD-0100", "2026-05-01", "Johnson Drain", "6 Mile Rd", 2.0, "", 0.5, dup=1))
+    d = mc.surface_water_view(sw_row("JD-0100", "19-JD-0105", "2026-05-01", "Johnson Drain", "u/s", 2.0, "", 0.5))
+    assert len({a["key"], b["key"], c["key"], d["key"]}) == 4
+    idx, dups = mc.index_rows([a, b, c, d], mc.SW_VIEW, "sw")
+    assert dups == 0 and len(idx) == 4
 
 
-def test_fish_view_and_the_no_value_code():
+def test_surface_water_key_when_the_lab_id_is_missing():
+    assert mc.surface_water_view(dict(sw_rows()[0], LabSampleId=None))["key"] == "no-lab-id|19-JD-0105|2022-07-06|0"
+
+
+def test_fish_view_keeps_the_code_as_published():
     v = mc.fish_view(fish_rows()[0])
     assert v["station"] == "1484" and v["pfos_ppb"] == "" and v["pfos_code"] == "I" and v["key"] == "2021233-S01"
-    assert mc.fish_view(fish_rows()[1])["pfos_ppb"] == "5.9"
+    assert mc.fish_view(fish_rows()[1])["pfos_ppb"] == "5.9" and mc.fish_view(fish_rows()[1])["pfos_code"] == ""
+    assert mc.fish_view(dict(fish_rows()[0], PFOScode=" K "))["pfos_code"] == "K"
+    assert mc.fish_view(dict(fish_rows()[0], SampleID=None))["key"] == "no-sample-id|2021233-F001|1484|2021-08-05"
+
+
+def test_fish_code_meanings_are_EGLEs_own_wording():
+    assert "analytical interference" in mc.fish_code_meaning("I") and "could not be determined" in mc.fish_code_meaning("I")
+    assert mc.fish_code_meaning("K").startswith("K: not detected") and "detection limit" in mc.fish_code_meaning("K")
+    assert "estimated" in mc.fish_code_meaning("J") and "not enough sample" in mc.fish_code_meaning("QNS")
+    assert mc.fish_code_meaning("NA") == "code NA (not defined here)"                        # unknown: verbatim, uninterpreted
+    assert "K:" in mc.fish_code_meaning("K, J") and "J:" in mc.fish_code_meaning("K, J")
+    assert mc.fish_code_meaning("") == ""
 
 
 def test_sites_view_is_keyed_by_name_and_never_carries_staff_contacts():
@@ -209,6 +279,7 @@ def test_sites_view_is_keyed_by_name_and_never_carries_staff_contacts():
     assert v["county"] == "Washtenaw County" and v["residential_wells"] == "Yes" and v["facility_date"] == "2020-03-31"
     assert "Staffer" not in json.dumps(v) and "example.gov" not in json.dumps(v)
     assert mc.sites_view(dict(site_row(), County="Oakland County "))["county"] == "Oakland County"
+    assert mc.sites_view(dict(site_row(), FacilityDate=ms("2020-03-31")))["facility_date"] == "2020-03-31"
 
 
 def test_row_hash_is_stable_and_sensitive_to_every_watched_field():
@@ -219,20 +290,37 @@ def test_row_hash_is_stable_and_sensitive_to_every_watched_field():
         assert mc.row_hash(dict(v, **{field: "changed"}), mc.SW_VIEW) != h, field
 
 
-def test_index_rows_rejects_blank_or_duplicate_keys():
-    views = [mc.fish_view(fish_rows()[0]), mc.fish_view(fish_rows()[0])]
+def test_index_rows_disambiguates_duplicates_deterministically_and_rejects_blank_keys():
+    a = mc.fish_view(fish_row("2021268-S01", 1507, "White Sucker", 5.9, None))
+    b = mc.fish_view(fish_row("2021268-S01", 1507, "White Sucker", 8.1, None))               # same key, different data
+    idx1, d1 = mc.index_rows([a, b], mc.FISH_VIEW, "fish")
+    idx2, d2 = mc.index_rows([b, a], mc.FISH_VIEW, "fish")                                    # service order flipped
+    assert d1 == d2 == 1 and idx1 == idx2 and set(idx1) == {"2021268-S01#1", "2021268-S01#2"}
+    v1, v2 = mc.views_by_index_key([a, b], mc.FISH_VIEW), mc.views_by_index_key([b, a], mc.FISH_VIEW)
+    assert {k: x["pfos_ppb"] for k, x in v1.items()} == {k: x["pfos_ppb"] for k, x in v2.items()}
+    assert {k: mc.row_hash(x, mc.FISH_VIEW) for k, x in v1.items()} == idx1                  # views and index agree
     with pytest.raises(mc.MpartParseError):
-        mc.index_rows(views, mc.FISH_VIEW, "fish")
-    with pytest.raises(mc.MpartParseError):
-        mc.index_rows([dict(mc.fish_view(fish_rows()[0]), key="")], mc.FISH_VIEW, "fish")
+        mc.index_rows([dict(a, key="")], mc.FISH_VIEW, "fish")
 
 
-def test_snapshot_is_order_independent_and_refuses_to_truncate():
-    a = {"b": "1", "a": "2"}
-    assert mc.snapshot_json(a) == mc.snapshot_json(dict(reversed(list(a.items()))))
-    assert mc.snapshot_hash(mc.snapshot_json(a)) != mc.snapshot_hash(mc.snapshot_json({"a": "2", "b": "3"}))
+def test_snapshot_roundtrip_carries_hits_and_is_versioned():
+    idx = {"b": "1", "a": "2"}
+    s = mc.snapshot_json(idx, {"b|PFOS", "a|PFOA"})
+    assert s == mc.snapshot_json(dict(reversed(list(idx.items()))), ["a|PFOA", "b|PFOS"])       # order-independent
+    parsed_idx, parsed_hits = mc.parse_snapshot(s)
+    assert parsed_idx == idx and parsed_hits == {"a|PFOA", "b|PFOS"}
+    assert mc.parse_snapshot(mc.snapshot_json(idx))[1] == set()
+
+
+@pytest.mark.parametrize("stored", ["not json", "[]", '{"rows": {"a": "1"}}', '{"v": 999, "rows": {}}', '{"v": 1, "rows": []}', ""])
+def test_an_unreadable_or_differently_versioned_snapshot_parses_to_none(stored):
+    assert mc.parse_snapshot(stored) is None
+
+
+def test_snapshot_refuses_to_truncate():
     with pytest.raises(mc.MpartParseError):
         mc.snapshot_json({f"key-{i:06d}": "0" * 16 for i in range(2000)})
+    assert mc.snapshot_hash(mc.snapshot_json({"a": "2"})) != mc.snapshot_hash(mc.snapshot_json({"a": "3"}))
 
 
 def test_epoch_dates():
@@ -245,33 +333,63 @@ def test_epoch_dates():
 # ==============================================================================
 
 TH = {"PFOS": 12.0, "PFOA": 170.0, "PFHxS": 210.0, "PFNA": 30.0}
+VY = {"PFOS": 2014, "PFOA": 2022, "PFHxS": 2023, "PFNA": 2023}
 
 
 def test_screen_flags_only_detected_values_above_the_threshold():
-    napier = mc.surface_water_view(sw_rows()[1])
-    hits = mw.screen_surface_water(napier, TH)
+    hits = mw.screen_surface_water(mc.surface_water_view(sw_rows()[1]), TH, VY)
     assert [(h["analyte"], h["value"], h["threshold"], h["estimated"]) for h in hits] == [("PFOS", "16.5", 12.0, False)]
-    assert mw.screen_surface_water(mc.surface_water_view(sw_rows()[0]), TH) == []          # 3.1 < 12
+    assert mw.screen_surface_water(mc.surface_water_view(sw_rows()[0]), TH, VY) == []             # 3.1 < 12
     exact = mc.surface_water_view(sw_row("x", "s", "2024-01-01", "w", "d", 12.0, "", 1))
-    assert mw.screen_surface_water(exact, TH) == []                                          # "above", not "at"
+    assert mw.screen_surface_water(exact, TH, VY) == []                                           # "above", not "at"
 
 
 def test_a_K_flag_is_a_nondetect_and_is_never_compared():
-    v = mc.surface_water_view(sw_row("x", "s", "2024-01-01", "w", "d", 20.0, "K", 20.0))     # value = the MDL
-    assert mw.is_nondetect(v["PFOS_flag"]) and mw.screen_surface_water(v, TH) == []
-    assert not mw.is_nondetect("J") and not mw.is_nondetect("J,Q") and mw.is_nondetect(" k ")
+    v = mc.surface_water_view(sw_row("x", "s", "2024-01-01", "w", "d", 20.0, "K", 20.0))         # value = the MDL
+    assert mw.is_nondetect(v["PFOS_flag"]) and mw.screen_surface_water(v, TH, VY) == []
+    assert not mw.is_nondetect("J") and not mw.is_nondetect("J, Q") and mw.is_nondetect(" k ")
 
 
 def test_an_estimated_J_value_above_the_threshold_is_flagged_as_estimated():
     v = mc.surface_water_view(sw_row("x", "s", "2024-01-01", "w", "d", 13.0, "J", 1))
-    assert [(h["analyte"], h["estimated"]) for h in mw.screen_surface_water(v, TH)] == [("PFOS", True)]
+    assert [(h["analyte"], h["estimated"], h["flag"]) for h in mw.screen_surface_water(v, TH, VY)] == [("PFOS", True, "J")]
+
+
+def test_screening_needs_a_unit_that_reads_as_ng_per_l():
+    for unit in ("ng/L", "ppt", " NG/L "):
+        assert mw.screen_surface_water(mc.surface_water_view(sw_row("x", "s", "2024-01-01", "w", "d", 30.0, "", 1, unit=unit)), TH, VY)
+    for unit in ("ug/L", "ppb", "", "mg/L"):
+        assert mw.screen_surface_water(mc.surface_water_view(sw_row("x", "s", "2024-01-01", "w", "d", 30.0, "", 1, unit=unit)), TH, VY) == []
+
+
+def test_a_sample_older_than_the_value_in_force_is_not_screened():
+    old = mc.surface_water_view(sw_row("x", "s", "2021-06-01", "w", "d", 5.0, "", 1, pfoa=200.0, pfhxs=None, pfna=99.0))
+    assert mw.screen_surface_water(old, TH, VY) == []               # PFOA value dates from 2022, PFNA from 2023
+    new = mc.surface_water_view(sw_row("x", "s", "2024-06-01", "w", "d", 5.0, "", 1, pfoa=200.0, pfna=99.0))
+    assert sorted(h["analyte"] for h in mw.screen_surface_water(new, TH, VY)) == ["PFNA", "PFOA"]
+    pfos_old = mc.surface_water_view(sw_row("x", "s", "2021-06-01", "w", "d", 40.0, "", 1))
+    assert [h["analyte"] for h in mw.screen_surface_water(pfos_old, TH, VY)] == ["PFOS"]            # PFOS value dates from 2014
 
 
 def test_screening_ignores_blank_and_unparseable_values_and_analytes_without_a_threshold():
     v = mc.surface_water_view(sw_row("x", "s", "2024-01-01", "w", "d", None, None, None))
-    assert mw.screen_surface_water(v, TH) == []
-    assert mw.screen_surface_water(dict(v, PFOS="n/a"), TH) == []
-    assert mw.screen_surface_water(mc.surface_water_view(sw_rows()[1]), {"PFOA": 170.0}) == []
+    assert mw.screen_surface_water(v, TH, VY) == []
+    assert mw.screen_surface_water(dict(v, PFOS="n/a"), TH, VY) == []
+    assert mw.screen_surface_water(mc.surface_water_view(sw_rows()[1]), {"PFOA": 170.0}, VY) == []
+
+
+def test_hit_keys_are_row_and_analyte_pairs():
+    views = mc.views_by_index_key([mc.surface_water_view(r) for r in sw_rows()], mc.SW_VIEW)
+    assert mw.hit_keys(views, TH, VY) == {f"{NAPIER}|PFOS"}
+
+
+def test_threshold_config_is_validated():
+    assert mw.load_thresholds({}) == (TH, VY)
+    assert mw.load_thresholds({"thresholds_ng_l": {"PFOS": 10}})[0] == {"PFOS": 10.0}
+    with pytest.raises(ValueError, match="PFHXS"):
+        mw.load_thresholds({"thresholds_ng_l": {"PFHXS": 1}})
+    with pytest.raises(ValueError):
+        mw.load_thresholds({"thresholds_verified_year": {"BOGUS": 2020}})
 
 
 # ==============================================================================
@@ -284,45 +402,99 @@ def _row(item, change, h="", note="", snap=""):
 
 
 def test_build_state_takes_the_last_snapshot_row_and_counts_consecutive_skips():
-    st = mw.build_state([_row("mpart:sw", "baseline", "h1", snap='{"rows":{}}'), _row("mpart:sw", "fetch-skipped", "h1"),
+    st = mw.build_state([_row("mpart:sw", "baseline", "h1", snap="S1"), _row("mpart:sw", "fetch-skipped", "h1"),
                          _row("mpart:sw", "fetch-skipped", "h1"), _row("mpart:fish", "baseline", "f1"),
                          _row("mpart:fish", "fetch-skipped"), _row("mpart:fish", "fetch-ok"), _row("mpart:fish", "fetch-skipped")])
     assert st["mpart:sw"]["skips"] == 2 and st["mpart:sw"]["hash"] == "h1"
-    assert st["mpart:fish"]["skips"] == 1                                                    # the fetch-ok reset the count
+    assert st["mpart:fish"]["skips"] == 1                                                     # the fetch-ok reset the count
     st2 = mw.build_state([_row("mpart:sw", "baseline", "h1"), _row("mpart:sw", "fetch-skipped"),
                           _row("mpart:sw", "changed", "h2", snap="S")])
     assert st2["mpart:sw"] == {"hash": "h2", "snapshot": "S", "skips": 0}
-    assert mw.build_state([_row("mpart:sw", "fetch-skipped")]) == {}                         # never baselined
+    assert mw.build_state([_row("mpart:sw", "fetch-skipped")]) == {}                          # never baselined
+    assert mw.build_state([["d", "mpart:sw", "l", "baseline", "h9"]])["mpart:sw"] == {"hash": "h9", "snapshot": "", "skips": 0}  # trailing cells stripped
 
 
-def test_diff_index_and_load_index():
+def test_diff_index():
     d = mw.diff_index({"a": "1", "b": "2", "c": "3"}, {"a": "1", "b": "9", "d": "4"})
     assert d == {"added": ["d"], "removed": ["c"], "changed": ["b"]}
-    assert mw.load_index('{"rows": {"a": "1"}}') == {"a": "1"} and mw.load_index("not json") == {} and mw.load_index("[]") == {}
 
 
-def test_surface_water_copy_prints_values_verbatim_and_carries_the_screening_caveats():
-    views = {"L-NAPIER-1": mc.surface_water_view(sw_rows()[1])}
-    screen = {"L-NAPIER-1": mw.screen_surface_water(views["L-NAPIER-1"], TH)}
-    diff = {"added": ["L-NAPIER-1"], "removed": [], "changed": []}
-    body = mw.format_change_body(mw.ITEM_SW, diff, views, screen)
-    assert "PFOS 16.5" in body and "Napier Rd" in body and "ABOVE the Rule 57 non-drinking-water value of 12.0 ng/L" in body
-    assert "SCREENING comparison" in body and "cite the value in force at the sample date" in body and "'K' flag" in body
-    assert mw.subject_for(mw.ITEM_SW, diff, screen).startswith("[MPART data] EXCEEDANCE")
-    assert not mw.subject_for(mw.ITEM_SW, diff, {"L-NAPIER-1": []}).startswith("[MPART data] EXCEEDANCE")
+@pytest.mark.parametrize("old,new,suspect", [(17, 0, True), (17, 8, True), (17, 9, False), (17, 17, False), (0, 0, False), (7, 2, True)])
+def test_suspect_shrink(old, new, suspect):
+    assert mw.is_suspect_shrink(old, new, 0.5) is suspect
 
 
-def test_fish_copy_never_calls_an_I_code_a_detection_and_applies_no_threshold():
-    views = {"2021233-S01": mc.fish_view(fish_rows()[0]), "2021268-S01": mc.fish_view(fish_rows()[1])}
-    body = mw.format_change_body(mw.ITEM_FISH, {"added": sorted(views), "removed": [], "changed": []}, views, {})
-    assert "no PFOS value published (code I)" in body and "PFOS 5.9 ppb" in body and "No threshold is applied" in body
-    assert "EXCEEDANCE" not in mw.subject_for(mw.ITEM_FISH, {"added": ["a"], "removed": [], "changed": []}, {})
+def _sw_views(rows=None):
+    return mc.views_by_index_key([mc.surface_water_view(r) for r in (rows or sw_rows())], mc.SW_VIEW)
 
 
-def test_bodies_cap_long_lists_and_name_removed_keys():
-    views = {f"k{i:03d}": mc.fish_view(fish_row(f"2021{i:03d}-S01", 1507, "Sucker", 6.0, None)) for i in range(40)}
-    body = mw.format_change_body(mw.ITEM_FISH, {"added": sorted(views), "removed": ["gone-1"], "changed": []}, views, {})
-    assert "NEW rows (40)" in body and "+ 15 more" in body and "REMOVED rows (1" in body and "- gone-1" in body
+def test_surface_water_copy_prints_values_verbatim_with_flags_and_the_screening_caveats():
+    views = _sw_views()
+    hit_map = {NAPIER: mw.screen_surface_water(views[NAPIER], TH, VY)}
+    diff = {"added": [NAPIER], "removed": [], "changed": []}
+    body = mw.format_change_body(mw.ITEM_SW, diff, views, hit_map, {f"{NAPIER}|PFOS"}, TH, VY)
+    assert "PFOS 16.5 (MDL 1.03)" in body and "PFNA 1.04 [J]" in body and "collected 2021-08-05" in body and "Napier Rd" in body
+    assert ">>> PFOS 16.5 ng/L is ABOVE the published Rule 57 non-drinking-water value of 12 ng/L" in body
+    assert "SCREENING comparison" in body and "PFOS 12 ng/L (verified 2014)" in body and "PFHxS 210 ng/L (verified 2023)" in body
+    assert "PFHxS and PFNA values were added in 2023" in body and "'K' flag" in body and "vary by report" in body
+    assert "static pull" in body and "republished the layer" in body
+    assert "revised in 2022-2023" not in body                                              # PFHxS/PFNA were ADDED, not revised
+
+
+def test_the_screening_note_is_rendered_from_the_thresholds_in_use():
+    note = mw.screen_note({"PFOS": 10.0}, {"PFOS": 2014})
+    assert "PFOS 10 ng/L (verified 2014)" in note and "PFOA" not in note.split("spreadsheet —")[1].split(".")[0]
+
+
+def test_a_hit_that_was_already_recorded_is_not_announced_as_new():
+    views = _sw_views()
+    hit_map = {NAPIER: mw.screen_surface_water(views[NAPIER], TH, VY)}
+    body = mw.format_change_body(mw.ITEM_SW, {"added": [], "removed": [], "changed": [NAPIER]}, views, hit_map, set(), TH, VY)
+    assert "was already above (previously recorded)" in body and "is ABOVE" not in body
+
+
+def test_subject_wording_is_a_screening_not_a_determination_and_counts_are_honest():
+    d = {"added": ["a"], "removed": [], "changed": ["b", "c"]}
+    assert mw.subject_for(mw.ITEM_SW, d, True).startswith("[MPART data] Rule 57 screening:")
+    assert "EXCEEDANCE" not in mw.subject_for(mw.ITEM_SW, d, True)
+    assert mw.subject_for(mw.ITEM_SW, d, False) == "[MPART data] 1 new, 2 changed: surface-water PFAS"
+    assert mw.subject_for(mw.ITEM_SITES, {"added": [], "removed": ["x"], "changed": []}, False) == "[MPART data] 1 removed: PFAS sites/AOIs"
+
+
+def test_fish_copy_uses_EGLEs_definitions_and_never_calls_an_I_code_a_detection_or_a_publication_gap():
+    rows = [fish_row("2021233-S01", 1484, "Brown Trout", None, "I"), fish_row("2021268-S01", 1507, "White Sucker", 5.9, None),
+            fish_row("2021999-S01", 1507, "White Sucker", 2.1, "K"), fish_row("2021998-S01", 1507, "Carp", None, "QNS")]
+    views = mc.views_by_index_key([mc.fish_view(r) for r in rows], mc.FISH_VIEW)
+    body = mw.format_change_body(mw.ITEM_FISH, {"added": sorted(views), "removed": [], "changed": []}, views, {}, set())
+    assert "no concentration reported — I: analytical interference was present; a concentration could not be determined" in body
+    assert "PFOS 5.9 ppb (edible portion)" in body
+    assert "PFOS 2.1 ppb (edible portion) — K: not detected — the value shown is the method detection limit" in body
+    assert "QNS: not enough sample remained" in body and "No threshold is applied" in body
+    assert "no value published" not in body and "fillet" not in body
+
+
+def test_screened_rows_are_listed_first_so_the_cap_cannot_hide_them():
+    rows = [sw_row(f"L{i:03d}", "19-JD-0105", "2025-01-01", "w", "d", 1.0, "", 0.5) for i in range(40)]
+    rows.append(sw_row("ZZZ-LAST", "19-JD-0105", "2025-02-01", "w", "d", 99.0, "", 0.5))       # sorts last alphabetically
+    views = _sw_views(rows)
+    hk = next(k for k in views if k.startswith("ZZZ-LAST"))
+    hit_map = {hk: mw.screen_surface_water(views[hk], TH, VY)}
+    body = mw.format_change_body(mw.ITEM_SW, {"added": sorted(views), "removed": [], "changed": []}, views, hit_map,
+                                 {f"{hk}|PFOS"}, TH, VY)
+    assert "NEW rows (41)" in body and "+ 16 more" in body and "sample ZZZ-LAST" in body
+    assert body.index("ZZZ-LAST") < body.index("sample L000") and "Snapshot JSON cell" in body
+
+
+def test_sites_and_removed_copy():
+    views = mc.views_by_index_key([mc.sites_view(r) for r in site_rows()], mc.SITES_VIEW)
+    body = mw.format_change_body(mw.ITEM_SITES, {"added": sorted(views), "removed": ["gone|site"], "changed": []}, views, {}, set())
+    assert "Holloway Sand and Gravel" in body and "residential wells sampled: Yes" in body and "- gone|site" in body
+
+
+def test_an_unscreenable_unit_is_said_out_loud():
+    views = _sw_views([sw_row("X1", "s", "2025-01-01", "w", "d", 30.0, "", 1, unit="ug/L")])
+    body = mw.format_change_body(mw.ITEM_SW, {"added": list(views), "removed": [], "changed": []}, views, {}, set(), TH, VY)
+    assert "NOT screened (unit 'ug/L' does not read as ng/L)" in body
 
 
 # ==============================================================================
@@ -335,17 +507,23 @@ CFG = {"mpart": {"enabled": True, "recipients": ["trisha@example.org"], "stale_a
 class World:
     def __init__(self):
         self.sw, self.fish, self.sites = sw_rows(), fish_rows(), site_rows()
-        self.error = {}          # item-name -> exception to raise
+        self.error = {}          # item-name -> exception to raise from its fetch
 
 
-def _wire(monkeypatch, world=None, cfg=CFG, fake=None):
+def _wire(monkeypatch, world=None, cfg=CFG, fake=None, send=None):
     world = world or World()
     fake = fake or FakeSheets()
     sent = []
     monkeypatch.setenv("GSHEET_ID", "PUBSHEET")
     monkeypatch.setattr(mw, "load_config", lambda: copy.deepcopy(cfg))
     monkeypatch.setattr(mw.dc, "sheets_service", lambda: fake)
-    monkeypatch.setattr(mw.ea, "send_email", lambda subj, body, c, recipients=None: sent.append((subj, body, recipients)) or True)
+
+    def _send(subj, body, c, recipients=None):
+        if send is not None:
+            return send(subj, body, c, recipients)
+        sent.append((subj, body, recipients))
+        return True
+    monkeypatch.setattr(mw.ea, "send_email", _send)
 
     def _mk(name, attr):
         def fetch(*a, **k):
@@ -370,13 +548,15 @@ def test_disabled_is_a_noop_touching_nothing(monkeypatch):
     assert mw.run([]) == 0
 
 
-def test_first_run_baselines_all_three_items_silently(monkeypatch):
+def test_first_run_baselines_all_three_items_silently_and_records_the_hits_already_present(monkeypatch):
     world, fake, sent = _wire(monkeypatch)
     assert mw.run([]) == 0
     rows = rows_of(fake)
     assert sorted(r[1] for r in rows) == ["mpart:fish", "mpart:sites", "mpart:sw"] and all(r[3] == "baseline" for r in rows)
     assert sent == []
-    assert json.loads(rows_of(fake, "mpart:sw")[0][7])["rows"].keys() == {r["LabSampleId"] for r in sw_rows()}
+    snap = json.loads(rows_of(fake, "mpart:sw")[0][7])
+    assert set(snap["rows"]) == {mc.surface_water_view(r)["key"] for r in sw_rows()}
+    assert snap["hits"] == [f"{NAPIER}|PFOS"] and "1 already above a screening value" in rows_of(fake, "mpart:sw")[0][5]
 
 
 def test_second_run_unchanged_writes_nothing(monkeypatch):
@@ -385,42 +565,52 @@ def test_second_run_unchanged_writes_nothing(monkeypatch):
     assert mw.run([]) == 0 and len(rows_of(fake)) == 3 and sent == []
 
 
-def test_a_new_exceeding_sample_alerts_with_the_screening_and_a_durable_row_first(monkeypatch):
-    world, fake, sent = _wire(monkeypatch)
+def test_a_new_screened_sample_writes_the_durable_row_BEFORE_the_alert(monkeypatch):
+    seen_at_send = []
+
+    def send(subj, body, c, recipients):
+        seen_at_send.append((len(rows_of(fake, "mpart:sw", "changed")), subj))     # the row must already be there
+        return True
+    world, fake, sent = _wire(monkeypatch, send=send)
     world.sw = world.sw[:1] + world.sw[2:]                    # baseline WITHOUT the Napier sample
     assert mw.run([]) == 0
-    world.sw = sw_rows()                                      # ...then it appears
+    world.sw = sw_rows()                                      # ...then EGLE republishes with it
     assert mw.run([]) == 0
     ch = rows_of(fake, "mpart:sw", "changed")
-    assert len(ch) == 1 and "1 added, 0 changed, 0 removed" in ch[0][5] and "L-NAPIER-1" in ch[0][5]
-    assert "EXCEEDANCE screen: 1 row(s)" in ch[0][5]
+    assert len(ch) == 1 and "1 added, 0 changed, 0 removed" in ch[0][5] and NAPIER in ch[0][5] and "NEW screening hits" in ch[0][5]
+    assert seen_at_send == [(1, "[MPART data] Rule 57 screening: a reported value is above a non-drink value — new/changed surface-water PFAS result(s)")]
+    assert mw.run([]) == 0 and len(rows_of(fake, "mpart:sw", "changed")) == 1     # not re-alerted
+    assert json.loads(ch[0][7])["hits"] == [f"{NAPIER}|PFOS"]                     # the hit is now on record
+
+
+def test_an_already_recorded_hit_is_not_re_announced_when_its_row_changes(monkeypatch):
+    world, fake, sent = _wire(monkeypatch)
+    assert mw.run([]) == 0                                    # Napier's PFOS hit is baselined
+    world.sw[1]["SampleType"] = "Grab"                        # an unrelated edit to the Napier row (e.g. a bulk re-pull)
+    assert mw.run([]) == 0
     assert len(sent) == 1
-    subj, body, recipients = sent[0]
-    assert subj.startswith("[MPART data] EXCEEDANCE") and "PFOS 16.5" in body and recipients == ["trisha@example.org"]
-    assert mw.run([]) == 0 and len(sent) == 1                 # not re-alerted
-
-
-def test_a_new_nondetect_or_low_sample_alerts_as_a_new_sample_without_an_exceedance(monkeypatch):
-    world, fake, sent = _wire(monkeypatch)
-    assert mw.run([]) == 0
-    world.sw.append(sw_row("L-NEW", "19-JD-0105", "2026-09-01", "Johnson Drain", "u/s 6 Mile Rd", 20.0, "K", 20.0))
-    assert mw.run([]) == 0
-    assert len(sent) == 1 and "EXCEEDANCE" not in sent[0][0] and "new sample" in sent[0][0]
-
-
-def test_a_revised_value_is_a_changed_row_and_a_dropped_row_is_removed(monkeypatch):
-    world, fake, sent = _wire(monkeypatch)
-    assert mw.run([]) == 0
-    world.sw[0]["CAS1763231_PFOS"] = 40.0                     # lab revised a published value upward
-    world.sw = world.sw[:2]                                    # and the K row vanished
-    assert mw.run([]) == 0
-    ch = rows_of(fake, "mpart:sw", "changed")
-    assert len(ch) == 1 and "1 changed, 1 removed" in ch[0][5]
     subj, body, _ = sent[0]
-    assert "EXCEEDANCE" in subj and "CHANGED rows" in body and "REMOVED rows" in body and "L-JD-100" in body
+    assert "Rule 57 screening" not in subj and subj == "[MPART data] 1 changed: surface-water PFAS"
+    assert "was already above (previously recorded)" in body and "is ABOVE" not in body
 
 
-def test_new_fish_and_new_sites_alert_and_staff_contacts_never_appear(monkeypatch):
+def test_a_hit_that_newly_appears_on_a_changed_row_is_announced(monkeypatch):
+    world, fake, sent = _wire(monkeypatch)
+    assert mw.run([]) == 0
+    world.sw[0]["CAS1763231_PFOS"] = 40.0                     # the lab revised 3.1 -> 40 on a previously clean row
+    assert mw.run([]) == 0
+    assert len(sent) == 1 and sent[0][0].startswith("[MPART data] Rule 57 screening") and "CHANGED rows" in sent[0][1]
+
+
+def test_a_new_nondetect_or_low_sample_is_a_plain_new_sample_alert(monkeypatch):
+    world, fake, sent = _wire(monkeypatch)
+    assert mw.run([]) == 0
+    world.sw.append(sw_row("JD-0100", "19-JD-0100", "2026-09-01", "Johnson Drain", "6 Mile Rd", 20.0, "K", 20.0))
+    assert mw.run([]) == 0
+    assert len(sent) == 1 and sent[0][0] == "[MPART data] 1 new: surface-water PFAS"
+
+
+def test_removed_and_new_fish_and_sites_alert_and_staff_contacts_never_appear(monkeypatch):
     world, fake, sent = _wire(monkeypatch)
     assert mw.run([]) == 0
     world.fish.append(fish_row("2026100-S01", 1507, "White Sucker", 7.7, None, "2026-08-01"))
@@ -430,6 +620,14 @@ def test_new_fish_and_new_sites_alert_and_staff_contacts_never_appear(monkeypatc
     blob = " ".join(s[1] for s in sent) + json.dumps(fake._values._tabs[sw.TAB_MPART])
     assert "PFOS 7.7 ppb" in blob and "New PFAS Site" in blob
     assert "Staffer" not in blob and "example.gov" not in blob
+
+
+def test_duplicate_keys_are_disambiguated_recorded_and_never_wedge_the_layer(monkeypatch):
+    world, fake, sent = _wire(monkeypatch)
+    world.fish = fish_rows() + [fish_row("2021268-S01", 1507, "White Sucker", 8.1, None)]      # a second row with a taken SampleID
+    assert mw.run([]) == 0
+    assert "1 duplicate row key(s) disambiguated" in rows_of(fake, "mpart:fish")[0][5]
+    assert mw.run([]) == 0 and len(rows_of(fake, "mpart:fish")) == 1 and sent == []            # stable across runs
 
 
 def test_empty_or_blank_recipients_are_display_only_never_the_coalition_list(monkeypatch):
@@ -443,18 +641,38 @@ def test_empty_or_blank_recipients_are_display_only_never_the_coalition_list(mon
         assert len(rows_of(fake, "mpart:sw", "changed")) == 1 and sent == [], recips
 
 
-def test_a_send_failure_still_leaves_the_row(monkeypatch):
+# --- alert delivery is never silent ------------------------------------------------------------
+
+
+def test_a_send_that_returns_false_or_raises_makes_the_run_red_but_keeps_the_row(monkeypatch):
+    for failing in (lambda *a: False, lambda *a: (_ for _ in ()).throw(RuntimeError("smtp"))):
+        world, fake, sent = _wire(monkeypatch, send=failing)
+        assert mw.run([]) == 0
+        world.sw.append(sw_row("L-NEW", "s", "2026-09-01", "w", "d", 30.0, "", 1))
+        assert mw.run([]) == 1                                    # the alert was lost: loud
+        assert len(rows_of(fake, "mpart:sw", "changed")) == 1
+
+
+def test_a_formatting_bug_is_contained_and_reported(monkeypatch):
     world, fake, sent = _wire(monkeypatch)
     assert mw.run([]) == 0
+    monkeypatch.setattr(mw, "format_change_body", lambda *a, **k: (_ for _ in ()).throw(KeyError("boom")))
     world.sw.append(sw_row("L-NEW", "s", "2026-09-01", "w", "d", 30.0, "", 1))
-    monkeypatch.setattr(mw.ea, "send_email", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("smtp")))
-    assert mw.run([]) == 0 and len(rows_of(fake, "mpart:sw", "changed")) == 1
+    assert mw.run([]) == 1 and len(rows_of(fake, "mpart:sw", "changed")) == 1 and sent == []
 
 
-# --- failure modes -----------------------------------------------------------------------------
+def test_one_broken_item_does_not_stop_the_others(monkeypatch):
+    world, fake, sent = _wire(monkeypatch)
+    monkeypatch.setattr(mw.mc, "fish_view", lambda a: (_ for _ in ()).throw(ValueError("weird attributes")))
+    assert mw.run([]) == 1
+    assert len(rows_of(fake, "mpart:sw", "baseline")) == 1 and len(rows_of(fake, "mpart:sites", "baseline")) == 1
+    assert rows_of(fake, "mpart:fish") == []
 
 
-def test_a_fetch_failure_after_baseline_is_recorded_and_alerts_once_at_the_threshold_then_recovers(monkeypatch):
+# --- failure modes -----------------------------------------------------------------------------------
+
+
+def test_a_fetch_failure_is_recorded_alerts_at_the_threshold_repeats_weekly_and_recovers(monkeypatch):
     world, fake, sent = _wire(monkeypatch)
     assert mw.run([]) == 0
     world.error["fish"] = mc.MpartFetchError("GET failed: OSError")
@@ -463,12 +681,52 @@ def test_a_fetch_failure_after_baseline_is_recorded_and_alerts_once_at_the_thres
     assert mw.run([]) == 0
     assert len(sent) == 1 and "mpart:fish unreadable for 3 runs" in sent[0][0] and "going UNSEEN" in sent[0][1]
     assert len(rows_of(fake, "mpart:fish", "fetch-skipped")) == 3
-    assert mw.run([]) == 0 and len(sent) == 1                  # once per outage
+    for _ in range(6):                                                                    # skips 4..9: no repeat yet
+        assert mw.run([]) == 0
+    assert len(sent) == 1
+    assert mw.run([]) == 0 and len(sent) == 2 and "unreadable for 10 runs" in sent[1][0]   # weekly reminder
     world.error.clear()
     assert mw.run([]) == 0 and len(rows_of(fake, "mpart:fish", "fetch-ok")) == 1
     world.error["fish"] = mc.MpartFetchError("blip")
-    assert mw.run([]) == 0 and len(sent) == 1                  # the counter was reset: 1 skip, no new alert
-    assert rows_of(fake, "mpart:fish", "changed") == []        # skips never invent changes
+    assert mw.run([]) == 0 and len(sent) == 2                                              # the counter was reset
+    assert rows_of(fake, "mpart:fish", "changed") == []                                     # skips never invent changes
+
+
+def test_an_empty_success_is_a_suspect_response_not_a_mass_removal(monkeypatch):
+    world, fake, sent = _wire(monkeypatch)
+    assert mw.run([]) == 0
+    good = world.sw
+    world.sw = []                                             # a republish window: 200 OK with zero features
+    assert mw.run([]) == 0
+    assert sent == [] and rows_of(fake, "mpart:sw", "changed") == []
+    sk = rows_of(fake, "mpart:sw", "fetch-skipped")
+    assert len(sk) == 1 and "suspect response: 0 row(s) now vs 3 recorded" in sk[0][5]
+    world.sw = good                                           # ...and it recovers: nothing was lost, nothing re-announced
+    assert mw.run([]) == 0 and sent == [] and len(rows_of(fake, "mpart:sw", "fetch-ok")) == 1
+
+
+def test_a_shrink_that_persists_is_accepted_as_real(monkeypatch):
+    world, fake, sent = _wire(monkeypatch)
+    assert mw.run([]) == 0
+    world.sites = world.sites[:0]                             # the sites layer really is emptied
+    assert mw.run([]) == 0 and mw.run([]) == 0 and sent == []                             # two suspect runs: skipped
+    assert mw.run([]) == 0                                                                  # the third observation: accepted
+    assert len(sent) == 1 and "REMOVED rows (2" in sent[0][1]
+    assert len(rows_of(fake, "mpart:sites", "changed")) == 1
+
+
+def test_a_partial_shrink_below_the_fraction_is_also_held_back(monkeypatch):
+    world, fake, sent = _wire(monkeypatch)
+    world.fish = [fish_row(f"2021{i:03d}-S01", 1507, "Sucker", 6.0, None) for i in range(10)]
+    assert mw.run([]) == 0
+    full = world.fish
+    world.fish = full[:3]                                     # 10 -> 3 (< 50%): a republish glitch, not a real change
+    assert mw.run([]) == 0
+    assert rows_of(fake, "mpart:fish", "changed") == [] and sent == []
+    assert len(rows_of(fake, "mpart:fish", "fetch-skipped")) == 1
+    world.fish = full[:6]                                     # 6 of 10 is a normal-sized drop: diffed and alerted at once
+    assert mw.run([]) == 0
+    assert len(rows_of(fake, "mpart:fish", "changed")) == 1 and "REMOVED rows (4" in sent[-1][1]
 
 
 def test_a_fetch_failure_without_a_baseline_is_loud(monkeypatch):
@@ -485,10 +743,21 @@ def test_a_structural_error_is_always_loud_even_with_a_baseline(monkeypatch):
     assert mw.run([]) == 1
 
 
-def test_a_duplicate_row_key_is_structural_not_silently_merged(monkeypatch):
+def test_a_blank_row_key_is_structural(monkeypatch):
     world, fake, sent = _wire(monkeypatch)
-    world.fish = fish_rows() + [fish_rows()[0]]
+    monkeypatch.setattr(mw.mc, "fish_view", lambda a: dict(mc.fish_view.__wrapped__(a) if hasattr(mc.fish_view, "__wrapped__") else {}, key=""))
     assert mw.run([]) == 1 and rows_of(fake, "mpart:fish") == []
+
+
+@pytest.mark.parametrize("stored", ["not json", '{"rows": {"a": "1"}}', '{"v": 999, "rows": {}}'])
+def test_an_unreadable_or_old_format_snapshot_rebaselines_silently_and_says_so(monkeypatch, stored):
+    world, fake, sent = _wire(monkeypatch)
+    assert mw.run([]) == 0
+    fake._values._tabs[sw.TAB_MPART] = [r if r[1] != "mpart:sw" or r[0] == "Date" else r[:7] + [stored]
+                                        for r in fake._values._tabs[sw.TAB_MPART]]
+    assert mw.run([]) == 0 and sent == []
+    sw_rows_ = rows_of(fake, "mpart:sw", "baseline")
+    assert len(sw_rows_) == 2 and "unreadable or from another snapshot format" in sw_rows_[1][5]
 
 
 def test_a_sheet_read_failure_propagates_instead_of_rebaselining(monkeypatch):
@@ -555,25 +824,31 @@ def test_shipped_config_ships_disabled_scoped_and_screens_the_four_rule_57_value
     from config_loader import load_config
     cfg = load_config()["mpart"]
     assert cfg["enabled"] is False and cfg["recipients"] == ["arbor-hills@trishakunst.com"]
-    assert {k: float(v) for k, v in cfg["thresholds_ng_l"].items()} == mw.DEFAULT_THRESHOLDS_NG_L
+    thresholds, years = mw.load_thresholds(cfg)                       # also validates the keys
+    assert thresholds == mw.DEFAULT_THRESHOLDS_NG_L and years == mw.DEFAULT_VERIFIED_YEAR
     assert [float(x) for x in cfg["bbox"]] == list(mc.DEFAULT_BBOX) and [int(s) for s in cfg["fish"]["stations"]] == [1484, 1507]
+    assert float(cfg["max_shrink_fraction"]) == 0.5 and int(cfg["accept_shrink_after_skips"]) == 2
 
 
 def test_the_public_water_supply_layer_is_not_rewatched_here():
     """Stream R (`pfas_pws`, live) already watches it; a second watcher would double-alert."""
-    import re
-    from pathlib import Path
-    root = Path(__file__).resolve().parent.parent
     for name in ("mpart_client.py", "mpart_watcher.py"):
-        code = re.sub(r'""".*?"""', "", (root / name).read_text(), flags=re.S)
+        code = re.sub(r'""".*?"""', "", (ROOT / name).read_text(), flags=re.S)
         code = re.sub(r"#.*", "", code)
         assert "PublicWaterSupply" not in code and "WSSN" not in code, name
     assert "PublicWaterSupply" not in json.dumps(__import__("config_loader").load_config()["mpart"])
 
 
-def test_workflow_is_scheduled_gated_and_public_data_only():
-    from pathlib import Path
-    wf = (Path(__file__).resolve().parent.parent / ".github" / "workflows" / "mpart-watch.yml").read_text()
+def test_workflow_is_public_data_only_and_never_passes_the_coalition_extras():
+    wf = (ROOT / ".github" / "workflows" / "mpart-watch.yml").read_text()
     assert "python mpart_watcher.py" in wf and "GSHEET_ID_PRIVATE" not in wf and "GOAUTH" not in wf
-    import re as _re
-    assert not _re.search(r"^\s*ALERT_RECIPIENTS_EXTRA:", wf, _re.M)         # recipients are scoped in config, verbatim
+    assert not re.search(r"^\s*ALERT_RECIPIENTS_EXTRA:", wf, re.M)              # recipients are scoped in config, verbatim
+    assert "schedule:" in wf and "workflow_dispatch:" in wf
+
+
+def test_no_print_in_the_new_modules_interpolates_a_url_or_raw_exception_text_from_the_client():
+    """The layers are public data, but the habit is pinned: prints carry counts, keys the
+    watcher built, and exception CLASS names — never a bare `{e}` from a fetch's message
+    that could embed a URL."""
+    src = (ROOT / "mpart_client.py").read_text()
+    assert "print(" not in src

@@ -16,7 +16,7 @@ name: mpart-watch
 # every layer and prints the counts, writing nothing.
 on:
   schedule:
-    - cron: "15 17 * * *"   # 12:15pm ET (5:15pm UTC), free slot between ride-watch and the afternoon jobs.
+    - cron: "15 17 * * *"   # 5:15pm UTC (12:15pm EST / 1:15pm EDT — DST drift of +/-1h is acceptable).
   workflow_dispatch:
     inputs:
       probe:
