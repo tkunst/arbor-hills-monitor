@@ -35,8 +35,9 @@ WHAT IT DOES per item (the RIDE / PFAS-PWS watch idiom):
     code changed) is alerted as such, listing the rows. The comparison is a SCREENING one
     against the published value — never a regulatory determination — applied only when
     the unit reads as ng/L, when the sample was collected on/after the year the current
-    value was verified (an undated row is screened), and never to a 'K' flag (the value is
-    the method detection limit). Fish results carry EGLE's own code definitions and no
+    value was verified (an undated row is screened), and never to a 'K' flag (EGLE: "below
+    the Method Detection Limit/LOD"). Other flags are printed as published, never glossed
+    (only the FISH layer's code definitions are shown). Fish results carry EGLE's own code definitions and no
     threshold.
 
 FAILURE MODES
@@ -169,7 +170,7 @@ def screen_surface_water(view: dict, thresholds: dict, verified_year: dict | Non
     """Analytes in one canonical surface-water row whose reported value is ABOVE its
     threshold. Pure. Not screened at all when: the unit does not read as ng/L; the sample
     was collected before the year that analyte's value was verified; the flag is K; the
-    value is blank or not a number. [{analyte, value, flag, threshold, estimated}]."""
+    value is blank or not a number. [{analyte, value, flag, threshold, id}]."""
     if mc.normalize_unit(view.get("unit", "")) != "ng/L":
         return []
     try:
@@ -193,7 +194,7 @@ def screen_surface_water(view: dict, thresholds: dict, verified_year: dict | Non
             continue
         if value > float(limit):
             out.append({"analyte": analyte, "value": raw, "flag": flag, "threshold": limit,
-                        "estimated": "J" in mc.flag_tokens(flag), "id": hit_id(view, analyte)})
+                        "id": hit_id(view, analyte)})
     return out
 
 
@@ -333,17 +334,20 @@ def screen_note(thresholds: dict, verified_year: dict) -> str:
     vals = "; ".join(f"{a} {thresholds[a]:g} ng/L (verified {verified_year.get(a, '?')})" for a in thresholds)
     return (
         "Rule 57 comparison: the non-drinking-water human non-cancer values (HNV) in EGLE's Rule 57 "
-        f"spreadsheet — {vals}. These non-drink values are applied to EVERY surface-water row in the "
-        "search box; the non-drink designation is documented for Johnson Drain / Johnson Creek only, and "
-        "a water body designated for drinking water has lower values in the same spreadsheet "
-        "(PFOS 11, PFOA 66, PFHxS 59, PFNA 19 ng/L). This is a SCREENING comparison of the reported "
-        "value with the published value, not a regulatory determination. Values are compared only for "
-        "samples collected on or after the year each CURRENT value was verified (an older value — for "
-        "PFOA, a much higher one — or none applied to earlier samples; check the analytical report) and "
-        "only when the unit reads as ng/L; a row with no collection date is screened. A 'K' flag (below "
-        "the method detection limit; the value shown is the detection limit) is never compared. Other "
-        "lab flags (J, Q, B, E, I …) are printed as published; EGLE notes that qualifiers are "
-        "analytical-laboratory specific and it is often better to refer to the original analytical report."
+        f"spreadsheet — {vals}. The layer carries no water-body designation, so these non-drink values are "
+        "applied to EVERY surface-water row in the search box; that Johnson Drain / Johnson Creek is a "
+        "non-drink water body comes from the monitor's own notes on the spreadsheet (not checked against "
+        "the water body's Rule 100 designation), and a water body designated for drinking water has "
+        "lower values in the same spreadsheet (PFOS 11, PFOA 66, PFHxS 59, PFNA 19 ng/L). This is a "
+        "SCREENING comparison of the reported value with the published value, not a regulatory "
+        "determination. Values are compared only for samples collected on or after the year each CURRENT "
+        "value was verified (an older value — for PFOA, a much higher one — or none applied to earlier "
+        "samples; check the analytical report) and only when the unit reads as ng/L; a row with no "
+        "collection date is screened. A 'K' flag (EGLE's layer description: \"below the Method Detection "
+        "Limit/LOD\"; in the rows observed the value shown equals the detection limit) is never compared. "
+        "Every other lab flag (J, Q, B, E, I …) is printed exactly as published and not interpreted here; "
+        "EGLE notes that qualifiers are analytical-laboratory specific and it is often better to refer to "
+        "the original analytical report."
     )
 
 
@@ -358,16 +362,15 @@ _STATIC_NOTE = (
 def _hit_lines(k: str, hit_map: dict[str, list[dict]], new_hits: set[str], recorded: dict[str, str]) -> list[str]:
     lines = []
     for h in hit_map.get(k, []):
-        est = " (J: estimated value)" if h["estimated"] else ""
-        head = (f"    >>> {h['analyte']} {h['value']}{' [' + h['flag'] + ']' if h['flag'] else ''} ng/L{est} is ")
+        head = f"    >>> {h['analyte']} {h['value']}{' [' + h['flag'] + ']' if h['flag'] else ''} ng/L is "
         tail = f"the published Rule 57 non-drinking-water value of {h['threshold']:g} ng/L"
         if h["id"] in new_hits:
             lines.append(f"{head}ABOVE {tail}")
         else:
             was = recorded.get(h["id"], "")
-            same = "" if was in ("", h["value"]) else f" — recorded earlier at {was} ng/L"
+            on_record = "" if was in ("", h["value"]) else f"; the value on record for it is {was} ng/L"
             lines.append(f"{head}above {tail} (a result above it for this site/date/analyte was already "
-                         f"recorded{same}; not new)")
+                         f"recorded{on_record}; not new)")
     return lines
 
 
@@ -383,7 +386,11 @@ def format_change_body(item: str, diff: dict, views: dict[str, dict], hit_map: d
     the row that raised the subject."""
     describe = DESCRIBE[item]
     recorded = recorded or {}
-    parts = [f"A watched MPART PFAS open-data layer changed.\n\nSource:  {LABELS[item]}"]
+    rows_changed = diff["added"] or diff["changed"] or diff["removed"]
+    opening = ("A watched MPART PFAS open-data layer changed." if rows_changed else
+               "The monitor re-screened a watched MPART PFAS open-data layer. The layer's rows did NOT change; "
+               "the screening values or this watch's logic did.")
+    parts = [f"{opening}\n\nSource:  {LABELS[item]}"]
 
     def rank(k):
         return (0 if any(h["id"] in new_hits for h in hit_map.get(k, [])) else 1, k)
@@ -421,12 +428,20 @@ def format_change_body(item: str, diff: dict, views: dict[str, dict], hit_map: d
     return "\n\n".join(parts) + "\n"
 
 
-def subject_for(item: str, diff: dict, has_new_hit: bool) -> str:
+def subject_for(item: str, diff: dict, has_new_hit: bool, new_hit_in_rows: bool = True) -> str:
+    """`new_hit_in_rows` = a new above-value result sits on an ADDED/CHANGED row (the layer moved).
+    A new result found only on an UNCHANGED row was raised by the monitor's own screening values
+    or logic, and the subject says so instead of blaming the layer."""
     kind = {ITEM_SW: "surface-water PFAS", ITEM_FISH: "fish PFOS", ITEM_SITES: "PFAS sites/AOIs"}[item]
-    if has_new_hit:
+    if has_new_hit and new_hit_in_rows:
         return f"[MPART data] Rule 57 screening: a reported value is above a non-drink value — new/changed {kind} result(s)"
     bits = [f"{n} {w}" for n, w in ((len(diff["added"]), "new"), (len(diff["changed"]), "changed"),
                                     (len(diff["removed"]), "removed")) if n]
+    if has_new_hit:
+        n = len(diff.get("rescreened", []))
+        also = f" — also {', '.join(bits)}" if bits else ""
+        return (f"[MPART data] Rule 57 screening: {n} unchanged {kind} row(s) now above a non-drink value "
+                f"(screening values or watch logic changed){also}")
     return f"[MPART data] {', '.join(bits) or 'changed'}: {kind}"
 
 
@@ -628,7 +643,8 @@ def run(argv: list[str] | None = None) -> int:
                   f"{len(diff['changed'])} changed, {len(diff['removed'])} removed, {len(diff['rescreened'])} re-screened).")
             if not (diff["added"] or diff["changed"] or diff["removed"] or diff["rescreened"]):
                 continue                                                # snapshot moved, nothing to say — the row records it
-            result = _send(recipients, subject_for(item, diff, bool(new_hits)),
+            new_in_rows = any(h["id"] in new_hits for k in diff["added"] + diff["changed"] for h in hit_map.get(k, []))
+            result = _send(recipients, subject_for(item, diff, bool(new_hits), new_in_rows),
                            lambda: format_change_body(item, diff, views, hit_map, new_hits, thresholds, verified_year,
                                                       old_hits), cfg)
             if result == "failed":

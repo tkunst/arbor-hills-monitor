@@ -162,11 +162,14 @@ def _fetch(url: str, where: str, fields: tuple[str, ...], timeout: int) -> list[
         raise MpartFetchError(f"GET {url} returned non-object JSON")
     if "error" in payload:
         err = payload["error"] if isinstance(payload["error"], dict) else {}
+        # upstream text is collapsed to ONE line before it reaches an exception (and so the public Actions
+        # log): a newline followed by `::add-mask::` / `::error::` would otherwise be a runner command
+        shown = re.sub(r"\s+", " ", str(payload["error"])).strip()[:200]
         if err.get("code") == 400:
             # ArcGIS answers a rejected query (a renamed field in the where clause, a bad layer id)
             # as 200 + {"error": {"code": 400}}. That persists across runs: structural, not a blip.
-            raise MpartParseError(f"ArcGIS rejected the query at {url}: {str(err)[:200]} — the layer may have changed")
-        raise MpartFetchError(f"ArcGIS error from {url}: {str(payload['error'])[:200]}")
+            raise MpartParseError(f"ArcGIS rejected the query at {url}: {shown} — the layer may have changed")
+        raise MpartFetchError(f"ArcGIS error from {url}: {shown}")
     if "features" not in payload:
         raise MpartParseError(f"query response from {url} has no 'features' — the service may have changed")
     if payload.get("exceededTransferLimit"):

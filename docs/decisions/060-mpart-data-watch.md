@@ -57,10 +57,11 @@ upper-Rouge surface-water and fish results, which were found by hand in 9/2026.
   range), I (chemical interference; EMPC for Eurofins) and IDA01 (estimated/suspect), and
   "the definition varies by report". `Unit` is "provided by the analytical laboratory".
 
-One real exceedance exists in the area data: the Napier Rd tributary sample
-(`19-UUTJD-0010`, 2021-08-05; lab id `UT-0100`) reports PFOS **16.5 ng/L** with no flag;
-Lotext's Rule 57 note (`documents/arbor-hills/source-docs/egle-rule-57-water-quality-values-2026-09-26/`)
-compares it with the 12 ng/L non-drink value. At baseline this watch records that row as
+One row in the area data reports PFOS above the non-drink screening value: the Napier Rd
+tributary sample (`19-UUTJD-0010`, 2021-08-05; lab id `UT-0100`; waterbody "Unnamed Trib to an
+Unnamed Trib", not Johnson Drain) reports PFOS **16.5 ng/L** with no flag; Lotext's Rule 57 note
+(`documents/arbor-hills/source-docs/egle-rule-57-water-quality-values-2026-09-26/`) compares it
+with the 12 ng/L non-drink value. At baseline this watch records that row as
 already above its value; it does not announce it as new.
 
 ## Decision
@@ -103,11 +104,13 @@ PFOA 66, PFHxS 59, PFNA 19 ng/L). Rules:
   screened** (`thresholds_verified_year`): at that date an older value (for PFOA, a much
   higher one) or none applied, so the report has to be checked by hand. A row with no
   collection date is screened (fail-open).
-- A `K` flag (below the method detection limit; the value shown is the limit — the
-  observed K rows have value = MDL) is never compared. Every other flag is printed **as
-  published** (not re-cased or re-sorted); the alert quotes EGLE: qualifiers are
-  analytical-laboratory specific and it is often better to refer to the original analytical
-  report. `Not Measured` is shown as such; a `J` hit is rendered "(J: estimated value)".
+- A `K` flag (EGLE's surface-water layer description: "below the Method Detection
+  Limit/LOD"; in the observed K rows the value equals the MDL) is never compared. Every
+  other flag is printed **as published** and **not interpreted or glossed** — in particular
+  a `J` on a surface-water hit is NOT rendered as "estimated" (EGLE's surface-water J is
+  "below the Reporting Limit/LOQ"; "estimated concentration" is the FISH layer's J). The
+  alert quotes EGLE: qualifiers are analytical-laboratory specific and it is often better
+  to refer to the original analytical report. `Not Measured` is shown as such.
 - A row is screened only when `Unit` reads as ng/L (also `ppt`); otherwise the alert says
   it was not screened. A value must be strictly above the threshold.
 - The snapshot records which (site, date, analyte) results are above their value, so only
@@ -117,7 +120,9 @@ PFOA 66, PFHxS 59, PFNA 19 ng/L). Rules:
 - A change that touches **no row** but newly puts an unchanged row above a value (a
   threshold in config was tightened, or this code changed) is written as a `changed` row
   and alerted in its own "UNCHANGED rows now above a screening value" section — never as a
-  subject-only email. A snapshot that moved with nothing to say writes its row and no email.
+  subject-only email — and its subject and opening line say the monitor's screening changed,
+  not the layer ("N unchanged … row(s) now above a non-drink value (screening values or watch
+  logic changed)"). A snapshot that moved with nothing to say writes its row and no email.
 - **Fish** PFOS (ppb, edible portion) is printed as published with EGLE's own code
   definitions; **no fish threshold is applied** (none was specified).
 
@@ -186,7 +191,9 @@ other than `K` are printed but not interpreted (EGLE says qualifiers are laborat
 specific); a value revised by the lab alerts as `changed` and shows only the new value (the
 snapshot stores hashes; a known hit shows what was recorded); the `hits` record is never
 pruned, so raising a threshold in config leaves earlier announced hits on record;
-`Matrix` and the reporting limit are not part of the record; a layer that legitimately
+`Matrix` and the reporting limit are not part of the record; a duplicate group's `#n`
+labels follow row-hash order, so editing one member can relabel its siblings (all list as
+changed; rare — the live layers held no duplicate keys); a layer that legitimately
 returns zero rows at first sighting is refused loudly rather than baselined.
 
 ## Activation

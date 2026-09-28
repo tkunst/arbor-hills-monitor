@@ -183,6 +183,20 @@ def test_fetch_guards_split_transient_from_structural(monkeypatch, body, status,
         mc.fetch_surface_water()
 
 
+@pytest.mark.parametrize("error", ["boom\n::add-mask::secret\r\n::error::forged", {"code": 503, "message": "x\n::stop-commands::y"}])
+def test_upstream_error_text_reaches_exceptions_as_one_line(monkeypatch, error):
+    """A newline in an upstream error would let it start a line with `::` in the public Actions log
+    (a workflow command). It is collapsed to a single line before it is stored anywhere."""
+    wire_opener(monkeypatch, json.dumps({"error": error}).encode())
+    with pytest.raises(mc.MpartFetchError) as e:
+        mc.fetch_surface_water()
+    assert "\n" not in str(e.value) and "\r" not in str(e.value)
+    wire_opener(monkeypatch, json.dumps({"error": {"code": 400, "message": "bad\nfield"}}).encode())
+    with pytest.raises(mc.MpartParseError) as e2:
+        mc.fetch_surface_water()
+    assert "\n" not in str(e2.value)
+
+
 @pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://example.com/x", "http://insecure.example/x", ""])
 def test_a_non_https_layer_url_is_refused_before_any_request(monkeypatch, url):
     def boom():
@@ -347,7 +361,7 @@ VY = {"PFOS": 2014, "PFOA": 2022, "PFHxS": 2023, "PFNA": 2023}
 
 def test_screen_flags_only_detected_values_above_the_threshold():
     hits = mw.screen_surface_water(mc.surface_water_view(sw_rows()[1]), TH, VY)
-    assert [(h["analyte"], h["value"], h["threshold"], h["estimated"]) for h in hits] == [("PFOS", "16.5", 12.0, False)]
+    assert [(h["analyte"], h["value"], h["threshold"]) for h in hits] == [("PFOS", "16.5", 12.0)]
     assert mw.screen_surface_water(mc.surface_water_view(sw_rows()[0]), TH, VY) == []             # 3.1 < 12
     exact = mc.surface_water_view(sw_row("x", "s", "2024-01-01", "w", "d", 12.0, "", 1))
     assert mw.screen_surface_water(exact, TH, VY) == []                                           # "above", not "at"
@@ -359,9 +373,9 @@ def test_a_K_flag_is_a_nondetect_and_is_never_compared():
     assert not mw.is_nondetect("J") and not mw.is_nondetect("J, Q") and mw.is_nondetect(" k ")
 
 
-def test_an_estimated_J_value_above_the_threshold_is_flagged_as_estimated():
+def test_a_J_flagged_value_above_the_threshold_is_compared_and_carries_its_flag_as_published():
     v = mc.surface_water_view(sw_row("x", "s", "2024-01-01", "w", "d", 13.0, "J", 1))
-    assert [(h["analyte"], h["estimated"], h["flag"]) for h in mw.screen_surface_water(v, TH, VY)] == [("PFOS", True, "J")]
+    assert [(h["analyte"], h["flag"]) for h in mw.screen_surface_water(v, TH, VY)] == [("PFOS", "J")]
 
 
 def test_screening_needs_a_unit_that_reads_as_ng_per_l():
@@ -497,11 +511,14 @@ def test_surface_water_copy_prints_values_verbatim_with_flags_and_the_screening_
     assert ">>> PFOS 16.5 ng/L is ABOVE the published Rule 57 non-drinking-water value of 12 ng/L" in body
     assert "SCREENING comparison" in body and "PFOS 12 ng/L (verified 2014)" in body and "PFHxS 210 ng/L (verified 2023)" in body
     # the non-drink designation is documented for one water body; the values are applied to every row — and the note says so
-    assert "applied to EVERY surface-water row" in body and "Johnson Drain / Johnson Creek only" in body
+    assert "applied to EVERY surface-water row" in body and "carries no water-body designation" in body
     assert "PFOS 11, PFOA 66, PFHxS 59, PFNA 19 ng/L" in body                              # the lower drink-water values
     assert "CURRENT value was verified" in body and "for PFOA, a much higher one" in body and "a row with no collection date is screened" in body
     assert "no such value was in force" not in body and "vary by report" not in body       # both were inaccurate
     assert "qualifiers are analytical-laboratory specific" in body and "'K' flag" in body
+    assert "Below the Method Detection Limit/LOD" not in body and 'below the Method Detection Limit/LOD' in body   # EGLE's own words, attributed
+    assert "printed exactly as published and not interpreted here" in body
+    assert "monitor's own notes" in body and "Rule 100 designation" in body               # the designation's source is named
     assert "revised in 2022-2023" not in body                                              # PFHxS/PFNA were ADDED, not revised
 
 
@@ -530,15 +547,19 @@ def test_a_revised_value_on_an_already_recorded_hit_says_what_was_recorded_and_i
     key = next(iter(views))
     body = mw.format_change_body(mw.ITEM_SW, {"added": [], "removed": [], "changed": [key]}, views,
                                  _hit_map(views, [key]), set(), TH, VY, {NAPIER_HIT: "16.5"})
-    assert ">>> PFOS 18 ng/L" in body.replace("18.0", "18") and "recorded earlier at 16.5 ng/L; not new" in body and "is ABOVE" not in body
+    assert ">>> PFOS 18 ng/L" in body.replace("18.0", "18") and "the value on record for it is 16.5 ng/L; not new" in body
+    assert "is ABOVE" not in body and "revised" not in body and "recorded earlier" not in body
 
 
-def test_an_estimated_J_hit_is_rendered_as_estimated():
+def test_a_J_hit_is_printed_as_published_and_never_glossed_as_estimated():
+    """EGLE's surface-water J is 'below the Reporting Limit/LOQ' — 'estimated' is the FISH layer's
+    J. The alert prints the flag exactly and adds no meaning of its own."""
     views = _sw_views([sw_row("x", "s", "2024-01-01", "w", "d", 13.0, "J", 1)])
     key = next(iter(views))
     body = mw.format_change_body(mw.ITEM_SW, {"added": [key], "removed": [], "changed": []}, views, _hit_map(views, [key]),
                                  {mw.hit_id(views[key], "PFOS")}, TH, VY)
-    assert ">>> PFOS 13 [J] ng/L (J: estimated value) is ABOVE" in body
+    assert ">>> PFOS 13 [J] ng/L is ABOVE" in body and "estimated" not in body.split("Rule 57 comparison")[0]
+    assert "estimated" not in body                                                       # nowhere in the surface-water alert
 
 
 def test_unchanged_rows_newly_above_a_value_get_their_own_section():
@@ -902,8 +923,11 @@ def test_a_hits_only_change_is_alerted_with_the_rows_and_never_as_an_empty_alert
     assert mw.run([]) == 0
     ch = rows_of(fake, "mpart:sw", "changed")
     assert len(ch) == 1 and "0 added, 0 changed, 0 removed, 1 re-screened" in ch[0][5]
-    assert len(sent) == 1 and sent[0][0].startswith("[MPART data] Rule 57 screening")
+    assert len(sent) == 1
+    assert sent[0][0] == ("[MPART data] Rule 57 screening: 1 unchanged surface-water PFAS row(s) now above a non-drink value "
+                          "(screening values or watch logic changed)")                   # it does NOT blame the layer
     body = sent[0][1]
+    assert body.startswith("The monitor re-screened a watched MPART PFAS open-data layer. The layer's rows did NOT change")
     assert "UNCHANGED rows now above a screening value" in body and "19-JD-0105" in body and "3.1" in body and "is ABOVE" in body
     assert mw.run([]) == 0 and len(sent) == 1                                                # and it is not re-announced
 
@@ -915,7 +939,7 @@ def test_a_reissued_row_with_a_new_lab_id_is_not_announced_as_a_new_exceedance(m
     assert mw.run([]) == 0
     assert len(sent) == 1
     subj, body, _ = sent[0]
-    assert "Rule 57 screening" not in subj and "recorded earlier at 16.5 ng/L; not new" in body and "is ABOVE" not in body
+    assert "Rule 57 screening" not in subj and "the value on record for it is 16.5 ng/L; not new" in body and "is ABOVE" not in body
 
 
 def test_a_result_that_leaves_the_layer_and_returns_is_not_announced_twice(monkeypatch):
@@ -929,12 +953,21 @@ def test_a_result_that_leaves_the_layer_and_returns_is_not_announced_twice(monke
 
 
 def test_a_snapshot_that_moved_with_nothing_to_say_writes_its_row_and_no_email(monkeypatch):
+    """The real path: two rows share a site/date/analyte (a field duplicate). Raising the threshold
+    stops the first (13) hitting while the second (20) still does — no row changed, no new result, but
+    the value on record for the shared id moves. The row records it; nobody is emailed."""
     world, fake, sent = _wire(monkeypatch)
+    twin = dict(world.sw[1], CAS1763231_PFOS=13.0)                       # same LabSampleId/site/date, Duplicate flag differs
+    world.sw[1] = dict(world.sw[1], CAS1763231_PFOS=20.0, Duplicate=1)
+    world.sw.append(dict(twin, Duplicate=0))
+    assert mw.run([]) == 0 and json.loads(rows_of(fake, "mpart:sw", "baseline")[0][7])["hits"] == {NAPIER_HIT: "13"}
+    loose = copy.deepcopy(CFG)
+    loose["mpart"]["thresholds_ng_l"] = {"PFOS": 15.0}
+    monkeypatch.setattr(mw, "load_config", lambda: copy.deepcopy(loose))
     assert mw.run([]) == 0
-    monkeypatch.setattr(mw, "hits_by_id", lambda hm: {**{i: v for k in hm for h in hm[k] for i, v in [(h["id"], h["value"])]},
-                                                       "ghost|2020-01-01|PFOS": "99"})       # a value with no row change behind it
-    assert mw.run([]) == 0
-    assert len(rows_of(fake, "mpart:sw", "changed")) == 1 and sent == []
+    ch = rows_of(fake, "mpart:sw", "changed")
+    assert len(ch) == 1 and "0 added, 0 changed, 0 removed" in ch[0][5] and sent == []
+    assert json.loads(ch[0][7])["hits"] == {NAPIER_HIT: "20"}
 
 
 def test_a_failed_liveness_alert_makes_the_run_red(monkeypatch):

@@ -1644,8 +1644,8 @@ mpart:
   # call this a SCREENING comparison. A sample collected before the year its CURRENT value was
   # verified is NOT screened (an older value — PFOA's was far higher, replaced in 2022 — or
   # none applied then; PFHxS and PFNA were added in 2023), an undated row IS screened, a 'K'
-  # flag (below the method detection limit; the value shown is the limit) is never compared,
-  # and a unit that does not read as ng/L is never compared. Keys must be PFOS/PFOA/PFHxS/
+  # flag (EGLE: "below the Method Detection Limit/LOD") is never compared, every other flag is
+  # printed as published and not interpreted, and a unit that does not read as ng/L is never compared. Keys must be PFOS/PFOA/PFHxS/
   # PFNA (a typo raises); `thresholds_verified_year` is layered over the defaults.
   thresholds_ng_l: {PFOS: 12, PFOA: 170, PFHxS: 210, PFNA: 30}
   thresholds_verified_year: {PFOS: 2014, PFOA: 2022, PFHxS: 2023, PFNA: 2023}
