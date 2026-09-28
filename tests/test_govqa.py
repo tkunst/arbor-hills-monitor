@@ -1552,16 +1552,62 @@ def test_the_rid_found_by_number_is_kept_on_the_done_row_and_restored_from_it(mo
 
 
 def test_a_request_with_no_rid_cannot_hog_the_staging_batch(monkeypatch):
-    fake, sent, grid, arch = _released_world(monkeypatch, names=("a.pdf", "b.pdf"))
+    """A's files sort first but its rid is unknown; with max_downloads_per_run=1 it would take the only slot
+    and nothing would ever be staged for B."""
+    cfg = copy.deepcopy(CFG)
+    cfg["govqa"].update(keywords=[], download_attachments=True, max_downloads_per_run=1, max_file_mb=1)
+    fake, sent, grid, arch = _wire(monkeypatch, cfg=cfg)
     uploads = _staging_env(monkeypatch)
-    real = gw.Run.phase_stage
+    real = gw.build_state
 
-    def blind(self):                                                                  # the request's rid is unknown in this run
-        self.state["requests"]["E600003-010126"]["rid"] = ""
-        return real(self)
-    monkeypatch.setattr(gw.Run, "phase_stage", blind)
-    assert go(grid, arch) == 0 and uploads == [] and arch.downloads == []
-    assert len(rows_of(fake, "file-listed")) == 2
+    def seeded(rows):
+        st = real(rows)
+        blank = {"status": "GRANTED – Records", "created": "", "closed": "", "matched": True, "terms": "t"}
+        st["requests"]["E600001-010126"] = dict(blank, rid="")                 # A: no rid known
+        st["requests"]["E600003-010126"] = dict(blank, rid="7003")             # B: fine
+        for no, name in (("E600001-010126", "a.pdf"), ("E600003-010126", "b.pdf")):
+            st["files"][gw.file_key(no, name)] = {"request": no, "name": name, "occ": 1, "state": "listed", "fails": 0}
+        return st
+    monkeypatch.setattr(gw, "build_state", seeded)
+    arch.details_by_rid["7003"] = {"reference": "E600003-010126", "closed": "", "files": [
+        {"target": "rptAttachments$ctl00$lnkStreamCloud", "name": "b.pdf"}]}
+    assert go(FakeGrid(), arch) == 0
+    assert arch.downloads == ["b.pdf"] and len(uploads) == 1                       # B got the slot A could not use
+
+
+def test_a_malformed_rid_or_key_in_the_sheet_costs_only_that_request(monkeypatch):
+    """A hand-edited private-Sheet cell must not abort the listing phase for every other request."""
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+    assert go(grid, arch) == 0
+    arch.details_by_rid["7010"] = {"reference": "E600010-020226", "closed": "", "files": []}
+    real = gw.build_state
+
+    def seeded(rows):
+        st = real(rows)
+        st["list_pending"].update({"E600020-010126", "E600010-020226"})
+        st["requests"]["E600020-010126"] = {"status": "GRANTED – Records", "created": "", "closed": "", "rid": "70x", "matched": True, "terms": "t"}
+        st["requests"]["E600010-020226"] = {"status": "GRANTED – Records", "created": "", "closed": "", "rid": "7010", "matched": True, "terms": "t"}
+        return st
+    monkeypatch.setattr(gw, "build_state", seeded)
+    assert go(first_run_grid(), arch) == 1                                          # the bad one is reported...
+    assert [r[gw.C_KEY] for r in rows_of(fake, "list-failed")] == ["list:E600020-010126"]
+    assert [r[gw.C_KEY] for r in rows_of(fake, "file-list-done")] == ["list:E600010-020226"]   # ...and the other is still listed
+
+
+def test_a_fresh_release_event_restarts_the_strike_count_in_the_same_run_too(monkeypatch):
+    """4 persisted strikes, then the status changes: the new list-pending must start the count over (as a
+    reload would), not give the release up after ONE more failure."""
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+    assert go(grid, arch) == 0
+    arch.details_error = gq.GovqaFetchError("timeout")
+    new = FakeGrid({"Arbor Hills": pages([R("E600009-020226", "Arbor Hills FOIA", "New Request", rid="7009"), R("E600003-010126", AH)]),
+                    "Holloway": pages([R("E599999-010126", "Holloway pit")])})
+    for _ in range(4):                                                              # the request appears; four listings fail
+        assert go(new, arch) == 1
+    assert len(rows_of(fake, "list-failed")) == 4 and rows_of(fake, "list-skipped") == []
+    arch.rows["E600009-020226"] = R("E600009-020226", "Arbor Hills FOIA", "GRANTED – Records", rid="7009")
+    assert go(new, arch) == 1                                                       # status change: a FRESH list-pending
+    assert rows_of(fake, "list-skipped") == [] and len(rows_of(fake, "list-failed")) == 5     # one more strike, NOT a give-up
 
 
 # --- keyword sweep guards (round 3) ---------------------------------------------------------------------
