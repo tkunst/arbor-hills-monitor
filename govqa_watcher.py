@@ -9,8 +9,8 @@ E614007 (an 8/2026 request by outside counsel, closed 8/20/2026) put ~45 RRD
 documents in front of us we had never seen. Nothing watched for the next one.
 
 WHAT IT DOES (daily), in guarded phases — a failure in one phase is reported and the
-next still runs, and the REPORT is always sent last (a `finally`), so an alert can never
-be lost to a crash after its rows were written:
+next still runs, and the REPORT is always sent last (a `finally`), so an alert cannot
+be lost to an exception after its rows were written:
   1. KEYWORD SWEEP  each configured keyword, ONE per search, newest first (Playwright,
      the handoff's §1C-bis method), stopping at the first page whose E-numbers are ALL
      already in the tab. A request that is new and passes the keyword's optional `require`
@@ -33,15 +33,18 @@ be lost to a crash after its rows were written:
      status, by E-number over a plain cookie session (no browser); a status change alerts.
      Unknown statuses count as OPEN. A truncated re-check list, or lookups that keep
      returning nothing, are reported.
-  4. FILES          for a new or status-changed request that says records were released,
-     the attachment list is recorded (`file-listed`, duplicate names keyed by occurrence).
-     The request gets a `list-pending` marker in the SAME write as its `new`/`status` row and
-     a `file-list-done` marker once its detail page was read, and every run retries the
+  4. FILES          for every new or status-changed request the attachment list is recorded
+     (`file-listed`, duplicate names keyed by occurrence) — not only for statuses this code
+     recognises as "released": an unseen status must not hide a release. The request gets a
+     `list-pending` marker in the SAME write as its `new`/`status` row and a `file-list-done`
+     marker (carrying the rid) once its detail page was read, and every run retries the
      pending ones — so a failure, a spent time budget or a kill between the status row and
-     the listing (the request is terminal and never re-checked) cannot lose the release.
+     the listing (the request is terminal and never re-checked) cannot lose the release. A
+     listing that keeps failing gets `list-failed` strikes and is given up (`list-skipped`,
+     reported once) after 5.
   5. STAGING        if `download_attachments` and a private staging folder are set, files are
      downloaded, hashed (SHA-256 + MD5) and uploaded under a CONTENT-ADDRESSED name
-     (`<E-number>__<sha256[:16]>.<ext>` — the attachment's own name, which can name a
+     (`<E-number>__<sha256[:16]>[.<ext>]` — the attachment's own name, which can name a
      resident, is kept only in the private Sheet and never goes into a Drive query or log),
      skipping any whose MD5 matches a configured "already held" folder.
 
@@ -62,8 +65,10 @@ HARD RULES (ADR 059) — pinned by tests/test_govqa.py:
     (which prints request URLs) is silenced; `main()` reports an uncaught error as class +
     scrubbed message only.
 
-RESIDUAL (accepted, ADR 059): released files are listed when a request is new or changes
-status; attachments posted later to an already-terminal request are not seen; requests
+RESIDUAL (accepted, ADR 059): the one report email is sent after staging, so a HARD kill
+(SIGKILL / the job timeout) during a long staging phase could still lose it (staging ships
+off and is time-budgeted; an exception never can); released files are listed when a request
+is new or changes status; attachments posted later to an already-terminal request are not seen; requests
 baselined by a first sweep or a CSV are history and are not listed.
 
 ACCURACY: alerts are source-labeled listing events ("EGLE's archive shows request X with
@@ -100,6 +105,7 @@ from config_loader import load_config
 STAGING_ENV_DEFAULT = "GOAUTH_GOVQA_STAGING_FOLDER_ID"
 CSV_ENV_DEFAULT = "GOAUTH_GOVQA_CSV_FOLDER_ID"
 _MAX_FILE_FAILS = 5
+_MAX_LIST_FAILS = 5
 _EMAIL_LIST_CAP = 25
 _EXCERPT_CHARS = 300
 _CIRCUIT_BREAKER = 3                # consecutive structural failures that abort a phase
@@ -218,11 +224,12 @@ def build_state(rows: list[list]) -> dict:
     """Fold the append-only tab into state (the LAST row for a key wins):
       requests[E]  {status, created, closed, rid, matched, terms}
       files[key]   {request, name, occ, state: listed|staged|held|skipped, fails}
-      list_pending requests with a `list-pending` marker and no `file-list-done` since
+      list_pending requests with a `list-pending` marker and no `file-list-done`/`list-skipped` since
+      list_fails   {E: consecutive `list-failed` strikes since its last `list-pending`}
       terms        keywords with a first-sweep marker (baseline OR partial)
       csvs         '<Drive id>:<content hash>' of CSV files already ingested
     Tolerates rows Sheets returned with trailing empty cells stripped."""
-    st = {"requests": {}, "files": {}, "terms": set(), "csvs": set(), "list_pending": set()}
+    st = {"requests": {}, "files": {}, "terms": set(), "csvs": set(), "list_pending": set(), "list_fails": {}}
     for r in rows:
         key, event = _cell(r, C_KEY), _cell(r, C_EVENT)
         if key.startswith("term:"):
@@ -230,7 +237,17 @@ def build_state(rows: list[list]) -> dict:
         elif key.startswith("csv:"):
             st["csvs"].add(key[4:])
         elif key.startswith("list:"):
-            (st["list_pending"].add if event == "list-pending" else st["list_pending"].discard)(key[5:])
+            no = key[5:]
+            if event == "list-pending":
+                st["list_pending"].add(no)
+                st["list_fails"].pop(no, None)                       # a fresh release event starts a fresh count
+            elif event == "list-failed":
+                st["list_fails"][no] = st["list_fails"].get(no, 0) + 1
+            elif event in ("file-list-done", "list-skipped"):
+                st["list_pending"].discard(no)
+                st["list_fails"].pop(no, None)
+            if _cell(r, C_RID) and no in st["requests"] and not st["requests"][no]["rid"]:
+                st["requests"][no]["rid"] = _cell(r, C_RID)          # a rid found by number is kept for next time
         elif key.startswith("file:"):
             m = _FILE_KEY.match(key)
             if not m:
@@ -503,6 +520,8 @@ class Run:
             return
         found: dict[str, dict] = {}
         partial_terms, swept_ok, empties, structural_in_a_row = [], [], 0, 0
+        partial_why: dict[str, str] = {}
+        known_terms = {t for rq in self.state["requests"].values() if rq["matched"] for t in rq["terms"].split(";")}
         try:
             for kw in self.keywords:
                 if self.out_of_time():
@@ -528,6 +547,9 @@ class Run:
                       f"page(s) of {res.total_items} item(s){' — stopped at a fully-known page' if res.stopped_on_known else ''}.")
                 if res.total_items == 0:
                     empties += 1
+                    if term in known_terms:
+                        self.problem(f"keyword {term!r} returned zero items although it matched recorded requests before — "
+                                     "the site may have stopped honouring the query (e.g. quoted phrases)", fatal=False)
                 for r in res.rows:
                     entry = found.setdefault(r["request_no"], {"row": r, "matched_by": [], "first": True})
                     if keyword_matches(kw, r["summary"]):
@@ -541,6 +563,8 @@ class Run:
                     print(f"[govqa] NEEDS CSV EXPORT: keyword {term!r} ({res.total_items} items, {res.total_pages} pages).")
                     if first:
                         partial_terms.append(term)      # ask ONCE; what was read is recorded below
+                        partial_why[term] = (f"first sweep stopped at max_pages_per_term={self.max_pages}: older history NOT read "
+                                             "— export a CSV to backfill it")
                 elif first and res.pager_missing:
                     # a full page of rows and no pager text: older pages may exist that were never read
                     self.problem(f"keyword {term!r} returned a full page of {gq.GRID_PAGE_SIZE} rows with no pager text, so "
@@ -548,6 +572,8 @@ class Run:
                                  "results, ignore this; otherwise export the grid to CSV in a real browser and drop it in the "
                                  "CSV folder.", fatal=False)
                     partial_terms.append(term)
+                    partial_why[term] = ("first sweep read a full page of rows with no pager text, so whether older pages exist "
+                                         "is unknown — export a CSV if the term has more than that many results")
                 else:
                     swept_ok.append(term)
         finally:
@@ -556,10 +582,12 @@ class Run:
             except Exception:  # noqa: BLE001
                 pass
 
-        # Sanity: every keyword empty while the tab holds recorded requests is a broken read, not "no news".
-        if self.keywords and empties == len(self.keywords) and self.state["requests"]:
-            self.problem("every keyword returned zero rows although requests are on record — the archive or its markup "
-                         "may have changed; nothing was recorded and no keyword marker was written")
+        # Sanity: EVERY keyword empty is a broken read, not "no news" — with requests on record, and also on the
+        # activation run (writing every `term:` marker with no requests would make the next real run alert the
+        # whole history as new).
+        if self.keywords and empties == len(self.keywords):
+            self.problem("every keyword returned zero rows — the archive, its markup or the query syntax may have changed "
+                         "(run the workflow with probe=true); nothing was recorded and no keyword marker was written")
             return
 
         rows = []
@@ -589,14 +617,11 @@ class Run:
             if event == "new":
                 self.new_reqs.append({"request_no": no, "status": r["status"], "created": r["created"],
                                       "summary": r["summary"], "terms": terms, "rid": r["rid"]})
-                if gq.is_released(r["status"]):
-                    rows.append(self.list_pending_row(no))
+                rows.append(self.list_pending_row(no))            # ANY new request: an unseen status must not hide a release
         self.write(rows)
         markers = ([_row(self.today, f"term:{t}", "baseline", note="keyword baselined")
                     for t in swept_ok if t not in self.state["terms"]]
-                   + [_row(self.today, f"term:{t}", "partial",
-                           note=f"first sweep stopped at max_pages_per_term={self.max_pages}: older history NOT read — "
-                                "export a CSV to backfill it") for t in partial_terms])
+                   + [_row(self.today, f"term:{t}", "partial", note=partial_why[t]) for t in partial_terms])
         self.write(markers)                              # markers LAST: a crash re-baselines silently
         self.state["terms"].update(swept_ok)
         self.state["terms"].update(partial_terms)
@@ -690,8 +715,7 @@ class Run:
                 old = prev["status"]
                 out = [_row(self.today, no, "status", created=row["created"], status=row["status"], terms=prev["terms"],
                             rid=rq["rid"], text=excerpt(row["summary"]), note=f"status {old!r} -> {row['status']!r}")]
-                if gq.is_released(row["status"]):
-                    out.append(self.list_pending_row(no))
+                out.append(self.list_pending_row(no))
                 self.write(out)                                     # the status row and the pending marker: ONE append
                 prev.update(status=row["status"], rid=rq["rid"])
                 self.changed.append((rq, old))
@@ -701,9 +725,23 @@ class Run:
                          "an outage or a markup change?")
 
     # -- phase 4: list the released files ------------------------------------
+    def list_strike(self, no: str, why: str):
+        """One failed listing attempt: a `list-failed` row (fatal problem this run); the 5th gives up
+        (`list-skipped`, the request leaves the pending set) and says so once, non-fatally."""
+        n = self.state["list_fails"].get(no, 0) + 1
+        self.state["list_fails"][no] = n
+        gave_up = n >= _MAX_LIST_FAILS
+        self.write([_row(self.today, f"list:{no}", "list-skipped" if gave_up else "list-failed", note=f"attempt {n}: {why}"[:250])])
+        if gave_up:
+            self.state["list_pending"].discard(no)
+            self.problem(f"{no}: gave up listing its released files after {n} failed attempts (list-skipped in the Sheet) — "
+                         "look at the request by hand", fatal=False)
+        else:
+            self.problem(f"{no}: its released files could not be listed (attempt {n} of {_MAX_LIST_FAILS}; retried next run): {why}")
+
     def phase_list_files(self):
         """Read the detail page of every request with a `list-pending` marker — this run's new/
-        released requests AND any left over from an earlier run — and record its attachments."""
+        changed requests AND any left over from an earlier run — and record its attachments."""
         in_report = {r["request_no"]: r for r in self.new_reqs}
         in_report.update({r["request_no"]: r for r, _old in self.changed})
         for no in sorted(self.state["list_pending"], reverse=True):
@@ -716,23 +754,24 @@ class Run:
             session = self.get_session()
             rid = rq.get("rid") or known.get("rid")
             if not rid:                                       # the grid row had no details link: ask by number
-                row = self.backoff(lambda: session.lookup(no), f"lookup {no}") if not self.out_of_time() else None
+                try:
+                    row = self.backoff(lambda: session.lookup(no), f"lookup {no}")
+                except gq.GovqaStructuralError as e:
+                    print(f"[govqa] STRUCTURAL: {gq.scrub(e)}")
+                    self.list_strike(no, f"lookup: {gq.scrub(e, 120)}")
+                    continue
                 rid = row["rid"] if row else None
                 if rid:
                     rq["rid"] = rid
                     known["rid"] = rid
             if not rid:
-                self.problem(f"{no}: released, but the archive shows no details link — files not listed (retried next run)",
-                             fatal=False)
+                self.list_strike(no, "the archive shows no details link for it")
                 continue
             try:
-                det = self.backoff(lambda: session.details(rid), f"details {no}", on_retry=session.reset)
+                det = self.backoff(lambda: session.details(rid, expect_reference=no), f"details {no}", on_retry=session.reset)
             except gq.GovqaStructuralError as e:
                 print(f"[govqa] STRUCTURAL: {gq.scrub(e)}")
-                self.problem(f"details {no}: {gq.scrub(e)}")
-                continue
-            if det["reference"] != no:                        # the rid led somewhere else: never record it under `no`
-                self.problem(f"{no}: the detail page for rid {rid} is for a different request — not listed (retried next run)")
+                self.list_strike(no, gq.scrub(e, 150))
                 continue
             rq["closed"] = det.get("closed", "")
             rq["n_files"] = len(det["files"])
@@ -747,9 +786,11 @@ class Run:
                     self.state["files"][key] = {"request": no, "name": f["name"], "occ": seen[f["name"]],
                                                 "state": "listed", "fails": 0}
             n_listed = len(rows)
-            rows.append(_row(self.today, f"list:{no}", "file-list-done", note=f"{len(det['files'])} attachment(s) on the page"))
-            self.write(rows)                                  # the files first, the done marker LAST
+            rows.append(_row(self.today, f"list:{no}", "file-list-done", rid=rid,
+                             note=f"{len(det['files'])} attachment(s) on the page"))
+            self.write(rows)                                  # the files first, the done marker LAST (it also keeps the rid)
             self.state["list_pending"].discard(no)
+            self.state["list_fails"].pop(no, None)
             self.counts["files_listed"] += n_listed
 
     # -- phase 5: stage the attachments (private folder) ----------------------
@@ -763,7 +804,9 @@ class Run:
             print(f"[govqa] STAGING REFUSED: {gq.scrub(e)}")
             self.problem(gq.scrub(e))
             return
-        pending = [(k, f) for k, f in self.state["files"].items() if f["state"] == "listed" and f["fails"] < _MAX_FILE_FAILS]
+        pending = [(k, f) for k, f in self.state["files"].items()
+                   if f["state"] == "listed" and f["fails"] < _MAX_FILE_FAILS
+                   and (self.state["requests"].get(f["request"]) or {}).get("rid")]      # a rid-less request cannot hog the batch
         if folder is None:
             n_pending = len(pending)
             if n_pending:
@@ -793,12 +836,10 @@ class Run:
                     self.problem("time budget reached while staging files — remaining files left for the next run")
                     return
                 try:
-                    det = self.backoff(lambda: session.details(rid), f"details {request_no}", on_retry=session.reset)
+                    det = self.backoff(lambda: session.details(rid, expect_reference=request_no), f"details {request_no}",
+                                       on_retry=session.reset)
                 except gq.GovqaStructuralError as e:
                     self.problem(f"details {request_no}: {gq.scrub(e)}")
-                    continue
-                if det["reference"] != request_no:
-                    self.problem(f"{request_no}: the detail page for its rid is for a different request — nothing staged")
                     continue
                 targets: dict[str, list[str]] = defaultdict(list)
                 for f in det["files"]:
@@ -825,9 +866,7 @@ class Run:
                         raise
                     # an expired session / transient answer: a FRESH session, reload the detail page, retry in-run
                     session.reset()
-                    det = session.details(rid)
-                    if det["reference"] != request_no:
-                        raise
+                    det = session.details(rid, expect_reference=request_no)
                     tl = [x["target"] for x in det["files"] if x["name"] == f["name"]]
                     if f["occ"] > len(tl):
                         raise

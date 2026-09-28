@@ -307,6 +307,44 @@ def test_next_page_keeps_polling_through_a_transiently_unreadable_page():
     assert rows[0]["request_no"] == "E615000-010126" and "GVPagerOnClick" in fp.js
 
 
+def test_parse_detail_refuses_a_page_whose_attachment_links_were_not_all_read():
+    """The M-1 hole: if the link text is wrapped (an icon, a <span>) the name regex reads too few files,
+    and a short list would be recorded as the whole release and closed for good."""
+    icon = DETAIL.replace('>10690_6_mile_2021.pdf</a>', '><i class="fa fa-file"></i></a>')
+    with pytest.raises(gq.GovqaStructuralError, match="attachment links"):
+        gq.parse_detail(icon)
+    none = re.sub(r"<a [^>]*rptAttachments.*?</a>", "", DETAIL, flags=re.S)
+    assert gq.parse_detail(none)["files"] == []                              # a release with no attachments is still fine
+    assert len(gq.parse_detail(DETAIL)["files"]) == 2
+
+
+def test_parse_pager_takes_the_LAST_match_so_request_text_cannot_hide_pages():
+    assert gq.parse_pager("row text: Page 1 of 1 (1 items) ... Page 1 of 10 (97 items)") == (1, 10, 97)
+    assert gq.parse_pager("only Page 3 of 4 (37 items)") == (3, 4, 37) and gq.parse_pager("nothing") is None
+
+
+def test_the_session_refuses_a_summary_or_details_response_that_ended_on_another_host():
+    evil = "https://evil.example.com/WEBAPP/_rs/(S(x))/OpenRecordsSummary.aspx"
+    with pytest.raises(gq.GovqaFetchError, match="non-allowlisted"):
+        gq.ArchiveSession(session=FakeHTTP([("GET", "Open", Resp(200, SUMMARY, url=evil))])).lookup("E615953-091526")
+    s = gq.ArchiveSession(session=FakeHTTP([("GET", "RequestArchiveDetails", Resp(200, DETAIL, url="https://evil.example.com/x"))]))
+    s._summary_page_url = SESSION_URL
+    with pytest.raises(gq.GovqaFetchError, match="non-allowlisted"):
+        s.details("703017")
+
+
+def test_details_with_expect_reference_refuses_and_never_remembers_a_mismatched_page(tmp_path):
+    http = FakeHTTP([summary_ok(), ("GET", "RequestArchiveDetails", Resp(200, DETAIL))])
+    s = gq.ArchiveSession(session=http)
+    with pytest.raises(gq.GovqaStructuralError, match="different request"):
+        s.details("703017", expect_reference="E999999-010126")
+    assert s._detail_html == ""                                              # nothing remembered: a later download() cannot use it
+    with pytest.raises(gq.GovqaFetchError, match="before details"):
+        s.download("rptAttachments$ctl00$lnkStreamCloud", str(tmp_path / "f"), 100)
+    ok = gq.ArchiveSession(session=FakeHTTP([summary_ok(), ("GET", "RequestArchiveDetails", Resp(200, DETAIL))]))
+    assert ok.details("703017", expect_reference="E614007-080526")["reference"] == "E614007-080526"
+
+
 # ==============================================================================
 # Client — backoff + sweep
 # ==============================================================================
@@ -780,12 +818,15 @@ class FakeArchive:
     def reset(self):
         self.resets += 1
 
-    def details(self, rid):
+    def details(self, rid, expect_reference=None):
         self.detail_calls.append(rid)
         if self.details_error:
             raise self.details_error
         default = {"reference": next((n for n, r in self.rows.items() if r.get("rid") == rid), "?"), "closed": "", "files": []}
-        self._current = self.details_by_rid.get(rid, default)
+        page = self.details_by_rid.get(rid, default)
+        if expect_reference and page["reference"] != expect_reference:              # like ArchiveSession: never remembered
+            raise gq.GovqaStructuralError(f"the detail page for rid {rid} is for a different request")
+        self._current = page
         return copy.deepcopy(self._current)
 
     def download(self, target, dest, max_bytes):
@@ -1014,7 +1055,7 @@ def test_every_keyword_empty_while_requests_are_on_record_is_a_broken_read_not_n
     n = len(rows_of(fake))
     blank = FakeGrid({"Arbor Hills": [([], None)], "Holloway": [([], None)]})
     assert go(blank, arch) == 1
-    assert len(rows_of(fake)) == n and "zero rows although requests are on record" in sent[0][1]
+    assert len(rows_of(fake)) == n and "every keyword returned zero rows" in sent[0][1]
 
 
 def test_a_keyword_that_legitimately_has_no_matches_is_baselined_when_others_have_rows(monkeypatch):
@@ -1441,6 +1482,117 @@ def test_a_browser_that_cannot_restart_does_not_abort_the_retry(monkeypatch):
     grid.fail_first = 1
     grid.restart = lambda: (_ for _ in ()).throw(gq.GovqaFetchError("browser is gone"))
     assert go(grid, arch) == 0 and len(rows_of(fake, "baseline")) >= 4                # the second attempt succeeded
+
+
+# --- listing: every event, strikes, contained lookup, kept rid (round 3) ------------------------------
+
+
+def test_a_request_under_a_status_this_code_has_never_seen_is_still_listed(monkeypatch):
+    """A release under an unseen status must not be hidden by a status whitelist."""
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+    assert go(grid, arch) == 0
+    arch.details_by_rid["7011"] = {"reference": "E600011-020226", "closed": "", "files": [
+        {"target": "rptAttachments$ctl00$lnkStreamCloud", "name": "release.pdf"}]}
+    g2 = FakeGrid({"Arbor Hills": pages([R("E600011-020226", "Arbor Hills FOIA", "RELEASED – NEW WORDING", rid="7011"),
+                                         R("E600003-010126", AH)]), "Holloway": pages([R("E599999-010126", "Holloway pit")])})
+    assert go(g2, arch) == 0
+    assert [r[gw.C_KEY] for r in rows_of(fake, "file-listed")] == ["file:E600011-020226:release.pdf#1"]
+
+
+def test_a_listing_that_keeps_failing_is_struck_then_given_up_and_reported_once(monkeypatch):
+    fake, sent, grid, arch = _baselined(monkeypatch)
+    _release(arch)
+    arch.details_error = gq.GovqaFetchError("timeout")
+    codes = [go(grid, arch) for _ in range(5)]
+    assert codes == [1, 1, 1, 1, 0]                                                   # loud four times, then a non-fatal give-up
+    assert len(rows_of(fake, "list-failed")) == 4 and len(rows_of(fake, "list-skipped")) == 1
+    assert "gave up listing its released files after 5 failed attempts" in sent[-1][1]
+    n = len(rows_of(fake))
+    assert go(grid, arch) == 0 and len(rows_of(fake)) == n                            # no longer pending: quiet
+    assert rows_of(fake, "file-list-done") == []
+
+
+def test_a_fresh_release_event_restarts_the_listing_strikes():
+    st = gw.build_state([_row("list:E600001-010126", "list-pending"), _row("list:E600001-010126", "list-failed"),
+                         _row("list:E600001-010126", "list-failed")])
+    assert st["list_fails"] == {"E600001-010126": 2} and st["list_pending"] == {"E600001-010126"}
+    st = gw.build_state([_row("list:E600001-010126", "list-failed"), _row("list:E600001-010126", "list-pending")])
+    assert st["list_fails"] == {}                                                       # a new release event starts a fresh count
+    st = gw.build_state([_row("list:E600001-010126", "list-pending"), _row("list:E600001-010126", "list-skipped")])
+    assert st["list_pending"] == set()
+
+
+def test_a_lookup_that_fails_while_listing_costs_only_that_request(monkeypatch):
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+    assert go(grid, arch) == 0
+    arch.details_by_rid["7010"] = {"reference": "E600010-020226", "closed": "", "files": [
+        {"target": "rptAttachments$ctl00$lnkStreamCloud", "name": "b.pdf"}]}
+    g2 = FakeGrid({"Arbor Hills": pages([dict(R("E600012-020226", "Arbor Hills FOIA A", "GRANTED – Records"), rid=None),
+                                         R("E600010-020226", "Arbor Hills FOIA B", "GRANTED – Records", rid="7010"),
+                                         R("E600003-010126", AH)]), "Holloway": pages([R("E599999-010126", "Holloway pit")])})
+    arch.lookup_error = gq.GovqaFetchError("timeout")
+    assert go(g2, arch) == 1
+    assert [r[gw.C_KEY] for r in rows_of(fake, "file-listed")] == ["file:E600010-020226:b.pdf#1"]     # B was not blocked by A
+    assert [r[gw.C_KEY] for r in rows_of(fake, "list-failed")] == ["list:E600012-020226"]
+    assert "E600012-020226" in sent[0][1] and "could not be listed" in sent[0][1]
+
+
+def test_the_rid_found_by_number_is_kept_on_the_done_row_and_restored_from_it(monkeypatch):
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+    assert go(grid, arch) == 0
+    arch.rows["E600009-020226"] = R("E600009-020226", "Arbor Hills FOIA", "GRANTED – Records", rid="7009")
+    arch.details_by_rid["7009"] = {"reference": "E600009-020226", "closed": "", "files": []}
+    g2 = FakeGrid({"Arbor Hills": pages([dict(R("E600009-020226", "Arbor Hills FOIA", "GRANTED – Records"), rid=None),
+                                         R("E600003-010126", AH)]), "Holloway": pages([R("E599999-010126", "Holloway pit")])})
+    assert go(g2, arch) == 0
+    done = rows_of(fake, "file-list-done")
+    assert len(done) == 1 and done[0][gw.C_RID] == "7009"
+    st = gw.build_state([r for r in fake._values._tabs[sw.TAB_GOVQA][1:]])
+    assert st["requests"]["E600009-020226"]["rid"] == "7009"                            # restored for staging next run
+
+
+def test_a_request_with_no_rid_cannot_hog_the_staging_batch(monkeypatch):
+    fake, sent, grid, arch = _released_world(monkeypatch, names=("a.pdf", "b.pdf"))
+    uploads = _staging_env(monkeypatch)
+    real = gw.Run.phase_stage
+
+    def blind(self):                                                                  # the request's rid is unknown in this run
+        self.state["requests"]["E600003-010126"]["rid"] = ""
+        return real(self)
+    monkeypatch.setattr(gw.Run, "phase_stage", blind)
+    assert go(grid, arch) == 0 and uploads == [] and arch.downloads == []
+    assert len(rows_of(fake, "file-listed")) == 2
+
+
+# --- keyword sweep guards (round 3) ---------------------------------------------------------------------
+
+
+def test_one_keyword_going_dark_is_reported_while_the_others_still_return_rows(monkeypatch):
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+    assert go(grid, arch) == 0
+    g2 = FakeGrid({"Arbor Hills": first_run_grid().pages_by_term["Arbor Hills"], "Holloway": [([], None)]})   # Holloway stops matching
+    assert go(g2, arch) == 0                                                                                  # advisory, not red
+    assert "keyword 'Holloway' returned zero items although it matched recorded requests before" in sent[0][1]
+
+
+def test_every_keyword_empty_on_the_activation_run_writes_no_markers(monkeypatch):
+    """Otherwise every `term:` marker would exist with no requests, and the next real run would alert the
+    whole history as NEW."""
+    blank = FakeGrid({"Arbor Hills": [([], None)], "Holloway": [([], None)]})
+    fake, sent, grid, arch = _wire(monkeypatch, grid=blank)
+    assert go(blank, arch) == 1
+    assert rows_of(fake) == [] and "every keyword returned zero rows" in sent[0][1]
+
+
+def test_the_partial_note_names_the_actual_cause(monkeypatch):
+    cfg = copy.deepcopy(CFG)
+    cfg["govqa"].update(max_pages_per_term=2, keywords=[{"term": "Big"}, {"term": "Ten"}])
+    big = pages(*[[R(f"E70000{i}-010126"), R(f"E70001{i}-010126")] for i in range(6)])
+    ten = pages([R(f"E7100{i:02d}-010126") for i in range(10)])
+    fake, sent, grid, arch = _wire(monkeypatch, cfg=cfg, grid=FakeGrid({"Big": big, "Ten": ten}))
+    go(grid, arch)
+    assert "max_pages_per_term=2" in rows_of(fake, key="term:Big")[0][gw.C_NOTE]
+    assert "no pager text" in rows_of(fake, key="term:Ten")[0][gw.C_NOTE] and "max_pages_per_term" not in rows_of(fake, key="term:Ten")[0][gw.C_NOTE]
 
 
 # --- CSV history is not re-checked in the run that ingested it -------------------------------------------
