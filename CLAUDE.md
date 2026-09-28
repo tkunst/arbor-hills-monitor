@@ -204,7 +204,9 @@ external users but no sensitive data). Public repo.
 - `ride_watcher.py` — Stream J: daily snapshot-diff of each watched Part 201
   site's / Part 211 UST's record vs. the `RIDE Watch` tab — a `RiskCondition`
   flip, a `Contaminants` change, or a new `Open_Release` alerts (R5, water
-  quality). Gated on `ride.enabled` (new source; ships `false`). See ADR 019.
+  quality). Gated on `ride.enabled` (built disabled; live `true` since
+  2026-08-07). Watches Layer-1 facilities 00040223 (GFL) and 00038889 (Arbor
+  Hills Landfill Inc, added 2026-09-28). See ADR 019.
 - `nsite_submissions_watcher.py` — Stream K: snapshot-diff of every site in
   the `nsite_sites` registry that has a `nsite_submissions.tiers` entry (a
   SEPARATE, wider 19-entry set than the Documents `facilities:` list — ADR

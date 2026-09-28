@@ -18,8 +18,8 @@ SEVEN watched items, derived from TWO fetches (one per layer):
                        82008712 MITC Corridor.
   - ride:<FacilityID>  one item per Part 211 UST facility's Layer-1 record —
                        00040223 (GFL, 7811 Chubb Rd) and 00038889 (Arbor Hills
-                       Landfill Inc / Advanced Disposal, 10690 W Six Mile; a
-                       closed 2016 LUST, added 2026-09-28).
+                       Landfill Inc, 10690 W Six Mile; registry status "No Longer
+                       A Facility", added 2026-09-28).
 
 WHAT IT DOES per item (mirrors mmd_watcher/rop_watcher exactly):
   - build a canonical snapshot + hash it,

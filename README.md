@@ -136,20 +136,22 @@ encouragement to comment lives on the advocacy site, not here.
     into the `MMD Watch` tab; alerts (Trisha-only to start) on any change; first
     sighting baselines silently — an empty record set is a valid baseline. See
     `docs/decisions/018-mmd-open-data-watch.md`.
-12. **EGLE RIDE / Part 201 + UST status watch (Stream J)** (daily, optional —
-    `ride.enabled: false`): RIDE's own web app is auth-walled with no anonymous
-    document API, but EGLE separately publishes the underlying per-site status on
+12. **EGLE RIDE / Part 201 + UST status watch (Stream J)** (daily, live —
+    `ride.enabled: true`): RIDE's own web app has no anonymous status API (its
+    public inventory page does list FILES anonymously — see the ADR 019
+    addendum), but EGLE separately publishes the underlying per-site status on
     a keyless public ArcGIS service (RRDOpenData — same host/idiom as Stream I,
     two layers). Watches Layer 0 (Part 201 remediation status) for the 5 Arbor
     Hills-area sites — Salem Landfill, Arbor Hills - East, 7667 Chubb Rd, 7941
-    Salem Rd, MITC Corridor — and Layer 1 (Part 211 UST) for the GFL facility.
+    Salem Rd, MITC Corridor — and Layer 1 (Part 211 UST) for two facilities: GFL
+    (00040223) and Arbor Hills Landfill Inc (00038889).
     A `RiskCondition` flip, a `Contaminants` change, or a new `Open_Release` is
     early, citable **R5** (water quality) signal. Snapshot-diff into the `RIDE
     Watch` tab; alerts (Trisha-only to start) on any change; first sighting
     baselines silently. Rides EGLE's RRDOpenData ArcGIS service; if EGLE
-    reorganizes it, the fetch fails loudly rather than silently going quiet. New
-    source, ships disabled — see `docs/decisions/019-ride-part201-watch.md` for
-    activation.
+    reorganizes it, the fetch fails loudly rather than silently going quiet.
+    Built disabled and activated 2026-08-07 — see
+    `docs/decisions/019-ride-part201-watch.md`.
 13. **nSITE Submissions watch (Stream K)** (`nsite_submissions.enabled:
     true`): watches a DIFFERENT, wider list than `facilities:` — all 19 of
     Trisha's MiEnviro email subscriptions, resolved to their real nSITE site
