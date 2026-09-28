@@ -88,6 +88,7 @@ jobs:
           GOAUTH_GFL_AIR_FOLDER_ID: ${{ secrets.GOAUTH_GFL_AIR_FOLDER_ID }}
           GOAUTH_MMPC_FOLDER_ID: ${{ secrets.GOAUTH_MMPC_FOLDER_ID }}
           GOAUTH_RIDGEWOOD_FOLDER_ID: ${{ secrets.GOAUTH_RIDGEWOOD_FOLDER_ID }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}          # the (vestigial) public PDF archive folder — same guard
         run: |
           if [ "$PROBE" = "true" ]; then
             python govqa_watcher.py --probe

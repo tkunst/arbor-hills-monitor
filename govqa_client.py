@@ -56,11 +56,12 @@ _UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
        "(KHTML, like Gecko) Version/17.0 Safari/605.1.15")
 
 MIN_INTERVAL = 1.0                       # seconds between HTTP requests (tests zero it)
-BACKOFF_SECONDS = (30, 120, 600)         # waits after failure 1, 2, 3 (1C-bis: 30 s, 2 min, 10 min)
+BACKOFF_SECONDS = (30, 120, 600)         # 1C-bis: 30 s, 2 min, 10 min. Waits BETWEEN attempts, so with the default
+                                         # 3 attempts only the first two are used; the 600 s applies if max_attempts is raised
 DEFAULT_MAX_ATTEMPTS = 3                 # "after 3 failures, log a structural error and move on"
+GRID_PAGE_SIZE = 10                      # rows per grid page ("Page 1 of 10 (97 items)")
 
 E_NUMBER = re.compile(r"^E\d{6}-\d{6}$")
-_E_NUMBER_IN_TEXT = re.compile(r"E\d{6}-\d{6}")
 
 # Redirect targets a download may follow: EXACTLY the archive and the state's own Azure blob
 # storage account (observed 2026-09-28). A changed storage account fails loudly (a fetch
@@ -141,7 +142,8 @@ def parse_rows(page_html: str) -> list[dict]:
     `aria-label="Request Number: …"` / `Create Date` / `Summary` / `Request Status`
     prefixes, so an EMPTY cell can never shift the others; if a row carries no aria-labels
     the non-empty cells are read positionally. `rid` is the internal id
-    (redirectInfo('714629')); None if the row has no details link. Rows whose request
+    (redirectInfo('714629') in the details link's own attributes); None if the row has no
+    details link. Rows whose request
     number isn't an E-number are ignored."""
     rows = []
     for tr in re.findall(r"<tr[^>]*dxgvDataRow[^>]*>(.*?)</tr>", page_html, re.S):
@@ -160,7 +162,10 @@ def parse_rows(page_html: str) -> list[dict]:
                                         cells[3] if len(cells) > 3 else "")
         if not E_NUMBER.match(no):
             continue
-        rid = re.search(r"(?:redirectInfo|OnMoreInfoClick)\((?:this,\s*)?(?:&#39;|')?(\d+)", tr)
+        # The rid is read ONLY from an <a …> tag's own attributes: the Summary cell is text a third
+        # party wrote, and text like "redirectInfo(123456)" there must never steer which
+        # request's detail page is opened. (The watcher also checks the detail page's reference.)
+        rid = re.search(r"<a\b[^>]*?(?:redirectInfo|OnMoreInfoClick)\((?:this,\s*)?(?:&#39;|')?(\d+)[^>]*>", tr)
         rows.append({"request_no": no, "created": created, "summary": summary,
                      "status": normalize_status(status), "rid": rid.group(1) if rid else None})
     return rows
@@ -170,12 +175,27 @@ def parse_grid_state(page_html: str) -> str:
     """'rows' (at least one data row), 'empty' (the grid POSITIVELY says it has no data:
     its 'No data to display' empty-row), or 'unknown' (neither — the page did not render,
     a challenge/error page, or the markup changed). A zero-row result is only ever
-    believed when it is 'empty'."""
-    if re.search(r"<tr[^>]*dxgvDataRow", page_html):
+    believed when it is 'empty'. <style>/<script> blocks are ignored, so a stylesheet rule
+    that merely NAMES `dxgvEmptyDataRow` cannot pass for an empty grid."""
+    body = re.sub(r"<(style|script)\b.*?</\1>", " ", page_html, flags=re.S | re.I)
+    if re.search(r"<tr[^>]*dxgvDataRow", body):
         return "rows"
-    if re.search(r"dxgvEmptyDataRow|No data to display", page_html):
+    if re.search(r"<tr[^>]*dxgvEmptyDataRow|No data to display", body):
         return "empty"
     return "unknown"
+
+
+def read_grid(page_html: str) -> list[dict]:
+    """The rows of a grid page, or a GovqaFetchError when the page is not a readable grid:
+    it did not render ('unknown'), or it DOES show data rows but none could be parsed (the
+    markup changed) — which must never pass for 'no requests'. An empty grid is []."""
+    state = parse_grid_state(page_html)
+    if state == "unknown":
+        raise GovqaFetchError("the grid did not render (no data rows and no 'No data to display' marker)")
+    rows = parse_rows(page_html)
+    if state == "rows" and not rows:
+        raise GovqaFetchError("the grid shows data rows but none could be read — the archive's markup may have changed")
+    return rows
 
 
 def parse_pager(text: str) -> tuple[int, int, int] | None:
@@ -263,32 +283,20 @@ def phrase_in(text: str, phrase: str) -> bool:
     return re.search(r"(?<!\w)" + re.escape(needle) + r"(?!\w)", norm(text)) is not None
 
 
-_UNSAFE = re.compile(r"[^A-Za-z0-9._ -]+")
-
-
-def safe_filename(request_no: str, name: str) -> str:
-    """A traversal-safe local/Drive filename: '<E-number>__<sanitized name>'. Only
-    [A-Za-z0-9._ -] survive from the attachment's own name; no path separators,
-    no leading dot."""
-    stem, dot, ext = str(name).rpartition(".")
-    stem, ext = (stem, ext) if dot else (str(name), "")
-    stem = _UNSAFE.sub("_", stem).strip(" ._")[:100] or "file"
-    ext = _UNSAFE.sub("", ext).strip(".")[:8]
-    no = request_no if E_NUMBER.match(request_no or "") else "E000000-000000"
-    return f"{no}__{stem}" + (f".{ext.lower()}" if ext else "")
-
-
 # ---------------------------------------------------------------------------
 # Backoff (1C-bis: fresh session, retry, then give up loudly and move on)
 # ---------------------------------------------------------------------------
 
 
 def with_backoff(fn, what: str, max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-                 delays=BACKOFF_SECONDS, sleep=time.sleep, on_retry=None):
+                 delays=BACKOFF_SECONDS, sleep=time.sleep, on_retry=None, should_stop=None):
     """Call fn() up to `max_attempts` times. Between attempts: run `on_retry()`
     (the caller's 'close the context, start a fresh one') then sleep delays[i].
-    GovqaFetchError is retried; anything else propagates. After the last failure
-    raise GovqaStructuralError — the caller logs it and moves on to the next item."""
+    GovqaFetchError is retried; anything else propagates. `should_stop()` (the caller's time
+    budget) is checked before every further attempt, so one failing call cannot outlive the
+    run's budget. A failing `on_retry` (a browser that cannot restart) is swallowed — the
+    next attempt fails on its own and is counted. After the last failure raise
+    GovqaStructuralError — the caller logs it and moves on to the next item."""
     last = None
     for i in range(max_attempts):
         try:
@@ -297,8 +305,13 @@ def with_backoff(fn, what: str, max_attempts: int = DEFAULT_MAX_ATTEMPTS,
             last = e
             print(f"[govqa] {what}: attempt {i + 1}/{max_attempts} failed: {scrub(e)}")
             if i + 1 < max_attempts:
+                if should_stop is not None and should_stop():
+                    raise GovqaStructuralError(f"{what}: not retried — the run's time budget is spent: {scrub(last)}") from e
                 if on_retry is not None:
-                    on_retry()
+                    try:
+                        on_retry()
+                    except Exception:  # noqa: BLE001
+                        pass
                 sleep(delays[min(i, len(delays) - 1)])
     raise GovqaStructuralError(f"{what}: gave up after {max_attempts} failed attempts: {scrub(last)}")
 
@@ -344,6 +357,12 @@ class ArchiveSession:
         except requests.RequestException as e:
             raise GovqaFetchError(f"{method} request failed: {scrub(e)}") from e
 
+    def reset(self) -> None:
+        """Forget the session (cookies, the (S(...)) URL, the loaded pages) so the next call
+        starts a fresh one — the 1C-bis 'restart the session' remedy for an expired one."""
+        self.http.cookies.clear()
+        self._summary_page_url = self._summary_html = self._detail_url = self._detail_html = ""
+
     def _open_summary(self) -> None:
         r = self._req("GET", self.summary_url, timeout=180)
         if r.status_code != 200 or "txtSearch" not in r.text:
@@ -364,35 +383,46 @@ class ArchiveSession:
                       headers={"Referer": self._summary_page_url})
         if r.status_code != 200:
             raise GovqaFetchError(f"lookup POST returned HTTP {r.status_code}")
-        for row in parse_rows(r.text):
+        for row in read_grid(r.text):                  # raises on an unrendered page / unreadable rows
             if row["request_no"] == request_no:
                 return row
-        if parse_grid_state(r.text) == "unknown":
-            raise GovqaFetchError("lookup answer is neither a grid nor an empty grid — page did not render")
         return None
 
     def details(self, rid: str) -> dict:
         """Detail page for an internal rid: see parse_detail. Remembers the page for
-        download()."""
+        download(). If a REUSED session answers with something that is not a detail page (it
+        expired), the session is reset and the call retried once on a fresh one; a fresh
+        session that still answers wrongly is a structural error (the markup changed)."""
         if not str(rid).isdigit():
             raise ValueError(f"not a numeric rid: {rid!r}")
-        if not self._summary_page_url:
+        reused = bool(self._summary_page_url)
+        if not reused:
             self._open_summary()               # a fresh session needs the (S(...)) session URL first
+        try:
+            return self._get_details(rid)
+        except GovqaStructuralError:
+            if not reused:
+                raise
+            self.reset()
+            self._open_summary()
+            return self._get_details(rid)
+
+    def _get_details(self, rid: str) -> dict:
         base = self._summary_page_url.rsplit("/", 1)[0]
         r = self._req("GET", f"{base}/RequestArchiveDetails.aspx?rid={rid}&view=1", timeout=180)
         if r.status_code != 200:
             raise GovqaFetchError(f"details GET returned HTTP {r.status_code}")
+        det = parse_detail(r.text)              # raises GovqaStructuralError on a non-detail page
         self._detail_url, self._detail_html = r.url or f"{base}/RequestArchiveDetails.aspx?rid={rid}&view=1", r.text
-        return parse_detail(r.text)
+        return det
 
     def download(self, target: str, dest_path: str, max_bytes: int) -> dict:
         """Download the attachment whose postback target is `target` on the most
         recently loaded detail page. Streams to `dest_path`; returns {size, sha256,
         md5, content_type}. Follows the 302 to the Azure blob by hand, allowlisting
         the host. Raises GovqaFetchError on a non-file (text/html = expired session)
-        answer, an empty body, or a transport error; ValueError if the file is over
-        `max_bytes` (GovqaTooLargeError — the caller records it as skipped); never leaves a
-        partial file."""
+        answer, an empty body, or a transport error; GovqaTooLargeError if the file is over
+        `max_bytes` (the caller records it as skipped); never leaves a partial file."""
         if not self._detail_html:
             raise GovqaFetchError("download() before details()")
         if not re.fullmatch(r"rptAttachments\$ctl\d+\$lnkStreamCloud", target):
@@ -474,6 +504,7 @@ class SweepResult:
         self.total_items = 0
         self.stopped_on_known = False
         self.overflow = False       # hit max_pages with unread pages left and no known row
+        self.pager_missing = False  # a FULL page of rows but no pager text: cannot tell whether older pages exist
 
 
 def sweep_term(grid, term: str, is_known, max_pages: int) -> SweepResult:
@@ -493,7 +524,11 @@ def sweep_term(grid, term: str, is_known, max_pages: int) -> SweepResult:
         if pager:
             out.total_pages, out.total_items = pager[1], pager[2]
         else:
+            if len(rows) > GRID_PAGE_SIZE:
+                raise GovqaFetchError(f"the grid shows {len(rows)} rows on one page but no pager — the pager text "
+                                      "could not be read")
             out.total_pages, out.total_items = 1, len(rows)
+            out.pager_missing = len(rows) == GRID_PAGE_SIZE
         if rows and all(is_known(r["request_no"]) for r in rows):
             out.stopped_on_known = True                  # nothing on this page is new: everything older was seen already
             return out
@@ -569,14 +604,12 @@ class PlaywrightGrid:
 
     def _read(self):
         html = self.page.content()
-        state = parse_grid_state(html)
-        if state == "unknown":
-            raise GovqaFetchError("the grid did not render (no data rows and no 'No data to display' marker)")
+        rows = read_grid(html)                        # raises GovqaFetchError on an unrendered grid / unreadable rows
         try:
             text = self.page.inner_text("body")
         except Exception:  # noqa: BLE001
             text = html
-        return parse_rows(html), parse_pager(text)
+        return rows, parse_pager(text)
 
     def search(self, term: str):
         try:
@@ -598,7 +631,10 @@ class PlaywrightGrid:
             pg.evaluate("ASPx.GVPagerOnClick('gridView','PBN')")
             for _ in range(120):                                  # up to 60 s
                 pg.wait_for_timeout(500)
-                rows, pager = self._read()
+                try:
+                    rows, pager = self._read()
+                except Exception:  # noqa: BLE001 — mid-navigation the DOM is briefly unreadable: keep polling
+                    continue
                 if rows and rows[0]["request_no"] != first:
                     return rows, pager
             raise GovqaFetchError("pager did not advance within 60 s")
