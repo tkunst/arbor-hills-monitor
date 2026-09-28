@@ -474,6 +474,24 @@ external users but no sensitive data). Public repo.
   raw value+analyte+date is actionable; see ADR 042). Recipients scoped verbatim
   (Trisha to start). Gated on `pfas_pws.enabled` (ships `false`). See ADR 042.
 
+- `mpart_client.py` — Stream V: fetch + canonicalize for MPART's PFAS open-data layers
+  (ADR 060): surface-water samples (`PfasOpenData/MapServer/0`, key `LabSampleId`, four
+  regulated analytes as value/flag/MDL), fish PFOS results (`FcmpOpenData/FeatureServer/1`,
+  a TABLE, key `SampleID`) and MPART's PFAS sites/AOIs (an ArcGIS Online layer). Explicit
+  `outFields`, no geometry, and no OBJECTID/GlobalID/coordinates/EGLE-staff-contact fields
+  ever fetched. Pure canonical views + a `{row key: hash16}` snapshot; a blank/duplicate key
+  or an over-45k-char snapshot is a structural error. Stdlib only. The public-water-supply
+  layer is NOT here (Stream R owns it).
+- `mpart_watcher.py` — Stream V: daily snapshot-diff of the three layers into the
+  `MPART Data Watch` tab (public Sheet — public data, no PII); silent baseline, then
+  new/changed/removed alerts; a new/changed surface-water row is SCREENED against the Rule 57
+  non-drinking-water values (PFOS 12 / PFOA 170 / PFHxS 210 / PFNA 30 ng/L, config
+  `thresholds_ng_l`) — copy says screening comparison, not a determination, cite the value in
+  force at the sample date; `K` flag = non-detect (never compared), fish `I` = no value (never
+  a detection), no fish threshold. Recorded-skip liveness alert after N consecutive unreadable
+  runs; the Sheet read raises (no silent re-baseline); empty recipients = display-only.
+  `--probe`. Gated on `mpart.enabled` (ships `false`). See ADR 060.
+
 ## Forbidden patterns (do not do these)
 
 - **Never commit PDFs or data files.** No `*.pdf`, `*.csv`, `*.xml`, `*.json`

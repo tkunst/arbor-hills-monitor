@@ -1610,6 +1610,40 @@ alert_recipients:
   # ALERT_RECIPIENTS_EXTRA secret, not committed here — see email_alerts.merge_extra_recipients()
   # and tests/test_config_no_committed_emails.py. (Hwang moved out 2026-09-17, privacy pass.)
 
+# --- MPART PFAS open-data layers watch (Stream V, ADR 060) ---
+# MPART (the Michigan PFAS Action Response Team, housed at EGLE) publishes PFAS results
+# as KEYLESS ArcGIS open-data layers. The monitor watches MPART's Arbor Hills WEB PAGE
+# (ADR 012) and the public-water-supply layer (Stream R, `pfas_pws`) but not the layers
+# that hold the Johnson Drain / Johnson Creek / upper-Rouge results, which were found by
+# hand in 9/2026. Daily snapshot-diff of three layers (surface-water samples, fish PFOS
+# results, and MPART's PFAS sites/AOIs); the FIRST sighting of each baselines silently;
+# a new/changed/removed row alerts. The public-water-supply layer is NOT re-watched here
+# (Stream R owns it; adding more WSSNs is a `pfas_pws.wssns` edit, not this block).
+# New and changed surface-water rows are SCREENED against the thresholds below.
+# Ships DISABLED (a brand-new external source): review the alert copy, then flip
+# `enabled`. Keyless — nothing to provision.
+mpart:
+  enabled: false
+  # Johnson Drain / Johnson Creek / upper Rouge box: [lon_min, lat_min, lon_max, lat_max].
+  bbox: [-83.66, 42.34, -83.40, 42.46]
+  surface_water:
+    url: "https://gisagoegle.state.mi.us/arcgis/rest/services/EGLE/PfasOpenData/MapServer/0/query"
+  fish:
+    url: "https://gisagoegle.state.mi.us/arcgis/rest/services/EGLE/FcmpOpenData/FeatureServer/1/query"
+    stations: [1484, 1507]        # Johnson Drain: Fish Hatchery Park, "6-mile" — plus every station inside the box
+  sites:
+    url: "https://services1.arcgis.com/FNjlrOFR0aGJ71Tg/arcgis/rest/services/Michigan_PFAS_Sites_and_Areas_of_Interest_PUBLIC_view/FeatureServer/1/query"
+    name_like: "Arbor Hills"      # plus every site inside the box
+  # Rule 57 NON-DRINKING-WATER human non-cancer values, ng/L (Johnson Drain / Johnson Creek
+  # is a non-drink water body). Source: EGLE's Rule 57 values spreadsheet as saved
+  # 2026-09-26; PFOS verified 2014, PFOA 2022, PFHxS/PFNA 2023 — the alert says it is a
+  # screening comparison and to cite the value in force at the sample date. A 'K' flag
+  # (non-detect; the value is the method detection limit) is never compared.
+  thresholds_ng_l: {PFOS: 12, PFOA: 170, PFHxS: 210, PFNA: 30}
+  stale_alert_after_skips: 3      # ONE liveness alert after this many consecutive unreadable runs
+  recipients:                     # Trisha only; EMPTY = display-only (rows, no email)
+    - arbor-hills@trishakunst.com
+
 # --- Weekly digest "Upcoming Activities" section (ADR 027) ---
 # The Sunday digest's calendar section is sourced from a SEPARATE, PRIVATE Sheet
 # (GSHEET_ID_PRIVATE) that may carry strategy-flavored key dates the public

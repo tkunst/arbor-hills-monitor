@@ -228,6 +228,11 @@ TAB_RIDE = "RIDE Watch"
 # sampling record, keyed by Item (e.g. "pws:2001381") in col B. See
 # pfas_pws_watcher.py.
 TAB_PFAS_PWS = "Public Water Supply PFAS Watch"
+# MPART PFAS open-data layers watch (Stream V, ADR 060) — same on-demand,
+# append-only, Sheet-derived-state idiom as the RIDE / PFAS PWS Watch tabs: no tab
+# until mpart_watcher runs; keyed by Item (`mpart:sw` / `mpart:fish` / `mpart:sites`)
+# in col B. Public-data only (lab results + a state agency's site list); no PII.
+TAB_MPART = "MPART Data Watch"
 # nSITE Submissions watch (Stream K, ADR 020) — same on-demand policy: no tab
 # appears until nsite_submissions_watcher actually runs. Append-only, keyed by
 # Item (e.g. "subm:N2688") in col B for dedup/state — the PFAS/Meeting/ROP/MMD/
@@ -448,6 +453,14 @@ RIDE_WATCH_HEADERS = [
 # what next run diffs against AND a durable dated record. "Change" is baseline
 # (silent) / changed / detection.
 PFAS_PWS_WATCH_HEADERS = [
+    "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
+    "Snapshot JSON",
+]
+
+# MPART PFAS open-data layers watch (Stream V, ADR 060). Same row shape as
+# RIDE_WATCH_HEADERS; Snapshot JSON is {"rows": {row_key: row_hash}}. "Change" is
+# baseline (silent) / changed / fetch-skipped / fetch-ok.
+MPART_WATCH_HEADERS = [
     "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
     "Snapshot JSON",
 ]
@@ -1880,6 +1893,50 @@ def append_ride_watch_row(
     (durable record first, alert best-effort second — same crash-safe ordering
     as append_mmd_watch_row)."""
     append_rows(service, sheet_id, TAB_RIDE, [[
+        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
+    ]])
+
+
+# ---------------------------------------------------------------------------
+# MPART PFAS open-data layers watch (Stream V, ADR 060) — the tab is the state
+# (append-only => race-free), like the RIDE / PFAS PWS Watch tabs above.
+# ---------------------------------------------------------------------------
+
+
+def ensure_mpart_tabs(service, sheet_id: str) -> None:
+    """Create the MPART Data Watch tab if missing and reconcile its header row on
+    every run (same self-healing policy as ensure_ride_tabs)."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_MPART not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_MPART}}}]},
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    _set_header(service, sheet_id, TAB_MPART, MPART_WATCH_HEADERS)
+
+
+def read_mpart_rows(service, sheet_id: str) -> list[list]:
+    """Every data row of the MPART Data Watch tab, in append order (the watcher folds
+    them into per-item state). Does NOT swallow read errors: a transient failure
+    returning [] would read as 'never baselined' and the watcher would silently absorb
+    genuinely new samples into a fresh baseline. ensure_mpart_tabs() runs first, so any
+    exception here is a real read failure and must propagate."""
+    resp = (
+        service.spreadsheets().values()
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_MPART}'!A2:H")
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    )
+    return [r for r in resp.get("values", []) if r]
+
+
+def append_mpart_watch_row(
+    service, sheet_id: str, date: str, item_key: str, label: str, change: str,
+    snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
+) -> None:
+    """Append one MPART Data Watch row. Written BEFORE the alert email (durable
+    record first, alert best-effort second — the append_ride_watch_row ordering)."""
+    append_rows(service, sheet_id, TAB_MPART, [[
         date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
     ]])
 

@@ -1,0 +1,70 @@
+name: mpart-watch
+
+# MPART PFAS open-data layers watch (Stream V, ADR 060): daily snapshot-diff on three
+# KEYLESS ArcGIS layers around Arbor Hills — surface-water PFAS samples, fish PFOS
+# results, and MPART's PFAS sites/AOIs (Johnson Drain / Johnson Creek / upper Rouge).
+# Emails Trisha on a new/changed/removed row; a new surface-water row is screened
+# against the Rule 57 non-drinking-water values. First sighting of each item
+# baselines silently. The public-water-supply layer is watched by pfas-pws-watch.
+#
+# Safe to leave scheduled from day one: mpart.enabled gates the run —
+# mpart_watcher._should_run() makes every run a quiet no-op (exit 0) while it is
+# false (ships disabled — a brand-new external source). No Anthropic (a deterministic
+# snapshot-diff), no Drive/OAuth, and public data only, so the case-file Sheet
+# (GSHEET_ID) is the right home for the "MPART Data Watch" tab. State is that tab,
+# NOT _meta, so it never races the other jobs. `probe: true` (manual dispatch) fetches
+# every layer and prints the counts, writing nothing.
+on:
+  schedule:
+    - cron: "15 17 * * *"   # 12:15pm ET (5:15pm UTC), free slot between ride-watch and the afternoon jobs.
+  workflow_dispatch:
+    inputs:
+      probe:
+        description: "Fetch-path diagnostic only (no Sheet writes, no email)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mpart-watch
+  cancel-in-progress: false
+
+jobs:
+  mpart-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Watch the MPART PFAS layers
+        env:
+          PROBE: ${{ inputs.probe }}
+          # Sheets I/O uses the service account; the alert uses SMTP. Recipients are
+          # scoped in config (ALERT_RECIPIENTS_EXTRA is deliberately not passed).
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+        run: |
+          if [ "$PROBE" = "true" ]; then
+            python mpart_watcher.py --probe
+          else
+            python mpart_watcher.py
+          fi
