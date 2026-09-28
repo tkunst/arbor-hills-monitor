@@ -236,7 +236,7 @@ TAB_PFAS_PWS = "Public Water Supply PFAS Watch"
 # baseline marker) and `csv:<Drive file id>:<content hash>`; the LAST row for a key
 # is its state. See govqa_watcher.py.
 TAB_GOVQA = "GovQA Archive Watch"
-# EGLE RIDE anonymous DOCUMENT listing watch (Stream T, ADR 058). Lives on the
+# EGLE RIDE anonymous DOCUMENT listing watch (Stream T, ADR 061). Lives on the
 # PRIVATE Sheet (GSHEET_ID_PRIVATE — shared only with the service account and
 # Trisha), NEVER the public case-file Sheet: RIDE file titles can carry
 # residents' names and street addresses. Append-only, one row per observed
@@ -478,7 +478,7 @@ GOVQA_HEADERS = [
     "Note", "Checked At",
 ]
 
-# RIDE anonymous document listing (Stream T, ADR 058) — PRIVATE Sheet only.
+# RIDE anonymous document listing (Stream T, ADR 061) — PRIVATE Sheet only.
 # Event is baseline (silent first sighting) / new / changed / removed /
 # mirrored / mirror-skipped / mirror-failed. Record Hash covers the canonical
 # file view (ride_docs_client.record_hash); Mirror Link / SHA-256 / MD5 are set
@@ -1961,7 +1961,7 @@ def append_govqa_rows(service, sheet_id: str, rows: list[list]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# RIDE anonymous document listing (Stream T, ADR 058) — PRIVATE Sheet. These
+# RIDE anonymous document listing (Stream T, ADR 061) — PRIVATE Sheet. These
 # helpers take the sheet id as an argument like every other tab helper; the
 # WATCHER is what guarantees it passes GSHEET_ID_PRIVATE and never GSHEET_ID.
 # ---------------------------------------------------------------------------

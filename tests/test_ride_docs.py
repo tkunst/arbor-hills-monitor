@@ -1,4 +1,4 @@
-"""ride_docs_client.py / ride_docs_watcher.py (Stream T, ADR 058) — the RIDE
+"""ride_docs_client.py / ride_docs_watcher.py (Stream T, ADR 061) — the RIDE
 anonymous DOCUMENT listing watch.
 
 Fixtures are trimmed Python literals modelled on the REAL response shape
@@ -105,13 +105,14 @@ def test_record_hash_is_stable_and_sensitive():
         assert rdc.record_hash(a) != rdc.record_hash(b), field
 
 
-def test_safe_filename_cannot_traverse_or_start_with_a_dot():
-    n = rdc.safe_filename("35715058", "../../etc/passwd\x00 / Closure: Report?", "PDF", "ab12cd34")
-    assert "/" not in n and "\\" not in n and ".." not in n and "\x00" not in n
-    assert n.startswith("35715058_ab12cd34_") and n.endswith(".pdf")
-    assert rdc.safe_filename("9", "", "", "").startswith("9_untitled.")
-    assert not rdc.safe_filename("9", "...", "PDF").startswith(".")
-    assert len(rdc.safe_filename("9", "x" * 500, "PDF")) < 120
+def test_safe_filename_is_title_free_and_cannot_traverse():
+    """The mirror name lands in Drive queries, which googleapiclient prints on errors
+    and retries — so it carries NO part of the (possibly resident-naming) title."""
+    assert rdc.safe_filename("35715058", "PDF", "ab12cd34") == "35715058_ab12cd34.pdf"
+    assert rdc.safe_filename("9", "", "") == "9.bin"
+    n = rdc.safe_filename("../9/..", "../p\x00df", "zz/..")
+    assert n == "9.pdf" and "/" not in n and ".." not in n and "\x00" not in n
+    assert "title" not in inspect.signature(rdc.safe_filename).parameters
 
 
 # ==============================================================================
@@ -219,7 +220,6 @@ def test_fetch_location_files_pages_until_total(monkeypatch):
 
 @pytest.mark.parametrize("payload,why", [
     ({"data": [], }, "no totalRows"),
-    ({"totalRows": 2, "data": three_files()[:1]}, "total mismatch"),
     ({"totalRows": 2, "data": [raw(5), raw(5)]}, "duplicate uri"),
     ({"totalRows": 1, "data": [dict(raw(5), uri=None)]}, "record without uri"),
 ])
@@ -227,6 +227,32 @@ def test_fetch_location_files_structural_problems_are_parse_errors(payload, why)
     s = FakeSession({"ForLocationFilesTable": FakeResp(payload=payload)})
     with pytest.raises(rdc.RideDocsParseError):
         rdc.fetch_location_files(s, 2085)
+
+
+def test_fetch_location_files_total_mismatch_is_a_parse_error():
+    """Page 1 has 1 of 2 records, page 2 is EMPTY: the loop stops short of totalRows.
+    (Distinct pages, so the duplicate-uri check cannot be what fires.)"""
+    s = FakeSession({"ForLocationFilesTable": [files_payload(three_files()[:1], total=2),
+                                               files_payload([], total=2)]})
+    with pytest.raises(rdc.RideDocsParseError, match="totalRows=2"):
+        rdc.fetch_location_files(s, 2085)
+
+
+@pytest.mark.parametrize("data", [[1, 2], ["x"]])
+def test_non_object_records_are_parse_errors_not_crashes(data):
+    s = FakeSession({"ForLocationFilesTable": FakeResp(payload={"totalRows": len(data), "data": data}),
+                     "GetFacilitiesTable": FakeResp(payload={"totalRows": 1, "data": data})})
+    with pytest.raises(rdc.RideDocsParseError):
+        rdc.fetch_location_files(s, 2085)
+    with pytest.raises(rdc.RideDocsParseError):
+        rdc.resolve_location(s, "81000004")
+
+
+def test_non_integer_location_id_is_a_parse_error():
+    s = FakeSession({"GetFacilitiesTable": FakeResp(payload={"totalRows": 1, "data": [
+        {"locationId": "abc", "programNum": "81000004"}]})})
+    with pytest.raises(rdc.RideDocsParseError):
+        rdc.resolve_location(s, "81000004")
 
 
 def test_405_is_a_transient_fetch_error_not_a_parse_error():
@@ -273,7 +299,7 @@ def test_download_enforces_the_cap_while_streaming_without_a_content_length(tmp_
     assert not dest.exists()
 
 
-@pytest.mark.parametrize("bad", ["abc", "1; DROP", "../1", "", "1.5"])
+@pytest.mark.parametrize("bad", ["abc", "1; DROP", "../1", "", "1.5", "\u0661\u0662"])
 def test_download_refuses_non_numeric_uris(tmp_path, bad):
     with pytest.raises(rdc.RideDocsFetchError):
         rdc.download_file(FakeSession({}), bad, str(tmp_path / "x"), max_bytes=100)
@@ -390,12 +416,15 @@ class RecordingSheets(FakeSheets):
     def __init__(self):
         super().__init__()
         self.ids = set()
+        self.read_error = None          # raised by a DATA-row read of the RRD tab (not the header)
         inner = self._values
         outer = self
 
         class _V:
             def get(self, spreadsheetId, range):
                 outer.ids.add(spreadsheetId)
+                if outer.read_error and sw.TAB_RRD_DOCS in range and "A2" in range:
+                    raise outer.read_error
                 return inner.get(spreadsheetId, range)
 
             def append(self, spreadsheetId, **kw):
@@ -439,6 +468,7 @@ def _wire(monkeypatch, tmp_path, world=None, cfg=CFG):
     monkeypatch.setenv("GSHEET_ID", "PUB")
     for k in [k for k in os.environ if re.fullmatch(r"GOAUTH_.*", k)]:
         monkeypatch.delenv(k)
+    monkeypatch.delenv("GDRIVE_FOLDER_ID", raising=False)
     monkeypatch.setattr(rdw, "load_config", lambda: copy.deepcopy(cfg))
     monkeypatch.setattr(rdw.dc, "sheets_service", lambda: fake)
     monkeypatch.setattr(rdw.ea, "send_email",
@@ -617,6 +647,7 @@ def test_persistent_outage_sends_exactly_one_liveness_alert_then_recovers(monkey
     world.list_error = rdc_fetch_error()
     assert rdw.run([]) == 0 and len(sent) == 1                   # counter was reset: 1 skip, no new alert
     assert len(_rows(fake, "new")) == 0                          # skips never invent new files
+    assert fake.ids == {"PRIV"}
 
 
 def test_session_level_outage_counts_toward_every_baselined_location(monkeypatch, tmp_path):
@@ -670,11 +701,11 @@ def test_a_sheet_read_failure_propagates_instead_of_rebaselining(monkeypatch, tm
     world, fake, sent = _wire(monkeypatch, tmp_path)
     assert rdw.run([]) == 0
     world.files[2085].append(raw(35715099, "Would Be Swallowed"))
-    monkeypatch.setattr(rdw.sw, "read_rrd_docs_rows",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("sheets 503")))
+    fake.read_error = RuntimeError("sheets 503")          # the REAL helper's read fails
     with pytest.raises(RuntimeError):
         rdw.run([])
-    assert _rows(fake, "new") == []
+    assert _rows(fake, "new") == [] and _rows(fake, "baseline")    # nothing re-baselined either
+    assert len(_rows(fake, "baseline")) == 3 + 1
 
 
 # --- probe -------------------------------------------------------------------------
@@ -689,6 +720,16 @@ def test_probe_runs_even_when_disabled_and_touches_nothing_else(monkeypatch, tmp
     assert rdw.run(["--probe"]) == 0
     out = capsys.readouterr().out
     assert "location 2085" in out and "37 file(s)" in out and "PROBE OK" in out
+
+
+def test_probe_fails_when_a_program_does_not_resolve(monkeypatch, tmp_path, capsys):
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    monkeypatch.setattr(rdw.rdc, "probe", lambda programs: [
+        {"program_num": "81000004", "location_id": 2085, "name": "A", "n_files": 3},
+        {"program_num": "99999999", "location_id": None, "name": "", "n_files": 0}])
+    assert rdw.run(["--probe"]) == 1
+    out = capsys.readouterr().out
+    assert "PROBE FAILED" in out and "99999999" in out and "PROBE OK" not in out
 
 
 def test_probe_failure_exits_nonzero(monkeypatch, tmp_path):
@@ -737,7 +778,8 @@ def test_mirror_uploads_to_the_private_folder_and_records_hashes(monkeypatch, tm
     assert len(mirrored) == 3 and {u[1] for u in uploads} == {"RRDFOLDER"}
     assert all(r[rdw.C_LINK].startswith("https://drive/") and r[rdw.C_SHA] == "S" * 64
                and r[rdw.C_MD5] == "M" * 32 for r in mirrored)
-    assert all(re.fullmatch(r"\d+_[0-9a-f]{8}_.+\.pdf", u[0]) for u in uploads)
+    assert all(re.fullmatch(r"\d+_[0-9a-f]{8}\.pdf", u[0]) for u in uploads)   # title-free
+    assert fake.ids == {"PRIV"}
     n = len(world.downloads)
     assert rdw.run([]) == 0 and len(world.downloads) == n            # already mirrored: no re-download
 
@@ -788,6 +830,15 @@ def test_mirror_refuses_a_folder_that_equals_another_mirrors_folder(monkeypatch,
     assert len(_rows(fake, "baseline")) == 3 + 1                     # listing/rows/alerts unaffected
 
 
+def test_mirror_refuses_the_public_pdf_archive_folder(monkeypatch, tmp_path):
+    cfg = copy.deepcopy(CFG)
+    cfg["ride_docs"]["mirror"] = True
+    world, fake, sent = _wire(monkeypatch, tmp_path, cfg=cfg)
+    _mirror_env(monkeypatch, folder="PUBPDF", GDRIVE_FOLDER_ID="PUBPDF")
+    _wire_mirror(monkeypatch, world)
+    assert rdw.run([]) == 1 and world.downloads == []
+
+
 def test_mirror_not_configured_is_a_quiet_skip(monkeypatch, tmp_path, capsys):
     cfg = copy.deepcopy(CFG)
     cfg["ride_docs"]["mirror"] = True
@@ -796,8 +847,171 @@ def test_mirror_not_configured_is_a_quiet_skip(monkeypatch, tmp_path, capsys):
     assert "mirror not configured" in capsys.readouterr().out and world.downloads == []
 
 
+# --- silent-forever paths for a baselined location (review round 1) -----------------
+
+
+def test_empty_listing_after_baseline_is_a_skip_not_a_mass_removal(monkeypatch, tmp_path):
+    cfg = copy.deepcopy(CFG)
+    cfg["ride_docs"]["stale_alert_after_skips"] = 2
+    world, fake, sent = _wire(monkeypatch, tmp_path, cfg=cfg)
+    assert rdw.run([]) == 0
+    saved = world.files[2085]
+    world.files[2085] = []                                   # totalRows 0
+    assert rdw.run([]) == 0
+    assert _rows(fake, "removed") == [] and sent == []
+    assert "EMPTY" in _rows(fake, "fetch-skipped")[0][rdw.C_NOTE]
+    assert rdw.run([]) == 0 and len(sent) == 1               # liveness at the threshold
+    assert "UNSEEN" in sent[0][1]
+    world.files[2085] = saved
+    assert rdw.run([]) == 0
+    assert _rows(fake, "new") == [] and len(_rows(fake, "fetch-ok")) == 1   # no re-alert storm
+
+
+def test_empty_listing_for_a_location_with_no_live_files_is_not_a_skip(monkeypatch, tmp_path):
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    world.files[2085] = []
+    assert rdw.run([]) == 0                                  # baseline of an empty location
+    assert rdw.run([]) == 0
+    assert _rows(fake, "fetch-skipped") == []
+
+
+def test_baselined_program_that_stops_resolving_is_skipped_and_alerted(monkeypatch, tmp_path):
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    assert rdw.run([]) == 0
+    world.locations = {}
+    assert rdw.run([]) == 0
+    assert len(_rows(fake, "fetch-skipped")) == 1 and len(sent) == 1
+    assert "no longer found" in sent[0][0] and "81000004" in sent[0][0]
+    assert rdw.run([]) == 0 and len(sent) == 1               # first-occurrence alert is once
+
+
+def test_program_that_moves_to_a_new_location_is_loud_never_silently_rebaselined(monkeypatch, tmp_path):
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    assert rdw.run([]) == 0
+    world.locations["81000004"] = dict(LOC, location_id=4242)
+    world.files[4242] = three_files() + [raw(35715099, "Genuinely New")]
+    assert rdw.run([]) == 1                                  # red
+    assert not any(r[rdw.C_KEY] == "loc:4242" for r in _rows(fake))   # NOT baselined
+    assert _rows(fake, "new") == [] and len(sent) == 1
+    subj, body, _ = sent[0]
+    assert "moved to a different RIDE location" in subj and "loc:4242" in body
+    assert rdw.run([]) == 1 and len(sent) == 1               # alert once, red every run
+    # Trisha accepts the move with the one documented manual row:
+    fake._values._tabs[sw.TAB_RRD_DOCS].append(_row("loc:4242", "baseline", lid="4242"))
+    assert rdw.run([]) == 0
+    new = _rows(fake, "new")
+    assert [r[rdw.C_KEY] for r in new] == ["rrd:35715099"]  # the unseen file alerts; known ones don't
+    assert "1 new RRD file" in sent[-1][0]
+
+
+def test_session_failure_with_an_unbaselined_program_still_records_skips(monkeypatch, tmp_path):
+    cfg = copy.deepcopy(CFG)
+    cfg["ride"]["site_ids"] = ["81000004", "81000033"]
+    world, fake, sent = _wire(monkeypatch, tmp_path, cfg=cfg)
+    assert rdw.run([]) == 0                                  # 81000033 not in the World: unbaselined
+    world.session_error = rdc_fetch_error()
+    assert rdw.run([]) == 1                                  # loud: one program has no baseline
+    assert len(_rows(fake, "fetch-skipped")) == 1            # ...but the baselined one still counts
+
+
+def test_stale_threshold_zero_cannot_disable_liveness(monkeypatch, tmp_path):
+    cfg = copy.deepcopy(CFG)
+    cfg["ride_docs"]["stale_alert_after_skips"] = 0
+    world, fake, sent = _wire(monkeypatch, tmp_path, cfg=cfg)
+    assert rdw.run([]) == 0
+    world.list_error = rdc_fetch_error()
+    assert rdw.run([]) == 0 and len(sent) == 1
+
+
+def test_smtp_not_configured_is_reported_not_silent(monkeypatch, tmp_path, capsys):
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    assert rdw.run([]) == 0
+    monkeypatch.setattr(rdw.ea, "send_email", lambda *a, **k: False)
+    world.files[2085].append(raw(35715099))
+    assert rdw.run([]) == 0
+    assert "NOT SENT" in capsys.readouterr().out
+
+
+def test_refuses_a_private_id_that_points_at_the_public_sheet(monkeypatch, tmp_path):
+    """The CI-effective guard: the workflow never receives GSHEET_ID, so the env
+    comparison can't fire there — but the public Sheet's own tabs give it away."""
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    monkeypatch.delenv("GSHEET_ID")
+    fake._values._tabs[sw.TAB_NEW] = [["header"]]
+    assert rdw.run([]) == 1
+    assert sw.TAB_RRD_DOCS not in fake._values._tabs and sent == []
+
+
+# --- the Actions log is public: nothing resident-derived may reach it --------------
+
+SENSITIVE = "Jane Q Resident 123 Elm St"
+
+
+def _http_error(uri):
+    import httplib2
+    from googleapiclient.errors import HttpError
+    return HttpError(httplib2.Response({"status": 404}), b'{"error": {"message": "File not found"}}', uri=uri)
+
+
+def test_a_drive_error_carrying_a_title_never_reaches_stdout_or_stderr(monkeypatch, tmp_path, capsys):
+    cfg = copy.deepcopy(CFG)
+    cfg["ride_docs"]["mirror"] = True
+    world, fake, sent = _wire(monkeypatch, tmp_path, cfg=cfg)
+    world.files[2085] = [raw(35715058, SENSITIVE)]
+    _mirror_env(monkeypatch)
+    _wire_mirror(monkeypatch, world)
+    q = f"https://www.googleapis.com/drive/v3/files?q=name+%3D+%27{SENSITIVE}%27"
+
+    def _boom(*a, **k):
+        raise _http_error(q)
+    monkeypatch.setattr(rdw.ac, "upload_file", _boom)
+    monkeypatch.setattr(rdw.sys, "argv", ["ride_docs_watcher.py"])
+    assert rdw.main() == 0
+    out = capsys.readouterr()
+    assert "HttpError (HTTP 404)" in out.out
+    assert "Resident" not in out.out + out.err and "Elm" not in out.out + out.err
+    assert len(_rows(fake, "mirror-failed")) == 1                  # the detail went to the PRIVATE Sheet only
+
+
+def test_main_reports_an_unhandled_error_as_its_class_only(monkeypatch, tmp_path, capsys):
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    monkeypatch.setattr(rdw.dc, "sheets_service",
+                        lambda: (_ for _ in ()).throw(_http_error(f"https://x/?q={SENSITIVE}")))
+    monkeypatch.setattr(rdw.sys, "argv", ["ride_docs_watcher.py"])
+    assert rdw.main() == 1
+    out = capsys.readouterr()
+    assert "FAILED: HttpError" in out.out and "Resident" not in out.out + out.err
+
+
+def test_main_silences_the_googleapiclient_retry_logger(monkeypatch, tmp_path):
+    import logging
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    monkeypatch.setattr(rdw.sys, "argv", ["ride_docs_watcher.py"])
+    loggers = [logging.getLogger(n) for n in ("googleapiclient", "googleapiclient.http")]
+    before = [lg.level for lg in loggers]
+    try:
+        rdw.main()
+        assert not logging.getLogger("googleapiclient.http").isEnabledFor(logging.WARNING)
+    finally:
+        for lg, lvl in zip(loggers, before):
+            lg.setLevel(lvl)
+
+
+def test_no_print_interpolates_a_raw_exception_or_a_title():
+    """AST pin: every print() in the watcher interpolates no bare exception variable
+    (only _err(e)) and no view title/file name."""
+    import ast
+    tree = ast.parse((ROOT / "ride_docs_watcher.py").read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "print":
+            for fv in (n for a in node.args for n in ast.walk(a) if isinstance(n, ast.FormattedValue)):
+                src = ast.unparse(fv.value)
+                assert src not in ("e", "err", "str(e)", "str(err)"), src
+                assert "title" not in src and "file_name" not in src, src
+
+
 # ==============================================================================
-# HARD RULE: never publish (ADR 058)
+# HARD RULE: never publish (ADR 061)
 # ==============================================================================
 
 _NEW = ("ride_docs_client.py", "ride_docs_watcher.py")
@@ -851,3 +1065,16 @@ def test_shipped_config_recipients_are_scoped_and_program_default_is_ride_sites(
     cfg = load_config()
     assert cfg["ride_docs"]["recipients"] == ["arbor-hills@trishakunst.com"]
     assert rdw._program_nums(cfg) == [str(s) for s in cfg["ride"]["site_ids"]]
+
+
+def test_workflow_passes_every_other_mirror_folder_id_for_the_equality_guard():
+    """The folder guard only protects against folder ids it can SEE. Every
+    GOAUTH_*_FOLDER_ID any other workflow uses must be passed to this one."""
+    wf_dir = ROOT / ".github" / "workflows"
+    mine = (wf_dir / "ride-docs-watch.yml").read_text()
+    others = set()
+    for f in wf_dir.glob("*.yml"):
+        if f.name != "ride-docs-watch.yml":
+            others |= set(re.findall(r"\b(GOAUTH_[A-Z0-9_]+_FOLDER_ID|GDRIVE_FOLDER_ID)\s*:", f.read_text()))
+    passed = set(re.findall(r"\b(GOAUTH_[A-Z0-9_]+_FOLDER_ID|GDRIVE_FOLDER_ID)\s*:", mine))
+    assert others and others <= passed, sorted(others - passed)

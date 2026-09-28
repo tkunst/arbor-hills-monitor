@@ -2,8 +2,8 @@
 
 *Status: built — 2026-09-28 (`govqa.enabled: false` pending Trisha's review; see
 Activation).*
-Builds on: ADR 058's pattern (private-Sheet-only, display-only recipients) — that ADR is
-in a separate, not-yet-merged PR; ADR 015/017/019 (snapshot-diff watches); ADR 041
+Builds on: ADR 061's pattern (private-Sheet-only, display-only recipients; the RRD documents
+watch, drafted as "ADR 058" and renumbered on merge); ADR 015/017/019 (snapshot-diff watches); ADR 041
 (Stream S: probe mode).
 
 ## Context
