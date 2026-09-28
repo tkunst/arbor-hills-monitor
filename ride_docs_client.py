@@ -16,9 +16,8 @@ with plain `requests`:
   - POST api/ContentManagerFile/GetFileContents     {"uri": N} -> the file bytes
 
 A bare POST with no cookie warm-up returns HTTP 405, so the warm-up is part of
-`open_session()`. The session cookies include F5/Cloudflare bot-defense values
-(TS*, __cf_bm), so a datacenter runner IP may be challenged where a residential
-one is not — hence `probe()`, which the watcher exposes as `--probe` (Stream S's
+`open_session()`. The session also sets F5 (`TS*`, `BIGip*`) and Cloudflare
+(`__cf_bm`) bot-defense cookies, so a datacenter runner IP may be challenged where a residential one is not — hence `probe()`, which the watcher exposes as `--probe` (Stream S's
 pre-activation runner check).
 
 This module only FETCHES + CANONICALIZES. Snapshotting, alerting and the private

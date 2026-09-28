@@ -10,11 +10,10 @@ document API" premise), ADR 007/010 (Drive mirror idiom), ADR 015/017/019
 
 EGLE has four divisions with Arbor Hills records. The monitor pulls AQD, MMD and
 WRD records routinely; **RRD (Remediation and Redevelopment Division)** was
-watched only for *status* (Stream J), never for *documents*. What that cost us:
-EGLE FOIA E614007 (released publicly on EGLE's GovQA archive) contained about 45
-RRD documents we had never seen — the 1981-2004 Part 201 file on the Holloway
-Landfill (now Arbor Hills East), a 2016 leaking-UST release and closure, and an
-October 2021 RRD PFAS memo. Nothing would have caught the next ones.
+watched only for *status* (Stream J), never for *documents*. Per the
+overnight-coder handoff of 2026-09-28, EGLE FOIA request E614007-080526 (released
+publicly on EGLE's GovQA archive on 2026-08-20) contained about 45 RRD file
+documents the monitor had not seen, and nothing watched for the next ones.
 
 ## Feasibility spike (read-only, 2026-09-28) — the anonymous document channel
 
@@ -140,8 +139,8 @@ to end regardless of the enabled flag and touches no Sheet, Drive or email.
 
 ## Adversarial review
 
-**Show-stoppers considered:** (1) RIDE's F5/Cloudflare front end challenges the
-GitHub runner IP. *Detect:* `--probe` before activation; a first run without a
+**Show-stoppers considered:** (1) RIDE's bot defense (the session carries
+F5- and Cloudflare-style cookies) challenges the GitHub runner IP. *Detect:* `--probe` before activation; a first run without a
 baseline exits red; after activation the liveness alert above. *Recover:* the
 probe/liveness signal tells Trisha before anything is lost; the fallback is a
 different runner egress, or pausing by flipping `enabled` (the tab state
