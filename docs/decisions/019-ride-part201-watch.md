@@ -176,9 +176,9 @@ states only what the registry itself says about it (live layer-1 query,
 `Total_Tank` 2, `Active_Tank` 0, `LastUpdated` 2024-04-26. The layer gives no
 release or closure date. It is watched because the overnight-coder handoff
 (2026-09-28), working from EGLE FOIA request E614007-080526, found it missing from
-the watch list; a change to `Open_Release`, `RiskCondition` or `LastUpdated` —
-Layer 1's own diffed fields (`ride_client.LAYER1_FIELDS`) — would otherwise go
-unseen. This does NOT cover a `ReleaseStatus` flip (e.g. Closed -> Open) or the
+the watch list; a change to `Open_Release`, `RiskCondition` or `LastUpdated` — three
+of the five fields `ride_client.LAYER1_FIELDS` fetches and the snapshot hashes —
+would otherwise go unseen. This does NOT cover a `ReleaseStatus` flip (e.g. Closed -> Open) or the
 tank/release counters, since Layer 1 exposes those fields but this watch's
 `facility_ids` query never fetches them. The watch makes no other claim about
 the facility.
