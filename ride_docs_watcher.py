@@ -62,6 +62,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 from collections import defaultdict
 from datetime import datetime
 
@@ -81,6 +82,7 @@ from config_loader import load_config
 FOLDER_ENV = "GOAUTH_RRD_FOLDER_ID"
 _MAX_MIRROR_FAILS = 3          # then a file is recorded `mirror-skipped` until its record changes
 _DEFAULT_STALE_SKIPS = 3       # consecutive skipped runs for a baselined location before ONE liveness alert
+_MIRROR_BUDGET_S = 25 * 60     # wall-clock cap on one run's mirror pass (the job times out at 45 min)
 _EMAIL_LIST_CAP = 25           # lines per alert body; every file still gets its own Sheet row
 _CAUSE_RE = re.compile(r"skipped \[(\w+)\]")    # the cause code in a fetch-skipped note
 _PUBLIC_TABS = ("TAB_NEW", "TAB_EVIDENCE", "TAB_MEASUREMENTS")   # sheet_writer names of PUBLIC case-file tabs
@@ -226,31 +228,45 @@ def build_state(rows: list[list]) -> tuple[dict, dict]:
 
 def diff_location(location_id: int, views: dict[str, dict], files_state: dict,
                   baselined: bool, owned: set[str] | None = None,
-                  elsewhere: set[str] | frozenset = frozenset()) -> dict:
+                  listed_at: dict[str, set[str]] | None = None) -> dict:
     """Classify one location's current files against stored state. Pure.
-    Returns {baseline, new, changed, moved, removed}; all but `baseline` are empty on
-    a first sighting (everything is `baseline`). `owned` = the location ids whose
-    files this listing now answers for (itself plus any location it superseded by
-    an accepted relocation). `elsewhere` = uris listed under OTHER locations this run:
-    a file that moved between watched locations is `moved` where it now appears and
-    never `removed` where it left, whichever location is diffed first."""
+    Returns {baseline, new, changed, moved, removed}. `owned` = the location ids whose
+    files this listing now answers for (itself plus any location it superseded by an
+    accepted relocation). `listed_at` = uri -> ids of EVERY location listing it this
+    run. A known, unchanged uri is `moved` only when its stored location did NOT list
+    it this run (a file listed under two watched locations is left alone, never
+    flip-flopped), and a uri still listed under another location is never `removed`
+    here — whichever location is diffed first. On a location's first sighting its
+    unknown files are `baseline`; its already-known ones are `moved`/untouched, not
+    re-baselined (which would reset their mirror state)."""
     out = {"baseline": [], "new": [], "changed": [], "moved": [], "removed": []}
-    if not baselined:
-        out["baseline"] = list(views.values())
-        return out
+    lid = str(location_id)
+    owned = owned or {lid}
+    listed_at = listed_at or {}
+
+    def moved(st, uri):
+        return st["location_id"] not in owned and st["location_id"] not in listed_at.get(uri, ())
+
     for uri, view in views.items():
         st = files_state.get(f"rrd:{uri}")
-        if st is None or st["removed"]:
+        if not baselined:
+            if st is None or st["removed"]:
+                out["baseline"].append(view)
+            elif moved(st, uri):
+                out["moved"].append((st, view))
+        elif st is None or st["removed"]:
             out["new"].append(view)
         elif st["hash"] != rdc.record_hash(view):
             out["changed"].append((st, view))
-        elif st["location_id"] not in (owned or {str(location_id)}):
+        elif moved(st, uri):
             out["moved"].append((st, view))
-    owned = owned or {str(location_id)}
+    if not baselined:
+        return out
     for key, st in files_state.items():
-        if (st["location_id"] in owned and not st["removed"] and key[4:] not in views
-                and key[4:] not in elsewhere):
-            out["removed"].append((key[4:], st))      # (uri, last stored state)
+        uri = key[4:]
+        if (st["location_id"] in owned and not st["removed"] and uri not in views
+                and not (listed_at.get(uri, set()) - {lid})):
+            out["removed"].append((uri, st))          # (uri, last stored state)
     return out
 
 
@@ -364,8 +380,12 @@ def _mirror_pass(session, service, priv_id, today, todo, folder_id, max_bytes, c
     _MAX_MIRROR_FAILS the caller records `mirror-skipped`). Returns files mirrored."""
     done = 0
     drive = ac.oauth_drive_service()
+    started = time.monotonic()
     with tempfile.TemporaryDirectory() as tmp:
         for loc, program, view, rec_hash, fails in todo[:cap]:
+            if time.monotonic() - started > _MIRROR_BUDGET_S:
+                print("[ride-docs] mirror time budget spent; the rest waits for the next run.")
+                break
             # TITLE-FREE on purpose: the name goes into Drive queries, and googleapiclient
             # errors/retry warnings print the query. The title stays in the private Sheet row.
             name = rdc.safe_filename(view["uri"], view["extension"], rec_hash[:8])
@@ -621,18 +641,21 @@ def run(argv: list[str] | None = None) -> int:
         listings[lid] = (loc, {v["uri"]: v for v in (rdc.file_view(r) for r in records)})
 
     # Phase 2: diff, record, alert.
+    listed_at: dict[str, set[str]] = defaultdict(set)
+    for other, (_, vs) in listings.items():
+        for u in vs:
+            listed_at[u].add(str(other))
     mirror_todo: list = []
     for lid, (loc, views) in listings.items():
         program = loc["program_num"]
         loc_key = f"loc:{lid}"
-        elsewhere = {u for other, (_, vs) in listings.items() if other != lid for u in vs}
         baselined = loc_key in locs_state
         # This listing answers for its own files AND those recorded under any location it
         # superseded by an accepted relocation (their rows still carry the old id).
         owned = {str(lid)} | {k[4:] for k, st in locs_state.items()
                               if st["program"] == program and not st["current"]}
-        live = sum(1 for st in files_state.values()
-                   if st["location_id"] in owned and not st["removed"])
+        live = sum(1 for k, st in files_state.items()
+                   if st["location_id"] in owned and not st["removed"] and not listed_at.get(k[4:]))
         if baselined and not views and live:
             # An EMPTY listing where files were listed before is far likelier a RIDE-side
             # glitch than every file withdrawn at once. Diffing it would write N `removed`
@@ -643,7 +666,7 @@ def run(argv: list[str] | None = None) -> int:
             _note_skip(sheets, priv_id, today, loc_key, locs_state, why, recipients, cfg, stale_after,
                        cause="empty")
             continue
-        d = diff_location(lid, views, files_state, baselined, owned, elsewhere)
+        d = diff_location(lid, views, files_state, baselined, owned, listed_at)
         label = location_label(loc)
         body_label = location_label(loc, with_name=True)
 
@@ -678,6 +701,7 @@ def run(argv: list[str] | None = None) -> int:
         counts["baseline"] += len(d["baseline"])
         counts["new"] += len(d["new"])
         counts["changed"] += len(d["changed"])
+        counts["moved"] += len(d["moved"])
         counts["removed"] += len(d["removed"])
         print(f"[ride-docs] {label}: {len(views)} listed — {len(d['baseline'])} baselined, "
               f"{len(d['new'])} new, {len(d['changed'])} changed, {len(d['moved'])} moved, "
@@ -725,7 +749,7 @@ def run(argv: list[str] | None = None) -> int:
                                               folder, max_bytes, max_mirror)
 
     print(f"[ride-docs] done — {counts['baseline']} baselined, {counts['new']} new, "
-          f"{counts['changed']} changed, {counts['removed']} removed, "
+          f"{counts['changed']} changed, {counts['moved']} moved, {counts['removed']} removed, "
           f"{counts['mirrored']} mirrored.")
     return exit_code
 

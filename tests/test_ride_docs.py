@@ -1051,6 +1051,56 @@ def test_a_uri_moving_between_watched_locations_is_moved_not_removed_then_new(mo
     assert [r[rdw.C_KEY] for r in _rows(fake, "removed")] == ["rrd:35715058"]
 
 
+def test_a_uri_listed_under_two_watched_locations_writes_nothing_run_after_run(monkeypatch, tmp_path):
+    world, fake, sent = _two_sites(monkeypatch, tmp_path)
+    assert rdw.run([]) == 0
+    world.files[9549].append(copy.deepcopy(world.files[2085][0]))   # now listed at BOTH
+    n = len(_rows(fake))
+    for _ in range(3):
+        assert rdw.run([]) == 0
+    assert len(_rows(fake)) == n and sent == []
+
+
+def test_all_files_moving_away_is_not_an_empty_listing_skip(monkeypatch, tmp_path):
+    world, fake, sent = _two_sites(monkeypatch, tmp_path)
+    assert rdw.run([]) == 0
+    world.files[9549].extend(world.files[2085])
+    world.files[2085] = []
+    assert rdw.run([]) == 0
+    assert _rows(fake, "fetch-skipped") == [] and _rows(fake, "removed") == []
+    assert len(_rows(fake, "moved")) == 3 and sent == []
+
+
+def test_a_new_location_listing_known_files_does_not_rebaseline_or_remirror(monkeypatch, tmp_path):
+    cfg = copy.deepcopy(CFG)
+    cfg["ride_docs"]["mirror"] = True
+    world, fake, sent = _wire(monkeypatch, tmp_path, cfg=cfg)
+    _mirror_env(monkeypatch)
+    _wire_mirror(monkeypatch, world)
+    assert rdw.run([]) == 0 and len(_rows(fake, "mirrored")) == 3
+    cfg2 = copy.deepcopy(cfg)
+    cfg2["ride"]["site_ids"] = ["81000004", "81000033"]
+    monkeypatch.setattr(rdw, "load_config", lambda: copy.deepcopy(cfg2))
+    world.locations["81000033"] = dict(LOC, location_id=9549, program_num="81000033")
+    world.files[9549] = [raw(40000001, "Salem Doc"), copy.deepcopy(world.files[2085][0])]
+    n = len(world.downloads)
+    assert rdw.run([]) == 0
+    assert [r[rdw.C_KEY] for r in _rows(fake, "baseline")][-2:] == ["rrd:40000001", "loc:9549"]
+    assert len(world.downloads) == n + 1                   # only the genuinely new file
+
+
+def test_the_mirror_pass_stops_at_its_time_budget(monkeypatch, tmp_path):
+    cfg = copy.deepcopy(CFG)
+    cfg["ride_docs"]["mirror"] = True
+    world, fake, sent = _wire(monkeypatch, tmp_path, cfg=cfg)
+    _mirror_env(monkeypatch)
+    _wire_mirror(monkeypatch, world)
+    clock = iter([0, 0, rdw._MIRROR_BUDGET_S + 1] + [10**6] * 10)
+    monkeypatch.setattr(rdw.time, "monotonic", lambda: next(clock))
+    assert rdw.run([]) == 0
+    assert len(_rows(fake, "mirrored")) == 1
+
+
 def test_a_uri_moving_between_watched_locations_in_one_run_is_not_double_alerted(monkeypatch, tmp_path):
     cfg = copy.deepcopy(CFG)
     cfg["ride"]["site_ids"] = ["81000004", "81000033"]
