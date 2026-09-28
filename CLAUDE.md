@@ -508,6 +508,27 @@ external users but no sensitive data). Public repo.
   print interpolates request text or an attachment name (AST-pinned), googleapiclient's retry logger
   is silenced, `main()` prints class + scrubbed message only. `--probe`. Gated on `govqa.enabled`
   (ships `false`). See ADR 059.
+- `ride_docs_client.py` — Stream T: fetch + canonicalize for RIDE's ANONYMOUS
+  document listing (ADR 058). RIDE's public Inventory of Facilities page gives
+  every visitor a "Public User" session (no credentials, no login); its own front
+  end then calls three JSON endpoints (program -> locationId; the location's file
+  list, keyed by unique `uri`; file bytes by `uri`) that plain `requests` replays
+  after a cookie warm-up (a bare POST is 405). Stable paging (sort on `uri`),
+  streaming size-capped downloads with SHA-256/MD5, the 1900-01-31 placeholder
+  date -> blank, a traversal-safe mirror filename, and `probe()`. Never touches a
+  credential, never routes through `egle_doc_parser`.
+- `ride_docs_watcher.py` — Stream T: daily watch on the DOCUMENTS RRD lists for the
+  `ride:` Part 201 sites (95 files across 5 locations at build). Events append to
+  the `RRD Documents` tab (last row per key = state): silent baseline per location
+  (file rows first, `loc:` marker last), then new / changed / removed alerts, a
+  bounded PRIVATE Drive mirror, and a liveness alert after N consecutive skipped
+  runs. **HARD RULE: private only** — rows go to `GSHEET_ID_PRIVATE` (fails closed
+  if unset or equal to `GSHEET_ID`; the workflow never receives the public id),
+  files to a private folder that must not equal any other `GOAUTH_*_FOLDER_ID`,
+  nothing feeds `findings_feed`; EMPTY `recipients` = display-only, never the
+  coalition list. Alerts show BOTH document date and added-to-RIDE date (backlog
+  digitization). `--probe` = pre-activation runner check. Gated on
+  `ride_docs.enabled` (ships `false`). See ADR 058.
 
 ## Forbidden patterns (do not do these)
 
