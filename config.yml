@@ -1647,7 +1647,8 @@ mpart:
   # none applied then; PFHxS and PFNA were added in 2023), an undated row IS screened, a 'K'
   # flag (EGLE: "below the Method Detection Limit/LOD") is never compared, every other flag is
   # printed as published and not interpreted, and a unit that does not read as ng/L is never compared. Keys must be PFOS/PFOA/PFHxS/
-  # PFNA (a typo raises); `thresholds_verified_year` is layered over the defaults.
+  # PFNA (a typo raises); both `thresholds_ng_l` and `thresholds_verified_year` are layered
+  # over their defaults, so overriding one analyte here cannot silently drop the other three.
   thresholds_ng_l: {PFOS: 12, PFOA: 170, PFHxS: 210, PFNA: 30}
   thresholds_verified_year: {PFOS: 2014, PFOA: 2022, PFHxS: 2023, PFNA: 2023}
   stale_alert_after_skips: 3      # a liveness alert after this many consecutive unreadable runs (repeated weekly)
