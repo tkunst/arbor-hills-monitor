@@ -82,7 +82,10 @@ whole list). A `new` uri, a `changed` record, or a `removed` uri (a public
 record disappearing is signal) alerts; a `removed` uri that returns is `new`
 again. Every location is LISTED before any is diffed, so a known, unchanged uri that
 now appears under a different watched location gets a silent `moved` row (its
-location is updated) and is never `removed` where it left, whatever the order. The Sheet read is **not** error-swallowing (unlike the other tabs'
+location is updated) and is never `removed` where it left, whatever the order. A
+file listed under TWO watched locations at once is left alone (no row), and a
+location's first sighting baselines only files never seen before; already-known
+ones keep their state (and their mirror). The Sheet read is **not** error-swallowing (unlike the other tabs'
 helpers): a swallowed transient read error would look like "never baselined" and
 silently fold genuinely-new files into a fresh baseline. It raises.
 
@@ -142,7 +145,8 @@ backlog drains over about 12 daily runs, newest first), `max_file_mb`
 per-file failure cap (two `mirror-failed` rows, then `mirror-skipped` on the third
 failed attempt) so one
 bad file cannot starve the rest. Each download also has a
-wall-clock deadline (15 min), so a trickling server can't hold the job. Mirroring
+wall-clock deadline (15 min) and the whole mirror pass a 25-min budget, so a
+trickling server can't hold the job past its 45-min timeout. Mirroring
 is optional: without the folder secret the stream still lists, records and alerts.
 
 ### 6. Failure modes and liveness
@@ -174,7 +178,10 @@ also a `fetch-skipped` run (counting toward the liveness alert), never a diff:
   SUPERSEDES the old location: the
   next run diffs the new location against every known uri (anything unseen alerts
   as new), its removal and empty-listing checks also cover files first recorded
-  under the old id, and the old location never accrues skips again.
+  under the old id (when the new location is not already listed for another
+  program; after a MERGE into another program's location, files missing from the
+  merged listing are not removal-checked — accepted residual), and the old location
+  never accrues skips again.
 
 Each skip row records its cause (`[fetch]`, `[empty]`, `[unresolved]`,
 `[relocated]`). The cause-specific alert fires the first time a cause appears in

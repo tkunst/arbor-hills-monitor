@@ -284,8 +284,8 @@ def download_file(session: requests.Session, uri: str, dest_path: str,
     RideDocsFetchError (non-200, a JSON/HTML error body, an empty body, or — for
     a PDF — a body that isn't %PDF-). A failed download never leaves a partial
     file behind. The response is never buffered whole (files reach 200+ MB).
-    `timeout` is per read; `deadline_s` bounds the WHOLE download, so a server that
-    trickles bytes can't hold the job until the workflow timeout."""
+    `timeout` is per read; `deadline_s` bounds this ONE download against a server
+    that trickles bytes (the watcher also caps its whole mirror pass)."""
     if not re.fullmatch(r"[0-9]+", str(uri).strip()):          # ASCII digits only
         raise RideDocsFetchError(f"refusing non-numeric file uri {uri!r}")
     _pace()
