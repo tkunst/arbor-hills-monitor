@@ -492,12 +492,17 @@ external users but no sensitive data). Public repo.
   `max_pages_per_term`, baselines silently, `term:` marker last; a page-cap hit writes a `partial`
   marker and asks for a CSV once; `nomatch` rows are upgradeable), CSV drop (AFTER the sweep; keyed
   by Drive id + content hash), re-check of watched/open requests by number (unknown status = open;
-  truncation and mass-misses are reported), file listing (duplicate names keyed by occurrence), and
-  optional staging under CONTENT-ADDRESSED names `<E>__<sha16>.<ext>` (attachment names never reach
-  Drive queries/logs; in-run retry; 5 strikes then reported). Circuit breaker + wall-clock budget.
+  truncation, mass-misses and a watch_requests entry the archive never shows are reported), file
+  listing (`file:<E>:<name>#<n>`; a `list-pending` marker is written in the SAME append as the
+  new/status row and a `file-list-done` marker after the detail page was read, so a failed/killed
+  listing is retried next run even though the request is terminal; the detail page's Reference No
+  must match), and optional staging under CONTENT-ADDRESSED names `<E>__<sha16>[.<known ext>]`
+  (attachment names never reach Drive queries/logs; in-run retry on a FRESH session; 5 strikes then
+  reported). A grid with data rows none of which parse, or >10 rows with no pager, is a fetch error
+  (never "no requests"); a first sweep of a full page with no pager text is marked `partial`. Circuit breaker + wall-clock budget.
   **HARD RULE: private only** — rows to `GSHEET_ID_PRIVATE` (fails closed if unset, equal to
   `GSHEET_ID`, or — the CI-effective check — the spreadsheet already holds public case-file tabs);
-  staging folder != any other `GOAUTH_*_FOLDER_ID`; nothing feeds `findings_feed`; EMPTY
+  staging folder != any other `GOAUTH_*_FOLDER_ID` / `GDRIVE_FOLDER_ID`; nothing feeds `findings_feed`; EMPTY
   `recipients` = display-only; a report that can't be sent makes the run red. stdout is public: no
   print interpolates request text or an attachment name (AST-pinned), googleapiclient's retry logger
   is silenced, `main()` prints class + scrubbed message only. `--probe`. Gated on `govqa.enabled`

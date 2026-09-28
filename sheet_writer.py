@@ -231,9 +231,10 @@ TAB_PFAS_PWS = "Public Water Supply PFAS Watch"
 # EGLE GovQA public FOIA archive watch (Stream U, ADR 059). PRIVATE Sheet only
 # (GSHEET_ID_PRIVATE): request text and attachment names from OTHER people's FOIA
 # requests can name residents and street addresses. Append-only events keyed by
-# request number (E######-######), `file:<E-number>:<name>`, `term:<keyword>`
-# (a keyword's first-sweep baseline marker) and `csv:<Drive file id>`; the LAST
-# row for a key is its state. See govqa_watcher.py.
+# request number (E######-######), `file:<E-number>:<name>#<n>`, `list:<E-number>`
+# (release-listing pending/done marker), `term:<keyword>` (a keyword's first-sweep
+# baseline marker) and `csv:<Drive file id>:<content hash>`; the LAST row for a key
+# is its state. See govqa_watcher.py.
 TAB_GOVQA = "GovQA Archive Watch"
 # nSITE Submissions watch (Stream K, ADR 020) — same on-demand policy: no tab
 # appears until nsite_submissions_watcher actually runs. Append-only, keyed by
@@ -460,8 +461,9 @@ PFAS_PWS_WATCH_HEADERS = [
 ]
 
 # EGLE GovQA public FOIA archive watch (Stream U, ADR 059) — PRIVATE Sheet only.
-# Event: baseline (silent first sighting) / new / nomatch / status / ingested /
-# file-listed / file-staged / file-held / file-skipped / file-failed.
+# Event: baseline (silent first sighting) / new / nomatch / partial / status / ingested /
+# list-pending / file-list-done / file-listed / file-staged / file-held / file-skipped /
+# file-failed.
 GOVQA_HEADERS = [
     "Date", "Key", "Event", "Created", "Closed", "Status", "Matched Terms", "Rid",
     "Request Excerpt", "File Name", "Size (bytes)", "SHA-256", "MD5", "Staging Link",

@@ -69,9 +69,11 @@ version only when the stream is enabled or a probe is requested.
 
 ### 2. State is the tab; events are append-only
 
-`GovQA Archive Watch` rows are events keyed by request number, `file:<E>:<name>` (a
-repeated name gets `#2`, `#3`), `term:<keyword>` (a keyword's first-sweep marker) or
-`csv:<Drive id>:<content hash>`; the LAST row for a key is its state. A **first sweep of
+`GovQA Archive Watch` rows are events keyed by request number, `file:<E>:<name>#<n>` (n =
+the occurrence of that name on the request, ALWAYS written, so a name that itself ends in
+`#3` cannot be misread), `list:<E>` (the release-listing marker, below), `term:<keyword>`
+(a keyword's first-sweep marker) or `csv:<Drive id>:<content hash>`; the LAST row for a key
+is its state. A **first sweep of
 a keyword reads every page up to `max_pages_per_term`** and records what it finds
 silently (`baseline`); later sweeps alert (`new`). Rows are written first and the
 `term:` marker last, so a crash re-baselines silently instead of alerting on history. A
@@ -85,9 +87,18 @@ recorded `nomatch` (no request text kept) so the incremental stop works, and is
 ### 3. Zero rows are only believed with the empty marker
 
 A grid with no data rows and no "No data to display" marker did not render — that is a
-transient fetch error (retried). A by-number lookup that returns neither the request nor
-an empty grid is the same. If every keyword comes back empty while requests are on
-record, that is reported as a broken read and nothing is recorded.
+transient fetch error (retried); `<style>`/`<script>` blocks are ignored when looking for
+the markers, so a stylesheet that merely names the empty-row class cannot pass for an empty
+grid. A grid that DOES show data rows but from which no request could be read (the markup
+changed) is the same fetch error — never "no requests". A by-number lookup that returns
+neither the request nor an empty grid is the same. A page of more than 10 rows with no
+pager text is impossible and fails the keyword; a first sweep that reads a FULL page of 10
+rows with no pager text cannot tell whether older pages exist, so it is marked `partial`
+and a CSV is requested (a false alarm for a term with exactly 10 results — accepted). If
+every keyword comes back empty while requests are on record, that is reported as a broken
+read and nothing is recorded. The `rid` that opens a request's detail page is read only
+from the row's details-link tag (never from request text), and the detail page's own
+`Reference No` must equal the request it was opened for.
 
 ### 4. Re-check by number, statuses fail safe
 
@@ -96,18 +107,26 @@ a terminal status (GRANTED, DENIED, CANCELLED, ABANDONED — real statuses seen 
 "WAITING FOR PAYMENT", "PARTIAL", "UTLR", "New Request") is looked up by number each
 day, newest first, capped at `max_open_rechecks` (a truncated list is reported). Any
 other status counts as open. A malformed `watch_requests` entry (it must be the full
-`E######-MMDDYY`) is reported and ignored, never a crash; lookups that return nothing
-for most recorded requests are reported.
+`E######-MMDDYY`) is reported and ignored, never a crash; a well-formed one the archive
+never shows (a mistyped date suffix) is reported on every run until it resolves; lookups
+that return nothing for most recorded requests are reported. Requests ingested from a CSV
+in this run are history, not re-checked in the same run.
 
 ### 5. Released files: list, optionally stage privately
 
 For a new or status-changed request whose status says records were released, the
-attachment list is recorded (`file-listed`, with the request's close date). If
+attachment list is recorded (`file-listed`, with the request's close date). The request is
+given a `list-pending` marker **in the same append as its `new`/`status` row**, and a
+`file-list-done` marker after its detail page was read (files first, marker last); every
+run retries the pending ones, so a failure, a spent time budget or a kill between the
+status row (which makes the request terminal — never re-checked) and the listing cannot lose
+the release. A retry reopens the archive session first (a stale `(S(...))` session is the
+usual cause). If
 `download_attachments` is on and a private staging folder is configured, each file is
 streamed to disk (size-capped), hashed (SHA-256 + MD5) and uploaded under a
-**content-addressed name** — `<E-number>__<sha256[:16]>.<ext>` — so the attachment's own
-name (which can name a resident) never enters a Drive query, and distinct files can
-never collide. A transient download failure reloads the detail page and retries once
+**content-addressed name** — `<E-number>__<sha256[:16]>[.<ext>]` — the extension only from a short list of known
+document/image types, never a slice of the attachment's own name — so that name (which can
+name a resident) never enters a Drive query, and distinct files can never collide. A transient download failure reloads the detail page and retries once
 in the same run; a file gets up to five strikes across runs before it is recorded
 `file-skipped` **and reported**; an over-size file is skipped once. The handoff asked to
 skip files already held "by SHA-256 against the Archived-PDFs mirror and Hand-Curated
@@ -137,7 +156,9 @@ Trisha to confirm. The watcher fails closed three ways: the secret unset; equal 
 and — the check that works in CI — the target spreadsheet already holding a public
 case-file tab (New Documents / Evidence by Risk / Measurements), checked before any
 write. Files stage only to a private folder that must not equal any other
-`GOAUTH_*_FOLDER_ID`. Nothing imports or feeds `findings_feed`/`gen_findings_feed` or
+`GOAUTH_*_FOLDER_ID` or the public PDF archive's `GDRIVE_FOLDER_ID` (the workflow passes
+them for exactly that check; the guard compares ids, it cannot tell whether a folder is
+shared — create the staging folder private). Nothing imports or feeds `findings_feed`/`gen_findings_feed` or
 another archiver. Recipients are scoped verbatim; an empty list is display-only and
 `send_email` (which would fall back to the coalition list) is never called. All pinned
 by `tests/test_govqa.py`.
@@ -147,7 +168,11 @@ by `tests/test_govqa.py`.
 Each phase (sweep, CSV, re-check, file listing, staging) is guarded: an exception
 becomes a reported problem and the next phase still runs, and the one report email is
 sent from a `finally`, so an alert can never be lost to a crash after its rows were
-written. A configured recipient whose report could not be sent makes the run red.
+written. A configured recipient whose report could not be sent makes the run red. A retry
+loop checks the run's time budget before every further attempt (one failing call cannot
+outlive it), and a browser that cannot restart never aborts the retry (the next attempt
+fails on its own and is counted); an unexpected error inside one keyword's sweep is
+contained to that keyword.
 stdout is a public log: no `print` interpolates request text or an attachment name
 (an AST test pins it), every exception message is URL-scrubbed (Azure download links
 carry the file name and a signed token), `googleapiclient`'s retry logger — which prints
@@ -165,7 +190,7 @@ An alert storm on activation — each keyword's first sweep baselines silently. 
 backfill too large to scrape — records what it read, then asks for a CSV once.
 
 **Manageable risks:** markup changes (`parse_detail` and the empty-grid check raise);
-a session expiring mid-download (retried once in-run); a storage account rename (fails
+a session expiring mid-download or mid-listing (a fresh session, retried once in-run); a storage account rename (fails
 loudly at the redirect allowlist).
 
 **Residual risks accepted:** a `require` phrase, if configured, can miss a hit the site
@@ -174,7 +199,13 @@ listed when a request is new or changes status — attachments posted later to a
 already-terminal request are not seen** (a possible follow-up: re-list until the close
 date plus N days); requests already released when first seen (a first sweep or a CSV)
 are not listed; `PARTIAL` is not terminal, so such a request is re-checked until it
-closes.
+closes; statuses this code has never seen (e.g. `UTLR`) count as open and re-check
+daily — enough of them fill the `max_open_rechecks` cap and turn the truncation notice
+into a daily nag (raise the cap); the headless browser inherits the job's environment
+(which holds the SMTP and OAuth secrets) while it renders third-party-authored archive text —
+passing a minimal `env=` to `chromium.launch` is a tracked follow-up (it cannot be verified
+without a runner, so it is not shipped blind); the requester's organization is not captured (the grid
+does not show it); a hash exists only for staged files.
 
 ## Alternatives considered
 
@@ -190,8 +221,9 @@ closes.
 
 Ships `govqa.enabled: false`. To activate: (1) share the private Sheet with the
 service account as Editor; (2) run the workflow once with `probe=true`; (3) optional:
-create a private staging folder, set `GOAUTH_GOVQA_STAGING_FOLDER_ID`, set
-`download_attachments: true`; (4) flip `govqa.enabled` (and update
+create a PRIVATE staging folder **with the app's OAuth identity** (the `drive.file` scope
+only sees files the app created — the `create-oauth-folder` workflow does this), set
+`GOAUTH_GOVQA_STAGING_FOLDER_ID`, set `download_attachments: true`; (4) flip `govqa.enabled` (and update
 `test_the_workflow_never_receives_the_public_sheet_id_ships_disabled_and_pins_playwright`,
 which pins the shipped `false`). The first run sweeps every keyword and baselines
 silently. Pause = flip back to `false`.

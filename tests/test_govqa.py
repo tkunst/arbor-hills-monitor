@@ -193,13 +193,118 @@ def test_phrase_in_is_case_and_whitespace_insensitive_and_whole_word():
     assert not gq.phrase_in("anything", "")
 
 
-def test_safe_filename_cannot_traverse_or_start_with_a_dot():
-    n = gq.safe_filename("E614007-080526", "../../etc/passwd\x00 / Cost: Estimate?.docx")
-    assert n.startswith("E614007-080526__") and n.endswith(".docx")
-    assert "/" not in n and "\\" not in n and ".." not in n and "\x00" not in n
-    assert gq.safe_filename("evil/../x", "a.pdf").startswith("E000000-000000__")
-    assert not gq.safe_filename("E614007-080526", "...").split("__")[1].startswith(".")
-    assert len(gq.safe_filename("E614007-080526", "x" * 500 + ".pdf")) < 140
+def test_the_rid_is_read_only_from_the_details_link_never_from_request_text():
+    """The Summary cell is text a third party wrote. `redirectInfo(999999)` in it must not steer which
+    request's detail page is opened."""
+    steered = grid_row(0, "E615953-091526", "9/16/2026", "please see redirectInfo(999999) and OnMoreInfoClick(this, 888888)",
+                       "GRANTED – Records", "714629")
+    assert gq.parse_rows("<table>" + steered + "</table>")[0]["rid"] == "714629"
+    no_link = re.sub(r"<a .*?</a>", "", steered)
+    assert gq.parse_rows("<table>" + no_link + "</table>")[0]["rid"] is None
+
+
+def test_parse_grid_state_ignores_style_and_script_blocks():
+    css = "<style>.dxgvEmptyDataRow_Material { color: red } /* No data to display */</style><script>var s='dxgvDataRow'</script>"
+    assert gq.parse_grid_state(css + "<html>Just a moment…</html>") == "unknown"
+    assert gq.parse_grid_state(css + EMPTY_GRID) == "empty" and gq.parse_grid_state(css + GRID) == "rows"
+
+
+def test_read_grid_refuses_a_page_with_data_rows_that_cannot_be_read():
+    """The likeliest markup-change failure: rows are present but no cell parses. It must NOT pass for
+    'no requests' (which would baseline an empty term or report a request as not shown)."""
+    weird = '<table><tr class="dxgvDataRow_x"><td>who knows</td><td>x</td></tr></table>'
+    with pytest.raises(gq.GovqaFetchError, match="none could be read"):
+        gq.read_grid(weird)
+    with pytest.raises(gq.GovqaFetchError, match="did not render"):
+        gq.read_grid("<html>Just a moment…</html>")
+    assert gq.read_grid(EMPTY_GRID) == [] and len(gq.read_grid(GRID)) == 3
+    http = FakeHTTP([summary_ok(), ("POST", "OpenRecordsSummary", Resp(200, weird))])
+    with pytest.raises(gq.GovqaFetchError, match="none could be read"):
+        gq.ArchiveSession(session=http).lookup("E615953-091526")
+
+
+def test_sweep_marks_a_full_page_with_no_pager_and_refuses_an_impossible_one():
+    ten = [R(f"E7000{i:02d}-010126") for i in range(10)]
+    res = gq.sweep_term(FakeGrid({"t": pages(ten)}), "t", lambda n: False, max_pages=3)
+    assert res.pager_missing and len(res.rows) == 10 and not res.overflow          # cannot tell whether older pages exist
+    few = gq.sweep_term(FakeGrid({"t": pages(ten[:3])}), "t", lambda n: False, max_pages=3)
+    assert not few.pager_missing
+    with pytest.raises(gq.GovqaFetchError, match="no pager"):
+        gq.sweep_term(FakeGrid({"t": pages(ten + [R("E700099-010126")])}), "t", lambda n: False, max_pages=3)
+
+
+def test_with_backoff_stops_retrying_when_the_time_budget_is_spent_and_survives_a_dead_on_retry():
+    slept, calls = [], []
+
+    def fn():
+        calls.append(1)
+        raise gq.GovqaFetchError("timeout")
+    with pytest.raises(gq.GovqaStructuralError, match="time budget"):
+        gq.with_backoff(fn, "x", sleep=slept.append, should_stop=lambda: True)
+    assert len(calls) == 1 and slept == []                                  # one attempt, no wait, no retry
+    n = []
+
+    def flaky():
+        n.append(1)
+        if len(n) < 2:
+            raise gq.GovqaFetchError("timeout")
+        return "ok"
+
+    def dead_restart():
+        raise gq.GovqaFetchError("browser is gone")
+    assert gq.with_backoff(flaky, "x", sleep=lambda s: None, on_retry=dead_restart) == "ok"   # a failing restart never aborts
+
+
+def test_details_on_a_reused_session_that_expired_resets_and_retries_once():
+    shell = "<html>Session Timeout — please log in</html>"
+    http = FakeHTTP([("GET", "RequestArchiveDetails", Resp(200, shell)),          # the reused session has expired
+                     summary_ok(),                                                  # ...so a FRESH one is opened
+                     ("GET", "(S(abc123))/RequestArchiveDetails", Resp(200, DETAIL))])
+    s = gq.ArchiveSession(session=http)
+    s._summary_page_url = SESSION_URL
+    assert s.details("703017")["reference"] == "E614007-080526" and http.cookie_clears == 1
+
+
+def test_details_on_a_fresh_session_that_still_answers_wrongly_is_a_structural_error():
+    http = FakeHTTP([summary_ok(), ("GET", "RequestArchiveDetails", Resp(200, "<html>changed markup</html>"))])
+    with pytest.raises(gq.GovqaStructuralError):
+        gq.ArchiveSession(session=http).details("703017")
+    assert len(http.calls) == 2                                                    # no second retry loop
+
+
+def test_reset_forgets_the_session():
+    http = FakeHTTP([])
+    s = gq.ArchiveSession(session=http)
+    s._summary_page_url, s._detail_html = SESSION_URL, "x"
+    s.reset()
+    assert s._summary_page_url == "" and s._detail_html == "" and http.cookie_clears == 1
+
+
+def test_next_page_keeps_polling_through_a_transiently_unreadable_page():
+    """Mid-navigation the DOM is briefly not a grid; that must not abort the page advance."""
+    pageA = GRID
+    pageB = GRID.replace("E615953-091526", "E615000-010126")
+    seen = iter([pageA, "<html>loading…</html>", "<html>loading…</html>", pageB, pageB, pageB])
+
+    class FakePage:
+        def content(self):
+            return self._cur
+
+        def inner_text(self, sel):
+            return "Page 2 of 10 (97 items)"
+
+        def evaluate(self, js):
+            self.js = js
+
+        def wait_for_timeout(self, ms):
+            self._cur = next(seen)
+
+    fp = FakePage()
+    fp._cur = next(seen)
+    grid = gq.PlaywrightGrid()
+    grid.page = fp
+    rows, pager = grid.next_page()
+    assert rows[0]["request_no"] == "E615000-010126" and "GVPagerOnClick" in fp.js
 
 
 # ==============================================================================
@@ -331,6 +436,13 @@ class FakeHTTP:
 
     def __init__(self, script):
         self.script, self.calls, self.headers = list(script), [], {}
+        self.cookie_clears = 0
+        outer = self
+
+        class _Cookies:
+            def clear(self):
+                outer.cookie_clears += 1
+        self.cookies = _Cookies()
 
     def request(self, method, url, **kw):
         self.calls.append({"method": method, "url": url, **kw})
@@ -526,22 +638,28 @@ def test_build_state_folds_requests_files_terms_and_csvs():
         _row("E600001-010126", "status", status="GRANTED – Records", rid="9", closed="1/2/2026"),
         _row("E600002-010126", "nomatch", status="PARTIAL"),
         _row("E600003-010126", "new", status="Received"), _row("E600003-010126", "nomatch"),   # nomatch never un-matches
-        _row("file:E600001-010126:a.pdf", "file-listed"), _row("file:E600001-010126:a.pdf", "file-failed"),
-        _row("file:E600001-010126:a.pdf", "file-failed"),
-        _row("file:E600001-010126:b.pdf", "file-listed"), _row("file:E600001-010126:b.pdf", "file-staged"),
-        _row("file:E600001-010126:b.pdf", "file-listed"),                                # a re-list never demotes staged
-        _row("file:E600001-010126:image001.png", "file-listed"), _row("file:E600001-010126:image001.png#2", "file-listed"),
+        _row("file:E600001-010126:a.pdf#1", "file-listed"), _row("file:E600001-010126:a.pdf#1", "file-failed"),
+        _row("file:E600001-010126:a.pdf#1", "file-failed"),
+        _row("file:E600001-010126:b.pdf#1", "file-listed"), _row("file:E600001-010126:b.pdf#1", "file-staged"),
+        _row("file:E600001-010126:b.pdf#1", "file-listed"),                              # a re-list never demotes staged
+        _row("file:E600001-010126:image001.png#1", "file-listed"), _row("file:E600001-010126:image001.png#2", "file-listed"),
+        _row("file:E600001-010126:report#3#1", "file-listed"),                            # a name that itself ends in #3
+        _row("list:E600001-010126", "list-pending"), _row("list:E600002-010126", "list-pending"),
+        _row("list:E600002-010126", "file-list-done"),
     ])
     assert st["terms"] == {"Holloway", "Big"} and st["csvs"] == {"abc:0123456789abcdef"}
     rq = st["requests"]
     assert rq["E600001-010126"]["status"] == "GRANTED – Records" and rq["E600001-010126"]["matched"]
     assert rq["E600001-010126"]["rid"] == "9" and rq["E600001-010126"]["terms"] == "Holloway"
     assert rq["E600002-010126"]["matched"] is False and rq["E600003-010126"]["matched"] is True
-    assert st["files"]["file:E600001-010126:a.pdf"]["fails"] == 2 and st["files"]["file:E600001-010126:a.pdf"]["state"] == "listed"
-    assert st["files"]["file:E600001-010126:b.pdf"]["state"] == "staged"
+    assert st["files"]["file:E600001-010126:a.pdf#1"]["fails"] == 2 and st["files"]["file:E600001-010126:a.pdf#1"]["state"] == "listed"
+    assert st["files"]["file:E600001-010126:b.pdf#1"]["state"] == "staged"
     dup = st["files"]["file:E600001-010126:image001.png#2"]
-    assert dup["name"] == "image001.png" and dup["occ"] == 2 and st["files"]["file:E600001-010126:image001.png"]["occ"] == 1
-    assert gw.file_key("E600001-010126", "a.pdf") == "file:E600001-010126:a.pdf"
+    assert dup["name"] == "image001.png" and dup["occ"] == 2 and st["files"]["file:E600001-010126:image001.png#1"]["occ"] == 1
+    odd = st["files"]["file:E600001-010126:report#3#1"]
+    assert odd["name"] == "report#3" and odd["occ"] == 1                                # the LAST #n is the occurrence, always
+    assert st["list_pending"] == {"E600001-010126"}                                      # E600002 was marked done
+    assert gw.file_key("E600001-010126", "a.pdf") == "file:E600001-010126:a.pdf#1"
     assert gw.file_key("E600001-010126", "a.pdf", 3) == "file:E600001-010126:a.pdf#3"
 
 
@@ -556,6 +674,9 @@ def test_staged_name_is_content_addressed_and_never_carries_the_attachment_name(
     assert "Jane" not in n and gw.staged_name("E614007-080526", "cd" * 32, "noext") == "E614007-080526__cdcdcdcdcdcdcdcd"
     assert gw.staged_name("evil/../x", "ef" * 32, "a.b/../c").startswith("E000000-000000__")
     assert gw.staged_name("E614007-080526", "ab" * 32, "x.p?d*f") == "E614007-080526__abababababababab.pdf"
+    # an unknown "extension" (really a slice of the attachment's own name) never reaches a Drive name or query
+    assert gw.staged_name("E614007-080526", "ab" * 32, "John.Smith letter") == "E614007-080526__abababababababab"
+    assert gw.staged_name("E614007-080526", "ab" * 32, "a.tar.gz") == "E614007-080526__abababababababab"
 
 
 def test_report_shows_sections_only_when_present_and_carries_the_privacy_note():
@@ -635,6 +756,7 @@ class FakeArchive:
         self.details_by_rid = details if details is not None else {}
         self.lookups, self.detail_calls, self.downloads = [], [], []
         self.lookup_error = None
+        self.resets = 0
         self.details_error = None
         self.download_error = {}                   # file name -> exception (or list of exceptions, consumed in order)
         self.file_bytes = b"%PDF-fake" + b"z" * 50
@@ -655,11 +777,15 @@ class FakeArchive:
         r = self.rows.get(no)
         return dict(r) if r else None
 
+    def reset(self):
+        self.resets += 1
+
     def details(self, rid):
         self.detail_calls.append(rid)
         if self.details_error:
             raise self.details_error
-        self._current = self.details_by_rid.get(rid, {"reference": "?", "closed": "", "files": []})
+        default = {"reference": next((n for n, r in self.rows.items() if r.get("rid") == rid), "?"), "closed": "", "files": []}
+        self._current = self.details_by_rid.get(rid, default)
         return copy.deepcopy(self._current)
 
     def download(self, target, dest, max_bytes):
@@ -954,8 +1080,13 @@ def test_a_send_that_fails_makes_the_run_red_but_keeps_the_rows(monkeypatch):
     g2 = FakeGrid({"Arbor Hills": pages([R("E600009-020226", "Arbor Hills expansion", "New Request"), R("E600003-010126", AH)]),
                    "Holloway": pages([R("E599999-010126", "Holloway pit")])})
     assert go(g2, arch) == 1 and len(rows_of(fake, "new")) == 1
-    fake2, _, grid3, arch3 = _wire(monkeypatch, grid=first_run_grid(), send=lambda *a: (_ for _ in ()).throw(RuntimeError("smtp")))
-    assert go(grid3, arch3) == 0
+
+def test_a_send_that_RAISES_makes_the_run_red_but_keeps_the_rows(monkeypatch):
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid(), send=lambda *a: (_ for _ in ()).throw(RuntimeError("smtp")))
+    assert go(grid, arch) == 0                                                                 # baseline: nothing to send
+    g2 = FakeGrid({"Arbor Hills": pages([R("E600009-020226", "Arbor Hills expansion", "New Request"), R("E600003-010126", AH)]),
+                   "Holloway": pages([R("E599999-010126", "Holloway pit")])})
+    assert go(g2, arch) == 1 and len(rows_of(fake, "new")) == 1                                # the exception branch really ran
 
 
 # --- re-check + status changes + released files ------------------------------------------
@@ -979,7 +1110,7 @@ def test_an_open_request_that_changes_status_alerts_and_lists_its_released_files
     st = rows_of(fake, "status")
     assert len(st) == 1 and "'WAITING FOR PAYMENT' -> 'GRANTED – Records'" in st[0][gw.C_NOTE]
     listed = rows_of(fake, "file-listed")
-    assert {r[gw.C_KEY] for r in listed} == {"file:E600003-010126:a.pdf", "file:E600003-010126:b.docx"}
+    assert {r[gw.C_KEY] for r in listed} == {"file:E600003-010126:a.pdf#1", "file:E600003-010126:b.docx#1"}
     assert all(r[gw.C_CLOSED] == "9/2/2026 1:00 PM" for r in listed)                          # the Closed column is written
     assert len(sent) == 1 and "STATUS CHANGES" in sent[0][1] and "2 file(s) listed" in sent[0][1]
     assert arch.downloads == []                                                              # download_attachments is off
@@ -1166,6 +1297,164 @@ def test_an_unreadable_csv_folder_is_reported_but_never_sinks_the_run(monkeypatc
     assert len(rows_of(fake, "baseline")) >= 3 and "CSV drop phase failed" in sent[0][1]
 
 
+# --- the release listing survives failures (review round 2, M1) --------------------------------------
+
+
+def _release(arch, files=("a.pdf", "b.docx")):
+    arch.rows["E600003-010126"] = R("E600003-010126", AH, "GRANTED – Records", rid="7003")
+    arch.details_by_rid["7003"] = {"reference": "E600003-010126", "closed": "9/2/2026 1:00 PM", "files": [
+        {"target": f"rptAttachments$ctl0{i}$lnkStreamCloud", "name": n} for i, n in enumerate(files)]}
+
+
+def test_a_release_whose_listing_fails_is_retried_next_run_even_though_the_request_is_terminal(monkeypatch):
+    """The status row makes the request terminal (never re-checked). If reading its detail page then
+    fails, the listing must not be lost — the E614007 case this stream exists for."""
+    fake, sent, grid, arch = _baselined(monkeypatch)
+    _release(arch)
+    arch.details_error = gq.GovqaFetchError("timeout")
+    assert go(grid, arch) == 1                                                       # said out loud
+    assert len(rows_of(fake, "status")) == 1 and len(rows_of(fake, "list-pending")) == 1
+    assert rows_of(fake, "file-listed") == [] and rows_of(fake, "file-list-done") == [] and arch.resets >= 2
+    arch.details_error = None
+    assert go(grid, arch) == 0
+    assert {r[gw.C_KEY] for r in rows_of(fake, "file-listed")} == {"file:E600003-010126:a.pdf#1", "file:E600003-010126:b.docx#1"}
+    assert len(rows_of(fake, "file-list-done")) == 1
+    assert arch.lookups.count("E600003-010126") == 1                                 # terminal: NOT re-checked — the marker drove the retry
+    n = len(rows_of(fake))
+    assert go(grid, arch) == 0 and len(rows_of(fake)) == n                            # done: quiet from now on
+
+
+def test_a_crash_between_the_status_row_and_the_listing_loses_nothing(monkeypatch):
+    fake, sent, grid, arch = _baselined(monkeypatch)
+    _release(arch)
+    with monkeypatch.context() as m:
+        m.setattr(gw.Run, "phase_list_files", lambda self: (_ for _ in ()).throw(RuntimeError("runner killed")))
+        assert go(grid, arch) == 1
+    assert len(rows_of(fake, "status")) == 1 and len(rows_of(fake, "list-pending")) == 1 and rows_of(fake, "file-listed") == []
+    assert go(grid, arch) == 0 and len(rows_of(fake, "file-listed")) == 2 and len(rows_of(fake, "file-list-done")) == 1
+
+
+def test_the_pending_marker_and_the_status_row_are_written_in_one_append(monkeypatch):
+    fake, sent, grid, arch = _baselined(monkeypatch)
+    _release(arch)
+    appends = []
+    real = gw.sw.append_govqa_rows
+    monkeypatch.setattr(gw.sw, "append_govqa_rows", lambda svc, sid, rows: (appends.append([r[gw.C_EVENT] for r in rows]), real(svc, sid, rows))[1])
+    assert go(grid, arch) == 0
+    assert ["status", "list-pending"] in appends                                     # no crash can separate them
+
+
+def test_a_released_request_with_no_attachments_is_marked_done_and_not_retried(monkeypatch):
+    fake, sent, grid, arch = _baselined(monkeypatch)
+    _release(arch, files=())
+    assert go(grid, arch) == 0 and len(rows_of(fake, "file-list-done")) == 1 and rows_of(fake, "file-listed") == []
+    calls = len(arch.detail_calls)
+    assert go(grid, arch) == 0 and len(arch.detail_calls) == calls
+
+
+def test_history_that_was_already_released_at_baseline_is_not_listed(monkeypatch):
+    fake, sent, grid, arch = _baselined(monkeypatch, status="GRANTED – Records")
+    assert go(grid, arch) == 0
+    assert rows_of(fake, "list-pending") == [] and arch.detail_calls == []
+
+
+def test_a_new_request_that_is_already_released_gets_its_files_listed(monkeypatch):
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+    assert go(grid, arch) == 0
+    arch.details_by_rid["7009"] = {"reference": "E600009-020226", "closed": "", "files": [
+        {"target": "rptAttachments$ctl00$lnkStreamCloud", "name": "release.pdf"}]}
+    g2 = FakeGrid({"Arbor Hills": pages([R("E600009-020226", "Arbor Hills FOIA", "GRANTED – Records", rid="7009"),
+                                         R("E600003-010126", AH)]), "Holloway": pages([R("E599999-010126", "Holloway pit")])})
+    assert go(g2, arch) == 0
+    assert [r[gw.C_KEY] for r in rows_of(fake, "list-pending")] == ["list:E600009-020226"]
+    assert [r[gw.C_KEY] for r in rows_of(fake, "file-listed")] == ["file:E600009-020226:release.pdf#1"]
+    assert "1 file(s) listed" in sent[0][1]
+
+
+def test_a_released_request_the_grid_gave_no_details_link_for_is_looked_up_by_number(monkeypatch):
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+    assert go(grid, arch) == 0
+    arch.rows["E600009-020226"] = R("E600009-020226", "Arbor Hills FOIA", "GRANTED – Records", rid="7009")   # the archive knows the rid
+    arch.details_by_rid["7009"] = {"reference": "E600009-020226", "closed": "", "files": [
+        {"target": "rptAttachments$ctl00$lnkStreamCloud", "name": "release.pdf"}]}
+    g2 = FakeGrid({"Arbor Hills": pages([dict(R("E600009-020226", "Arbor Hills FOIA", "GRANTED – Records"), rid=None),
+                                         R("E600003-010126", AH)]), "Holloway": pages([R("E599999-010126", "Holloway pit")])})
+    assert go(g2, arch) == 0
+    assert len(rows_of(fake, "file-listed")) == 1 and "E600009-020226" in arch.lookups
+
+
+def test_a_detail_page_for_a_different_request_is_never_recorded_under_this_one(monkeypatch):
+    fake, sent, grid, arch = _baselined(monkeypatch)
+    _release(arch)
+    arch.details_by_rid["7003"]["reference"] = "E999999-010126"                      # the rid led somewhere else
+    assert go(grid, arch) == 1
+    assert rows_of(fake, "file-listed") == [] and rows_of(fake, "file-list-done") == [] and len(rows_of(fake, "list-pending")) == 1
+    assert "different request" in sent[0][1]
+
+
+# --- a watched request that never resolves is loud (M2) ------------------------------------------------
+
+
+def test_a_watch_request_that_is_never_found_is_reported_every_run_until_it_resolves(monkeypatch):
+    cfg = copy.deepcopy(CFG)
+    cfg["govqa"].update(watch_requests=["E614606-090126"], keywords=[])
+    fake, sent, grid, arch = _wire(monkeypatch, cfg=cfg)
+    assert go(grid, arch) == 0 and len(sent) == 1                                     # a mistyped date suffix: not silent
+    assert "E614606-090126 was not found in the archive" in sent[0][1] and "date suffix" in sent[0][1]
+    assert go(grid, arch) == 0 and len(sent) == 2                                     # ...and again tomorrow
+    arch.rows["E614606-090126"] = R("E614606-090126", "Peer landfill", "New Request", rid="8006")
+    assert go(grid, arch) == 0 and len(sent) == 2 and len(rows_of(fake, "baseline")) == 1   # resolved: baselined silently
+
+
+# --- keyword sweep robustness (M3 + containment) ---------------------------------------------------------
+
+
+def test_a_first_sweep_page_of_ten_rows_with_no_pager_text_is_marked_partial(monkeypatch):
+    cfg = copy.deepcopy(CFG)
+    cfg["govqa"]["keywords"] = [{"term": "Big"}]
+    ten = [R(f"E7000{i:02d}-010126") for i in range(10)]
+    fake, sent, grid, arch = _wire(monkeypatch, cfg=cfg, grid=FakeGrid({"Big": pages(ten)}))
+    assert go(grid, arch) == 0                                                        # advisory: not a red run
+    assert [r[gw.C_EVENT] for r in rows_of(fake, key="term:Big")] == ["partial"] and len(rows_of(fake, "baseline")) == 10
+    assert "no pager text" in sent[0][1] and "CSV" in sent[0][1]
+
+
+def test_an_impossible_pageless_result_is_a_failed_keyword_not_a_baseline(monkeypatch):
+    cfg = copy.deepcopy(CFG)
+    cfg["govqa"]["keywords"] = [{"term": "Big"}]
+    fake, sent, grid, arch = _wire(monkeypatch, cfg=cfg, grid=FakeGrid({"Big": pages([R(f"E7000{i:02d}-010126") for i in range(11)])}))
+    assert go(grid, arch) == 1
+    assert rows_of(fake, key="term:Big") == [] and rows_of(fake, "baseline") == [] and "no pager" in sent[0][1]
+
+
+def test_an_unexpected_error_in_one_keyword_does_not_cost_the_others_their_finds(monkeypatch):
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+    real = grid.search
+    grid.search = lambda term: (_ for _ in ()).throw(RuntimeError("driver bug")) if term == "Arbor Hills" else real(term)
+    assert go(grid, arch) == 1
+    assert "E599999-010126" in {r[gw.C_KEY] for r in rows_of(fake, "baseline")}       # Holloway's finds were kept
+    assert "RuntimeError" in sent[0][1] and rows_of(fake, key="term:Arbor Hills") == []
+
+
+def test_a_browser_that_cannot_restart_does_not_abort_the_retry(monkeypatch):
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+    grid.fail_first = 1
+    grid.restart = lambda: (_ for _ in ()).throw(gq.GovqaFetchError("browser is gone"))
+    assert go(grid, arch) == 0 and len(rows_of(fake, "baseline")) >= 4                # the second attempt succeeded
+
+
+# --- CSV history is not re-checked in the run that ingested it -------------------------------------------
+
+
+def test_a_csv_ingested_open_request_is_not_rechecked_or_alerted_in_the_same_run(monkeypatch):
+    csv = 'Request Number,Create Date,Summary,Request Status\nE500013-010125,1/4/2025,"Arbor Hills stack test",New Request\n'
+    fake, sent, grid, arch, box = _wire_csv(monkeypatch, [{"id": "F1", "name": "x.csv"}], data=csv.encode())
+    arch.rows["E500013-010125"] = R("E500013-010125", "Arbor Hills stack test", "GRANTED – Records", rid="5013")   # moved since the export
+    assert go(grid, arch) == 0 and sent == [] and "E500013-010125" not in arch.lookups     # history: no alert in the ingesting run
+    assert go(first_run_grid(), arch) == 0                                             # ...then an ordinary open request
+    assert len(sent) == 1 and "New Request → GRANTED – Records" in sent[0][1]
+
+
 # --- staging the attachments to a private folder --------------------------------------------
 
 
@@ -1213,7 +1502,7 @@ def test_duplicate_attachment_names_are_keyed_by_occurrence_and_each_is_staged(m
     uploads = _staging_env(monkeypatch)
     assert go(grid, arch) == 0
     keys = sorted(r[gw.C_KEY] for r in rows_of(fake, "file-staged"))
-    assert keys == ["file:E600003-010126:image001.png", "file:E600003-010126:image001.png#2", "file:E600003-010126:image001.png#3"]
+    assert keys == ["file:E600003-010126:image001.png#1", "file:E600003-010126:image001.png#2", "file:E600003-010126:image001.png#3"]
     assert len({u[0] for u in uploads}) == 3 and arch.downloads == ["image001.png"] * 3    # three distinct targets were used
 
 
@@ -1236,7 +1525,7 @@ def test_oversized_files_are_skipped_once_and_never_retried(monkeypatch):
     _staging_env(monkeypatch)
     for _ in range(3):
         assert go(grid, arch) == 0
-    assert [r[gw.C_KEY] for r in rows_of(fake, "file-staged")] == ["file:E600003-010126:ok.pdf"]
+    assert [r[gw.C_KEY] for r in rows_of(fake, "file-staged")] == ["file:E600003-010126:ok.pdf#1"]
     assert arch.downloads.count("big.pdf") == 1 and len(rows_of(fake, "file-skipped")) == 1   # a size skip costs no strikes
 
 
@@ -1255,7 +1544,7 @@ def test_a_persistently_failing_file_strikes_five_times_then_is_reported_and_nev
     _staging_env(monkeypatch)
     for _ in range(6):
         assert go(grid, arch) == 0
-    assert [r[gw.C_KEY] for r in rows_of(fake, "file-staged")] == ["file:E600003-010126:ok.pdf"]
+    assert [r[gw.C_KEY] for r in rows_of(fake, "file-staged")] == ["file:E600003-010126:ok.pdf#1"]
     assert len(rows_of(fake, "file-failed")) == 4 and len(rows_of(fake, "file-skipped")) == 1      # the 5th strike is a skip
     assert any("gave up after 5 failed staging attempts" in s[1] for s in sent)                    # ...and it is said out loud
 
@@ -1275,6 +1564,12 @@ def test_staging_refuses_a_folder_that_equals_another_mirrors_folder(monkeypatch
     assert go(grid, arch) == 1
     assert arch.downloads == [] and uploads == [] and rows_of(fake, "file-staged") == []
     assert len(rows_of(fake, "file-listed")) == 3                                            # listing/rows/alerts unaffected
+
+
+def test_staging_also_refuses_the_public_pdf_archive_folder(monkeypatch):
+    fake, sent, grid, arch = _released_world(monkeypatch)
+    uploads = _staging_env(monkeypatch, folder="PUBPDF", GDRIVE_FOLDER_ID="PUBPDF")
+    assert go(grid, arch) == 1 and arch.downloads == [] and uploads == []
 
 
 def test_staging_not_configured_lists_but_downloads_nothing(monkeypatch, capsys):
@@ -1355,33 +1650,54 @@ def test_main_silences_googleapiclients_retry_logger_which_prints_request_urls(m
 
 _BANNED_IN_PRINT_NAMES = {"summary", "excerpt", "file_name", "key", "f", "row", "entry", "rq", "det", "items", "pending", "r"}
 _BANNED_IN_PRINT_SUBSCRIPTS = {"name", "summary", "excerpt", "file_name"}
+_EXC_NAMES = {"e", "exc", "err", "ex", "error"}
 
 
 def _call_name(node):
     return getattr(node.func, "id", None) or getattr(node.func, "attr", None)
 
 
+def _print_violations(source: str) -> list:
+    """Every way a print() in `source` could put request text, an attachment name or a raw
+    exception (which can embed a signed URL) into the WORLD-READABLE Actions log. Each
+    exception Name is judged on its OWN position: it must sit inside a scrub()/type() call —
+    one safe `type(e)` elsewhere in the same print does not excuse a raw `{e}` beside it."""
+    bad, tree = [], ast.parse(source)
+    for call in [n for n in ast.walk(tree) if isinstance(n, ast.Call) and _call_name(n) == "print"]:
+        safe = {id(n) for c in ast.walk(call) if isinstance(c, ast.Call) and _call_name(c) in ("scrub", "type")
+                for n in ast.walk(c)}
+        for node in ast.walk(call):
+            if isinstance(node, ast.Name) and node.id in _BANNED_IN_PRINT_NAMES:
+                bad.append((call.lineno, node.id))
+            if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) \
+                    and node.slice.value in _BANNED_IN_PRINT_SUBSCRIPTS:
+                bad.append((call.lineno, node.slice.value))
+            if isinstance(node, ast.Name) and node.id in _EXC_NAMES and id(node) not in safe:
+                bad.append((call.lineno, f"raw exception {node.id}"))
+    return bad
+
+
 def test_no_print_can_interpolate_request_text_attachment_names_or_raw_exceptions():
-    """Static AST pin over every print() in both modules (stdout is a PUBLIC log): its
-    arguments may not reference the file/row/summary variables, may not subscript a
-    name/summary/…, and an interpolated exception variable must be inside scrub() or type()."""
     checked = 0
     for module in ("govqa_client.py", "govqa_watcher.py"):
-        tree = ast.parse((ROOT / module).read_text())
-        for call in [n for n in ast.walk(tree) if isinstance(n, ast.Call) and _call_name(n) == "print"]:
-            checked += 1
-            for node in ast.walk(call):
-                if isinstance(node, ast.Name):
-                    assert node.id not in _BANNED_IN_PRINT_NAMES, (module, call.lineno, node.id)
-                if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
-                    assert node.slice.value not in _BANNED_IN_PRINT_SUBSCRIPTS, (module, call.lineno, node.slice.value)
-            for node in ast.walk(call):
-                if isinstance(node, ast.Name) and node.id == "e":
-                    safe = any(isinstance(c, ast.Call) and _call_name(c) in ("scrub", "type")
-                               and any(isinstance(n2, ast.Name) and n2.id == "e" for n2 in ast.walk(c))
-                               for c in ast.walk(call))
-                    assert safe, (module, call.lineno, "a raw exception in a print")
+        src = (ROOT / module).read_text()
+        assert _print_violations(src) == [], module
+        checked += sum(1 for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Call) and _call_name(n) == "print")
     assert checked >= 15                                                            # the pin actually looked at the prints
+
+
+@pytest.mark.parametrize("snippet", [
+    'print(f"{type(e).__name__}: {e}")',                       # the bypass: a safe type(e) beside a raw {e}
+    'print("x", str(exc))',
+    'print(f"failed {row}")', 'print(f"{f[\'name\']}")', 'print(err)',
+])
+def test_the_print_pin_really_catches_leaks(snippet):
+    assert _print_violations(snippet), snippet
+
+
+@pytest.mark.parametrize("snippet", ['print(f"{type(e).__name__}: {gq.scrub(e)}")', 'print("x", scrub(exc, 100))', 'print(len(rows))'])
+def test_the_print_pin_allows_scrubbed_and_typed_exceptions(snippet):
+    assert _print_violations(snippet) == [], snippet
 
 
 # --- probe ---------------------------------------------------------------------------------------
@@ -1451,6 +1767,7 @@ def test_the_workflow_never_receives_the_public_sheet_id_ships_disabled_and_pins
     assert cfg["enabled"] is False and cfg["download_attachments"] is False
     assert cfg["recipients"] == ["arbor-hills@trishakunst.com"]
     assert (ROOT / "requirements.txt").read_text().lower().count("playwright") == 0     # optional, installed by the workflow only
+    assert "secrets.GDRIVE_FOLDER_ID" in wf                                            # passed for the staging guard only
     other = {n for n in re.findall(r"GOAUTH_[A-Z_]*FOLDER_ID", "".join(p.read_text() for p in (ROOT / ".github" / "workflows").glob("*.yml")))}
     assert other <= set(re.findall(r"GOAUTH_[A-Z_]*FOLDER_ID", wf)), other - set(re.findall(r"GOAUTH_[A-Z_]*FOLDER_ID", wf))
 
