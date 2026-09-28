@@ -278,15 +278,18 @@ def safe_filename(uri: str, extension: str, hash8: str = "") -> str:
 
 def download_file(session: requests.Session, uri: str, dest_path: str,
                   max_bytes: int, expect_pdf: bool = True,
-                  timeout: int = 300) -> dict:
+                  timeout: int = 300, deadline_s: float = 900) -> dict:
     """Stream one file to `dest_path`; returns {size, sha256, md5, content_type}.
     Raises RideDocsTooLargeError (over `max_bytes`, by header or while streaming),
     RideDocsFetchError (non-200, a JSON/HTML error body, an empty body, or — for
     a PDF — a body that isn't %PDF-). A failed download never leaves a partial
-    file behind. The response is never buffered whole (files reach 200+ MB)."""
+    file behind. The response is never buffered whole (files reach 200+ MB).
+    `timeout` is per read; `deadline_s` bounds the WHOLE download, so a server that
+    trickles bytes can't hold the job until the workflow timeout."""
     if not re.fullmatch(r"[0-9]+", str(uri).strip()):          # ASCII digits only
         raise RideDocsFetchError(f"refusing non-numeric file uri {uri!r}")
     _pace()
+    started = time.monotonic()
     try:
         r = session.post(CONTENT_URL, json={"uri": int(uri)}, stream=True, timeout=timeout,
                          headers={"Content-Type": "application/json"})
@@ -311,6 +314,8 @@ def download_file(session: requests.Session, uri: str, dest_path: str,
                     if not head:
                         head = chunk[:8]
                     size += len(chunk)
+                    if time.monotonic() - started > deadline_s:
+                        raise RideDocsFetchError(f"uri {uri}: download exceeded the {deadline_s:.0f} s deadline")
                     if size > max_bytes:
                         raise RideDocsTooLargeError(f"uri {uri}: exceeded cap {max_bytes} bytes while streaming")
                     sha.update(chunk)
@@ -319,7 +324,8 @@ def download_file(session: requests.Session, uri: str, dest_path: str,
             if size == 0:
                 raise RideDocsFetchError(f"GetFileContents uri={uri} returned an empty body")
             if expect_pdf and not head.startswith(b"%PDF-"):
-                raise RideDocsFetchError(f"uri {uri}: body is not a PDF (starts {head!r})")
+                # No body bytes in the message: it can reach the public Actions log.
+                raise RideDocsFetchError(f"uri {uri}: body is not a PDF (no %PDF- signature)")
         except (requests.RequestException, OSError) as e:
             raise RideDocsFetchError(f"streaming uri={uri} failed: {e}") from e
     except BaseException:

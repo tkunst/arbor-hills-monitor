@@ -300,6 +300,26 @@ def test_download_enforces_the_cap_while_streaming_without_a_content_length(tmp_
     assert not dest.exists()
 
 
+def test_a_non_pdf_body_error_carries_no_file_bytes(tmp_path):
+    s = FakeSession({"GetFileContents": FakeResp(200, content=b"Jane Doe lives at", headers={
+        "content-type": "application/octet-stream"})})
+    with pytest.raises(rdc.RideDocsFetchError) as ei:
+        rdc.download_file(s, "5", str(tmp_path / "f"), 10_000)
+    assert "Jane" not in str(ei.value)
+
+
+def test_a_slow_drip_download_hits_the_wall_clock_deadline(tmp_path, monkeypatch):
+    monkeypatch.setattr(rdc, "_pace", lambda: None)       # pacing reads the clock too
+    clock = iter(range(0, 10_000, 100))
+    monkeypatch.setattr(rdc.time, "monotonic", lambda: next(clock))
+    s = FakeSession({"GetFileContents": FakeResp(200, content=PDF * 50, headers={
+        "content-type": "application/pdf"})})
+    monkeypatch.setattr(rdc, "_DOWNLOAD_CHUNK", 1000)
+    with pytest.raises(rdc.RideDocsFetchError, match="deadline"):
+        rdc.download_file(s, "5", str(tmp_path / "f"), 10**9, deadline_s=600)
+    assert not (tmp_path / "f").exists()
+
+
 @pytest.mark.parametrize("bad", ["abc", "1; DROP", "../1", "", "1.5", "\u0661\u0662"])
 def test_download_refuses_non_numeric_uris(tmp_path, bad):
     with pytest.raises(rdc.RideDocsFetchError):
@@ -329,7 +349,8 @@ def test_build_state_last_row_wins_and_record_change_resets_mirror():
         _row("rrd:4", "baseline", rec_hash="h4"), _row("rrd:4", "removed"),
         _row("rrd:9", "mirrored", link="ORPHAN"),                       # never seen: ignored
     ])
-    assert locs == {"loc:2085": {"program": "81000004", "skips": 0, "cause": "", "current": True}}
+    assert locs == {"loc:2085": {"program": "81000004", "skips": 0, "cause": "", "causes": set(),
+                                "current": True}}
     assert files["rrd:1"]["mirror_link"] == "LINK" and files["rrd:1"]["title"] == "T"
     assert files["rrd:2"]["fails"] == 2 and not files["rrd:2"]["skipped"]
     assert files["rrd:3"]["skipped"] and files["rrd:4"]["removed"] and "rrd:9" not in files
@@ -969,6 +990,65 @@ def test_a_cause_change_mid_streak_still_sends_the_cause_alert(monkeypatch, tmp_
     assert rdw.run([]) == 1
     assert len(sent) == 2 and "moved to a different RIDE location" in sent[-1][0]
     assert rdw.run([]) == 1 and len(sent) == 2             # same cause: not repeated
+
+
+def _two_sites(monkeypatch, tmp_path):
+    cfg = copy.deepcopy(CFG)
+    cfg["ride"]["site_ids"] = ["81000004", "81000033"]
+    world, fake, sent = _wire(monkeypatch, tmp_path, cfg=cfg)
+    world.locations["81000033"] = dict(LOC, location_id=9549, program_num="81000033")
+    world.files[9549] = [raw(40000001, "Salem Doc")]
+    return world, fake, sent
+
+
+def test_a_merge_onto_another_programs_location_is_loud_not_silent(monkeypatch, tmp_path):
+    world, fake, sent = _two_sites(monkeypatch, tmp_path)
+    assert rdw.run([]) == 0
+    world.locations["81000004"] = dict(LOC, location_id=9549)      # RIDE merges it into 9549
+    assert rdw.run([]) == 1
+    assert "moved to a different RIDE location" in sent[-1][0]
+    assert _rows(fake, "fetch-skipped")[-1][rdw.C_KEY] == "loc:2085"
+
+
+def test_a_mistyped_accept_row_does_not_silently_accept(monkeypatch, tmp_path):
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    assert rdw.run([]) == 0
+    _move_2085_to_4242(world, fake)
+    assert rdw.run([]) == 1
+    fake._values._tabs[sw.TAB_RRD_DOCS].append(_row("loc:4242", "baseline", lid="4242", program="8100004"))
+    assert rdw.run([]) == 1                                # still refused (wrong program typed)
+
+
+def test_a_flapping_relocation_alert_is_not_resent(monkeypatch, tmp_path):
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    assert rdw.run([]) == 0
+    _move_2085_to_4242(world, fake)
+    assert rdw.run([]) == 1 and len(sent) == 1
+    world.session_error = rdc_fetch_error()
+    rdw.run([])                                            # [fetch] in the same streak
+    world.session_error = None
+    assert rdw.run([]) == 1
+    relocation_alerts = [x for x in sent if "moved to a different" in x[0]]
+    assert len(relocation_alerts) == 1
+    assert "Accept it" in sent[-1][1]                      # the 3rd skip's liveness copy fits the cause
+
+
+@pytest.mark.parametrize("order", ["A-first", "B-first"])
+def test_a_uri_moving_between_watched_locations_is_moved_not_removed_then_new(monkeypatch, tmp_path, order):
+    world, fake, sent = _two_sites(monkeypatch, tmp_path)
+    if order == "B-first":
+        world.locations = {"81000033": world.locations["81000033"], "81000004": world.locations["81000004"]}
+        cfg = copy.deepcopy(CFG)
+        cfg["ride"]["site_ids"] = ["81000033", "81000004"]
+        monkeypatch.setattr(rdw, "load_config", lambda: copy.deepcopy(cfg))
+    assert rdw.run([]) == 0
+    world.files[9549].append(world.files[2085].pop(0))
+    assert rdw.run([]) == 0 and rdw.run([]) == 0
+    assert sent == [] and _rows(fake, "removed") == [] and _rows(fake, "new") == []
+    assert [(r[rdw.C_KEY], r[rdw.C_LOC]) for r in _rows(fake, "moved")] == [("rrd:35715058", "9549")]
+    world.files[9549].pop()                                # it later vanishes from its NEW location
+    assert rdw.run([]) == 0
+    assert [r[rdw.C_KEY] for r in _rows(fake, "removed")] == ["rrd:35715058"]
 
 
 def test_a_uri_moving_between_watched_locations_in_one_run_is_not_double_alerted(monkeypatch, tmp_path):

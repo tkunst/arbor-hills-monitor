@@ -72,7 +72,7 @@ to blank, never shown or hashed as a 1900 date.
 
 ### 2. The state is the tab; events are append-only
 
-`RRD Documents` rows are events (`baseline`, `new`, `changed`, `removed`,
+`RRD Documents` rows are events (`baseline`, `new`, `changed`, `moved`, `removed`,
 `mirrored`, `mirror-skipped`, `mirror-failed`, `fetch-skipped`, `fetch-ok`); the
 LAST row for a key (`rrd:<uri>` or `loc:<locationId>`) is its state, so nothing
 races (the ADR 019 idiom). First sighting of a location writes silent `baseline`
@@ -80,7 +80,9 @@ rows for all its files plus one `loc:` marker in **one append**, so a baseline i
 all-or-nothing (a failed write re-baselines silently next run, never alerts on the
 whole list). A `new` uri, a `changed` record, or a `removed` uri (a public
 record disappearing is signal) alerts; a `removed` uri that returns is `new`
-again. The Sheet read is **not** error-swallowing (unlike the other tabs'
+again. Every location is LISTED before any is diffed, so a known, unchanged uri that
+now appears under a different watched location gets a silent `moved` row (its
+location is updated) and is never `removed` where it left, whatever the order. The Sheet read is **not** error-swallowing (unlike the other tabs'
 helpers): a swallowed transient read error would look like "never baselined" and
 silently fold genuinely-new files into a fresh baseline. It raises.
 
@@ -139,8 +141,9 @@ backlog drains over about 12 daily runs, newest first), `max_file_mb`
 (default 250; larger files are recorded `mirror-skipped`, never retried), and a
 per-file failure cap (two `mirror-failed` rows, then `mirror-skipped` on the third
 failed attempt) so one
-bad file cannot starve the rest. Mirroring is optional: without the folder secret
-the stream still lists, records and alerts.
+bad file cannot starve the rest. Each download also has a
+wall-clock deadline (15 min), so a trickling server can't hold the job. Mirroring
+is optional: without the folder secret the stream still lists, records and alerts.
 
 ### 6. Failure modes and liveness
 
@@ -161,23 +164,29 @@ also a `fetch-skipped` run (counting toward the liveness alert), never a diff:
   would write every file `removed`, then re-alert all of them `new` on recovery.
 - **A program that stops resolving** in RIDE's inventory. Also alerts on the
   first run it happens.
-- **A program that resolves to a different `locationId`.** Baselining the new
-  location silently would absorb any genuinely new file, so the run is red
+- **A program that resolves to any location other than its own current one**
+  (unknown, superseded, or already watched for another program, e.g. a RIDE merge).
+  Baselining it silently would absorb any genuinely new file, or leave the old
+  location unwatched, so the run is red
   (exit 1) and alerts, naming the one manual row that accepts the move
-  (`loc:<new id>`, event `baseline`). That row SUPERSEDES the old location: the
+  (`loc:<new id>`, event `baseline`, Program = that site). A row with a mistyped
+  Program does not supersede anything, so the refusal continues. The correct row
+  SUPERSEDES the old location: the
   next run diffs the new location against every known uri (anything unseen alerts
   as new), its removal and empty-listing checks also cover files first recorded
   under the old id, and the old location never accrues skips again.
 
 Each skip row records its cause (`[fetch]`, `[empty]`, `[unresolved]`,
-`[relocated]`). The cause-specific alert fires when the cause CHANGES, so a
-relocation during an ongoing outage still sends its instructions. Skips land only
+`[relocated]`). The cause-specific alert fires the first time a cause appears in
+the current skip streak: a relocation during an ongoing outage still sends its
+instructions, and a relocation that flaps with fetch failures does not repeat it.
+The threshold liveness alert's advice also depends on the cause. Skips land only
 on the current location of a configured program (a superseded location, or one
 whose program left the config, is never listed again and would only climb to a
 false liveness alert).
 
-A session that cannot be opened records a skip for every baselined location, and
-is loud as well when some program has no baseline yet. `stale_alert_after_skips`
+A session that cannot be opened records a skip for the current location of every
+configured program, and is loud as well when some program has no baseline yet. `stale_alert_after_skips`
 is at least 1 (0 cannot disable liveness).
 `python ride_docs_watcher.py --probe` (workflow input `probe`) runs the client end
 to end regardless of the enabled flag and touches no Sheet, Drive or email.
@@ -199,7 +208,14 @@ every `uri` (the email lists at most 25 per location; every file still gets its
 Sheet row; `removed` + `new` batches are visible at a glance); the `Public User`
 role or endpoints changing (structural error, loud).
 
-**Residual risks accepted:** file *contents* are never reviewed or classified by
+**Residual risks accepted:** two configured programs that resolve to the SAME
+location: the `loc:` marker records only the first, so the second never counts as
+baselined (its transient lookup failures are loud, and its later relocation or
+disappearance is not tracked separately). Latent: the five watched sites resolve
+to five distinct locations; `--probe` shows the mapping before any config change.
+The mirror folder's own sharing setting is not checked by code (create it with
+the `create-oauth-folder` workflow, which makes an app-only private folder).
+Also: file *contents* are never reviewed or classified by
 this job (no LLM, no `egle_doc_parser`) — it is a listing watch; the "Location
 Submittals" list (0 entries for Arbor Hills East) is not watched; a location with
 no exact program match at first sight is skipped with a printed note only (one that
