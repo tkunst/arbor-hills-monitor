@@ -431,7 +431,9 @@ def test_rescreened_keys_are_unchanged_rows_carrying_a_new_hit_id():
 
 def test_threshold_config_is_validated():
     assert mw.load_thresholds({}) == (TH, VY)
-    assert mw.load_thresholds({"thresholds_ng_l": {"PFOS": 10}})[0] == {"PFOS": 10.0}
+    # overriding ONE analyte's threshold must not silently drop the others' (they would then go
+    # unscreened entirely -- the exact class of hazard this function's own typo-check guards against)
+    assert mw.load_thresholds({"thresholds_ng_l": {"PFOS": 10}})[0] == {**TH, "PFOS": 10.0}
     with pytest.raises(ValueError, match="PFHXS"):
         mw.load_thresholds({"thresholds_ng_l": {"PFHXS": 1}})
     with pytest.raises(ValueError):

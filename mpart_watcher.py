@@ -129,9 +129,10 @@ def _should_run(cfg: dict) -> tuple[bool, str]:
 def load_thresholds(m: dict) -> tuple[dict[str, float], dict[str, int]]:
     """(thresholds, verified_year) from config, validated: an unknown analyte key (e.g. a
     typo such as 'PFHXS') raises ValueError instead of silently disabling a screen; a
-    non-positive threshold raises; `verified_year` is layered over the documented defaults
-    so overriding one analyte's year cannot silently drop the others'."""
-    raw = m.get("thresholds_ng_l") or DEFAULT_THRESHOLDS_NG_L
+    non-positive threshold raises; BOTH tables are layered over their documented defaults
+    so overriding one analyte's threshold or year cannot silently drop the others' — a
+    config that tightens only PFOS must not go blind to PFOA/PFHxS/PFNA."""
+    raw = {**DEFAULT_THRESHOLDS_NG_L, **(m.get("thresholds_ng_l") or {})}
     years = {**DEFAULT_VERIFIED_YEAR, **(m.get("thresholds_verified_year") or {})}
     for name, table in (("thresholds_ng_l", raw), ("thresholds_verified_year", years)):
         bad = sorted(set(table) - set(mc.ANALYTES))

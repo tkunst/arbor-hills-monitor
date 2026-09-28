@@ -202,7 +202,10 @@ specific); a value revised by the lab alerts as `changed` and shows only the new
 snapshot stores hashes; a known hit shows what was recorded); the `hits` record is never
 pruned, so raising a threshold in config leaves earlier announced hits on record; a row
 edit and a threshold change in the SAME run can announce an unchanged value under "new/changed
-… result(s)" (rare, cosmetic);
+… result(s)" (rare, cosmetic); a stored snapshot that is unreadable or from a future
+`SNAPSHOT_VERSION` re-baselines on whatever the current response is, WITHOUT the
+shrink guard — inert today (only `v=2` exists), but a future version bump landing on a
+truncated response would trust it as the new baseline;
 `Matrix` and the reporting limit are not part of the record; a duplicate group's `#n`
 labels follow row-hash order, so editing one member can relabel its siblings (all list as
 changed; rare — the live layers held no duplicate keys); a layer that legitimately
