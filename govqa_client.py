@@ -13,8 +13,8 @@ session, and the working method (docs/overnight-coder-handoffs/rrd-mpart-records
 §1C-bis, learned the hard way in 9/2026) is followed exactly:
 
   KEYWORD LIST  headless Playwright, ONE term per search, newest-first, paged with
-                ASPx.GVPagerOnClick('gridView','PBN'), stopping as soon as a page
-                holds an E-number we already know (incremental daily run). Never
+                ASPx.GVPagerOnClick('gridView','PBN'), stopping at the first page whose
+                E-numbers are ALL already known (incremental daily run). Never
                 the UI's CSV Export headless (returns nothing within 10 minutes),
                 never the date filter (ignored), never in parallel. Any timeout:
                 fresh browser context, retry with backoff (30 s, 2 min, ...),
@@ -199,10 +199,12 @@ def read_grid(page_html: str) -> list[dict]:
 
 
 def parse_pager(text: str) -> tuple[int, int, int] | None:
-    """(page, pages, items) from 'Page 1 of 10 (97 items)'; None when the grid has
-    no pager (10 or fewer rows)."""
-    m = re.search(r"Page (\d+) of (\d+) \((\d+) items\)", text)
-    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+    """(page, pages, items) from 'Page 1 of 10 (97 items)'; None when the grid has no pager
+    (10 or fewer rows). The pager is rendered AFTER every row, and request text (third-party
+    authored) is rendered inside the rows, so the LAST match is the real one — text such as
+    "Page 1 of 1 (1 items)" in a Summary cannot hide the later pages."""
+    found = re.findall(r"Page (\d+) of (\d+) \((\d+) items\)", text)
+    return tuple(int(x) for x in found[-1]) if found else None
 
 
 def _label_value(page_html: str, label: str) -> str:
@@ -223,6 +225,12 @@ def parse_detail(page_html: str) -> dict:
             r"__doPostBack\((?:&#39;|')(rptAttachments\$ctl\d+\$lnkStreamCloud)(?:&#39;|'),(?:&#39;|')(?:&#39;|')\)"
             r"[^>]*>([^<]+)</a>", page_html):
         files.append({"target": target, "name": htmllib.unescape(name).strip()})
+    targets = set(re.findall(r"rptAttachments\$ctl\d+\$lnkStreamCloud", page_html))
+    if len(targets) != len({f["target"] for f in files}):
+        # the page HAS N attachment postback links but fewer/more were read (e.g. the link text is now
+        # wrapped in a <span>/<i>): a short list must never be recorded as the whole release
+        raise GovqaStructuralError(f"detail page carries {len(targets)} attachment links but {len(files)} were read — "
+                                   "page shape changed")
     return {
         "reference": ref,
         "created": _label_value(page_html, "Create Date:"),
@@ -367,6 +375,8 @@ class ArchiveSession:
         r = self._req("GET", self.summary_url, timeout=180)
         if r.status_code != 200 or "txtSearch" not in r.text:
             raise GovqaFetchError(f"summary page returned HTTP {r.status_code} without the search form")
+        if r.url and not _host_allowed(r.url):
+            raise GovqaFetchError(f"summary request ended on a non-allowlisted host: {scrub(urlparse(r.url).hostname)}")
         self._summary_page_url, self._summary_html = r.url, r.text   # r.url carries the (S(...)) session id
 
     # -- public API ---------------------------------------------------------
@@ -388,31 +398,37 @@ class ArchiveSession:
                 return row
         return None
 
-    def details(self, rid: str) -> dict:
+    def details(self, rid: str, expect_reference: str | None = None) -> dict:
         """Detail page for an internal rid: see parse_detail. Remembers the page for
         download(). If a REUSED session answers with something that is not a detail page (it
         expired), the session is reset and the call retried once on a fresh one; a fresh
-        session that still answers wrongly is a structural error (the markup changed)."""
+        session that still answers wrongly is a structural error (the markup changed). With
+        `expect_reference`, a page for a DIFFERENT request is a structural error and is never
+        remembered (so a later download() cannot post a mismatched page's form)."""
         if not str(rid).isdigit():
             raise ValueError(f"not a numeric rid: {rid!r}")
         reused = bool(self._summary_page_url)
         if not reused:
             self._open_summary()               # a fresh session needs the (S(...)) session URL first
         try:
-            return self._get_details(rid)
+            return self._get_details(rid, expect_reference)
         except GovqaStructuralError:
             if not reused:
                 raise
             self.reset()
             self._open_summary()
-            return self._get_details(rid)
+            return self._get_details(rid, expect_reference)
 
-    def _get_details(self, rid: str) -> dict:
+    def _get_details(self, rid: str, expect_reference: str | None = None) -> dict:
         base = self._summary_page_url.rsplit("/", 1)[0]
         r = self._req("GET", f"{base}/RequestArchiveDetails.aspx?rid={rid}&view=1", timeout=180)
         if r.status_code != 200:
             raise GovqaFetchError(f"details GET returned HTTP {r.status_code}")
+        if r.url and not _host_allowed(r.url):
+            raise GovqaFetchError(f"details request ended on a non-allowlisted host: {scrub(urlparse(r.url).hostname)}")
         det = parse_detail(r.text)              # raises GovqaStructuralError on a non-detail page
+        if expect_reference and det["reference"] != expect_reference:
+            raise GovqaStructuralError(f"the detail page for rid {rid} is for a different request")
         self._detail_url, self._detail_html = r.url or f"{base}/RequestArchiveDetails.aspx?rid={rid}&view=1", r.text
         return det
 

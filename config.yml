@@ -1599,7 +1599,7 @@ pfas_pws:
 # peer-landfill watchers — and posts the requests and what it released on a PUBLIC
 # archive (michiganegle.govqa.us). E614007 (8/2026) surfaced ~45 RRD files we had
 # never seen that way. Daily: sweep each keyword newest-first (headless browser,
-# one term per search, stopping at the first known request), re-check open/watched
+# one term per search, stopping at the first page whose requests are ALL known), re-check open/watched
 # requests by number (plain session, no browser), and alert on a new matching
 # request or a status change (e.g. "Cost estimate sent" -> "Closed").
 # HARD RULES (pinned by tests): rows go ONLY to the PRIVATE Sheet

@@ -488,15 +488,16 @@ external users but no sensitive data). Public repo.
   Cells are parsed by aria-label. `scrub()` strips URLs from every message that can reach a log.
   `parse_gridview_csv` for a human-exported CSV. Never writes anywhere.
 - `govqa_watcher.py` — Stream U: daily, in GUARDED phases with the report sent from a `finally`
-  (a crash can never lose an alert): keyword sweep (a keyword's first sweep reads all pages to
+  (an exception cannot lose an alert; a hard kill mid-staging could): keyword sweep (a keyword's first sweep reads all pages to
   `max_pages_per_term`, baselines silently, `term:` marker last; a page-cap hit writes a `partial`
   marker and asks for a CSV once; `nomatch` rows are upgradeable), CSV drop (AFTER the sweep; keyed
   by Drive id + content hash), re-check of watched/open requests by number (unknown status = open;
-  truncation, mass-misses and a watch_requests entry the archive never shows are reported), file
-  listing (`file:<E>:<name>#<n>`; a `list-pending` marker is written in the SAME append as the
-  new/status row and a `file-list-done` marker after the detail page was read, so a failed/killed
-  listing is retried next run even though the request is terminal; the detail page's Reference No
-  must match), and optional staging under CONTENT-ADDRESSED names `<E>__<sha16>[.<known ext>]`
+  truncation, mass-misses, a watch_requests entry the archive never shows, and a keyword that goes
+  dark are reported), file listing for EVERY new/status event (`file:<E>:<name>#<n>`; a
+  `list-pending` marker is written in the SAME append as the new/status row and a `file-list-done`
+  marker — carrying the rid — after the detail page was read, so a failed/killed listing is retried
+  next run even though the request is terminal; 5 failed attempts give up as `list-skipped`; the
+  detail page's Reference No must match and its attachment-link count must equal the names read), and optional staging under CONTENT-ADDRESSED names `<E>__<sha16>[.<known ext>]`
   (attachment names never reach Drive queries/logs; in-run retry on a FRESH session; 5 strikes then
   reported). A grid with data rows none of which parse, or >10 rows with no pager, is a fetch error
   (never "no requests"); a first sweep of a full page with no pager text is marked `partial`. Circuit breaker + wall-clock budget.

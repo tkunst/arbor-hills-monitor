@@ -91,9 +91,11 @@ transient fetch error (retried); `<style>`/`<script>` blocks are ignored when lo
 the markers, so a stylesheet that merely names the empty-row class cannot pass for an empty
 grid. A grid that DOES show data rows but from which no request could be read (the markup
 changed) is the same fetch error — never "no requests". A by-number lookup that returns
-neither the request nor an empty grid is the same. A page of more than 10 rows with no
+neither a grid nor an empty grid is the same (a grid that lists OTHER requests but not the
+one asked for is "not shown", and a test pins that). A page of more than 10 rows with no
 pager text is impossible and fails the keyword; a first sweep that reads a FULL page of 10
 rows with no pager text cannot tell whether older pages exist, so it is marked `partial`
+(the marker's note names which cause)
 and a CSV is requested (a false alarm for a term with exactly 10 results — accepted). If
 every keyword comes back empty while requests are on record, that is reported as a broken
 read and nothing is recorded. The `rid` that opens a request's detail page is read only
@@ -114,14 +116,20 @@ in this run are history, not re-checked in the same run.
 
 ### 5. Released files: list, optionally stage privately
 
-For a new or status-changed request whose status says records were released, the
-attachment list is recorded (`file-listed`, with the request's close date). The request is
+For EVERY new or status-changed request (not only statuses this code recognises as
+"released": an unseen status must not hide a release), the attachment list is recorded
+(`file-listed`, with the request's close date). The request is
 given a `list-pending` marker **in the same append as its `new`/`status` row**, and a
 `file-list-done` marker after its detail page was read (files first, marker last); every
 run retries the pending ones, so a failure, a spent time budget or a kill between the
 status row (which makes the request terminal — never re-checked) and the listing cannot lose
 the release. A retry reopens the archive session first (a stale `(S(...))` session is the
-usual cause). If
+usual cause). The detail page's attachment-link count must equal the number of names read (a
+markup change that wraps the link text would otherwise record a SHORT list as the whole
+release and close it — verified against live pages of 0–71 files); a page for a different
+request is refused before it is remembered; a listing that fails 5 times is given up
+(`list-skipped`, reported once), and the rid found by number is kept on the `file-list-done`
+row. If
 `download_attachments` is on and a private staging folder is configured, each file is
 streamed to disk (size-capped), hashed (SHA-256 + MD5) and uploaded under a
 **content-addressed name** — `<E-number>__<sha256[:16]>[.<ext>]` — the extension only from a short list of known
@@ -167,8 +175,12 @@ by `tests/test_govqa.py`.
 
 Each phase (sweep, CSV, re-check, file listing, staging) is guarded: an exception
 becomes a reported problem and the next phase still runs, and the one report email is
-sent from a `finally`, so an alert can never be lost to a crash after its rows were
-written. A configured recipient whose report could not be sent makes the run red. A retry
+sent from a `finally`, so an alert cannot be lost to an exception after its rows were
+written (a HARD kill — SIGKILL or the job timeout — during a long staging phase still could;
+staging ships off and is time-budgeted). Every keyword returning nothing is a broken read
+(also on the activation run, where markers would otherwise make the whole history alert as
+new); one keyword that goes dark although it matched before is reported. The pager is read
+from the LAST match, and the summary/details responses must end on an allowlisted host. A configured recipient whose report could not be sent makes the run red. A retry
 loop checks the run's time budget before every further attempt (one failing call cannot
 outlive it), and a browser that cannot restart never aborts the retry (the next attempt
 fails on its own and is counted); an unexpected error inside one keyword's sweep is
@@ -204,7 +216,9 @@ daily — enough of them fill the `max_open_rechecks` cap and turn the truncatio
 into a daily nag (raise the cap); the headless browser inherits the job's environment
 (which holds the SMTP and OAuth secrets) while it renders third-party-authored archive text —
 passing a minimal `env=` to `chromium.launch` is a tracked follow-up (it cannot be verified
-without a runner, so it is not shipped blind); the requester's organization is not captured (the grid
+without a runner, so it is not shipped blind); partial parse loss (a page that yields fewer rows than its pager implies) is not detected —
+only a total loss is — and a cross-check against the pager was tried and dropped for
+false-positive risk; the requester's organization is not captured (the grid
 does not show it); a hash exists only for staged files.
 
 ## Alternatives considered

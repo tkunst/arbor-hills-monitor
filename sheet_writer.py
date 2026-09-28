@@ -462,8 +462,8 @@ PFAS_PWS_WATCH_HEADERS = [
 
 # EGLE GovQA public FOIA archive watch (Stream U, ADR 059) — PRIVATE Sheet only.
 # Event: baseline (silent first sighting) / new / nomatch / partial / status / ingested /
-# list-pending / file-list-done / file-listed / file-staged / file-held / file-skipped /
-# file-failed.
+# list-pending / file-list-done / list-failed / list-skipped / file-listed / file-staged /
+# file-held / file-skipped / file-failed.
 GOVQA_HEADERS = [
     "Date", "Key", "Event", "Created", "Closed", "Status", "Matched Terms", "Rid",
     "Request Excerpt", "File Name", "Size (bytes)", "SHA-256", "MD5", "Staging Link",
