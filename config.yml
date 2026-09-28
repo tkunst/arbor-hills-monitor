@@ -727,6 +727,36 @@ ride:
   recipients:
     - arbor-hills@trishakunst.com
 
+# --- EGLE RIDE anonymous DOCUMENT listing watch (Stream T, ADR 058) ---
+# RRD (Remediation and Redevelopment Division) is the one EGLE division the
+# monitor watched only for STATUS (`ride:` above), never for DOCUMENTS. RIDE's
+# public Inventory of Facilities page gives every anonymous visitor a "Public
+# User" session and lists each Part 201 location's files (no credentials, no
+# login). Daily: list every watched location's files; the FIRST sighting of a
+# location baselines silently; a new file / a changed record / a vanished file
+# alerts; not-yet-mirrored files are copied to a PRIVATE Drive folder.
+# HARD RULES (pinned by tests): rows go ONLY to the PRIVATE Sheet
+# (GSHEET_ID_PRIVATE) — RIDE titles can carry residents' names/addresses;
+# nothing here reaches the public Sheet, the findings feed or the site; an
+# EMPTY `recipients` = display-only (NEVER the coalition list).
+# Ships DISABLED (brand-new external source). To activate: (1) share the private
+# Sheet with the service account as EDITOR, (2) run the workflow with probe=true
+# to confirm the Azure runner isn't bot-challenged, (3) optionally create a
+# PRIVATE Drive folder and set the GOAUTH_RRD_FOLDER_ID secret (mirroring is
+# skipped without it), then flip `enabled`.
+ride_docs:
+  enabled: false
+  # Part 201 program numbers to watch. Omit to reuse `ride.site_ids` (the same 5
+  # Arbor Hills-area sites). UST facility ids (`ride.facility_ids`) are not RIDE
+  # inventory programs; 00038889's files are listed under 81000004's location.
+  # program_nums: ["81000033", "81000004", "81000835", "81000840", "82008712"]
+  mirror: true                 # copy files to the private Drive folder (needs GOAUTH_RRD_FOLDER_ID)
+  max_mirror_per_run: 8        # bounds run time; the backlog (~95 files) drains over a few days
+  max_file_mb: 250             # larger files are recorded as mirror-skipped (some reach 216 MB)
+  stale_alert_after_skips: 3   # ONE liveness alert after this many consecutive skipped (unreadable) runs
+  recipients:                  # Trisha only; EMPTY = display-only (rows, no email)
+    - arbor-hills@trishakunst.com
+
 # --- nSITE site registry (ADR 022) ---
 # Canonical identity (srn/name/id) for every nSITE site this monitor knows
 # about, shared across every profile-specific watch (Submissions today; more

@@ -1,0 +1,84 @@
+name: ride-docs-watch
+
+# EGLE RIDE anonymous DOCUMENT listing watch (Stream T, ADR 058): daily, list the
+# files RIDE's public Inventory of Facilities shows for the Arbor Hills-area Part
+# 201 sites; alert on a new / changed / vanished file; mirror files to a PRIVATE
+# Drive folder. Rows go ONLY to the PRIVATE Sheet (GSHEET_ID_PRIVATE) — this
+# workflow deliberately does NOT receive the public GSHEET_ID at all, because RIDE
+# file titles can carry residents' names and addresses.
+#
+# Safe to leave scheduled from day one: ride_docs.enabled gates the run —
+# ride_docs_watcher._should_run() makes every run a quiet no-op (exit 0) while it
+# is false (ships disabled — a brand-new external source). `probe: true` (manual
+# dispatch) runs the client end to end regardless of the flag and touches no
+# Sheet, Drive or email — the pre-activation check that the Azure runner is not
+# bot-challenged by RIDE's F5/Cloudflare front end (Stream S's probe idiom).
+# State is the "RRD Documents" tab, NOT _meta, so it never races other jobs.
+on:
+  schedule:
+    - cron: "30 17 * * *"   # 12:30pm ET (5:30pm UTC), after ride-watch's noon slot.
+  workflow_dispatch:
+    inputs:
+      probe:
+        description: "Fetch-path diagnostic only (no Sheet/Drive/email writes)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ride-docs-watch
+  cancel-in-progress: false
+
+jobs:
+  ride-docs-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Watch RIDE's RRD document listing
+        env:
+          PROBE: ${{ inputs.probe }}
+          # PRIVATE Sheet only. GSHEET_ID (public) is intentionally NOT passed.
+          GSHEET_ID_PRIVATE: ${{ secrets.GSHEET_ID_PRIVATE }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          # Private Drive mirror (optional). The folder MUST be private and its own —
+          # the watcher refuses to run the mirror if it equals another GOAUTH_*_FOLDER_ID.
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID_KUNST }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET_KUNST }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN_KUNST }}
+          GOAUTH_RRD_FOLDER_ID: ${{ secrets.GOAUTH_RRD_FOLDER_ID }}
+          # The OTHER mirrors' folder ids are passed ONLY so the watcher can refuse to
+          # run if GOAUTH_RRD_FOLDER_ID was copy-pasted from one of them (some are
+          # public-facing). They are IDs, never used to read or write those folders here.
+          GOAUTH_ARCHIVE_FOLDER_ID: ${{ secrets.GOAUTH_ARCHIVE_FOLDER_ID }}
+          GOAUTH_BOC_FOLDER_ID: ${{ secrets.GOAUTH_BOC_FOLDER_ID }}
+          GOAUTH_DPW_FOLDER_ID: ${{ secrets.GOAUTH_DPW_FOLDER_ID }}
+          GOAUTH_GFL_AIR_FOLDER_ID: ${{ secrets.GOAUTH_GFL_AIR_FOLDER_ID }}
+          GOAUTH_MMPC_FOLDER_ID: ${{ secrets.GOAUTH_MMPC_FOLDER_ID }}
+          GOAUTH_RIDGEWOOD_FOLDER_ID: ${{ secrets.GOAUTH_RIDGEWOOD_FOLDER_ID }}
+        run: |
+          if [ "$PROBE" = "true" ]; then
+            python ride_docs_watcher.py --probe
+          else
+            python ride_docs_watcher.py
+          fi
