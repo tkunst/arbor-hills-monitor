@@ -479,8 +479,8 @@ GOVQA_HEADERS = [
 ]
 
 # RIDE anonymous document listing (Stream T, ADR 061) — PRIVATE Sheet only.
-# Event is baseline (silent first sighting) / new / changed / removed /
-# mirrored / mirror-skipped / mirror-failed. Record Hash covers the canonical
+# Event is baseline (silent first sighting) / new / changed / moved / removed /
+# mirrored / mirror-skipped / mirror-failed / fetch-skipped / fetch-ok. Record Hash covers the canonical
 # file view (ride_docs_client.record_hash); Mirror Link / SHA-256 / MD5 are set
 # only on a "mirrored" row.
 RRD_DOCS_HEADERS = [
