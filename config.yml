@@ -674,15 +674,17 @@ mmd:
 # Daily snapshot-diff on EGLE's KEYLESS RRDOpenData ArcGIS registry
 # (gisagoegle.state.mi.us .../EGLE/RRDOpenData/MapServer) — Layer 0 (Part 201
 # contaminated-site remediation status) for the 5 Arbor Hills-area sites, and
-# Layer 1 (Part 211 underground storage tanks) for the GFL UST. RIDE's own web
-# app is auth-walled with no anonymous document API; this is the underlying
-# public status data. A RiskCondition flip, a Contaminants change, or a new
+# Layer 1 (Part 211 underground storage tanks) for the watched UST facilities
+# (GFL 00040223; Arbor Hills Landfill Inc 00038889). This is the underlying
+# public STATUS data (RIDE's document listing is a separate source — see the
+# ADR 019 addendum). A RiskCondition flip, a Contaminants change, or a new
 # Open_Release is early, citable R5 (water quality) signal. Statuses change
 # rarely — near-silent in steady state. The FIRST sighting of each watched
 # item baselines silently. See ride_client.py / ride_watcher.py.
 #
 # Built 2026-07-23/24 (unattended overnight) and shipped disabled per the
-# new-source gate; the live feasibility re-check confirmed all 6 records return.
+# new-source gate; the live feasibility re-check confirmed all 6 records return
+# (7 since 00038889 was added 2026-09-28).
 # ACTIVATED 2026-08-07 (Trisha-directed) — keyless, nothing to provision. The
 # first run baselines every watched item silently; alerts go to `recipients`
 # below (Trisha only to start).

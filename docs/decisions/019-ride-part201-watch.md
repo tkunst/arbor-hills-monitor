@@ -168,12 +168,17 @@ against the last recorded snapshots.
 
 ### Watched set: `00038889` joins `00040223`
 
-`ride.facility_ids` now also carries Layer-1 FacilityID **`00038889`** — "Arbor
-Hills Landfill Inc" (Advanced Disposal), 10690 W Six Mile Rd, the 2016
-leaking-UST release + closure (Leak C-0076-16). The facility was not on the
-watch list, so a re-open or a status change on it would have gone unseen.
-RIDE lists it under the same location (`locationId` 2085) as Part 201 site
-`81000004` (Arbor Hills - East), shown as `00038889 - 81000004`.
+`ride.facility_ids` now also carries Layer-1 FacilityID **`00038889`** — the
+registry's own `FacilityName` is "Arbor Hills Landfill Inc". Per the
+overnight-coder handoff (drawn from EGLE's FOIA release E614007) it is the
+leaking-UST release and closure Leak C-0076-16 at 10690 W Six Mile Rd; RIDE's
+own file list for the location carries a 2016 Confirmed Release Report and
+Closure Report. The facility was not on the watch list, so a re-open or a status
+change on it would have gone unseen. In RIDE's file list it appears under the
+same location (`locationId` 2085) as Part 201 site `81000004` (Arbor Hills -
+East), as `00038889 - 81000004`. Layer 1 itself only says "No Longer A
+Facility" — nothing in this layer confirms a closure date, so no label or alert
+text asserts one.
 
 The shipped `ride:` stream was already `enabled: true`, so this was a live-path
 edit. Real-specimen check (live layer-1 query, 2026-09-28):
@@ -189,18 +194,40 @@ edit. Real-specimen check (live layer-1 query, 2026-09-28):
 The item key stays `ride:<FacilityID>`; `00038889` cannot collide with any
 Part 201 `SiteID` (those are `8100xxxx`/`8200xxxx`).
 
-### Correction: RIDE does have an anonymous DOCUMENT channel
+### Correction: RIDE's public page does list documents anonymously
 
 The Context section above (and worker #69's 7/2026 recon it cites) says RIDE is
 "auth-walled, no anonymous document API". That was right about the **status**
-data this stream watches and wrong as a statement about RIDE as a whole.
-Re-checked 2026-09-28 with a headless browser, **no credentials and no login
-click**: the public Inventory of Facilities page provisions every anonymous
-visitor a "Public User" session on its own, and its own front end then calls
-JSON endpoints that list a facility's files and return the PDFs. See ADR 058
-for the endpoints, the document watch built on them (`ride_docs_*`, shipped
-`enabled: false`), and the privacy handling.
+data this stream watches and is wrong as a statement about RIDE as a whole.
+Re-checked 2026-09-28 with a headless browser — **no credentials, no login
+click**:
+
+- RIDE's public Inventory of Facilities page (`/RIDE/inventory-of-facilities/
+  facilities?...programNum=<id>`) gives every anonymous visitor a "Public User"
+  session on its own (`GET /RIDE/Home/GetAppSettings` returns `userName`
+  "Public1").
+- Its own front end then calls JSON endpoints that a plain HTTP client can
+  replay once it has the session cookies (a bare `POST` returns 405):
+  `POST api/Location/GetFacilitiesTable` (program number -> `locationId`),
+  `POST api/ContentManagerFile/GetContentManagerFilesForLocationFilesTable`
+  (the location's file list; 37 files for 81000004, each with a unique `uri`),
+  and `POST api/ContentManagerFile/GetFileContents` (returns the PDF).
+- The page's own disclaimer says records maintained by RRD are available for
+  download through RIDE.
 
 This stream is unchanged by that finding: it still watches only RRDOpenData's
-status layers. The document watch is a separate stream because it has a
-different source, key (file `uri`, not `SiteID`), and sensitivity.
+status layers. A document watch built on those endpoints is a separate stream
+(different source, key — file `uri`, not `SiteID` — and sensitivity: file titles
+include resident street addresses) proposed in its own PR, not in this change.
+
+### Accepted first-run behaviour
+
+`_all_baselined()` now includes `ride:00038889`, which has no baseline until its
+first successful run. If that very first run hits a transient Layer-1 fetch
+error, the run exits loud (red) instead of skip-and-warn — the documented
+activation-time rule. It self-heals on the next successful run; nothing is
+alerted or lost.
+
+If EGLE ever drops `00038889` from the open-data layer (its live
+`RiskCondition` is "No Longer A Facility"), the watch will send an accurate
+"NO LONGER LISTED" alert — that is the designed behaviour, not a false positive.

@@ -1,13 +1,13 @@
 """
 ride_watcher.py — daily watch on EGLE's RRDOpenData ArcGIS service (RIDE) for
-the Arbor-Hills-area Part 201 sites (Layer 0) and the GFL Part 211 UST (Layer
-1), alerting on any status change. Standalone + self-terminating, the same
+the Arbor-Hills-area Part 201 sites (Layer 0) and the watched Part 211 UST
+facilities (Layer 1), alerting on any status change. Standalone + self-terminating, the same
 shape as mmd_watcher.py / rop_watcher.py. See docs/decisions/019-ride-part201-watch.md.
 
 WHY: this is the STATE'S OWN registry view of contaminated-site remediation
 status (R5 — water quality / groundwater). A RiskCondition flip (e.g. "Risks
 Present and Require Action in Short-term" -> "Risks Controlled-Interim"), a
-Contaminants list changing, or a new Open_Release on the GFL UST is early,
+Contaminants list changing, or a new Open_Release on a watched UST is early,
 citable signal for the case file. Statuses change rarely, so this watch is
 near-silent in steady state.
 
@@ -38,9 +38,8 @@ no-op forever). A response that fetched but is structurally wrong
 reorganization persists across runs, and going quiet would hide it forever
 (same posture as mmd_watcher's MmdParseError / rop_watcher's RopParseError).
 
-GATED on ride.enabled (false by default — brand-new poller against a live
-external system, ships disabled per overnight-coder's new-source gate).
-Flipping it on is a separate, later, human step. Runs daily (see
+GATED on ride.enabled (built disabled per overnight-coder's new-source gate;
+activated 2026-08-07 by Trisha — the live flag is in config.yml, not here). Runs daily (see
 .github/workflows/ride-watch.yml).
 
 NO DRIVE / OAUTH (same scope call as pfas/rop/mmd, ADR 012): the deliverable is
@@ -78,7 +77,7 @@ _KNOWN_SITE_NAMES = {
 }
 _KNOWN_FACILITY_NAMES = {
     "00040223": "GFL Environmental USA, LLC — Part 211 UST",
-    "00038889": "Arbor Hills Landfill Inc (Advanced Disposal) — closed 2016 LUST",
+    "00038889": "Arbor Hills Landfill Inc — Part 211 UST",
 }
 
 
@@ -350,7 +349,7 @@ def run() -> int:
                                       cfg, recipients)
             counts[result] += 1
 
-    # --- Layer 1: GFL Part 211 UST -------------------------------------------
+    # --- Layer 1: Part 211 UST facilities -------------------------------------------
     facility_keys = [f"ride:{f}" for f in facility_ids]
     ust_records = None
     try:

@@ -194,8 +194,9 @@ external users but no sensitive data). Public repo.
   at all (465941, the expansion-parcel trip-wire; an empty record set is a
   valid baseline). Gated on `mmd.enabled`. See ADR 018.
 - `ride_client.py` — Stream J: EGLE RIDE / Part 201 + UST status (keyless public
-  ArcGIS RRDOpenData, two layers — RIDE's own web app is auth-walled with no
-  anonymous API). One `SiteID IN (...)` / `FacilityID IN (...)` query per layer;
+  ArcGIS RRDOpenData, two layers — status only; RIDE's app has no anonymous
+  STATUS API, though its public inventory page does list FILES anonymously, see
+  the ADR 019 addendum). One `SiteID IN (...)` / `FacilityID IN (...)` query per layer;
   explicit `outFields` (never `*`) + `returnGeometry=false` keep OID/geometry
   out of the fetch entirely (`ProjectManaager` excluded too — admin churn, not
   signal). Fetch-vs-structural error split mirrors mmd_client. Structured-API

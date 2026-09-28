@@ -2,9 +2,12 @@
 ride_client.py — fetch + canonicalize for the EGLE RIDE / Part 201 + UST status
 watch (Stream J). See docs/decisions/019-ride-part201-watch.md.
 
-RIDE (EGLE's Remediation Information Data Exchange) itself is an auth-walled
-Angular SPA with no anonymous document API (confirmed by worker #69's recon).
-But EGLE separately publishes the underlying per-site STATUS as a KEYLESS
+RIDE (EGLE's Remediation Information Data Exchange) is an Angular SPA. Its
+per-site STATUS has no anonymous API of its own (worker #69's 7/2026 recon), and
+this module deliberately does not use the app. (A separate anonymous DOCUMENT
+listing was found on RIDE's public Inventory of Facilities page on 2026-09-28 —
+see the ADR 019 addendum; it is not part of this status watch.)
+EGLE separately publishes the underlying per-site STATUS as a KEYLESS
 ArcGIS REST MapServer (gisagoegle.state.mi.us — the same host/idiom as Stream
 I's MMD watch, just a different service and, here, two layers instead of one):
 

@@ -2,8 +2,8 @@ name: ride-watch
 
 # EGLE RIDE / Part 201 + UST status watch (Stream J, ADR 019): daily
 # snapshot-diff on EGLE's keyless RRDOpenData ArcGIS registry — Layer 0 (the
-# 5 Arbor Hills-area Part 201 remediation sites) and Layer 1 (the GFL Part 211
-# UST). Emails an alert on any change vs. the last snapshot in the "RIDE
+# 5 Arbor Hills-area Part 201 remediation sites) and Layer 1 (the watched Part
+# 211 UST facilities). Emails an alert on any change vs. the last snapshot in the "RIDE
 # Watch" tab. First sighting of each watched item baselines silently.
 #
 # Safe to leave scheduled from day one: ride.enabled gates the run —

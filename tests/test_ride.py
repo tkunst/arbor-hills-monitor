@@ -4,7 +4,8 @@ changed/fetch-fail flows driven through a fake Sheets service (no network, no
 creds). Reuses FakeSheets from test_pfas_watcher, same idiom as test_mmd/
 test_rop. The attribute fixtures below are VERBATIM copies of the real
 Layer-0/Layer-1 query responses (live-verified 2026-07-23, the overnight-coder
-feasibility-gate re-check) — not fabricated data — so the canonicalization,
+feasibility-gate re-check; the 00038889 UST record 2026-09-28) — not fabricated
+data — so the canonicalization,
 whitespace-stripping, and epoch-date assumptions are pinned against the real
 service shape."""
 import copy
@@ -287,10 +288,14 @@ RIDE_CFG = {
 }
 
 
+requested_facility_ids: list[list[str]] = []  # the facility_ids each fake Layer-1 fetch received
+
+
 def _wire(monkeypatch, cfg=RIDE_CFG, sites=None, usts=None,
           site_error=None, ust_error=None):
     fake = FakeSheets()
     sent = []
+    requested_facility_ids.clear()
     monkeypatch.setenv("GSHEET_ID", "SID")
     monkeypatch.setattr(rw, "load_config", lambda: copy.deepcopy(cfg))
     monkeypatch.setattr(rw.dc, "sheets_service", lambda: fake)
@@ -305,6 +310,7 @@ def _wire(monkeypatch, cfg=RIDE_CFG, sites=None, usts=None,
     monkeypatch.setattr(rw.rc, "fetch_site_records", _fetch_sites)
 
     def _fetch_usts(facility_ids=rc.DEFAULT_FACILITY_IDS, url=None, timeout=60):
+        requested_facility_ids.append(list(facility_ids))
         if ust_error is not None:
             raise ust_error
         return copy.deepcopy(usts if usts is not None else ust_records())
@@ -358,6 +364,45 @@ def test_adding_a_new_ust_to_an_established_watch_baselines_only_it_silently(mon
     assert len(new_rows) == 1 and new_rows[0][3] == "baseline"
     assert not any(r[3] == "changed" for r in rows)
     assert sent == []
+
+
+def test_run_asks_layer1_for_every_configured_facility_id(monkeypatch):
+    """The id must reach the actual Layer-1 query: run() passes the config's
+    facility_ids to fetch_ust_records — the fake ignores them for its response,
+    so THIS assertion is what pins that 00038889 is requested at all."""
+    fake, sent = _wire(monkeypatch)
+    assert rw.run() == 0
+    assert requested_facility_ids == [["00040223", "00038889"]]
+
+
+def test_fetch_ust_records_puts_every_id_in_the_where_clause(monkeypatch):
+    seen = {}
+
+    class _Op:
+        def open(self, url, timeout=60):
+            seen["url"] = url
+            return _FakeResp(_arcgis_payload(ust_records(), rc.LAYER1_FIELDS))
+    monkeypatch.setattr(rc, "_opener", lambda: _Op())
+    rc.fetch_ust_records(("00040223", "00038889"))
+    from urllib.parse import parse_qs, urlparse
+    where = parse_qs(urlparse(seen["url"]).query)["where"][0]
+    assert where == "FacilityID IN ('00040223','00038889')"
+
+
+def test_new_ust_first_run_fetch_error_is_loud_not_silent(monkeypatch):
+    """Adding an id to an established watch: until its first successful run the
+    'all baselined' gate is false, so a Layer-1 fetch error on that very first
+    run exits loud (red) rather than skip-and-warn. Documented in the ADR 019
+    addendum as the accepted activation-time behaviour."""
+    old_cfg = copy.deepcopy(RIDE_CFG)
+    old_cfg["ride"]["facility_ids"] = ["00040223"]
+    fake, sent = _wire(monkeypatch, cfg=old_cfg)
+    assert rw.run() == 0                                   # six baselines exist
+    fake2, sent2 = _wire(monkeypatch, ust_error=rc.RideFetchError("blip"))
+    fake2._values._tabs.update(fake._values._tabs)         # same Sheet as the first run
+    assert rw.run() == 1                                   # +00038889 has no baseline -> loud
+    assert sent2 == []
+    assert len([r for r in _data_rows(fake2) if r[1] == "ride:00038889"]) == 0
 
 
 def test_live_config_watches_the_2016_lust_facility():
