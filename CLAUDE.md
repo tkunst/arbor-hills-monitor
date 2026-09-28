@@ -194,15 +194,15 @@ external users but no sensitive data). Public repo.
   at all (465941, the expansion-parcel trip-wire; an empty record set is a
   valid baseline). Gated on `mmd.enabled`. See ADR 018.
 - `ride_client.py` — Stream J: EGLE RIDE / Part 201 + UST status (keyless public
-  ArcGIS RRDOpenData, two layers — status only; RIDE's app has no anonymous
-  STATUS API, though its public inventory page does list FILES anonymously, see
-  the ADR 019 addendum). One `SiteID IN (...)` / `FacilityID IN (...)` query per layer;
+  ArcGIS RRDOpenData, two layers — status only; RIDE's app itself is not used
+  — its public inventory page was found on 2026-09-28 to list FILES anonymously,
+  see the ADR 019 addendum). One `SiteID IN (...)` / `FacilityID IN (...)` query per layer;
   explicit `outFields` (never `*`) + `returnGeometry=false` keep OID/geometry
   out of the fetch entirely (`ProjectManaager` excluded too — admin churn, not
   signal). Fetch-vs-structural error split mirrors mmd_client. Structured-API
   source, never goes through `egle_doc_parser`. See ADR 019.
 - `ride_watcher.py` — Stream J: daily snapshot-diff of each watched Part 201
-  site's / Part 211 UST's record vs. the `RIDE Watch` tab — a `RiskCondition`
+  site's / UST facility's record vs. the `RIDE Watch` tab — a `RiskCondition`
   flip, a `Contaminants` change, or a new `Open_Release` alerts (R5, water
   quality). Gated on `ride.enabled` (built disabled; live `true` since
   2026-08-07). Watches Layer-1 facilities 00040223 (GFL) and 00038889 (Arbor

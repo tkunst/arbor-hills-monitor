@@ -1,6 +1,6 @@
 """
 ride_watcher.py — daily watch on EGLE's RRDOpenData ArcGIS service (RIDE) for
-the Arbor-Hills-area Part 201 sites (Layer 0) and the watched Part 211 UST
+the Arbor-Hills-area Part 201 sites (Layer 0) and the watched UST
 facilities (Layer 1), alerting on any status change. Standalone + self-terminating, the same
 shape as mmd_watcher.py / rop_watcher.py. See docs/decisions/019-ride-part201-watch.md.
 
@@ -16,10 +16,11 @@ SEVEN watched items, derived from TWO fetches (one per layer):
                        81000033 Salem Landfill, 81000004 Arbor Hills - East,
                        81000835 7667 Chubb Rd, 81000840 7941 Salem Rd,
                        82008712 MITC Corridor.
-  - ride:<FacilityID>  one item per Part 211 UST facility's Layer-1 record —
-                       00040223 (GFL, 7811 Chubb Rd) and 00038889 (Arbor Hills
-                       Landfill Inc, 10690 W Six Mile; registry status "No Longer
-                       A Facility", added 2026-09-28).
+  - ride:<FacilityID>  one item per UST facility's Layer-1 record — 00040223
+                       (registry name "GFL Environmental USA, LLC") and 00038889
+                       ("Arbor Hills Landfill Inc", added 2026-09-28). Layer 1
+                       mixes RegulatoryProgram 211 and 213 records, so nothing
+                       here labels an item with a program number.
 
 WHAT IT DOES per item (mirrors mmd_watcher/rop_watcher exactly):
   - build a canonical snapshot + hash it,
@@ -76,8 +77,10 @@ _KNOWN_SITE_NAMES = {
     "82008712": "MITC Corridor",
 }
 _KNOWN_FACILITY_NAMES = {
-    "00040223": "GFL Environmental USA, LLC — Part 211 UST",
-    "00038889": "Arbor Hills Landfill Inc — Part 211 UST",
+    # The registry's own FacilityName, verbatim (Layer 1 mixes RegulatoryProgram
+    # 211 and 213 records — 00038889 is 213 — so no program is asserted in a label).
+    "00040223": "GFL Environmental USA, LLC",
+    "00038889": "Arbor Hills Landfill Inc",
 }
 
 
@@ -114,7 +117,7 @@ def site_label(site_id) -> str:
 def ust_label(facility_id) -> str:
     name = _KNOWN_FACILITY_NAMES.get(str(facility_id))
     suffix = f" ({name})" if name else ""
-    return f"RIDE Part 211 UST — Facility {facility_id}{suffix}"
+    return f"RIDE UST registry — Facility {facility_id}{suffix}"
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +142,7 @@ def site_snapshot(records: list[dict], site_id) -> dict:
 
 
 def ust_snapshot(records: list[dict], facility_id) -> dict:
-    """Canonical, hash-stable snapshot of one Part 211 UST's Layer-1
+    """Canonical, hash-stable snapshot of one UST facility's Layer-1
     record(s). Same shape/rationale as site_snapshot."""
     views = sorted(
         (rc.ust_record_view(r) for r in records
@@ -215,7 +218,7 @@ def summarize_site_change(old: dict, new: dict) -> tuple[str, str]:
 
 
 def summarize_ust_change(old: dict, new: dict) -> tuple[str, str]:
-    """(note, body) for the Part 211 UST's snapshot change. Pure."""
+    """(note, body) for a UST facility's snapshot change. Pure."""
     facility_id = new.get("facility_id") or old.get("facility_id") or "?"
     detail_fields = tuple(f for f in rc.LAYER1_FIELDS if f not in ("FacilityID", "FacilityName"))
     return _summarize(
@@ -229,14 +232,14 @@ def format_change_body(label: str, note: str, body: str) -> str:
     """The change-alert email body. Pure — unit-tested."""
     shown = body or "(no further detail — see the RIDE Watch tab's Snapshot JSON.)"
     return (
-        "A watched Arbor Hills Part 201 / Part 211 UST record changed in "
-        "EGLE's RIDE RRDOpenData registry.\n\n"
+        "A watched Arbor Hills Part 201 site / underground-storage-tank facility "
+        "record changed in EGLE's RIDE RRDOpenData registry.\n\n"
         f"Source:  {label}\n"
         f"Change:  {note}\n\n"
         "What changed:\n\n"
         f"{shown}\n\n"
         "This is an automated watch on EGLE's Part 201 contaminated-site "
-        "remediation / Part 211 underground-storage-tank status registry "
+        "remediation / underground-storage-tank status registry "
         "(RRDOpenData) — the state's own view of risk condition, contaminant "
         "classes, and open releases. A change here is early, citable R5 "
         "(water quality) signal worth reviewing at the source.\n"
@@ -349,7 +352,7 @@ def run() -> int:
                                       cfg, recipients)
             counts[result] += 1
 
-    # --- Layer 1: Part 211 UST facilities -------------------------------------------
+    # --- Layer 1: UST facilities -------------------------------------------
     facility_keys = [f"ride:{f}" for f in facility_ids]
     ust_records = None
     try:

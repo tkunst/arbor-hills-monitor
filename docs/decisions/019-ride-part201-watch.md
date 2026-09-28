@@ -164,41 +164,46 @@ keyless, same as MMD/ROP). First enabled run baselines all 6 items silently.
 Pause = flip back to `enabled: false` (tab state survives); resume re-diffs
 against the last recorded snapshots.
 
-## Addendum 2026-09-28 — UST 00038889 added; the "no anonymous document API" premise corrected
+## Addendum 2026-09-28 — UST 00038889 added; the "no anonymous document API" premise superseded
 
 ### Watched set: `00038889` joins `00040223`
 
-`ride.facility_ids` now also carries Layer-1 FacilityID **`00038889`** — the
-registry's own `FacilityName` is "Arbor Hills Landfill Inc". Per the
-overnight-coder handoff `docs/overnight-coder-handoffs/rrd-mpart-records.md` (drawn from EGLE's FOIA release E614007) it is the
-leaking-UST release and closure Leak C-0076-16 at 10690 W Six Mile Rd; RIDE's
-own file list for the location carries a 2016 Confirmed Release Report and
-Closure Report. The facility was not on the watch list, so a re-open or a status
-change on it would have gone unseen. In RIDE's file list it appears under the
-same location (`locationId` 2085) as Part 201 site `81000004` (Arbor Hills -
-East), as `00038889 - 81000004`. Layer 1 itself only says "No Longer A
-Facility" — nothing in this layer confirms a closure date, so no label or alert
-text asserts one.
+`ride.facility_ids` now also carries Layer-1 FacilityID **`00038889`**. This ADR
+states only what the registry itself says about it (live layer-1 query,
+2026-09-28): `FacilityName` "Arbor Hills Landfill Inc", `RegulatoryProgram` 213,
+`ReleaseStatus` "Closed", `Total_Release` 1, `Closed_Release` 1, `Open_Release` 0,
+`HighestClassification` "Class 4", `RiskCondition` "No Longer A Facility",
+`Total_Tank` 2, `Active_Tank` 0, `LastUpdated` 2024-04-26. The layer gives no
+release or closure date. It is watched because the overnight-coder handoff
+(2026-09-28), working from EGLE FOIA request E614007-080526, found it missing from
+the watch list; a re-open (`Open_Release`, `RiskCondition`) or a status change on
+it would otherwise go unseen. The watch makes no other claim about the facility.
+
+`RegulatoryProgram` shows why no label asserts a program: Layer 1 mixes 211 and
+213 records (`00040223`, GFL, is 211; `00038889` is 213). The item label prefix
+is therefore the neutral "RIDE UST registry — Facility <id>" (it was "RIDE Part
+211 UST"), and each facility is named by its registry `FacilityName` only. Labels
+are not part of the snapshot hash, so the wording change alerts on nothing.
 
 The shipped `ride:` stream was already `enabled: true`, so this was a live-path
-edit. Real-specimen check (live layer-1 query, 2026-09-28):
+edit. Real-specimen verification:
 
-- `00038889` returns one record — `FacilityName` "Arbor Hills Landfill Inc",
-  `RiskCondition` "No Longer A Facility", `Open_Release` 0, `LastUpdated`
-  2024-04-26 — with the same fields the canonical view already reads.
-- `00040223` still returns its documented record unchanged.
-- The watcher's first-sighting path records a silent `baseline` row for an id
-  with no prior row, so adding it to an already-baselined stream alerts on
-  nothing (pinned by `test_adding_a_new_ust_to_an_established_watch_baselines_only_it_silently`).
+- The live layer-1 query returns both records with the fields the canonical view
+  already reads (above); `00040223` is unchanged.
+- The watcher's first-sighting path records a silent `baseline` row for an id with
+  no prior row (pinned by
+  `test_adding_a_new_ust_to_an_established_watch_baselines_only_it_silently`, whose
+  Layer-1 fake answers with one record and then two, as the real service does).
+- A real production run of the workflow on the PR branch (`workflow_dispatch`)
+  reported `0 changed, 1 baselined, 6 unchanged` and sent no email.
 
-The item key stays `ride:<FacilityID>`; `00038889` cannot collide with any
-Part 201 `SiteID` (those are `8100xxxx`/`8200xxxx`).
+The item key stays `ride:<FacilityID>`; `00038889` cannot collide with any Part 201
+`SiteID` (those are `8100xxxx`/`8200xxxx`).
 
-### Correction: RIDE's public page does list documents anonymously
+### Superseded premise: RIDE's public page does list documents anonymously
 
-The Context section above (and worker #69's 7/2026 recon it cites) says RIDE is
-"auth-walled, no anonymous document API". That was right about the **status**
-data this stream watches and is wrong as a statement about RIDE as a whole.
+The Context section above cites worker #69's 7/2026 recon: RIDE is "behind a
+login" with "no anonymous document API". For **documents** that is superseded.
 Re-checked 2026-09-28 with a headless browser — **no credentials, no login
 click**:
 
@@ -206,8 +211,8 @@ click**:
   facilities?...programNum=<id>`) gives every anonymous visitor a "Public User"
   session on its own (`GET /RIDE/Home/GetAppSettings` returns `userName`
   "Public1").
-- Its own front end then calls JSON endpoints that a plain HTTP client can
-  replay once it has the session cookies (a `POST` without them returns 405):
+- Its own front end then calls JSON endpoints that a plain HTTP client can replay
+  once it holds the session cookies (a `POST` without them returns 405):
   `POST api/Location/GetFacilitiesTable` (program number -> `locationId`),
   `POST api/ContentManagerFile/GetContentManagerFilesForLocationFilesTable`
   (the location's file list; 37 files for 81000004, each with a unique `uri`),
@@ -215,24 +220,26 @@ click**:
 - The page's own disclaimer says records maintained by RRD are available for
   download through RIDE.
 
-This stream is unchanged by that finding: it still watches only RRDOpenData's
-status layers. A document watch built on those endpoints is a separate stream
-(different source, key — file `uri`, not `SiteID` — and sensitivity: file titles
-include resident street addresses) proposed in its own PR, not in this change.
+Whether RIDE's app also exposes *status* anonymously was **not investigated**;
+this stream keeps using RRDOpenData, unchanged. A document watch built on those
+endpoints is a separate stream (different source, key — file `uri`, not `SiteID` —
+and sensitivity: file titles can include resident street addresses) proposed in
+its own PR, not in this change.
 
-### Accepted first-run behaviour
+### Accepted behaviours
 
-`_all_baselined()` now includes `ride:00038889`, which has no baseline until its
-first successful run. If that very first run hits a transient Layer-1 fetch
-error, the run exits loud (red) instead of skip-and-warn — the documented
-activation-time rule. It self-heals on the next successful run; nothing is
-alerted or lost.
-
-The snapshot hash includes `LastUpdated`, so a routine EGLE re-stamp of a dormant
-record (`00038889`, like every watched item) emails a date-only change; the body
-prints the old and new values, so it is recognizable at a glance. Pre-existing
-behaviour, accepted.
-
-If EGLE ever drops `00038889` from the open-data layer (its live
-`RiskCondition` is "No Longer A Facility"), the watch will send an accurate
-"NO LONGER LISTED" alert — that is the designed behaviour, not a false positive.
+- **First run:** `_all_baselined()` now includes `ride:00038889`, which has no
+  baseline until its first successful run. If that very first run hits a
+  transient Layer-1 fetch error, it exits loud (red) instead of skip-and-warn — the
+  documented activation-time rule — and self-heals on the next good run (pinned by
+  `test_ust_fetch_error_is_skip_when_fully_baselined_but_loud_for_a_new_id`).
+- **Date-only alerts:** the snapshot hash includes `LastUpdated`, so a routine EGLE
+  re-stamp of a dormant record emails a date-only change; the body prints the old
+  and new values, so it is recognizable at a glance. Pre-existing for every watched
+  item.
+- **Alert boilerplate:** the change email's closing sentence ("early, citable R5
+  signal") is generic to every item, including a record whose registry status is
+  "No Longer A Facility". Left unchanged here (recipient is Trisha only); a future
+  copy pass could make it status-aware.
+- **"NO LONGER LISTED":** if EGLE ever drops `00038889` from the layer, the watch
+  sends an accurate alert — the designed behaviour, not a false positive.

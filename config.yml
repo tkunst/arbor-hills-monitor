@@ -693,8 +693,8 @@ mmd:
 # Daily snapshot-diff on EGLE's KEYLESS RRDOpenData ArcGIS registry
 # (gisagoegle.state.mi.us .../EGLE/RRDOpenData/MapServer) — Layer 0 (Part 201
 # contaminated-site remediation status) for the 5 Arbor Hills-area sites, and
-# Layer 1 (Part 211 underground storage tanks) for the watched UST facilities
-# (GFL 00040223; Arbor Hills Landfill Inc 00038889). This is the underlying
+# Layer 1 (underground storage tanks) for the watched UST facilities
+# (registry names: GFL Environmental USA, LLC 00040223; Arbor Hills Landfill Inc 00038889). This is the underlying
 # public STATUS data (RIDE's document listing is a separate source — see the
 # ADR 019 addendum). A RiskCondition flip, a Contaminants change, or a new
 # Open_Release is early, citable R5 (water quality) signal. Statuses change
@@ -715,12 +715,11 @@ ride:
     - "81000835"   # 7667 Chubb Rd
     - "81000840"   # 7941 Salem Rd
     - "82008712"   # MITC Corridor
-  facility_ids:                      # Layer 1 (Part 211 UST) — key field FacilityID
+  facility_ids:                      # Layer 1 (UST; RegulatoryProgram 211 or 213 per record) — key field FacilityID
     - "00040223"   # GFL Environmental USA, LLC, 7811 Chubb Rd
-    - "00038889"   # Arbor Hills Landfill Inc, 10690 W Six Mile Rd — a 2016 leaking-UST release (Leak C-0076-16,
-                   # per EGLE FOIA E614007). Registry status today: RiskCondition "No Longer A Facility", 0 open
-                   # releases — watched so a re-open or a status change is caught. RIDE lists it under the same
-                   # location as Part 201 site 81000004 (observed 2026-09-28). Added 2026-09-28; ADR 019 addendum.
+    - "00038889"   # Registry FacilityName "Arbor Hills Landfill Inc" (RegulatoryProgram 213, ReleaseStatus
+                   # Closed, RiskCondition "No Longer A Facility", 0 open releases as of 2026-09-28). Added
+                   # 2026-09-28 so a re-open or status change is caught; see the ADR 019 addendum.
   # Recipient override: Trisha only to start (Meeting Watch/MMD precedent for
   # a brand-new stream). Delete/comment this block to send to the full
   # alert_recipients list once the alert copy has been seen in the wild.
