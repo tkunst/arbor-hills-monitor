@@ -98,6 +98,58 @@ A new stream, e.g. `govqa_watcher.py` + `govqa_client.py`, shipped `enabled: fal
   law-firm releases are caught the day they post. Known example: E614606, Liddle Sheets, Pine Tree; it
   is a peer site, so it's config-driven and optional.
 
+### 1C-bis. GovQA: the method that works without timing out (added 2026-09-28; READ BEFORE BUILDING 1C)
+
+These are lessons from the 9/25-9/27/2026 manual runs. Prior-art code is in Lotext
+`.../egle-foia-archive/_tools/` (`pw_search.py`, `rid.py`, `dl.py`, `getall.py`).
+
+**Don't:**
+- **Don't use the UI's CSV Export headless.** It returned nothing within 10 minutes. The grid is a DevExpress
+  control tied to a live session.
+- **Don't trust the date filter.** It is ignored; filtering happens only after the search form is POSTed to the
+  session URL (`.../_rs/(S(<session>))/OpenRecordsSummary.aspx`).
+- **Don't parallelize.** Run one browser or one cookie jar at a time, at about 1 request/second.
+
+**Keyword search (the list of requests):** use headless Playwright on the pattern in `pw_search.py`.
+- `goto` the summary URL, then wait for `#txtSearch_I` (timeout 180 s).
+- `fill("#txtSearch_I", term)`, then click `#filterButton` inside `expect_navigation(timeout=300000)`.
+- Read rows from `tr[class*=dxgvDataRow]`. The first cell is the E-number (`E\d{6}-\d{6}`).
+- Page with `ASPx.GVPagerOnClick('gridView','PBN')`. Then poll up to 60 s (every 500 ms) until the first row's
+  E-number changes. Read "Page X of Y (N items)" from body text to know when to stop.
+- **One term per search.** Terms are OR-ed across separate searches; there are no boolean queries.
+- **Incremental daily run:** results come newest-first, so stop paging a term as soon as a page contains only
+  E-numbers already in the `GovQA Archive Watch` tab. Don't re-walk the whole history daily.
+- On any timeout: close the context, start a fresh browser context/session, retry with backoff (e.g. 30 s, 2 min,
+  10 min). After 3 failures, log a structural error and move on. Never hang the run.
+
+**One request by E-number (status checks + attachments):** use curl and a cookie jar, no browser (`rid.py` +
+`dl.py`).
+1. GET the summary with `-L`, capturing the effective URL (it contains the session id).
+2. Scrape all `<input>` name/value pairs from the page, drop `main-nav`/`viewport`, set `txtRefsearch=<E-number>`
+   + `filterButton=FILTER`, and POST back to that URL with `-e <url>`.
+3. Get the internal `rid` from `redirectInfo(...)` or `OnMoreInfoClick(this, ...)` in the response.
+4. The detail page is `RequestArchiveDetails.aspx?rid=<rid>&view=1`. Status, dates and the attachment list come
+   from `__doPostBack('rptAttachments$ctlNN$lnkStreamCloud','')` links.
+5. **Download each attachment** by re-POSTing the detail page's form with `__EVENTTARGET=<that target>`, following
+   the **302 to a time-limited Azure blob URL with `-L`**.
+   - If the response content-type is `text/html`, it failed (session expired): rename the file `*.ERR.html`,
+     restart the session, retry once.
+   - Skip files already present and non-empty. SHA-256 each.
+
+Use this path, not the grid, to **re-check open requests** (status flips like "Cost estimate sent" → "Closed").
+
+**CSV fallback for bulk backfills:**
+- The site's **Export button works in a real, human-driven browser**. Trisha exported
+  `govqa_export_gridView_2026-09-25_{a,b}.csv` that way (313 requests).
+- The watcher should accept **a gridView CSV dropped into a configured folder** as an alternative input (same
+  columns as those files), and ingest new E-numbers from it. That is the fallback when scraping the grid is too
+  slow for a large backfill. **Do not** try to automate the Export button headless.
+- If a large backfill is ever needed, the run should **stop and ask Trisha for an export** rather than loop on
+  timeouts.
+
+**Volume sanity:** a full "Arbor Hills" history is small (dozens of requests). A daily incremental run should take
+a few minutes, not tens.
+
 ### 1D. If 1A finds an anonymous RRD document channel
 
 Add an RRD document watch mirroring the nSITE documents pattern: a Sheet tab `RRD Documents` and a private
