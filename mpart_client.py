@@ -41,12 +41,18 @@ itself says about them (the layers' ArcGIS item descriptions, saved in Lotext
     republished the layer, not that sampling just happened — the collection date says
     when.
   - Surface-water flags are "a note from the analytical laboratory"; a flag of "Not
-    Measured" means that analyte was not part of the analysis. Qualifier definitions
-    include K (amount detected is below the method detection limit — Vista), J
-    (below the reporting limit / LOQ), Q (ion-transition ratio outside acceptance
-    criteria), B (also in the method blank), E (above the calibration range), I
-    (chemical interference; EMPC for Eurofins) and IDA01 (estimated/suspect); "the
-    definition varies by report". Observed K rows carry value == MDL.
+    Measured" means that analyte was not part of the analysis. EGLE's prose: "K" flagged
+    analytes "were not detected in the sample and therefore the method detection limit
+    (MDL) is displayed"; "J" flagged results "indicate an estimated concentration as the
+    result is above the MDL but below the laboratory reporting limit". Its qualifier table
+    words them "amount detected is below the Method Detection Limit/LOD" (K: Vista, EGLE,
+    Eurofins) and "below the Reporting Limit/LOQ" (J), and also lists Q (ion-transition
+    ratio outside acceptance criteria), B (also in the method blank), E (above the
+    calibration range), I (chemical interference; EMPC for Eurofins) and IDA01
+    (estimated/suspect). EGLE: "Qualifiers are analytical laboratory specific and often it
+    is better to refer to the original analytical report". The watch therefore prints every
+    flag exactly as published and interprets only K (never compared). Observed K rows carry
+    value == MDL.
   - Fish: "K" = not detected, the method detection limit is displayed; "J" = an
     estimated concentration; "I" = analytical interference was present, so a
     concentration could not be determined; "QNS" = not enough sample remained. Only
@@ -162,14 +168,15 @@ def _fetch(url: str, where: str, fields: tuple[str, ...], timeout: int) -> list[
         raise MpartFetchError(f"GET {url} returned non-object JSON")
     if "error" in payload:
         err = payload["error"] if isinstance(payload["error"], dict) else {}
-        # upstream text is collapsed to ONE line before it reaches an exception (and so the public Actions
-        # log): a newline followed by `::add-mask::` / `::error::` would otherwise be a runner command
-        shown = re.sub(r"\s+", " ", str(payload["error"])).strip()[:200]
-        if err.get("code") == 400:
+        # Upstream FREE TEXT never reaches an exception (and so the public Actions log): the runner
+        # honours `::cmd::` and `##[cmd]` anywhere a log line carries them. Only the integer code does.
+        code = err.get("code")
+        shown = f"code {code}" if isinstance(code, int) and not isinstance(code, bool) else "no numeric code"
+        if code == 400:
             # ArcGIS answers a rejected query (a renamed field in the where clause, a bad layer id)
             # as 200 + {"error": {"code": 400}}. That persists across runs: structural, not a blip.
-            raise MpartParseError(f"ArcGIS rejected the query at {url}: {shown} — the layer may have changed")
-        raise MpartFetchError(f"ArcGIS error from {url}: {shown}")
+            raise MpartParseError(f"ArcGIS rejected the query at {url} ({shown}) — the layer may have changed")
+        raise MpartFetchError(f"ArcGIS error from {url} ({shown})")
     if "features" not in payload:
         raise MpartParseError(f"query response from {url} has no 'features' — the service may have changed")
     if payload.get("exceededTransferLimit"):

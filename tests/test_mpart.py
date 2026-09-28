@@ -183,18 +183,21 @@ def test_fetch_guards_split_transient_from_structural(monkeypatch, body, status,
         mc.fetch_surface_water()
 
 
-@pytest.mark.parametrize("error", ["boom\n::add-mask::secret\r\n::error::forged", {"code": 503, "message": "x\n::stop-commands::y"}])
-def test_upstream_error_text_reaches_exceptions_as_one_line(monkeypatch, error):
-    """A newline in an upstream error would let it start a line with `::` in the public Actions log
-    (a workflow command). It is collapsed to a single line before it is stored anywhere."""
+@pytest.mark.parametrize("error", ["boom\n::add-mask::secret ##[error]forged", {"code": 503, "message": "x\n::stop-commands:: ##[add-mask]y"},
+                                   {"code": "##[error]not-an-int"}, {"code": True}])
+def test_upstream_error_free_text_never_reaches_an_exception(monkeypatch, error):
+    """The runner honours `::cmd::` and legacy `##[cmd]` anywhere a log line carries them, so upstream
+    FREE TEXT is never put into an exception message — only an integer code is."""
     wire_opener(monkeypatch, json.dumps({"error": error}).encode())
     with pytest.raises(mc.MpartFetchError) as e:
         mc.fetch_surface_water()
-    assert "\n" not in str(e.value) and "\r" not in str(e.value)
-    wire_opener(monkeypatch, json.dumps({"error": {"code": 400, "message": "bad\nfield"}}).encode())
+    msg = str(e.value)
+    assert "\n" not in msg and "::" not in msg and "##[" not in msg and "forged" not in msg and "secret" not in msg
+    assert ("code 503" in msg) or ("no numeric code" in msg)
+    wire_opener(monkeypatch, json.dumps({"error": {"code": 400, "message": "bad\n##[error]field"}}).encode())
     with pytest.raises(mc.MpartParseError) as e2:
         mc.fetch_surface_water()
-    assert "\n" not in str(e2.value)
+    assert "##[" not in str(e2.value) and "field" not in str(e2.value) and "code 400" in str(e2.value)
 
 
 @pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://example.com/x", "http://insecure.example/x", ""])
@@ -516,8 +519,8 @@ def test_surface_water_copy_prints_values_verbatim_with_flags_and_the_screening_
     assert "CURRENT value was verified" in body and "for PFOA, a much higher one" in body and "a row with no collection date is screened" in body
     assert "no such value was in force" not in body and "vary by report" not in body       # both were inaccurate
     assert "qualifiers are analytical-laboratory specific" in body and "'K' flag" in body
-    assert "Below the Method Detection Limit/LOD" not in body and 'below the Method Detection Limit/LOD' in body   # EGLE's own words, attributed
-    assert "printed exactly as published and not interpreted here" in body
+    assert 'were not detected in the sample and therefore the method detection limit (MDL) is displayed' in body   # EGLE's own words, attributed
+    assert "every flag is printed exactly as published — the monitor adds no meaning of its own" in body
     assert "monitor's own notes" in body and "Rule 100 designation" in body               # the designation's source is named
     assert "revised in 2022-2023" not in body                                              # PFHxS/PFNA were ADDED, not revised
 
@@ -552,21 +555,25 @@ def test_a_revised_value_on_an_already_recorded_hit_says_what_was_recorded_and_i
 
 
 def test_a_J_hit_is_printed_as_published_and_never_glossed_as_estimated():
-    """EGLE's surface-water J is 'below the Reporting Limit/LOQ' — 'estimated' is the FISH layer's
-    J. The alert prints the flag exactly and adds no meaning of its own."""
+    """EGLE words the surface-water J two ways ('an estimated concentration … above the MDL but below
+    the laboratory reporting limit' in its prose, 'below the Reporting Limit/LOQ' in its table) and
+    says qualifiers are lab-specific. The HIT LINE prints the flag exactly and adds no meaning of the
+    monitor's own; EGLE's prose appears only as an attributed quote in the caveat paragraph."""
     views = _sw_views([sw_row("x", "s", "2024-01-01", "w", "d", 13.0, "J", 1)])
     key = next(iter(views))
     body = mw.format_change_body(mw.ITEM_SW, {"added": [key], "removed": [], "changed": []}, views, _hit_map(views, [key]),
                                  {mw.hit_id(views[key], "PFOS")}, TH, VY)
-    assert ">>> PFOS 13 [J] ng/L is ABOVE" in body and "estimated" not in body.split("Rule 57 comparison")[0]
-    assert "estimated" not in body                                                       # nowhere in the surface-water alert
+    hit_lines = [ln for ln in body.splitlines() if ln.lstrip().startswith(">>>")]
+    assert hit_lines == ["    >>> PFOS 13 [J] ng/L is ABOVE the published Rule 57 non-drinking-water value of 12 ng/L"]
+    assert "estimated" not in body.split("Rule 57 comparison")[0]                        # no gloss on the hit or anywhere above the caveat
+    assert 'EGLE describes a \'J\' flag as "an estimated concentration as the result is above the MDL' in body   # ...attributed
 
 
 def test_unchanged_rows_newly_above_a_value_get_their_own_section():
     views = _sw_views()
     body = mw.format_change_body(mw.ITEM_SW, {"added": [], "removed": [], "changed": [], "rescreened": [NAPIER]}, views,
                                  _hit_map(views, [NAPIER]), {NAPIER_HIT}, TH, VY)
-    assert "UNCHANGED rows now above a screening value" in body and "the row itself did not change" in body and "(1):" in body
+    assert "UNCHANGED rows now above a screening value" in body and "none of the watched fields on the row changed" in body and "(1):" in body
     assert "is ABOVE" in body and "NEW rows" not in body
 
 
@@ -927,9 +934,18 @@ def test_a_hits_only_change_is_alerted_with_the_rows_and_never_as_an_empty_alert
     assert sent[0][0] == ("[MPART data] Rule 57 screening: 1 unchanged surface-water PFAS row(s) now above a non-drink value "
                           "(screening values or watch logic changed)")                   # it does NOT blame the layer
     body = sent[0][1]
-    assert body.startswith("The monitor re-screened a watched MPART PFAS open-data layer. The layer's rows did NOT change")
+    assert body.startswith("The monitor re-screened a watched MPART PFAS open-data layer. None of the fields this watch reads changed")
     assert "UNCHANGED rows now above a screening value" in body and "19-JD-0105" in body and "3.1" in body and "is ABOVE" in body
     assert mw.run([]) == 0 and len(sent) == 1                                                # and it is not re-announced
+
+
+def test_the_subject_says_so_when_rows_changed_AND_an_unchanged_row_is_newly_above_a_value():
+    d = {"added": [], "changed": ["a"], "removed": ["b"], "rescreened": ["c"]}
+    assert mw.subject_for(mw.ITEM_SW, d, True, new_hit_in_rows=False) == (
+        "[MPART data] Rule 57 screening: 1 unchanged surface-water PFAS row(s) now above a non-drink value "
+        "(screening values or watch logic changed) — also 1 changed, 1 removed")
+    assert mw.subject_for(mw.ITEM_SW, d, True, new_hit_in_rows=True).endswith("new/changed surface-water PFAS result(s)")
+    assert mw.subject_for(mw.ITEM_SW, d, False) == "[MPART data] 1 changed, 1 removed: surface-water PFAS"
 
 
 def test_a_reissued_row_with_a_new_lab_id_is_not_announced_as_a_new_exceedance(monkeypatch):
@@ -1053,10 +1069,17 @@ def test_a_sheet_read_failure_propagates_instead_of_rebaselining(monkeypatch):
     assert len(rows_of(fake, "mpart:sw", "changed")) == 0 and len(rows_of(fake, "mpart:sw", "baseline")) == 1
 
 
-def test_main_reports_only_the_class_and_a_short_message(monkeypatch, capsys):
-    monkeypatch.setattr(mw, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x" * 500)))
-    assert mw.main() == 1
-    assert "RuntimeError" in capsys.readouterr().out
+def test_main_and_the_per_item_guard_print_the_exception_class_only(monkeypatch, capsys):
+    with monkeypatch.context() as m:
+        m.setattr(mw, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x" * 500 + " ##[error]forged")))
+        assert mw.main() == 1
+    out = capsys.readouterr().out
+    assert "RuntimeError" in out and "forged" not in out and "xxx" not in out
+    world, fake, sent = _wire(monkeypatch)
+    monkeypatch.setattr(mw.mc, "fish_view", lambda a: (_ for _ in ()).throw(ValueError("weird ##[error]attributes")))
+    assert mw.run([]) == 1
+    out = capsys.readouterr().out
+    assert "unexpected ValueError" in out and "##[" not in out and "weird" not in out
 
 
 # --- probe -----------------------------------------------------------------------------------------

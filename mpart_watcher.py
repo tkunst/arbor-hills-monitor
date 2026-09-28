@@ -343,11 +343,13 @@ def screen_note(thresholds: dict, verified_year: dict) -> str:
         "determination. Values are compared only for samples collected on or after the year each CURRENT "
         "value was verified (an older value — for PFOA, a much higher one — or none applied to earlier "
         "samples; check the analytical report) and only when the unit reads as ng/L; a row with no "
-        "collection date is screened. A 'K' flag (EGLE's layer description: \"below the Method Detection "
-        "Limit/LOD\"; in the rows observed the value shown equals the detection limit) is never compared. "
-        "Every other lab flag (J, Q, B, E, I …) is printed exactly as published and not interpreted here; "
-        "EGLE notes that qualifiers are analytical-laboratory specific and it is often better to refer to "
-        "the original analytical report."
+        "collection date is screened. A 'K' flag is never compared (EGLE's layer description: K flagged "
+        "analytes \"were not detected in the sample and therefore the method detection limit (MDL) is "
+        "displayed\"). EGLE describes a 'J' flag as \"an estimated concentration as the result is above the "
+        "MDL but below the laboratory reporting limit\"; J values are compared like any other reported value "
+        "and every flag is printed exactly as published — the monitor adds no meaning of its own. EGLE "
+        "notes that qualifiers are analytical-laboratory specific and it is often better to refer to the "
+        "original analytical report."
     )
 
 
@@ -388,8 +390,8 @@ def format_change_body(item: str, diff: dict, views: dict[str, dict], hit_map: d
     recorded = recorded or {}
     rows_changed = diff["added"] or diff["changed"] or diff["removed"]
     opening = ("A watched MPART PFAS open-data layer changed." if rows_changed else
-               "The monitor re-screened a watched MPART PFAS open-data layer. The layer's rows did NOT change; "
-               "the screening values or this watch's logic did.")
+               "The monitor re-screened a watched MPART PFAS open-data layer. None of the fields this watch reads "
+               "changed; the screening values or this watch's logic did.")
     parts = [f"{opening}\n\nSource:  {LABELS[item]}"]
 
     def rank(k):
@@ -397,8 +399,8 @@ def format_change_body(item: str, diff: dict, views: dict[str, dict], hit_map: d
 
     for title, keys in (("NEW rows", diff["added"]),
                         ("CHANGED rows (values differ from what was last recorded)", diff["changed"]),
-                        ("UNCHANGED rows now above a screening value (the row itself did not change — the "
-                         "screening values or this watch's logic did)", diff.get("rescreened", []))):
+                        ("UNCHANGED rows now above a screening value (none of the watched fields on the row changed — "
+                         "the screening values or this watch's logic did)", diff.get("rescreened", []))):
         if not keys:
             continue
         ordered = sorted(keys, key=rank)
@@ -653,7 +655,7 @@ def run(argv: list[str] | None = None) -> int:
             print(f"[mpart] {item}: STRUCTURAL failure (failing loudly — not a transient blip): {e}")
             exit_code = 1
         except Exception as e:  # noqa: BLE001 — one item must never abort the others
-            print(f"[mpart] {item}: unexpected {type(e).__name__} — continuing with the next item: {str(e)[:120]}")
+            print(f"[mpart] {item}: unexpected {type(e).__name__} — continuing with the next item.")
             exit_code = 1
 
     print(f"[mpart] done — {counts['changed']} changed, {counts['baseline']} baselined, "
@@ -665,7 +667,7 @@ def main() -> int:
     try:
         return run()
     except Exception as e:  # noqa: BLE001 — never a raw traceback into a public log
-        print(f"[mpart] FAILED: {type(e).__name__}: {str(e)[:200]}")
+        print(f"[mpart] FAILED: {type(e).__name__}")
         return 1
 
 

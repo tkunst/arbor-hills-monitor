@@ -45,17 +45,22 @@ upper-Rouge surface-water and fish results, which were found by hand in 9/2026.
 - Both are **static pulls**: surface water "last pulled 2/2025"; fish "a static pull … on
   01/14/2026 … updated annually". A new row therefore means EGLE republished the layer —
   not that sampling just happened. Expect quiet stretches and a burst when EGLE re-pulls.
-- Fish codes: **K** = not detected, the method detection limit is displayed; **J** = an
-  estimated concentration; **I** = "analytical interference was present in the sample;
+- Fish codes (the FISH layer's own description): **K** = not detected, the method detection
+  limit is displayed; **J** = an estimated concentration; **I** = "analytical interference was present in the sample;
   therefore, a concentration could not be determined"; **QNS** = not enough sample
   remained. Only edible-portion data are shown. (The overnight-coder handoff glossed `I`
   as "no value published"; EGLE's own wording is used here instead.)
 - Surface-water flags are "a note from the analytical laboratory"; `Not Measured` means
-  that analyte was not part of the analysis. Qualifier definitions include K (below the
-  method detection limit), J (below the reporting limit / LOQ), Q (ion-transition ratio
-  outside acceptance criteria), B (also in the method blank), E (above the calibration
-  range), I (chemical interference; EMPC for Eurofins) and IDA01 (estimated/suspect), and
-  "the definition varies by report". `Unit` is "provided by the analytical laboratory".
+  that analyte was not part of the analysis. EGLE's prose: "K" flagged analytes "were not
+  detected in the sample and therefore the method detection limit (MDL) is displayed"; "J"
+  flagged results "indicate an estimated concentration as the result is above the MDL but
+  below the laboratory reporting limit". Its qualifier table words K as "below the Method
+  Detection Limit/LOD" (Vista, EGLE, Eurofins) and J as "below the Reporting Limit/LOQ", and
+  also lists Q (ion-transition ratio outside acceptance criteria), B (also in the method
+  blank), E (above the calibration range), I (chemical interference; EMPC for Eurofins) and
+  IDA01 (estimated/suspect). EGLE: "Qualifiers are analytical laboratory specific and often
+  it is better to refer to the original analytical report". `Unit` is "provided by the
+  analytical laboratory".
 
 One row in the area data reports PFOS above the non-drink screening value: the Napier Rd
 tributary sample (`19-UUTJD-0010`, 2021-08-05; lab id `UT-0100`; waterbody "Unnamed Trib to an
@@ -94,7 +99,9 @@ compared with the Rule 57 **non-drinking-water human non-cancer values** — PFO
 170, PFHxS 210, PFNA 30 ng/L (config `thresholds_ng_l`; EGLE's Rule 57 values spreadsheet
 as saved 2026-09-26, where PFOS was verified in 2014, PFOA 2022 — replacing an older value
 — and PFHxS/PFNA were added in 2023). Johnson Drain / Johnson Creek is a non-drink water
-body per that note, but the watch applies the non-drink values to **every surface-water
+body per the monitor's own Rule 57 note (Lotext README — not EGLE's statement, and not
+checked against the water body's Rule 100 designation), but the layer carries no
+designation and the watch applies the non-drink values to **every surface-water
 row in the search box** — the alert says so and quotes the lower drink-water values (PFOS 11,
 PFOA 66, PFHxS 59, PFNA 19 ng/L). Rules:
 
@@ -104,18 +111,21 @@ PFOA 66, PFHxS 59, PFNA 19 ng/L). Rules:
   screened** (`thresholds_verified_year`): at that date an older value (for PFOA, a much
   higher one) or none applied, so the report has to be checked by hand. A row with no
   collection date is screened (fail-open).
-- A `K` flag (EGLE's surface-water layer description: "below the Method Detection
-  Limit/LOD"; in the observed K rows the value equals the MDL) is never compared. Every
-  other flag is printed **as published** and **not interpreted or glossed** — in particular
-  a `J` on a surface-water hit is NOT rendered as "estimated" (EGLE's surface-water J is
-  "below the Reporting Limit/LOQ"; "estimated concentration" is the FISH layer's J). The
-  alert quotes EGLE: qualifiers are analytical-laboratory specific and it is often better
-  to refer to the original analytical report. `Not Measured` is shown as such.
+- A `K` flag (EGLE's surface-water layer description: K flagged analytes "were not detected
+  in the sample and therefore the method detection limit (MDL) is displayed"; the observed K
+  rows have value = MDL) is never compared. Every other flag is printed **as published** and
+  **not interpreted or glossed by the watch**: a `J` on a surface-water hit is compared like
+  any reported value and shown as `[J]`, with no meaning of the monitor's own on the hit
+  line. EGLE words J two ways (prose: "an estimated concentration as the result is above the
+  MDL but below the laboratory reporting limit"; table: "below the Reporting Limit/LOQ") and
+  says qualifiers are analytical-laboratory specific, so the alert's caveat paragraph quotes
+  EGLE's prose for K and J as attributed quotes and points to the original analytical report.
+  `Not Measured` is shown as such.
 - A row is screened only when `Unit` reads as ng/L (also `ppt`); otherwise the alert says
   it was not screened. A value must be strictly above the threshold.
 - The snapshot records which (site, date, analyte) results are above their value, so only
   a **new** one raises the subject; a known one on a changed row is labelled "already
-  recorded; not new" and, if its value differs, "recorded earlier at X ng/L". Rows with a
+  recorded; not new" and, if its value differs, "the value on record for it is X ng/L". Rows with a
   new result are listed first, so the 25-row email cap cannot hide them.
 - A change that touches **no row** but newly puts an unchanged row above a value (a
   threshold in config was tightened, or this code changed) is written as a `changed` row
@@ -190,7 +200,9 @@ change to any other analyte, or to a fish field other than PFOS, is not detected
 other than `K` are printed but not interpreted (EGLE says qualifiers are laboratory
 specific); a value revised by the lab alerts as `changed` and shows only the new value (the
 snapshot stores hashes; a known hit shows what was recorded); the `hits` record is never
-pruned, so raising a threshold in config leaves earlier announced hits on record;
+pruned, so raising a threshold in config leaves earlier announced hits on record; a row
+edit and a threshold change in the SAME run can announce an unchanged value under "new/changed
+… result(s)" (rare, cosmetic);
 `Matrix` and the reporting limit are not part of the record; a duplicate group's `#n`
 labels follow row-hash order, so editing one member can relabel its siblings (all list as
 changed; rare — the live layers held no duplicate keys); a layer that legitimately

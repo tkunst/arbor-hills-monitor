@@ -1638,7 +1638,8 @@ mpart:
     url: "https://services1.arcgis.com/FNjlrOFR0aGJ71Tg/arcgis/rest/services/Michigan_PFAS_Sites_and_Areas_of_Interest_PUBLIC_view/FeatureServer/1/query"
     name_like: "Arbor Hills"      # plus every site inside the box
   # Rule 57 NON-DRINKING-WATER human non-cancer values, ng/L. Johnson Drain / Johnson Creek is
-  # a non-drink water body, but the layer has no designation, so these are applied to EVERY
+  # a non-drink water body per the monitor's own Rule 57 notes (not checked against Rule 100),
+  # but the layer has no designation, so these are applied to EVERY
   # surface-water row in the box (the alert says so; drink values are PFOS 11, PFOA 66,
   # PFHxS 59, PFNA 19). Source: EGLE's Rule 57 values spreadsheet as saved 2026-09-26. Alerts
   # call this a SCREENING comparison. A sample collected before the year its CURRENT value was
