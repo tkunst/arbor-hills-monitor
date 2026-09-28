@@ -1,8 +1,9 @@
 # ADR 061 — RRD documents watch (Stream T): RIDE's anonymous file listing
 
 *Status: built — 2026-09-28; review fixes the same day (drafted as "ADR 058",
-renumbered 061 on merge because 058-060 were taken). Ships `ride_docs.enabled:
-false`; see Activation.*
+renumbered 061 on merge because 058-060 were taken). Shipped `ride_docs.enabled:
+false`; ACTIVATED 2026-09-28 after the GitHub-runner probe passed (5 locations, 95
+files). Mirror pending its folder secret; see Activation.*
 Builds on: ADR 019 (Stream J, RRD status; this ADR corrects its "no anonymous
 document API" premise), ADR 007/010 (Drive mirror idiom), ADR 015/017/019
 (snapshot-diff watches), ADR 041 (Stream S: probe mode, display-only recipients).

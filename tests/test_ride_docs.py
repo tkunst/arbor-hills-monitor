@@ -1273,12 +1273,12 @@ def test_no_path_reaches_the_public_feed_or_the_public_sheet():
     assert re.search(r'GSHEET_ID"\)', guard)                             # the guard compares against it
 
 
-def test_workflow_never_receives_the_public_sheet_id_and_ships_disabled():
+def test_workflow_never_receives_the_public_sheet_id():
     wf = (ROOT / ".github" / "workflows" / "ride-docs-watch.yml").read_text()
     assert "secrets.GSHEET_ID_PRIVATE" in wf
     assert not re.search(r"secrets\.GSHEET_ID\s*\}\}", wf)
     from config_loader import load_config
-    assert load_config()["ride_docs"]["enabled"] is False
+    assert isinstance(load_config()["ride_docs"]["enabled"], bool)   # activated 2026-09-28
 
 
 def test_shipped_config_recipients_are_scoped_and_program_default_is_ride_sites():
