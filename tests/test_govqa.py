@@ -3,15 +3,17 @@ FOIA archive watch.
 
 HTML fixtures are trimmed Python literals shaped like the REAL markup (captured
 2026-09-28 from the live archive: grid rows with aria-labelled cells and
-`redirectInfo('<rid>')`, the 'Page 1 of 10 (97 items)' pager text, and a request
-detail page with `Reference No:` labels and `rptAttachments$ctlNN$lnkStreamCloud`
-postback links) — never committed HTML/PDF/JSON files (data-guard forbids them).
-The request texts are synthetic; real ones can name residents and street addresses,
-which is exactly why the watcher's rows are private-Sheet-only (pinned below).
+`redirectInfo('<rid>')`, the 'Page 1 of 10 (97 items)' pager text, the grid's
+'No data to display' empty row, and a request detail page with `Reference No:` labels and
+`rptAttachments$ctlNN$lnkStreamCloud` postback links) — never committed HTML/PDF/JSON
+files (data-guard forbids them). The request texts are synthetic; real ones can name
+residents and street addresses, which is exactly why the watcher's rows are private-Sheet-
+only (pinned below).
 """
 import ast
 import copy
-import inspect
+import hashlib
+import logging
 import os
 import re
 from pathlib import Path
@@ -44,7 +46,7 @@ def grid_row(i, no, created, summary, status, rid):
         f'<td class="grid-cell-word-wrap dxgv" aria-label="Summary: {summary}">{summary}</td>'
         f'<td class="dxgv dx-al" aria-label="Request Status: {status}">{status}</td>'
         f'<td class="dxgv dx-ac"><a href="javascript:void(0);" aria-label="View Details" '
-        f'onclick="redirectInfo(&#39;{rid}&#39;)"><span>Details</span></a></td></tr>'
+        f'onclick="redirectInfo(&#39;{rid}&#39;)"><i class="fa"></i></a></td></tr>'      # icons only, like the real cell
     )
 
 
@@ -60,6 +62,9 @@ GRID = (
     + '<tr class="dxgvDataRow_x"><td>not-an-e-number</td><td>x</td></tr>'
     + "</table><b class=\"dxp-summary\">Page 1 of 10 (97 items)</b>"
 )
+
+EMPTY_GRID = ('<table><tr id="gridView_DXEmptyRow" class="dxgvEmptyDataRow_MaterialCompact"><td class="dxgv" colspan="5">'
+              "<div> No data to display </div></td></tr></table>")
 
 DETAIL = """
 <form method="post" action="./RequestArchiveDetails.aspx?rid=703017&amp;view=1" id="qacRequestPublicSummary">
@@ -98,24 +103,47 @@ def test_normalize_status_makes_every_dash_variant_identical(raw):
     assert gq.normalize_status(raw) == "GRANTED – Records"
 
 
+def test_a_hyphen_inside_a_word_is_not_a_separator():
+    assert gq.normalize_status("Well-known - thing") == "Well-known – thing"
+    assert gq.normalize_status("CANCELLED - Duplicate") == "CANCELLED – Duplicate"
+
+
 @pytest.mark.parametrize("status,terminal,released", [
     ("GRANTED – Records", True, True), ("GRANTED/DENIED – Exempt in Part", True, True),
-    ("DENIED – No Records", True, False), ("CANCELLED", True, False), ("ABANDONED", True, False),
+    ("DENIED – No Records", True, False), ("CANCELLED – Duplicate", True, False), ("ABANDONED", True, False),
     ("PARTIAL", False, True), ("WAITING FOR PAYMENT", False, False), ("New Request", False, False),
-    ("UTLR", False, False), ("Cost estimate sent", False, False), ("", False, False),
+    ("UTLR", False, False), ("Received", False, False), ("", False, False),
     ("SOME STATUS NOBODY HAS SEEN", False, False),          # unknown = OPEN (fail-safe)
 ])
 def test_status_classification(status, terminal, released):
     assert gq.is_terminal(status) is terminal and gq.is_released(status) is released
 
 
-def test_parse_rows_reads_real_grid_structure():
+def test_parse_rows_reads_real_grid_structure_by_aria_label():
     rows = gq.parse_rows(GRID)
     assert [r["request_no"] for r in rows] == ["E615953-091526", "E615662-090926", "E613141-071526"]
     first = rows[0]
     assert first["created"] == "9/16/2026 1:00:00 AM" and first["status"] == "GRANTED – Records"
     assert first["rid"] == "714629" and "Arbor Hills Landfill & the Six Mile" in first["summary"]   # entity unescaped
     assert gq.parse_rows("<table></table>") == []
+
+
+def test_an_empty_cell_cannot_shift_the_other_columns():
+    row = ('<tr class="dxgvDataRow_M"><td aria-label="Request Number: E615953-091526">E615953-091526</td>'
+           '<td aria-label="Create Date: 9/16/2026">9/16/2026</td><td aria-label="Summary: "></td>'
+           '<td aria-label="Request Status: GRANTED – Records">GRANTED – Records</td></tr>')
+    r = gq.parse_rows("<table>" + row + "</table>")[0]
+    assert r["summary"] == "" and r["status"] == "GRANTED – Records" and r["created"] == "9/16/2026"
+    # a row with no aria-labels at all falls back to the non-empty cells, positionally
+    plain = ('<tr class="dxgvDataRow_M"><td>E615953-091526</td><td>9/16/2026</td><td>Some text</td><td>PARTIAL</td></tr>')
+    r2 = gq.parse_rows("<table>" + plain + "</table>")[0]
+    assert (r2["created"], r2["summary"], r2["status"]) == ("9/16/2026", "Some text", "PARTIAL")
+
+
+def test_parse_grid_state_only_believes_zero_rows_with_the_empty_marker():
+    assert gq.parse_grid_state(GRID) == "rows" and gq.parse_grid_state(EMPTY_GRID) == "empty"
+    assert gq.parse_grid_state("<html>Just a moment…</html>") == "unknown"
+    assert gq.parse_grid_state("") == "unknown"
 
 
 def test_parse_pager():
@@ -152,12 +180,12 @@ def test_parse_gridview_csv_handles_bom_multiline_and_replacement_chars():
     assert [r["request_no"] for r in rows] == ["E615953-091526", "E615662-090926"]
     assert rows[0]["summary"] == "Line one line two, with comma" and rows[0]["status"] == "GRANTED – Records"
     assert rows[1]["status"] == "DENIED – No Records" and rows[0]["rid"] is None
-    latin = "Request Number,Create Date,Summary,Request Status\nE615953-091526,d,caf\xe9,GRANTED \u2013 Records\n"
+    latin = "Request Number,Create Date,Summary,Request Status\nE615953-091526,d,caf\xe9,GRANTED – Records\n"
     row = gq.parse_gridview_csv(latin.encode("cp1252"))[0]                  # a cp1252 file: 0xE9 / 0x96 are not valid UTF-8
     assert row["summary"] == "caf\xe9" and row["status"] == "GRANTED – Records"
 
 
-def test_phrase_in_is_case_and_whitespace_insensitive():
+def test_phrase_in_is_case_and_whitespace_insensitive_and_whole_word():
     assert gq.phrase_in("Records for ARBOR   HILLS\nlandfill", "arbor hills")
     assert not gq.phrase_in("Ann Arbor Housing", "Arbor Hills")
     assert not gq.phrase_in("Ann Arbor Hillsdale", "Arbor Hills") and not gq.phrase_in("SRN 106900", "10690")
@@ -252,10 +280,19 @@ def test_sweep_reads_every_page_when_nothing_is_known():
     assert res.pages_read == 2 and res.total_pages == 2 and not res.stopped_on_known and not res.overflow
 
 
-def test_sweep_stops_at_the_first_page_holding_a_known_request():
+def test_sweep_stops_at_the_first_page_that_holds_ONLY_known_requests():
     g = FakeGrid({"t": pages([R("E600003-010126"), R("E600002-010126")], [R("E600001-010126")])})
-    res = gq.sweep_term(g, "t", lambda n: n == "E600002-010126", max_pages=5)
+    res = gq.sweep_term(g, "t", lambda n: n in {"E600003-010126", "E600002-010126"}, max_pages=5)
     assert res.pages_read == 1 and res.stopped_on_known and len(res.rows) == 2 and g.cursor == 0
+
+
+def test_a_mixed_page_keeps_reading_so_a_date_tie_across_a_page_boundary_is_not_missed():
+    g = FakeGrid({"t": pages([R("E600009-010126"), R("E600003-010126")], [R("E600008-010126"), R("E600002-010126")],
+                             [R("E600001-010126")])})
+    known = {"E600003-010126", "E600002-010126", "E600001-010126"}
+    res = gq.sweep_term(g, "t", lambda n: n in known, max_pages=5)
+    assert "E600008-010126" in {r["request_no"] for r in res.rows}          # the unknown row on page 2 was reached
+    assert res.pages_read == 3 and res.stopped_on_known
 
 
 def test_sweep_flags_overflow_instead_of_paging_forever():
@@ -319,7 +356,14 @@ def test_lookup_posts_the_form_to_the_session_url_with_txtRefsearch():
     assert post["headers"]["Referer"] == SESSION_URL
 
 
-def test_lookup_returns_none_when_the_archive_does_not_show_the_request():
+def test_lookup_returns_none_only_when_the_grid_positively_says_it_is_empty():
+    http = FakeHTTP([summary_ok(), ("POST", "OpenRecordsSummary", Resp(200, EMPTY_GRID))])
+    assert gq.ArchiveSession(session=http).lookup("E999999-010126") is None
+    # ...and a page that is neither a grid nor an empty grid is a FETCH error, not "not found"
+    http = FakeHTTP([summary_ok(), ("POST", "OpenRecordsSummary", Resp(200, "<html>Just a moment…</html>"))])
+    with pytest.raises(gq.GovqaFetchError, match="did not render"):
+        gq.ArchiveSession(session=http).lookup("E999999-010126")
+    # a grid that lists OTHER requests but not this one is also "not shown"
     http = FakeHTTP([summary_ok(), ("POST", "OpenRecordsSummary", Resp(200, GRID))])
     assert gq.ArchiveSession(session=http).lookup("E999999-010126") is None
 
@@ -339,12 +383,13 @@ def test_lookup_transport_and_page_shape_failures_are_fetch_errors():
         gq.ArchiveSession(session=FakeHTTP([("GET", "Open", Resp(503, "", url=SESSION_URL))])).lookup("E615953-091526")
 
 
-def test_details_builds_the_url_from_the_session_and_validates_the_rid():
-    http = FakeHTTP([summary_ok(), ("POST", "Open", Resp(200, GRID)),
-                     ("GET", "(S(abc123))/RequestArchiveDetails.aspx?rid=703017&view=1", Resp(200, DETAIL))])
+def test_details_works_on_a_fresh_session_by_opening_the_summary_first():
+    """The sessionless path: no prior lookup(), so there is no (S(...)) session URL yet."""
+    http = FakeHTTP([summary_ok(),
+                     ("GET", "(S(abc123))/RequestArchiveDetails.aspx?rid=703017&view=1", Resp(200, DETAIL, url=SESSION_URL.replace("OpenRecordsSummary", "RequestArchiveDetails")))])
     s = gq.ArchiveSession(session=http)
-    s.lookup("E615953-091526")
     assert s.details("703017")["reference"] == "E614007-080526"
+    assert [c["method"] for c in http.calls] == ["GET", "GET"] and "(S(abc123))" in http.calls[1]["url"]
     for bad in ("70a", "703017&x=1", "../1", ""):
         with pytest.raises(ValueError):
             s.details(bad)
@@ -369,22 +414,20 @@ def test_download_reposts_the_form_and_follows_the_redirect_to_the_blob_store(tm
     dest = tmp_path / "f.pdf"
     info = s.download("rptAttachments$ctl00$lnkStreamCloud", str(dest), max_bytes=100_000)
     assert dest.read_bytes() == PDF and info["size"] == len(PDF)
-    import hashlib
     assert info["sha256"] == hashlib.sha256(PDF).hexdigest() and info["md5"] == hashlib.md5(PDF, usedforsecurity=False).hexdigest()
     post, get = http.calls[1], http.calls[2]
     assert post["data"]["__EVENTTARGET"] == "rptAttachments$ctl00$lnkStreamCloud" and post["allow_redirects"] is False
     assert get["method"] == "GET" and get.get("data") is None            # the redirect is followed as a GET
 
 
-def test_download_refuses_a_redirect_to_a_non_allowlisted_host(tmp_path):
-    s, _ = loaded_session([("POST", "RequestArchiveDetails",
-                            Resp(302, headers={"location": "https://evil.example.com/x.pdf"}))])
+@pytest.mark.parametrize("location", [
+    "https://evil.example.com/x.pdf", "http://michiganegle.govqa.us/plain",                       # wrong host / not https
+    "https://otheraccount.blob.core.usgovcloudapi.net/x.pdf", "https://x.blob.core.windows.net/x.pdf",   # another storage account
+    "https://michiganegle.govqa.us.evil.example/x", "https://1michigandeq.blob.core.usgovcloudapi.net.evil.io/x"])
+def test_download_refuses_any_redirect_outside_the_two_exact_hosts(tmp_path, location):
+    s, _ = loaded_session([("POST", "RequestArchiveDetails", Resp(302, headers={"location": location}))])
     with pytest.raises(gq.GovqaFetchError, match="non-allowlisted"):
         s.download("rptAttachments$ctl00$lnkStreamCloud", str(tmp_path / "f"), max_bytes=100)
-    s2, _ = loaded_session([("POST", "RequestArchiveDetails",
-                             Resp(302, headers={"location": "http://michiganegle.govqa.us/plain"}))])   # not https
-    with pytest.raises(gq.GovqaFetchError, match="non-allowlisted"):
-        s2.download("rptAttachments$ctl00$lnkStreamCloud", str(tmp_path / "f"), max_bytes=100)
 
 
 def test_download_html_answer_means_an_expired_session_and_leaves_no_file(tmp_path):
@@ -400,10 +443,10 @@ def test_download_html_answer_means_an_expired_session_and_leaves_no_file(tmp_pa
     Resp(200, headers={"content-type": "application/pdf", "content-length": "5000"}, content=PDF),   # declared > cap
     Resp(200, headers={"content-type": "application/pdf"}, content=PDF),                              # streamed > cap
 ])
-def test_download_enforces_the_size_cap_and_removes_the_partial(tmp_path, resp):
+def test_download_enforces_the_size_cap_with_its_own_exception_and_removes_the_partial(tmp_path, resp):
     s, _ = loaded_session([("POST", "RequestArchiveDetails", resp)])
     dest = tmp_path / "f.pdf"
-    with pytest.raises(ValueError):
+    with pytest.raises(gq.GovqaTooLargeError):
         s.download("rptAttachments$ctl00$lnkStreamCloud", str(dest), max_bytes=100)
     assert not dest.exists() and resp.closed
 
@@ -420,12 +463,24 @@ def test_download_empty_body_and_bad_targets(tmp_path):
         gq.ArchiveSession(session=FakeHTTP([])).download("rptAttachments$ctl00$lnkStreamCloud", str(tmp_path / "f"), 1)
 
 
-def test_playwright_grid_raises_a_structural_error_when_playwright_is_missing(monkeypatch):
+def test_playwright_grid_translates_every_launch_failure_to_a_structural_error(monkeypatch):
     import sys
+    import types
     monkeypatch.setitem(sys.modules, "playwright", None)
     monkeypatch.setitem(sys.modules, "playwright.sync_api", None)
     with pytest.raises(gq.GovqaStructuralError, match="playwright is not installed"):
         gq.PlaywrightGrid().__enter__()
+
+    class _PW:
+        def start(self):
+            raise RuntimeError("Executable doesn't exist at /x/chrome (https://cdn.example/secret?sig=1)")
+    fake = types.ModuleType("playwright.sync_api")
+    fake.sync_playwright = lambda: _PW()
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", fake)
+    with pytest.raises(gq.GovqaStructuralError) as e:
+        gq.PlaywrightGrid().__enter__()
+    assert "browser could not be started" in str(e.value) and "RuntimeError" in str(e.value) and "secret" not in str(e.value)
 
 
 # ==============================================================================
@@ -465,7 +520,7 @@ def test_csv_rows_match_on_any_keyword_term_in_the_summary_ignoring_query_quotes
 
 def test_build_state_folds_requests_files_terms_and_csvs():
     st = gw.build_state([
-        _row("term:Holloway", "baseline"), _row("csv:abc", "ingested"),
+        _row("term:Holloway", "baseline"), _row("term:Big", "partial"), _row("csv:abc:0123456789abcdef", "ingested"),
         _row("E1-1", "baseline"),                                                       # ignored: not an E-number
         _row("E600001-010126", "baseline", status="New Request", terms="Holloway", rid="9"),
         _row("E600001-010126", "status", status="GRANTED – Records", rid="9", closed="1/2/2026"),
@@ -475,14 +530,32 @@ def test_build_state_folds_requests_files_terms_and_csvs():
         _row("file:E600001-010126:a.pdf", "file-failed"),
         _row("file:E600001-010126:b.pdf", "file-listed"), _row("file:E600001-010126:b.pdf", "file-staged"),
         _row("file:E600001-010126:b.pdf", "file-listed"),                                # a re-list never demotes staged
+        _row("file:E600001-010126:image001.png", "file-listed"), _row("file:E600001-010126:image001.png#2", "file-listed"),
     ])
-    assert st["terms"] == {"Holloway"} and st["csvs"] == {"abc"}
+    assert st["terms"] == {"Holloway", "Big"} and st["csvs"] == {"abc:0123456789abcdef"}
     rq = st["requests"]
     assert rq["E600001-010126"]["status"] == "GRANTED – Records" and rq["E600001-010126"]["matched"]
     assert rq["E600001-010126"]["rid"] == "9" and rq["E600001-010126"]["terms"] == "Holloway"
     assert rq["E600002-010126"]["matched"] is False and rq["E600003-010126"]["matched"] is True
     assert st["files"]["file:E600001-010126:a.pdf"]["fails"] == 2 and st["files"]["file:E600001-010126:a.pdf"]["state"] == "listed"
     assert st["files"]["file:E600001-010126:b.pdf"]["state"] == "staged"
+    dup = st["files"]["file:E600001-010126:image001.png#2"]
+    assert dup["name"] == "image001.png" and dup["occ"] == 2 and st["files"]["file:E600001-010126:image001.png"]["occ"] == 1
+    assert gw.file_key("E600001-010126", "a.pdf") == "file:E600001-010126:a.pdf"
+    assert gw.file_key("E600001-010126", "a.pdf", 3) == "file:E600001-010126:a.pdf#3"
+
+
+def test_build_state_tolerates_rows_with_trailing_cells_stripped():
+    st = gw.build_state([["2026-09-28", "E600001-010126", "baseline"], ["2026-09-28", "term:X"]])
+    assert st["requests"]["E600001-010126"]["matched"] and st["requests"]["E600001-010126"]["status"] == "" and st["terms"] == {"X"}
+
+
+def test_staged_name_is_content_addressed_and_never_carries_the_attachment_name():
+    n = gw.staged_name("E614007-080526", "ab" * 32, "Jane_Doe_123_Main_St.PDF")
+    assert n == "E614007-080526__abababababababab.pdf"
+    assert "Jane" not in n and gw.staged_name("E614007-080526", "cd" * 32, "noext") == "E614007-080526__cdcdcdcdcdcdcdcd"
+    assert gw.staged_name("evil/../x", "ef" * 32, "a.b/../c").startswith("E000000-000000__")
+    assert gw.staged_name("E614007-080526", "ab" * 32, "x.p?d*f") == "E614007-080526__abababababababab.pdf"
 
 
 def test_report_shows_sections_only_when_present_and_carries_the_privacy_note():
@@ -495,6 +568,15 @@ def test_report_shows_sections_only_when_present_and_carries_the_privacy_note():
     assert "NEW requests" in body and "STATUS CHANGES" in body and "NEEDS ATTENTION" in body and "FILES STAGED" not in body
     assert "Received → GRANTED – Records" in body and "3 file(s) listed" in body and "…" in body     # excerpt truncated
     assert "PRIVATE" in body and "file contents are not read" in body
+
+
+def test_report_lists_cap_with_a_plus_n_more_line_for_every_section():
+    many_new = [{"request_no": f"E6{i:05d}-010126", "status": "New", "created": "d", "terms": "t", "summary": "s"} for i in range(40)]
+    many_chg = [({"request_no": f"E5{i:05d}-010126", "status": "GRANTED – Records", "created": "d", "terms": "t", "summary": "s"}, "New")
+                for i in range(30)]
+    many_st = [{"request": "E600001-010126", "size": 1, "sha256": "a" * 64} for _ in range(30)]
+    body = gw.format_report(many_new, many_chg, many_st, [])
+    assert body.count("+ 15 more request(s)") == 1 and body.count("+ 5 more change(s)") == 1 and body.count("+ 5 more file(s)") == 1
 
 
 # ==============================================================================
@@ -553,9 +635,18 @@ class FakeArchive:
         self.details_by_rid = details if details is not None else {}
         self.lookups, self.detail_calls, self.downloads = [], [], []
         self.lookup_error = None
-        self.download_error = {}
+        self.details_error = None
+        self.download_error = {}                   # file name -> exception (or list of exceptions, consumed in order)
         self.file_bytes = b"%PDF-fake" + b"z" * 50
         self._current = None
+
+    def sync_from(self, grid):
+        """A real archive knows every request its grid shows: fill `rows` from the grid's pages
+        (explicitly set rows win)."""
+        for pages_ in grid.pages_by_term.values():
+            for page_rows, _pager in pages_:
+                for r in page_rows:
+                    self.rows.setdefault(r["request_no"], dict(r))
 
     def lookup(self, no):
         self.lookups.append(no)
@@ -566,23 +657,28 @@ class FakeArchive:
 
     def details(self, rid):
         self.detail_calls.append(rid)
+        if self.details_error:
+            raise self.details_error
         self._current = self.details_by_rid.get(rid, {"reference": "?", "closed": "", "files": []})
         return copy.deepcopy(self._current)
 
     def download(self, target, dest, max_bytes):
-        import hashlib
         name = next(f["name"] for f in self._current["files"] if f["target"] == target)
         self.downloads.append(name)
-        if name in self.download_error:
-            raise self.download_error[name]
-        if len(self.file_bytes) > max_bytes:
-            raise ValueError("over cap")
-        Path(dest).write_bytes(self.file_bytes)
-        return {"size": len(self.file_bytes), "sha256": hashlib.sha256(self.file_bytes).hexdigest(),
-                "md5": hashlib.md5(self.file_bytes, usedforsecurity=False).hexdigest(), "content_type": "application/pdf"}
+        err = self.download_error.get(name)
+        if isinstance(err, list):
+            err = err.pop(0) if err else None
+        if err:
+            raise err
+        data = self.file_bytes + name.encode() + b"|" + target.encode()     # distinct content per attachment
+        if len(data) > max_bytes:
+            raise gq.GovqaTooLargeError("over cap")
+        Path(dest).write_bytes(data)
+        return {"size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+                "md5": hashlib.md5(data, usedforsecurity=False).hexdigest(), "content_type": "application/pdf"}
 
 
-def _wire(monkeypatch, cfg=CFG, grid=None, archive=None):
+def _wire(monkeypatch, cfg=CFG, grid=None, archive=None, send=None):
     fake = RecordingSheets()
     sent = []
     monkeypatch.setenv("GSHEET_ID_PRIVATE", "PRIV")
@@ -591,15 +687,22 @@ def _wire(monkeypatch, cfg=CFG, grid=None, archive=None):
         monkeypatch.delenv(k)
     monkeypatch.setattr(gw, "load_config", lambda: copy.deepcopy(cfg))
     monkeypatch.setattr(gw.dc, "sheets_service", lambda: fake)
-    monkeypatch.setattr(gw.ea, "send_email",
-                        lambda subj, body, c, recipients=None: sent.append((subj, body, recipients)))
+
+    def _send(subj, body, c, recipients=None):
+        if send is not None:
+            return send(subj, body, c, recipients)
+        sent.append((subj, body, recipients))
+        return True
+    monkeypatch.setattr(gw.ea, "send_email", _send)
     grid = grid or FakeGrid()
     archive = archive or FakeArchive()
     return fake, sent, grid, archive
 
 
-def go(grid, archive, argv=None):
-    return gw.run(argv or [], make_grid=lambda: grid, make_session=lambda: archive, sleep=lambda s: None)
+def go(grid, archive, argv=None, **kw):
+    if hasattr(archive, "sync_from"):
+        archive.sync_from(grid)
+    return gw.run(argv or [], make_grid=lambda: grid, make_session=lambda: archive, sleep=lambda s: None, **kw)
 
 
 def rows_of(fake, event=None, key=None):
@@ -636,6 +739,17 @@ def test_fails_closed_without_a_distinct_private_sheet(monkeypatch, private, pub
     assert go(grid, arch) == 1 and sent == [] and grid.searches == []
 
 
+@pytest.mark.parametrize("public_tab", ["TAB_NEW", "TAB_EVIDENCE", "TAB_MEASUREMENTS"])
+def test_refuses_a_spreadsheet_that_holds_the_public_case_file_tabs_even_when_GSHEET_ID_is_unset(monkeypatch, public_tab):
+    """The check that works in CI, where the workflow never sets GSHEET_ID: a GSHEET_ID_PRIVATE
+    secret copy-pasted from the PUBLIC id names a spreadsheet that has the public tabs."""
+    fake, sent, grid, arch = _wire(monkeypatch)
+    monkeypatch.delenv("GSHEET_ID")
+    fake._values._tabs[getattr(sw, public_tab)] = [["header"]]
+    assert go(grid, arch) == 1
+    assert sw.TAB_GOVQA not in fake._values._tabs and grid.searches == [] and sent == []          # nothing was created or written
+
+
 def test_first_run_baselines_silently_records_nomatch_and_marks_the_terms(monkeypatch):
     fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
     assert go(grid, arch) == 0
@@ -648,7 +762,7 @@ def test_first_run_baselines_silently_records_nomatch_and_marks_the_terms(monkey
     assert sent == [] and fake.ids == {"PRIV"}                                              # never the public Sheet
 
 
-def test_second_run_stops_at_known_requests_and_writes_nothing(monkeypatch):
+def test_second_run_stops_at_a_fully_known_page_and_writes_nothing(monkeypatch):
     fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
     assert go(grid, arch) == 0
     n = len(rows_of(fake))
@@ -672,17 +786,19 @@ def test_a_new_request_after_baseline_is_recorded_then_alerted_with_its_excerpt(
     assert go(g2, arch) == 0 and len(sent) == 1                                               # not re-alerted
 
 
-def test_a_keyword_added_later_baselines_its_own_first_sweep_silently(monkeypatch):
+def test_a_keyword_added_later_baselines_its_own_first_sweep_silently_and_in_full(monkeypatch):
     fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
     assert go(grid, arch) == 0
     cfg = copy.deepcopy(CFG)
     cfg["govqa"]["keywords"].append({"term": "Napier"})
     monkeypatch.setattr(gw, "load_config", lambda: copy.deepcopy(cfg))
     g2 = first_run_grid()
-    g2.pages_by_term["Napier"] = pages([R("E500001-010125", "Napier Rd culvert"), R("E500000-010125", "old Napier")])
+    # a request that another term already recorded sits on page 1 of Napier: a FIRST sweep must not stop there
+    g2.pages_by_term["Napier"] = pages([R("E600003-010126", AH), R("E500001-010125", "Napier Rd culvert")],
+                                       [R("E500000-010125", "old Napier")])
     assert go(g2, arch) == 0
     assert {r[gw.C_KEY] for r in rows_of(fake, "baseline")} >= {"E500001-010125", "E500000-010125", "term:Napier"}
-    assert rows_of(fake, "new") == [] and sent == []                                         # history is not "new"
+    assert rows_of(fake, "new") == [] and sent == []                                          # history is not "new"
 
 
 def test_a_request_found_by_a_baselined_and_a_fresh_term_is_alertable(monkeypatch):
@@ -698,6 +814,22 @@ def test_a_request_found_by_a_baselined_and_a_fresh_term_is_alertable(monkeypatc
     assert [r[gw.C_KEY] for r in rows_of(fake, "new")] == ["E600010-020226"] and len(sent) == 1
 
 
+def test_a_nomatch_request_is_upgraded_when_a_term_that_matches_it_finds_it_later(monkeypatch):
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+    assert go(grid, arch) == 0
+    assert [r[gw.C_KEY] for r in rows_of(fake, "nomatch")] == ["E600002-010126"]
+    cfg = copy.deepcopy(CFG)
+    cfg["govqa"]["keywords"] = [{"term": "Arbor Hills"}, {"term": "Holloway"}]                 # `require` relaxed
+    monkeypatch.setattr(gw, "load_config", lambda: copy.deepcopy(cfg))
+    g2 = first_run_grid()
+    g2.pages_by_term["Arbor Hills"] = pages([R("E600002-010126", "Housing in Ann Arbor, Hillsdale"), R("E600003-010126", AH)])
+    assert go(g2, arch) == 0
+    up = [r for r in rows_of(fake, "new") if r[gw.C_KEY] == "E600002-010126"]
+    assert len(up) == 1 and "upgraded from no-match" in up[0][gw.C_NOTE]
+    assert len(sent) == 1 and "E600002-010126" in sent[0][1]
+    assert go(g2, arch) == 0 and len(sent) == 1                                               # and only once
+
+
 def test_a_first_sweep_overflow_asks_for_a_csv_export_once_and_marks_the_term_partial(monkeypatch):
     cfg = copy.deepcopy(CFG)
     cfg["govqa"].update(max_pages_per_term=2, keywords=[{"term": "Big"}])
@@ -708,7 +840,7 @@ def test_a_first_sweep_overflow_asks_for_a_csv_export_once_and_marks_the_term_pa
     assert "export a CSV" in rows_of(fake, key="term:Big")[0][gw.C_NOTE]
     assert len(rows_of(fake, "baseline")) == 4                                               # what was read is kept (silently)
     assert len(sent) == 1 and "CSV" in sent[0][1] and "Big" in sent[0][1]
-    # ...and it asked ONCE: the next run is an ordinary incremental one (stops at a known request), quiet, exit 0
+    # ...and it asked ONCE: the next run is an ordinary incremental one (stops at a fully-known page), quiet, exit 0
     again = FakeGrid({"Big": big})
     assert go(again, arch) == 0 and len(sent) == 1 and again.cursor == 0
 
@@ -732,7 +864,43 @@ def test_a_term_that_keeps_timing_out_is_reported_and_the_run_moves_on(monkeypat
     assert len(sent) == 1 and "gave up after 3" in sent[0][1]
 
 
-def test_an_unavailable_browser_is_loud_but_the_recheck_path_still_runs(monkeypatch):
+def test_three_failing_keywords_in_a_row_trip_the_circuit_breaker(monkeypatch):
+    cfg = copy.deepcopy(CFG)
+    cfg["govqa"]["keywords"] = [{"term": t} for t in ("A", "B", "C", "D", "E")]
+    fake, sent, grid, arch = _wire(monkeypatch, cfg=cfg)
+    grid.fail_first = 999
+    assert go(grid, arch) == 1
+    assert set(grid.searches) == {"A", "B", "C"} and "circuit breaker" in sent[0][1]          # D and E were never attempted
+
+
+def test_the_time_budget_stops_a_phase_and_says_so(monkeypatch):
+    cfg = copy.deepcopy(CFG)
+    cfg["govqa"]["time_budget_minutes"] = 1
+    fake, sent, grid, arch = _wire(monkeypatch, cfg=cfg, grid=first_run_grid())
+    ticks = iter([0.0] + [999.0] * 200)                                                       # the budget is gone right after setup
+    assert go(grid, arch, clock=lambda: next(ticks)) == 1
+    assert grid.searches == [] and "time budget reached" in sent[0][1]
+
+
+def test_every_keyword_empty_while_requests_are_on_record_is_a_broken_read_not_no_news(monkeypatch):
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+    assert go(grid, arch) == 0
+    n = len(rows_of(fake))
+    blank = FakeGrid({"Arbor Hills": [([], None)], "Holloway": [([], None)]})
+    assert go(blank, arch) == 1
+    assert len(rows_of(fake)) == n and "zero rows although requests are on record" in sent[0][1]
+
+
+def test_a_keyword_that_legitimately_has_no_matches_is_baselined_when_others_have_rows(monkeypatch):
+    cfg = copy.deepcopy(CFG)
+    cfg["govqa"]["keywords"] = [{"term": "Holloway"}, {"term": "81000004"}]
+    fake, sent, grid, arch = _wire(monkeypatch, cfg=cfg, grid=FakeGrid({"Holloway": pages([R("E599999-010126", "Holloway pit")]),
+                                                                        "81000004": [([], None)]}))
+    assert go(grid, arch) == 0
+    assert {"term:Holloway", "term:81000004"} <= {r[gw.C_KEY] for r in rows_of(fake, "baseline")}
+
+
+def test_an_unavailable_browser_is_loud_but_the_by_number_path_still_runs(monkeypatch):
     class NoBrowser:
         def __enter__(self):
             raise gq.GovqaStructuralError("playwright is not installed")
@@ -744,6 +912,50 @@ def test_an_unavailable_browser_is_loud_but_the_recheck_path_still_runs(monkeypa
     assert gw.run([], make_grid=lambda: NoBrowser(), make_session=lambda: arch, sleep=lambda s: None) == 1
     assert [r[gw.C_KEY] for r in rows_of(fake, "baseline")] == ["E614606-090126"]            # by-number path unaffected
     assert "playwright is not installed" in sent[0][1]
+
+
+def test_any_browser_launch_error_type_is_contained(monkeypatch):
+    class Boom:
+        def __enter__(self):
+            raise RuntimeError("browserType.launch: something Playwright-shaped")
+    fake, sent, grid, arch = _wire(monkeypatch)
+    assert gw.run([], make_grid=lambda: Boom(), make_session=lambda: arch, sleep=lambda s: None) == 1
+    assert "keyword sweep unavailable: RuntimeError" in sent[0][1]
+
+
+# --- the report is ALWAYS sent, even when a later phase blows up ---------------------------------------
+
+
+def test_a_phase_that_crashes_after_rows_were_written_still_sends_the_alert(monkeypatch):
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+    assert go(grid, arch) == 0
+    g2 = FakeGrid({"Arbor Hills": pages([R("E600009-020226", "Arbor Hills expansion FOIA", "New Request"), R("E600003-010126", AH)]),
+                   "Holloway": pages([R("E599999-010126", "Holloway pit")])})
+    monkeypatch.setattr(gw.Run, "phase_recheck", lambda self: (_ for _ in ()).throw(RuntimeError("Sheets 503")))
+    assert go(g2, arch) == 1
+    assert [r[gw.C_KEY] for r in rows_of(fake, "new")] == ["E600009-020226"]                  # the row is written...
+    assert len(sent) == 1 and "E600009-020226" in sent[0][1] and "re-check phase failed: RuntimeError" in sent[0][1]   # ...and so is the alert
+
+
+def test_a_malformed_watch_request_is_reported_and_never_crashes_the_run(monkeypatch):
+    cfg = copy.deepcopy(CFG)
+    cfg["govqa"]["watch_requests"] = ["E614606", "e614606-090126", " E614606-090126 "]
+    fake, sent, grid, arch = _wire(monkeypatch, cfg=cfg, grid=first_run_grid())
+    arch.rows["E614606-090126"] = R("E614606-090126", "Peer landfill", "New Request", rid="8006")
+    assert go(grid, arch) == 1
+    assert arch.lookups == ["E614606-090126"]                                                 # only the valid one was looked up
+    assert sent[0][1].count("is not a full E-number") == 2
+    assert "E614606-090126" in {r[gw.C_KEY] for r in rows_of(fake, "baseline")}
+
+
+def test_a_send_that_fails_makes_the_run_red_but_keeps_the_rows(monkeypatch):
+    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid(), send=lambda *a: False)
+    assert go(grid, arch) == 0                                                                 # baseline: nothing to send
+    g2 = FakeGrid({"Arbor Hills": pages([R("E600009-020226", "Arbor Hills expansion", "New Request"), R("E600003-010126", AH)]),
+                   "Holloway": pages([R("E599999-010126", "Holloway pit")])})
+    assert go(g2, arch) == 1 and len(rows_of(fake, "new")) == 1
+    fake2, _, grid3, arch3 = _wire(monkeypatch, grid=first_run_grid(), send=lambda *a: (_ for _ in ()).throw(RuntimeError("smtp")))
+    assert go(grid3, arch3) == 0
 
 
 # --- re-check + status changes + released files ------------------------------------------
@@ -766,7 +978,9 @@ def test_an_open_request_that_changes_status_alerts_and_lists_its_released_files
     assert go(grid, arch) == 0
     st = rows_of(fake, "status")
     assert len(st) == 1 and "'WAITING FOR PAYMENT' -> 'GRANTED – Records'" in st[0][gw.C_NOTE]
-    assert {r[gw.C_KEY] for r in rows_of(fake, "file-listed")} == {"file:E600003-010126:a.pdf", "file:E600003-010126:b.docx"}
+    listed = rows_of(fake, "file-listed")
+    assert {r[gw.C_KEY] for r in listed} == {"file:E600003-010126:a.pdf", "file:E600003-010126:b.docx"}
+    assert all(r[gw.C_CLOSED] == "9/2/2026 1:00 PM" for r in listed)                          # the Closed column is written
     assert len(sent) == 1 and "STATUS CHANGES" in sent[0][1] and "2 file(s) listed" in sent[0][1]
     assert arch.downloads == []                                                              # download_attachments is off
     assert go(grid, arch) == 0 and len(sent) == 1                                            # terminal now: not re-checked
@@ -781,16 +995,30 @@ def test_terminal_requests_are_never_rechecked_and_unknown_statuses_are_open(mon
     assert go(grid, arch) == 0 and arch.lookups == ["E600003-010126"] and sent == []
 
 
-def test_recheck_count_is_capped(monkeypatch):
+def test_recheck_count_is_capped_and_the_truncation_is_reported(monkeypatch):
     cfg = copy.deepcopy(CFG)
     cfg["govqa"]["max_open_rechecks"] = 2
     grid = FakeGrid({"Arbor Hills": pages([R(f"E60000{i}-010126", AH, "Received") for i in range(5)]), "Holloway": pages([])})
     fake, sent, _, arch = _wire(monkeypatch, cfg=cfg, grid=grid)
     assert go(grid, arch) == 0
-    q = FakeGrid({"Arbor Hills": pages([R("E600009-020226", AH, "Received")]), "Holloway": pages([])})
-    q.pages_by_term["Arbor Hills"] = pages([R("E600004-010126", AH, "Received")])
+    q = FakeGrid({"Arbor Hills": pages([R("E600004-010126", AH, "Received")]), "Holloway": pages([])})
     arch.lookups.clear()
-    assert go(q, arch) == 0 and len(arch.lookups) == 2 and arch.lookups == ["E600004-010126", "E600003-010126"]   # newest first
+    assert go(q, arch) == 0 and arch.lookups == ["E600004-010126", "E600003-010126"]          # newest first
+    assert len(sent) == 1 and "3 open request(s) were not re-checked" in sent[0][1]            # said out loud (exit stays 0)
+
+
+def test_lookups_that_keep_returning_nothing_are_reported(monkeypatch):
+    grid = FakeGrid({"Arbor Hills": pages([R(f"E60000{i}-010126", AH, "Received") for i in range(5)]), "Holloway": pages([])})
+    fake, sent, _, arch = _wire(monkeypatch, grid=grid)
+    assert go(grid, arch) == 0                                                # five open requests recorded (baseline; no lookups yet)
+    arch.rows.clear()                                                         # the archive stops answering for them
+    quiet = FakeGrid({"Arbor Hills": pages([R("E600004-010126", AH, "Received")]), "Holloway": pages([])})
+    arch_quiet = arch
+    monkeypatch.setattr(arch_quiet, "sync_from", lambda grid: None)           # ...so do NOT re-teach it from the grid
+    assert go(quiet, arch) == 1
+    assert "returned nothing for 5 of 5" in sent[0][1]
+    arch.rows.update({f"E60000{i}-010126": R(f"E60000{i}-010126", AH, "Received", rid=f"60{i}") for i in range(5)})
+    assert go(quiet, arch) == 0 and len(sent) == 1                            # recovered: no problem, no repeat noise
 
 
 def test_watch_requests_baseline_silently_then_alert_on_a_status_change(monkeypatch):
@@ -803,6 +1031,20 @@ def test_watch_requests_baseline_silently_then_alert_on_a_status_change(monkeypa
     assert go(grid, arch) == 0 and len(sent) == 1 and "Cost estimate sent → GRANTED – Records" in sent[0][1]
 
 
+def test_an_explicit_watch_request_overrides_a_nomatch(monkeypatch):
+    cfg = copy.deepcopy(CFG)
+    fake, sent, grid, arch = _wire(monkeypatch, cfg=cfg, grid=first_run_grid())
+    assert go(grid, arch) == 0
+    assert [r[gw.C_KEY] for r in rows_of(fake, "nomatch")] == ["E600002-010126"]
+    cfg["govqa"]["watch_requests"] = ["E600002-010126"]
+    monkeypatch.setattr(gw, "load_config", lambda: copy.deepcopy(cfg))
+    arch.rows["E600002-010126"] = R("E600002-010126", "Housing in Ann Arbor, Hillsdale", "Received", rid="6002")
+    assert go(first_run_grid(), arch) == 0
+    assert any(r[gw.C_KEY] == "E600002-010126" and r[gw.C_TERMS] == "watch" for r in rows_of(fake, "baseline"))
+    arch.rows["E600002-010126"] = R("E600002-010126", "Housing in Ann Arbor, Hillsdale", "GRANTED – Records", rid="6002")
+    assert go(first_run_grid(), arch) == 0 and len(sent) == 1 and "Received → GRANTED – Records" in sent[0][1]
+
+
 def test_empty_recipients_is_display_only_never_the_coalition_list(monkeypatch):
     cfg = copy.deepcopy(CFG)
     cfg["govqa"]["recipients"] = []
@@ -812,13 +1054,6 @@ def test_empty_recipients_is_display_only_never_the_coalition_list(monkeypatch):
     assert len(rows_of(fake, "status")) == 1 and sent == []
 
 
-def test_send_failure_still_leaves_the_rows(monkeypatch):
-    fake, sent, grid, arch = _baselined(monkeypatch)
-    arch.rows["E600003-010126"] = R("E600003-010126", AH, "PARTIAL", rid="7003")
-    monkeypatch.setattr(gw.ea, "send_email", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("smtp")))
-    assert go(grid, arch) == 0 and len(rows_of(fake, "status")) == 1
-
-
 def test_a_recheck_that_keeps_failing_is_reported_not_silent(monkeypatch):
     fake, sent, grid, arch = _baselined(monkeypatch)
     arch.lookup_error = gq.GovqaFetchError("timeout")
@@ -826,12 +1061,37 @@ def test_a_recheck_that_keeps_failing_is_reported_not_silent(monkeypatch):
 
 
 def test_a_sheet_read_failure_propagates_instead_of_treating_everything_as_new(monkeypatch):
+    class Flaky(FakeSheets):
+        broken = False
+
+        def __init__(self):
+            super().__init__()
+            outer, inner = self, self._values
+
+            class _V:
+                def get(self, spreadsheetId, range):
+                    if outer.broken and "GovQA Archive Watch" in range:
+                        raise RuntimeError("sheets 503")
+                    return inner.get(spreadsheetId, range)
+
+                def append(self, *a, **k):
+                    return inner.append(*a, **k)
+
+                def update(self, *a, **k):
+                    return inner.update(*a, **k)
+            self._v = _V()
+
+        def values(self):
+            return self._v
+
     fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+    flaky = Flaky()
+    monkeypatch.setattr(gw.dc, "sheets_service", lambda: flaky)
     assert go(grid, arch) == 0
-    monkeypatch.setattr(gw.sw, "read_govqa_rows", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("sheets 503")))
+    flaky.broken = True
     with pytest.raises(RuntimeError):
         go(first_run_grid(), arch)
-    assert sent == []
+    assert sent == [] and len(flaky._values._tabs[sw.TAB_GOVQA]) > 1                          # nothing was re-recorded as new
 
 
 # --- CSV drop ------------------------------------------------------------------------------
@@ -843,36 +1103,67 @@ CSV_TEXT = ("Request Number,Create Date,Summary,Request Status\n"
             "E500012-010125,1/3/2025,the Holloway pit,DENIED - No Records\n")
 
 
-def _wire_csv(monkeypatch, files, data=CSV_TEXT.encode()):
-    fake, sent, grid, arch = _wire(monkeypatch, grid=first_run_grid())
+def _wire_csv(monkeypatch, files, data=CSV_TEXT.encode(), grid=None):
+    fake, sent, grid, arch = _wire(monkeypatch, grid=grid or first_run_grid())
     monkeypatch.setenv("GOAUTH_GOVQA_CSV_FOLDER_ID", "CSVFOLDER")
     monkeypatch.setattr(gw.dc, "drive_service", lambda: "DRIVE")
     monkeypatch.setattr(gw.dc, "list_files", lambda svc, fid: files)
+    box = {"data": data}
 
     def _dl(svc, fid, dest):
-        Path(dest).write_bytes(data)
+        Path(dest).write_bytes(box["data"])
         return dest
     monkeypatch.setattr(gw.dc, "download_file", _dl)
-    return fake, sent, grid, arch
+    return fake, sent, grid, arch, box
 
 
-def test_csv_drop_ingests_matching_new_requests_silently_once(monkeypatch):
-    fake, sent, grid, arch = _wire_csv(monkeypatch, [{"id": "F1", "name": "govqa_export.csv"}, {"id": "F2", "name": "notes.txt"}])
+def test_csv_drop_ingests_matching_old_requests_silently_once(monkeypatch):
+    fake, sent, grid, arch, box = _wire_csv(monkeypatch, [{"id": "F1", "name": "govqa_export.csv"}, {"id": "F2", "name": "notes.txt"}])
     assert go(grid, arch) == 0
     got = {r[gw.C_KEY] for r in rows_of(fake, "baseline") if r[gw.C_KEY].startswith("E")}
     assert {"E500010-010125", "E500012-010125"} <= got and "E500011-010125" not in got     # keyword-filtered
-    assert rows_of(fake, "ingested")[0][gw.C_KEY] == "csv:F1" and sent == []
+    assert rows_of(fake, "ingested")[0][gw.C_KEY].startswith("csv:F1:") and sent == []
     n = len(rows_of(fake))
     assert go(first_run_grid(), arch) == 0 and len(rows_of(fake)) == n                     # never re-ingested
     ing = [r for r in rows_of(fake, "baseline") if r[gw.C_KEY] == "E500010-010125"][0]
     assert ing[gw.C_STATUS] == "GRANTED – Records"                                          # dash normalized
 
 
+def test_the_csv_never_absorbs_a_request_the_sweep_should_alert_on(monkeypatch):
+    """A CSV exported today contains what was posted since the last run. The sweep runs FIRST in
+    the same run, so that request is alerted as new; only older, still-unknown history is baselined."""
+    files = []
+    fake, sent, grid, arch, box = _wire_csv(monkeypatch, files)
+    assert go(grid, arch) == 0                                                              # run 1: no CSV yet; the sweep baselines
+    files.append({"id": "F1", "name": "today.csv"})
+    box["data"] = (CSV_TEXT + 'E600009-020226,2/2/2026,"Arbor Hills expansion FOIA",New Request\n').encode()
+    g2 = FakeGrid({"Arbor Hills": pages([R("E600009-020226", "Arbor Hills expansion FOIA", "New Request"), R("E600003-010126", AH)]),
+                   "Holloway": pages([R("E599999-010126", "Holloway pit")])})
+    assert go(g2, arch) == 0
+    assert [r[gw.C_KEY] for r in rows_of(fake, "new")] == ["E600009-020226"] and len(sent) == 1   # alerted, NOT absorbed
+    csv_base = {r[gw.C_KEY] for r in rows_of(fake, "baseline") if r[gw.C_TERMS] == "csv"}
+    assert csv_base == {"E500010-010125", "E500012-010125"}                                   # only the older history
+
+
+def test_a_csv_replaced_in_place_under_the_same_drive_id_is_re_read(monkeypatch):
+    fake, sent, grid, arch, box = _wire_csv(monkeypatch, [{"id": "F1", "name": "x.csv"}])
+    assert go(grid, arch) == 0 and len(rows_of(fake, "ingested")) == 1
+    box["data"] = (CSV_TEXT + "E500020-010125,1/9/2025,another Holloway request,GRANTED - Records\n").encode()
+    assert go(first_run_grid(), arch) == 0
+    assert len(rows_of(fake, "ingested")) == 2 and any(r[gw.C_KEY] == "E500020-010125" for r in rows_of(fake, "baseline"))
+
+
+def test_a_csv_with_no_parseable_rows_is_reported_and_not_marked_ingested(monkeypatch):
+    fake, sent, grid, arch, box = _wire_csv(monkeypatch, [{"id": "F1", "name": "x.csv"}], data=b"not,the,right\ncolumns,at,all\n")
+    assert go(grid, arch) == 1
+    assert rows_of(fake, "ingested") == [] and "has no parseable rows" in sent[0][1]
+
+
 def test_an_unreadable_csv_folder_is_reported_but_never_sinks_the_run(monkeypatch):
-    fake, sent, grid, arch = _wire_csv(monkeypatch, [])
+    fake, sent, grid, arch, box = _wire_csv(monkeypatch, [])
     monkeypatch.setattr(gw.dc, "list_files", lambda svc, fid: (_ for _ in ()).throw(RuntimeError("drive 500")))
     assert go(grid, arch) == 1
-    assert len(rows_of(fake, "baseline")) >= 3 and "CSV drop folder unreadable" in sent[0][1]
+    assert len(rows_of(fake, "baseline")) >= 3 and "CSV drop phase failed" in sent[0][1]
 
 
 # --- staging the attachments to a private folder --------------------------------------------
@@ -902,44 +1193,80 @@ def _staging_env(monkeypatch, folder="STAGE", **others):
     return uploads
 
 
-def test_staging_downloads_hashes_and_uploads_to_the_private_folder_only(monkeypatch):
-    fake, sent, grid, arch = _released_world(monkeypatch)
+def test_staging_downloads_hashes_and_uploads_content_addressed_names_to_the_private_folder_only(monkeypatch):
+    fake, sent, grid, arch = _released_world(monkeypatch, names=("Jane_Doe_123_Main_St.pdf", "b.pdf", "c.pdf"))
     uploads = _staging_env(monkeypatch)
     assert go(grid, arch) == 0
     staged = rows_of(fake, "file-staged")
     assert len(staged) == 3 and {u[1] for u in uploads} == {"STAGE"}
     assert all(r[gw.C_SHA] and r[gw.C_MD5] and r[gw.C_LINK].startswith("https://drive/") for r in staged)
-    assert all(re.fullmatch(r"E600003-010126__[a-z]\.pdf", u[0]) for u in uploads)
-    assert "FILES STAGED" in sent[0][1]
+    assert all(re.fullmatch(r"E600003-010126__[0-9a-f]{16}\.pdf", u[0]) for u in uploads)     # no attachment name in Drive
+    assert any(r[gw.C_FILE] == "Jane_Doe_123_Main_St.pdf" for r in staged)                    # ...the real name is in the private Sheet
+    assert "FILES STAGED" in sent[0][1] and "Jane_Doe" not in sent[0][1]
     n = len(arch.downloads)
     assert go(grid, arch) == 0 and len(arch.downloads) == n                                  # staged files are never re-downloaded
 
 
+def test_duplicate_attachment_names_are_keyed_by_occurrence_and_each_is_staged(monkeypatch):
+    fake, sent, grid, arch = _released_world(monkeypatch, names=("image001.png", "image001.png", "image001.png"))
+    arch.file_bytes = b"\x89PNG"
+    uploads = _staging_env(monkeypatch)
+    assert go(grid, arch) == 0
+    keys = sorted(r[gw.C_KEY] for r in rows_of(fake, "file-staged"))
+    assert keys == ["file:E600003-010126:image001.png", "file:E600003-010126:image001.png#2", "file:E600003-010126:image001.png#3"]
+    assert len({u[0] for u in uploads}) == 3 and arch.downloads == ["image001.png"] * 3    # three distinct targets were used
+
+
 def test_staging_skips_files_identical_by_md5_to_a_held_folder(monkeypatch):
-    import hashlib
     fake, sent, grid, arch = _released_world(monkeypatch, names=("a.pdf",))
     cfg = copy.deepcopy(CFG)
     cfg["govqa"].update(download_attachments=True, max_file_mb=1, held_folder_envs=["GOAUTH_ARCHIVE_FOLDER_ID"])
     monkeypatch.setattr(gw, "load_config", lambda: copy.deepcopy(cfg))
     uploads = _staging_env(monkeypatch, GOAUTH_ARCHIVE_FOLDER_ID="HELD")
-    md5 = hashlib.md5(arch.file_bytes, usedforsecurity=False).hexdigest()
+    md5 = hashlib.md5(arch.file_bytes + b"a.pdf|rptAttachments$ctl00$lnkStreamCloud", usedforsecurity=False).hexdigest()
     monkeypatch.setattr(gw, "_held_md5s", lambda drive, ids: {md5} if ids == ["HELD"] else set())
     monkeypatch.setattr(gw.dc, "drive_service", lambda: "DRIVE-SA")
     assert go(grid, arch) == 0
     assert len(rows_of(fake, "file-held")) == 1 and rows_of(fake, "file-staged") == [] and uploads == []
 
 
-def test_oversized_files_are_skipped_once_and_a_failing_file_is_retried_then_given_up_on(monkeypatch):
-    fake, sent, grid, arch = _released_world(monkeypatch, names=("big.pdf", "flaky.pdf", "ok.pdf"))
-    arch.file_bytes = b"%PDF" + b"x" * 10
-    arch.download_error = {"big.pdf": ValueError("over cap"), "flaky.pdf": gq.GovqaFetchError("boom")}
+def test_oversized_files_are_skipped_once_and_never_retried(monkeypatch):
+    fake, sent, grid, arch = _released_world(monkeypatch, names=("big.pdf", "ok.pdf"))
+    arch.download_error = {"big.pdf": gq.GovqaTooLargeError("over cap")}
     _staging_env(monkeypatch)
-    for _ in range(4):
+    for _ in range(3):
         assert go(grid, arch) == 0
     assert [r[gw.C_KEY] for r in rows_of(fake, "file-staged")] == ["file:E600003-010126:ok.pdf"]
-    assert arch.downloads.count("big.pdf") == 1                                              # skipped once, never retried
-    assert arch.downloads.count("flaky.pdf") == 3                                            # exactly _MAX_FILE_FAILS attempts
-    assert len(rows_of(fake, "file-failed")) == 2 and len(rows_of(fake, "file-skipped")) == 2
+    assert arch.downloads.count("big.pdf") == 1 and len(rows_of(fake, "file-skipped")) == 1   # a size skip costs no strikes
+
+
+def test_a_transient_download_failure_is_retried_in_run_without_costing_a_strike(monkeypatch):
+    fake, sent, grid, arch = _released_world(monkeypatch, names=("a.pdf",))
+    arch.download_error = {"a.pdf": [gq.GovqaFetchError("download answered text/html — session expired")]}   # first attempt only
+    _staging_env(monkeypatch)
+    assert go(grid, arch) == 0
+    assert len(rows_of(fake, "file-staged")) == 1 and rows_of(fake, "file-failed") == []
+    assert arch.downloads == ["a.pdf", "a.pdf"] and len(arch.detail_calls) >= 2               # details were reloaded for the retry
+
+
+def test_a_persistently_failing_file_strikes_five_times_then_is_reported_and_never_blocks_the_rest(monkeypatch):
+    fake, sent, grid, arch = _released_world(monkeypatch, names=("flaky.pdf", "ok.pdf"))
+    arch.download_error = {"flaky.pdf": [gq.GovqaFetchError("boom")] * 99}
+    _staging_env(monkeypatch)
+    for _ in range(6):
+        assert go(grid, arch) == 0
+    assert [r[gw.C_KEY] for r in rows_of(fake, "file-staged")] == ["file:E600003-010126:ok.pdf"]
+    assert len(rows_of(fake, "file-failed")) == 4 and len(rows_of(fake, "file-skipped")) == 1      # the 5th strike is a skip
+    assert any("gave up after 5 failed staging attempts" in s[1] for s in sent)                    # ...and it is said out loud
+
+
+def test_a_dead_oauth_token_is_reported_and_the_listing_survives(monkeypatch):
+    fake, sent, grid, arch = _released_world(monkeypatch)
+    _staging_env(monkeypatch)
+    monkeypatch.setattr(gw.ac, "oauth_drive_service", lambda: (_ for _ in ()).throw(RuntimeError("invalid_grant")))
+    assert go(grid, arch) == 1
+    assert len(rows_of(fake, "file-listed")) == 3 and rows_of(fake, "file-staged") == []
+    assert "staging phase failed: RuntimeError" in sent[0][1] and "STATUS CHANGES" in sent[0][1]     # the status alert still went out
 
 
 def test_staging_refuses_a_folder_that_equals_another_mirrors_folder(monkeypatch):
@@ -972,6 +1299,10 @@ LEAKY = ("boom https://1michigandeq.blob.core.usgovcloudapi.net/michigandeq/x.pd
 
 def test_scrub_removes_urls_and_truncates():
     assert gq.scrub(LEAKY) == "boom <url> failed"
+    schemeless = ("HTTPSConnectionPool(host='1michigandeq.blob.core.usgovcloudapi.net', port=443): Max retries "
+                  "exceeded with url: /michigandeq/x.pdf?rscd=attachment%3B+filename%3DJane_Doe.pdf&sig=SECRETSIG (Caused by X)")
+    out = gq.scrub(schemeless, 400)
+    assert "Jane_Doe" not in out and "SECRETSIG" not in out and "<url>" in out
     assert gq.scrub("x" * 500) == "x" * 200 and gq.scrub("https://a/b https://c/d") == "<url> <url>"
 
 
@@ -995,7 +1326,7 @@ def test_transport_errors_never_carry_the_url(tmp_path):
 
 def test_a_failing_stage_never_puts_an_attachment_name_or_signed_url_in_stdout(monkeypatch, capsys):
     fake, sent, grid, arch = _released_world(monkeypatch, names=("Jane_Doe_123_Main_St.pdf",))
-    arch.download_error = {"Jane_Doe_123_Main_St.pdf": RuntimeError(LEAKY)}
+    arch.download_error = {"Jane_Doe_123_Main_St.pdf": [RuntimeError(LEAKY)] * 9}
     _staging_env(monkeypatch)
     assert go(grid, arch) == 0
     out = capsys.readouterr().out
@@ -1011,15 +1342,46 @@ def test_an_unhandled_error_reports_class_and_scrubbed_message_only(monkeypatch,
     assert "RuntimeError" in out and "Jane_Doe" not in out and "SECRETSIG" not in out
 
 
-def test_no_print_statement_can_emit_request_text_or_attachment_names():
-    """Static pin: a print()/f-string in the two modules must never interpolate the
-    file name, the file key, or the request text/excerpt (those live in the private
-    Sheet only; stdout is a public log)."""
-    for name in _NEW:
-        for m in re.finditer(r"print\((.*?)\)\s*$", (ROOT / name).read_text(), re.S | re.M):
-            stmt = m.group(1)
-            for banned in ('["name"]', "{key}", "summary", "excerpt", "file_name", "f['name']"):
-                assert banned not in stmt.split("\n")[0], (name, banned, stmt[:80])
+def test_main_silences_googleapiclients_retry_logger_which_prints_request_urls(monkeypatch):
+    """googleapiclient logs 'Sleeping … retry … <method> <uri>' on every 5xx/429 retry — and a
+    Drive query URI embeds file names. main() must silence it before anything runs."""
+    monkeypatch.setattr(gw, "run", lambda *a, **k: 0)
+    for name in ("googleapiclient", "googleapiclient.http"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+    assert gw.main() == 0
+    assert logging.getLogger("googleapiclient.http").getEffectiveLevel() == logging.CRITICAL
+    assert logging.getLogger("googleapiclient").getEffectiveLevel() == logging.CRITICAL
+
+
+_BANNED_IN_PRINT_NAMES = {"summary", "excerpt", "file_name", "key", "f", "row", "entry", "rq", "det", "items", "pending", "r"}
+_BANNED_IN_PRINT_SUBSCRIPTS = {"name", "summary", "excerpt", "file_name"}
+
+
+def _call_name(node):
+    return getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+
+
+def test_no_print_can_interpolate_request_text_attachment_names_or_raw_exceptions():
+    """Static AST pin over every print() in both modules (stdout is a PUBLIC log): its
+    arguments may not reference the file/row/summary variables, may not subscript a
+    name/summary/…, and an interpolated exception variable must be inside scrub() or type()."""
+    checked = 0
+    for module in ("govqa_client.py", "govqa_watcher.py"):
+        tree = ast.parse((ROOT / module).read_text())
+        for call in [n for n in ast.walk(tree) if isinstance(n, ast.Call) and _call_name(n) == "print"]:
+            checked += 1
+            for node in ast.walk(call):
+                if isinstance(node, ast.Name):
+                    assert node.id not in _BANNED_IN_PRINT_NAMES, (module, call.lineno, node.id)
+                if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+                    assert node.slice.value not in _BANNED_IN_PRINT_SUBSCRIPTS, (module, call.lineno, node.slice.value)
+            for node in ast.walk(call):
+                if isinstance(node, ast.Name) and node.id == "e":
+                    safe = any(isinstance(c, ast.Call) and _call_name(c) in ("scrub", "type")
+                               and any(isinstance(n2, ast.Name) and n2.id == "e" for n2 in ast.walk(c))
+                               for c in ast.walk(call))
+                    assert safe, (module, call.lineno, "a raw exception in a print")
+    assert checked >= 15                                                            # the pin actually looked at the prints
 
 
 # --- probe ---------------------------------------------------------------------------------------
@@ -1070,22 +1432,35 @@ def test_no_path_reaches_the_public_feed_the_public_sheet_or_another_archiver():
     for name in _NEW:
         assert not (_code_references(name) & forbidden), name
     watcher = (ROOT / "govqa_watcher.py").read_text()
-    guard = inspect.getsource(gw._private_sheet_id)
+    guard = "\n".join(__import__("inspect").getsource(f) for f in (gw._private_sheet_id,))
     code_only = re.sub(r'""".*?"""', "", watcher.replace(guard, ""), flags=re.S)
     code_only = re.sub(r"#.*", "", code_only)
     assert not re.search(r"GSHEET_ID(?!_PRIVATE)", code_only)
     assert re.search(r'GSHEET_ID"\)', guard)
     assert "GSHEET_ID" not in (ROOT / "govqa_client.py").read_text().replace("GSHEET_ID_PRIVATE", "")
-    # the client never writes anywhere but the caller-supplied local path
     client_src = (ROOT / "govqa_client.py").read_text()
     assert "sheets_service" not in client_src and "drive_service" not in client_src and "send_email" not in client_src
 
 
-def test_workflow_never_receives_the_public_sheet_id_and_ships_disabled():
+def test_the_workflow_never_receives_the_public_sheet_id_ships_disabled_and_pins_playwright():
     wf = (ROOT / ".github" / "workflows" / "govqa-watch.yml").read_text()
     assert "secrets.GSHEET_ID_PRIVATE" in wf and not re.search(r"secrets\.GSHEET_ID\s*\}\}", wf)
+    assert re.search(r"pip install playwright==\d+\.\d+\.\d+", wf)
     from config_loader import load_config
     cfg = load_config()["govqa"]
     assert cfg["enabled"] is False and cfg["download_attachments"] is False
     assert cfg["recipients"] == ["arbor-hills@trishakunst.com"]
     assert (ROOT / "requirements.txt").read_text().lower().count("playwright") == 0     # optional, installed by the workflow only
+    other = {n for n in re.findall(r"GOAUTH_[A-Z_]*FOLDER_ID", "".join(p.read_text() for p in (ROOT / ".github" / "workflows").glob("*.yml")))}
+    assert other <= set(re.findall(r"GOAUTH_[A-Z_]*FOLDER_ID", wf)), other - set(re.findall(r"GOAUTH_[A-Z_]*FOLDER_ID", wf))
+
+
+def test_shipped_keywords_are_valid_and_multiword_terms_are_quoted():
+    from config_loader import load_config
+    kws = gw._keywords(load_config())
+    assert [k["term"] for k in kws] == ['"Arbor Hills"', "Holloway", "10690", '"Six Mile"', "Napier", '"Great Lakes Recycling"',
+                                        "10833", "N2688", "475946", "81000004"]
+    for k in kws:
+        bare = gw.bare_term(k["term"])
+        assert (" " not in bare) or k["term"].startswith('"'), k                     # an unquoted multi-word term would be OR-ed word by word
+        assert k["require"] == []                                                    # no `require` by default: it dropped real hits
