@@ -474,6 +474,30 @@ external users but no sensitive data). Public repo.
   raw value+analyte+date is actionable; see ADR 042). Recipients scoped verbatim
   (Trisha to start). Gated on `pfas_pws.enabled` (ships `false`). See ADR 042.
 
+- `govqa_client.py` — Stream U: fetch + parse for EGLE's PUBLIC FOIA archive on
+  GovQA (ADR 059), following the handoff's §1C-bis method. KEYWORD LIST via lazily
+  imported headless Playwright (`PlaywrightGrid`; NOT in requirements.txt — the
+  workflow installs it only when enabled/probing): one term per search, newest
+  first, paged with `ASPx.GVPagerOnClick`, `sweep_term` stops at the first page
+  holding a known request and flags `overflow`; `with_backoff` = fresh context +
+  30 s/2 min retries, then a structural error and move on (never hang). ONE REQUEST
+  BY NUMBER via a plain `requests` cookie session (`ArchiveSession`: lookup ->
+  details -> streamed download that re-POSTs the form and follows the 302 by hand,
+  host-allowlisted to the archive + its Azure blob store). `parse_gridview_csv` for
+  a human-exported CSV. Pure parsers; never writes anywhere.
+- `govqa_watcher.py` — Stream U: daily sweep of each configured keyword + re-check
+  of open/watched requests by number; a new matching request or a status change
+  alerts; a keyword's first sweep baselines silently (`term:` marker written last);
+  released files are listed and — if `download_attachments` and a private staging
+  folder are set — staged with SHA-256 + MD5; an optional CSV-drop folder is the
+  backfill fallback (the run STOPS AND ASKS for one on overflow). **HARD RULE:
+  private only** — rows go to `GSHEET_ID_PRIVATE` (fails closed if unset or equal to
+  `GSHEET_ID`; the workflow never receives the public id), files to a private folder
+  that must not equal any other `GOAUTH_*_FOLDER_ID`, nothing feeds `findings_feed`;
+  EMPTY `recipients` = display-only. Unknown request statuses count as OPEN.
+  `--probe` = pre-activation check. Gated on `govqa.enabled` (ships `false`). See
+  ADR 059.
+
 ## Forbidden patterns (do not do these)
 
 - **Never commit PDFs or data files.** No `*.pdf`, `*.csv`, `*.xml`, `*.json`
