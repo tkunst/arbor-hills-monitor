@@ -51,9 +51,8 @@ _SITE_ATTRS = [
 _UST_ATTRS = [
     {"FacilityID": "00040223", "FacilityName": "GFL Environmental USA, LLC",
      "RiskCondition": "No Known Risks", "Open_Release": 0, "LastUpdated": 1738108800000},
-    # Real live specimen (queried 2026-09-28): the Advanced Disposal / Arbor Hills
-    # Landfill Inc UST facility (registry status "No Longer A Facility"). Added to the
-    # watch 2026-09-28.
+    # Real live registry record (queried 2026-09-28), fields verbatim; added to the
+    # watch 2026-09-28. (The layer also carries RegulatoryProgram 213 for this record.)
     {"FacilityID": "00038889", "FacilityName": "Arbor Hills Landfill Inc",
      "RiskCondition": "No Longer A Facility", "Open_Release": 0, "LastUpdated": 1714089600000},
 ]
@@ -272,6 +271,10 @@ def test_site_label_and_ust_label_include_known_names():
     assert "Salem Landfill" in rw.site_label("81000033")
     assert "GFL" in rw.ust_label("00040223")
     assert "Arbor Hills Landfill Inc" in rw.ust_label("00038889")
+    # Layer 1 mixes RegulatoryProgram 211 and 213 records, so no label may assert a program.
+    for fid in ("00040223", "00038889", "99999999"):
+        assert "211" not in rw.ust_label(fid) and "213" not in rw.ust_label(fid)
+        assert rw.ust_label(fid).startswith("RIDE UST registry — Facility ")
     assert rw.site_label("99999999") == "RIDE Part 201 — Site 99999999"  # unknown id: no crash
 
 
@@ -372,12 +375,16 @@ def test_adding_a_new_ust_to_an_established_watch_baselines_only_it_silently(mon
     assert sent == []
     # The transition is real: Layer 1 answered with ONE record, then with TWO.
     assert requested_facility_ids == [["00040223"], ["00040223", "00038889"]]
+    snap = json.loads(new_rows[0][7])           # the baseline row holds the REAL record, not an empty snapshot
+    assert snap["facility_id"] == "00038889"
+    assert snap["records"][0]["RiskCondition"] == "No Longer A Facility"
 
 
 def test_run_asks_layer1_for_every_configured_facility_id(monkeypatch):
     """The id must reach the actual Layer-1 query: run() passes the config's
-    facility_ids to fetch_ust_records — the fake ignores them for its response,
-    so THIS assertion is what pins that 00038889 is requested at all."""
+    facility_ids to fetch_ust_records, and the fake answers only for the ids it
+    was asked about — so this pins that 00038889 is requested at all, and that a
+    non-default config is honoured rather than replaced by the client defaults."""
     fake, sent = _wire(monkeypatch)
     assert rw.run() == 0
     assert requested_facility_ids == [["00040223", "00038889"]]
@@ -428,7 +435,8 @@ def test_status_change_on_the_new_ust_itself_alerts(monkeypatch):
     fake, sent = _wire(monkeypatch)
     assert rw.run() == 0
     reopened = ust_records()
-    reopened[1].update(RiskCondition="Risks Present", Open_Release=1)   # index 1 = 00038889
+    target = next(r for r in reopened if r["FacilityID"] == "00038889")
+    target.update(RiskCondition="Risks Present and Require Action in Short-term", Open_Release=1)
     monkeypatch.setattr(rw.rc, "fetch_ust_records",
                         lambda facility_ids=None, url=None, timeout=60: copy.deepcopy(reopened))
     assert rw.run() == 0
@@ -450,9 +458,9 @@ def test_new_ust_dropping_out_of_the_layer_alerts_no_longer_listed(monkeypatch):
     assert len(sent) == 1
 
 
-def test_live_config_watches_the_2016_lust_facility():
-    """Pin the shipped config: 00038889 (Arbor Hills Landfill Inc UST) is in ride.facility_ids
-    alongside the original GFL UST, and the client's fallback default matches."""
+def test_live_config_watches_both_ust_facilities():
+    """Pin the shipped config: 00038889 is in ride.facility_ids alongside the
+    original GFL UST, and the client's fallback default matches."""
     from config_loader import load_config
     facility_ids = [str(f) for f in load_config()["ride"]["facility_ids"]]
     assert "00038889" in facility_ids and "00040223" in facility_ids

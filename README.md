@@ -137,14 +137,14 @@ encouragement to comment lives on the advocacy site, not here.
     sighting baselines silently — an empty record set is a valid baseline. See
     `docs/decisions/018-mmd-open-data-watch.md`.
 12. **EGLE RIDE / Part 201 + UST status watch (Stream J)** (daily, live —
-    `ride.enabled: true`): RIDE's own web app has no anonymous status API (its
-    public inventory page does list FILES anonymously — see the ADR 019
-    addendum), but EGLE separately publishes the underlying per-site status on
+    `ride.enabled: true`): this watch does not use RIDE's web app (its public
+    inventory page was found on 2026-09-28 to list FILES anonymously — see the
+    ADR 019 addendum); EGLE separately publishes the underlying per-site status on
     a keyless public ArcGIS service (RRDOpenData — same host/idiom as Stream I,
     two layers). Watches Layer 0 (Part 201 remediation status) for the 5 Arbor
     Hills-area sites — Salem Landfill, Arbor Hills - East, 7667 Chubb Rd, 7941
-    Salem Rd, MITC Corridor — and Layer 1 (Part 211 UST) for two facilities: GFL
-    (00040223) and Arbor Hills Landfill Inc (00038889).
+    Salem Rd, MITC Corridor — and Layer 1 (underground storage tanks) for two facilities: GFL
+    Environmental USA (00040223) and Arbor Hills Landfill Inc (00038889).
     A `RiskCondition` flip, a `Contaminants` change, or a new `Open_Release` is
     early, citable **R5** (water quality) signal. Snapshot-diff into the `RIDE
     Watch` tab; alerts (Trisha-only to start) on any change; first sighting
