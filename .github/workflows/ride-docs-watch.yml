@@ -1,6 +1,6 @@
 name: ride-docs-watch
 
-# EGLE RIDE anonymous DOCUMENT listing watch (Stream T, ADR 058): daily, list the
+# EGLE RIDE anonymous DOCUMENT listing watch (Stream T, ADR 061): daily, list the
 # files RIDE's public Inventory of Facilities shows for the Arbor Hills-area Part
 # 201 sites; alert on a new / changed / vanished file; mirror files to a PRIVATE
 # Drive folder. Rows go ONLY to the PRIVATE Sheet (GSHEET_ID_PRIVATE) — this
@@ -16,7 +16,7 @@ name: ride-docs-watch
 # State is the "RRD Documents" tab, NOT _meta, so it never races other jobs.
 on:
   schedule:
-    - cron: "30 17 * * *"   # 12:30pm ET (5:30pm UTC), after ride-watch's noon slot.
+    - cron: "30 17 * * *"   # 17:30 UTC = 1:30pm EDT / 12:30pm EST, after ride-watch.
   workflow_dispatch:
     inputs:
       probe:
@@ -76,6 +76,9 @@ jobs:
           GOAUTH_GFL_AIR_FOLDER_ID: ${{ secrets.GOAUTH_GFL_AIR_FOLDER_ID }}
           GOAUTH_MMPC_FOLDER_ID: ${{ secrets.GOAUTH_MMPC_FOLDER_ID }}
           GOAUTH_RIDGEWOOD_FOLDER_ID: ${{ secrets.GOAUTH_RIDGEWOOD_FOLDER_ID }}
+          GOAUTH_GOVQA_STAGING_FOLDER_ID: ${{ secrets.GOAUTH_GOVQA_STAGING_FOLDER_ID }}
+          GOAUTH_GOVQA_CSV_FOLDER_ID: ${{ secrets.GOAUTH_GOVQA_CSV_FOLDER_ID }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}          # the (vestigial) public PDF archive folder — same guard
         run: |
           if [ "$PROBE" = "true" ]; then
             python ride_docs_watcher.py --probe

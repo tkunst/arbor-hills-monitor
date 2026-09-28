@@ -1,6 +1,6 @@
 """
 ride_docs_client.py — fetch + canonicalize for the EGLE RIDE anonymous DOCUMENT
-listing (Stream T). See docs/decisions/058-rrd-documents-watch.md.
+listing (Stream T). See docs/decisions/061-rrd-documents-watch.md.
 
 RIDE is EGLE's Remediation Information Data Exchange. Its public "Inventory of
 Facilities" page is an Angular SPA that gives every anonymous visitor a
@@ -157,11 +157,15 @@ def resolve_location(session: requests.Session, program_num: str,
     if not isinstance(data, list):
         raise RideDocsParseError("GetFacilitiesTable response has no 'data' list — RIDE may have changed")
     for rec in data:
+        if not isinstance(rec, dict):
+            raise RideDocsParseError("GetFacilitiesTable record is not an object")
         if str(rec.get("programNum", "")).strip() == str(program_num):
-            if "locationId" not in rec:
-                raise RideDocsParseError("GetFacilitiesTable record has no locationId")
+            try:
+                location_id = int(rec["locationId"])
+            except (KeyError, TypeError, ValueError) as e:
+                raise RideDocsParseError("GetFacilitiesTable record has no integer locationId") from e
             return {
-                "location_id": int(rec["locationId"]),
+                "location_id": location_id,
                 "program_num": str(rec["programNum"]).strip(),
                 "name": str(rec.get("name") or rec.get("displayName") or "").strip(),
                 "location_type": str((rec.get("locationType") or {}).get("name", "")).strip(),
@@ -199,6 +203,8 @@ def fetch_location_files(session: requests.Session, location_id: int,
             f"location {location_id}: fetched {len(records)} record(s) but totalRows={total}")
     uris = []
     for rec in records:
+        if not isinstance(rec, dict):
+            raise RideDocsParseError(f"location {location_id}: a file record is not an object")
         if rec.get("uri") in (None, ""):
             raise RideDocsParseError(f"location {location_id}: a file record has no 'uri'")
         uris.append(str(rec["uri"]))
@@ -253,18 +259,19 @@ def record_hash(view: dict) -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
-_UNSAFE = re.compile(r"[^A-Za-z0-9._ -]+")
-
-
-def safe_filename(uri: str, title: str, extension: str, hash8: str = "") -> str:
-    """A Drive-safe, traversal-safe mirror filename: '<uri>[_<hash8>]_<title>.<ext>'.
-    Only [A-Za-z0-9._ -] survive; path separators and control chars are replaced,
-    the title is capped, and no component can start with a dot."""
-    title_part = _UNSAFE.sub("_", title).strip(" ._") or "untitled"
-    ext = _UNSAFE.sub("", extension).strip(".").lower() or "bin"
+def safe_filename(uri: str, extension: str, hash8: str = "") -> str:
+    """A Drive-safe, traversal-safe, TITLE-FREE mirror filename: '<uri>[_<hash8>].<ext>'.
+    Deliberately carries no part of the RIDE title: the name is embedded in Drive
+    `files().list` queries, and googleapiclient prints the request URL (query
+    included) in its errors and retry warnings — which would put a resident's name
+    or address into the world-readable Actions log. The title lives only in the
+    private Sheet row, keyed by the same uri. Only digits, hex and a short
+    alphanumeric extension survive, so nothing can traverse or start with a dot."""
     head = re.sub(r"[^0-9]", "", str(uri)) or "0"
-    mid = f"_{re.sub(r'[^0-9a-f]', '', hash8)}" if hash8 else ""
-    return f"{head}{mid}_{title_part[:80].strip(' ._')}.{ext[:8]}"
+    hex8 = re.sub(r"[^0-9a-f]", "", hash8 or "")
+    mid = f"_{hex8}" if hex8 else ""
+    ext = re.sub(r"[^A-Za-z0-9]", "", extension).lower()[:8] or "bin"
+    return f"{head}{mid}.{ext}"
 
 
 def download_file(session: requests.Session, uri: str, dest_path: str,
@@ -275,7 +282,7 @@ def download_file(session: requests.Session, uri: str, dest_path: str,
     RideDocsFetchError (non-200, a JSON/HTML error body, an empty body, or — for
     a PDF — a body that isn't %PDF-). A failed download never leaves a partial
     file behind. The response is never buffered whole (files reach 200+ MB)."""
-    if not str(uri).strip().isdigit():
+    if not re.fullmatch(r"[0-9]+", str(uri).strip()):          # ASCII digits only
         raise RideDocsFetchError(f"refusing non-numeric file uri {uri!r}")
     _pace()
     try:
