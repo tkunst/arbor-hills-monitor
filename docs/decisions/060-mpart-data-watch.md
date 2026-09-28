@@ -28,8 +28,8 @@ upper-Rouge surface-water and fish results, which were found by hand in 9/2026.
   Data" is a **table**, not a layer; layer 0 is the sites. Stations 1484 (Fish Hatchery
   Park) and 1507 ("6-mile") plus the box give **388 rows** across 8 stations, every
   `SampleID` distinct. Station 1484's ten brown-trout rows carry `PFOScode` `'I'` and no
-  value; station 1507's ten white-sucker rows carry PFOS 5.1-9.5 ppb; other codes seen in
-  the box are `'K'` and `'NA'`.
+  value; station 1507's ten white-sucker rows carry PFOS 5.1-9.5 ppb; other PFOS codes
+  seen in the box (live query) are `'K'` and `'NA'`.
 - **Sites / AOIs** — MPART's `SitesAoisMerge` (an ArcGIS Online service, layer 1 — layer
   0 does not exist): `Name LIKE '%Arbor Hills%'` returns one row; the box adds six more (7
   in all). The layer carries `SiteLead`, `SiteLeadEmail` and `SiteLeadPhone` — an EGLE
@@ -69,11 +69,14 @@ already above its value; it does not announce it as new.
 
 `mpart:sw`, `mpart:fish`, `mpart:sites`, one keyless query each, one explicit `outFields`
 list (never `*`), `returnGeometry=false`, https-only. The snapshot is the compact JSON
-`{"v": 1, "rows": {key: hash16}, "hits": [...]}`: the fish table alone is 79,163 chars as
+`{"v": 2, "rows": {key: hash16}, "hits": {site|date|analyte: value}}`: the fish table alone is 79,163 chars as
 full canonical records (388 rows) — over a Sheets cell's 50,000-char cap — but 12,598 as
 hashes, and the watcher refuses to store anything over 45,000 chars rather than truncate.
 A stored snapshot that is unreadable or from another `v` is re-baselined silently (and
-says so) instead of flagging every row as changed.
+says so) instead of flagging every row as changed. `hits` records the surface-water results
+already announced as above a screening value, keyed by **site | collection date | analyte**
+(not by row key, so a row re-issued under a new lab id is the same result) and **never
+pruned** (a result that leaves the layer and returns is not announced twice).
 Keys: surface water is **composite** — `LabSampleId|SiteCode|date|Duplicate` (the lab id
 alone can repeat across lab jobs); fish `SampleID`; sites name + kind. A blank key is a
 structural error; a **duplicate key is disambiguated** (`#1`, `#2`, ordered by row hash,
@@ -89,22 +92,32 @@ only and never falls back to the coalition list). A new or changed surface-water
 compared with the Rule 57 **non-drinking-water human non-cancer values** — PFOS 12, PFOA
 170, PFHxS 210, PFNA 30 ng/L (config `thresholds_ng_l`; EGLE's Rule 57 values spreadsheet
 as saved 2026-09-26, where PFOS was verified in 2014, PFOA 2022 — replacing an older value
-— and PFHxS/PFNA were added in 2023; Johnson Drain / Johnson Creek is a non-drink water
-body per that note). Rules:
+— and PFHxS/PFNA were added in 2023). Johnson Drain / Johnson Creek is a non-drink water
+body per that note, but the watch applies the non-drink values to **every surface-water
+row in the search box** — the alert says so and quotes the lower drink-water values (PFOS 11,
+PFOA 66, PFHxS 59, PFNA 19 ng/L). Rules:
 
 - It is a **screening comparison** of the reported value with the published value, not a
   regulatory determination, and the subject says "Rule 57 screening", not "exceedance".
-- A sample collected **before the year an analyte's value was verified is not screened**
-  (`thresholds_verified_year`): no such value was in force at the sample date.
+- A sample collected **before the year an analyte's CURRENT value was verified is not
+  screened** (`thresholds_verified_year`): at that date an older value (for PFOA, a much
+  higher one) or none applied, so the report has to be checked by hand. A row with no
+  collection date is screened (fail-open).
 - A `K` flag (below the method detection limit; the value shown is the limit — the
   observed K rows have value = MDL) is never compared. Every other flag is printed **as
-  published** (not re-cased or re-sorted); the alert notes that qualifier definitions vary
-  by report. `Not Measured` is shown as such.
+  published** (not re-cased or re-sorted); the alert quotes EGLE: qualifiers are
+  analytical-laboratory specific and it is often better to refer to the original analytical
+  report. `Not Measured` is shown as such; a `J` hit is rendered "(J: estimated value)".
 - A row is screened only when `Unit` reads as ng/L (also `ppt`); otherwise the alert says
   it was not screened. A value must be strictly above the threshold.
-- The snapshot records which (row, analyte) pairs are above their value, so only a **new**
-  pair raises the subject; a known one on a changed row is labelled "previously recorded".
-  Rows with a new pair are listed first, so the 25-row email cap cannot hide them.
+- The snapshot records which (site, date, analyte) results are above their value, so only
+  a **new** one raises the subject; a known one on a changed row is labelled "already
+  recorded; not new" and, if its value differs, "recorded earlier at X ng/L". Rows with a
+  new result are listed first, so the 25-row email cap cannot hide them.
+- A change that touches **no row** but newly puts an unchanged row above a value (a
+  threshold in config was tightened, or this code changed) is written as a `changed` row
+  and alerted in its own "UNCHANGED rows now above a screening value" section — never as a
+  subject-only email. A snapshot that moved with nothing to say writes its row and no email.
 - **Fish** PFOS (ppb, edible portion) is printed as published with EGLE's own code
   definitions; **no fish threshold is applied** (none was specified).
 
@@ -114,14 +127,22 @@ A transient fetch failure is skip-and-warn for a baselined item, but every skipp
 recorded (`fetch-skipped`); the run that makes it `stale_alert_after_skips` (3) consecutive
 skips sends a liveness alert, repeated weekly while the outage lasts, and the first good
 run records `fetch-ok`. A **successful but empty or sharply smaller response** (under
-`max_shrink_fraction` of what was recorded) is treated as a republish glitch — recorded as
-a skip, not diffed — until it persists `accept_shrink_after_skips` (2) runs, so it cannot
-fire "REMOVED (17)" and then re-announce everything as new. An item never baselined that
-can't be fetched is loud (exit 1); a structural break (`MpartParseError`: no `features`, a
-truncated result, a missing field, a query ArcGIS rejects with code 400, a blank key, an
+`max_shrink_fraction` of what was recorded) is treated as a republish glitch and has its
+OWN counter — `shrink-held` rows, separate from fetch failures, so two failed fetches can
+never pre-authorize accepting a truncated response (review round 2, HIGH). It is not
+diffed, and is accepted as real only after the SAME shrunken snapshot (by hash) has been
+held on `accept_shrink_after_skips` (2) earlier runs; a flapping response is never accepted
+(`stale_alert_after_skips` consecutive holds send a liveness alert), and a normal-sized
+response records `held-cleared`, so a stale streak cannot carry over. So it cannot fire
+"REMOVED (17)" and then re-announce everything as new. An item never baselined that
+can't be fetched is loud (exit 1) — and so is one whose FIRST response is empty (nothing is
+baselined: a wrong bbox/URL/filter must not become a silently "watched" empty layer); a
+structural break (`MpartParseError`: no `features`, a truncated result, a missing field, a
+query ArcGIS rejects with code 400, a retired layer (HTTP 404/410), a blank key, an
 oversized snapshot) is always loud; any other exception in one item is reported and the run
 moves on (exit 1). A configured recipient whose alert could not be **sent** makes the run
-red (the row is already written, so it will not re-fire — the red run is the signal). The
+red — change alert or liveness alert alike (the row is already written, so it will not
+re-fire — the red run is the signal). The
 Sheet read raises instead of swallowing errors (a swallowed read would look like "never
 baselined"). `--probe` fetches every layer and prints the counts, writing nothing.
 
@@ -144,6 +165,9 @@ the sites layer's EGLE staff contact, is never fetched.
    `OBJECTID`).
 4. **Fish code `I`** is described in EGLE's words (analytical interference), not as "no
    value published".
+5. **Non-drink values on every row.** The handoff named the non-drink values; the layer has
+   no water-body designation, so they are applied to every surface-water row in the box and
+   the alert says so (see §2).
 
 ## Adversarial review
 
@@ -158,9 +182,12 @@ a weekly repeat); a red run for a structural break or a lost alert. **Recovery:*
 
 **Residual risks accepted:** only PFOS/PFOA/PFHxS/PFNA are fetched for surface water, so a
 change to any other analyte, or to a fish field other than PFOS, is not detected; flags
-other than `K` are printed but not interpreted (EGLE says their meaning varies by report);
-a value revised by the lab alerts as `changed` and shows only the new value (the snapshot
-stores hashes); `Matrix` and the reporting limit are not part of the record.
+other than `K` are printed but not interpreted (EGLE says qualifiers are laboratory
+specific); a value revised by the lab alerts as `changed` and shows only the new value (the
+snapshot stores hashes; a known hit shows what was recorded); the `hits` record is never
+pruned, so raising a threshold in config leaves earlier announced hits on record;
+`Matrix` and the reporting limit are not part of the record; a layer that legitimately
+returns zero rows at first sighting is refused loudly rather than baselined.
 
 ## Activation
 

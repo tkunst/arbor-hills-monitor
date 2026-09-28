@@ -481,21 +481,24 @@ external users but no sensitive data). Public repo.
   (an ArcGIS Online layer). Explicit `outFields`, no geometry, https-only, and no OBJECTID/
   GlobalID/coordinates/EGLE-staff-contact fields ever fetched. Flags/codes are kept AS
   PUBLISHED (`flag_text`; tokens only for logic); `fish_code_meaning` uses EGLE's own wording
-  (K/J/I/QNS). A versioned `{"v","rows":{key:hash16},"hits":[...]}` snapshot (blank key =
+  (K/J/I/QNS). A versioned `{"v":2,"rows":{key:hash16},"hits":{site|date|analyte:value}}` snapshot (blank key =
   structural error; duplicate key = disambiguated `#n`; >45k chars = structural error). A
-  rejected query (ArcGIS error 400) is structural. Stdlib only. The public-water-supply layer
+  rejected query (ArcGIS error 400) or a retired layer (HTTP 404/410) is structural. Stdlib only. The public-water-supply layer
   is NOT here (Stream R owns it).
 - `mpart_watcher.py` — Stream V: daily snapshot-diff of the three layers into the
   `MPART Data Watch` tab (public Sheet — public data, no PII); silent baseline, then
-  new/changed/removed alerts. EGLE calls both layers STATIC PULLS (2/2025; 1/14/2026, updated
-  annually), so a new row = EGLE republished. New/changed surface-water rows are SCREENED against
+  new/changed/removed alerts. EGLE's layer descriptions (saved 2026-09-26) call both STATIC PULLS (2/2025; 1/14/2026, updated
+  annually), so a new row can mean EGLE republished. New/changed surface-water rows are SCREENED against
   the Rule 57 non-drinking-water values (PFOS 12 / PFOA 170 / PFHxS 210 / PFNA 30 ng/L, config
   `thresholds_ng_l` + `thresholds_verified_year`): screening wording (subject says "Rule 57
   screening", never "exceedance"), a `K` flag is never compared, samples older than a value's
-  verified year and units that don't read as ng/L are not screened, and only a NEW (row,
-  analyte) pair raises the subject (the snapshot records existing hits). Fish: EGLE's code
-  definitions, no threshold. Suspect empty/shrunken responses are held back (`max_shrink_fraction`)
-  until they persist; recorded-skip liveness alert (weekly repeat); a lost alert or an item
+  verified year and units that don't read as ng/L are not screened (the non-drink values are applied
+  to every row in the box — the alert says so), and only a NEW (site, date, analyte) result raises
+  the subject (the snapshot records announced hits, never pruned). Fish: EGLE's code definitions,
+  no threshold. Suspect empty/shrunken responses (`max_shrink_fraction`) get their own
+  `shrink-held` counter (never shared with fetch failures) and are accepted only when the SAME
+  shrunken snapshot has been held twice; an empty FIRST response is loud, nothing baselined;
+  recorded-skip liveness alert (weekly repeat); a lost alert (change or liveness) or an item
   exception makes the run red; the Sheet read raises (no silent re-baseline); empty recipients =
   display-only. `--probe`. Gated on `mpart.enabled` (ships `false`). See ADR 060.
 

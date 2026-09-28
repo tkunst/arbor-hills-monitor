@@ -10,7 +10,8 @@ Johnson Drain / Johnson Creek / upper-Rouge story lives in:
 
   - SURFACE WATER  PfasOpenData/MapServer/0 "Pfas Surface Water" — one row per
     sample, ~30 PFAS analytes as (value, Flag, Mdl, Rl) column groups; located by
-    Latitude/Longitude inside a bounding box. Key: LabSampleId.
+    Latitude/Longitude inside a bounding box. Key: LabSampleId | SiteCode |
+    collection date | Duplicate (LabSampleId alone repeats — see `surface_water_view`).
   - FISH           FcmpOpenData/FeatureServer/1 "Fish Contaminant Monitoring
     Sampling Data" (a TABLE) — one row per fish, keyed by the unique SampleID;
     watched stations + the same bounding box.
@@ -58,6 +59,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -110,7 +112,8 @@ class MpartFetchError(RuntimeError):
 
 class MpartParseError(RuntimeError):
     """Structural: no `features`, a truncated result (exceededTransferLimit), a layer
-    schema missing a field we read, or a duplicate row key. ALWAYS loud, never gated on
+    schema missing a field we read, a rejected query, a retired/moved layer (HTTP 404/410),
+    a blank row key, or an oversized snapshot. ALWAYS loud, never gated on
     baseline status (a reorganized service persists across runs — the ADR 014 silent-
     stall class). Same split as ride_client / mmd_client."""
 
@@ -142,9 +145,14 @@ def _fetch(url: str, where: str, fields: tuple[str, ...], timeout: int) -> list[
         r = _opener().open(f"{url}?{params}", timeout=timeout)  # nosec B310 — https-only (checked above) + escaped params
         status = getattr(r, "status", None) or r.getcode()
         body = r.read()
-    except Exception as e:  # noqa: BLE001 — network / HTTP -> transient
+    except urllib.error.HTTPError as e:
+        if e.code in (404, 410):
+            # a retired / moved layer persists across runs — structural, like ArcGIS's own 400
+            raise MpartParseError(f"GET {url} returned HTTP {e.code} — the layer may have been retired or moved") from e
+        raise MpartFetchError(f"GET {url} returned HTTP {e.code}") from e
+    except Exception as e:  # noqa: BLE001 — network -> transient
         raise MpartFetchError(f"GET {url} failed: {type(e).__name__}") from e
-    if status != 200:
+    if status != 200:                # urllib raises for 4xx/5xx; this catches a 2xx that is not 200
         raise MpartFetchError(f"GET {url} returned HTTP {status}")
     try:
         payload = json.loads(body)
@@ -351,17 +359,19 @@ def views_by_index_key(views: list[dict], fields: tuple[str, ...]) -> dict[str, 
     return out
 
 
-SNAPSHOT_VERSION = 1
+SNAPSHOT_VERSION = 2
 
 
-def snapshot_json(index: dict[str, str], hits=()) -> str:
+def snapshot_json(index: dict[str, str], hits: dict[str, str] | None = None) -> str:
     """The stored snapshot: compact sorted JSON {"v", "rows": {key: row_hash}, "hits":
-    [...]}. `hits` are the (row key|analyte) pairs currently above a screening value, so
-    an already-announced hit is never re-announced as new. Raises MpartParseError above
-    MAX_SNAPSHOT_CHARS (a Sheets cell truncates silently)."""
-    doc = {"v": SNAPSHOT_VERSION, "rows": index}
+    {hit id: value as published}}. `hits` are the (site|date|analyte) results already
+    announced as above a screening value, so one is never re-announced as new — and, being
+    keyed on the sample's site/date/analyte rather than on a row key, a re-issued row does
+    not read as a new hit. Raises MpartParseError above MAX_SNAPSHOT_CHARS (a Sheets cell
+    truncates silently)."""
+    doc: dict = {"v": SNAPSHOT_VERSION, "rows": index}
     if hits:
-        doc["hits"] = sorted(hits)
+        doc["hits"] = {str(k): str(v) for k, v in hits.items()}
     s = json.dumps(doc, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     if len(s) > MAX_SNAPSHOT_CHARS:
         raise MpartParseError(f"snapshot is {len(s):,} chars (> {MAX_SNAPSHOT_CHARS:,}) — refusing to truncate")
@@ -374,9 +384,11 @@ def parse_snapshot(snapshot: str):
     diffing against a differently-shaped snapshot would flag every row as changed)."""
     try:
         doc = json.loads(snapshot)
-        if not isinstance(doc, dict) or doc.get("v") != SNAPSHOT_VERSION or not isinstance(doc.get("rows"), dict):
+        if (not isinstance(doc, dict) or doc.get("v") != SNAPSHOT_VERSION
+                or not isinstance(doc.get("rows"), dict) or not isinstance(doc.get("hits", {}), dict)):
             return None
-        return ({str(k): str(v) for k, v in doc["rows"].items()}, {str(h) for h in doc.get("hits", [])})
+        return ({str(k): str(v) for k, v in doc["rows"].items()},
+                {str(k): str(v) for k, v in doc.get("hits", {}).items()})
     except (ValueError, TypeError):
         return None
 

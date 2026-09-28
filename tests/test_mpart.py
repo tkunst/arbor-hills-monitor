@@ -1,11 +1,3 @@
-def test_a_blank_row_key_is_structural_and_loud(monkeypatch):
-    world, fake, sent = _wire(monkeypatch)
-    original = mc.fish_view
-    monkeypatch.setattr(mw.mc, "fish_view", lambda a: dict(original(a), key=""))
-    assert mw.run([]) == 1 and rows_of(fake, "mpart:fish") == []
-    assert len(rows_of(fake, "mpart:sw", "baseline")) == 1                # the other items were unaffected
-
-
 """mpart_client.py / mpart_watcher.py (Stream V, ADR 060) — the MPART PFAS open-data
 layers watch.
 
@@ -15,7 +7,7 @@ its messy flags (`'K'`, `' J'`, `'J, Q'`, `' '`) and REAL lab sample ids (short 
 labels such as `UT-0100` next to Eurofins ids such as `240-169452-6`), the fish table's
 `PFOScode` (EGLE: K = not detected/MDL shown, J = estimated, I = analytical interference,
 QNS = not enough sample), and the sites layer. Values for the Napier Rd 2021-08-05 sample
-(PFOS 16.5 ng/L, no flag — the one real Rule 57 exceedance in the area data) and the
+(PFOS 16.5 ng/L, no flag — the one row in the area data that reports PFOS above the non-drink value) and the
 Johnson Drain fish rows are the published ones. No JSON/CSV/PDF is committed (data-guard).
 """
 import copy
@@ -305,16 +297,33 @@ def test_index_rows_disambiguates_duplicates_deterministically_and_rejects_blank
 
 def test_snapshot_roundtrip_carries_hits_and_is_versioned():
     idx = {"b": "1", "a": "2"}
-    s = mc.snapshot_json(idx, {"b|PFOS", "a|PFOA"})
-    assert s == mc.snapshot_json(dict(reversed(list(idx.items()))), ["a|PFOA", "b|PFOS"])       # order-independent
+    hits = {"s2|2021-08-05|PFOS": "16.5", "s1|2022-01-01|PFOA": "180"}
+    s = mc.snapshot_json(idx, hits)
+    assert s == mc.snapshot_json(dict(reversed(list(idx.items()))), dict(reversed(list(hits.items()))))   # order-independent
     parsed_idx, parsed_hits = mc.parse_snapshot(s)
-    assert parsed_idx == idx and parsed_hits == {"a|PFOA", "b|PFOS"}
-    assert mc.parse_snapshot(mc.snapshot_json(idx))[1] == set()
+    assert parsed_idx == idx and parsed_hits == hits and json.loads(s)["v"] == mc.SNAPSHOT_VERSION == 2
+    assert mc.parse_snapshot(mc.snapshot_json(idx))[1] == {}
 
 
-@pytest.mark.parametrize("stored", ["not json", "[]", '{"rows": {"a": "1"}}', '{"v": 999, "rows": {}}', '{"v": 1, "rows": []}', ""])
+@pytest.mark.parametrize("stored", ["not json", "[]", '{"rows": {"a": "1"}}', '{"v": 999, "rows": {}}', '{"v": 2, "rows": []}',
+                                    '{"v": 1, "rows": {"a": "1"}, "hits": ["a|PFOS"]}',      # the old list-shaped format
+                                    '{"v": 2, "rows": {"a": "1"}, "hits": ["a|PFOS"]}', ""])
 def test_an_unreadable_or_differently_versioned_snapshot_parses_to_none(stored):
     assert mc.parse_snapshot(stored) is None
+
+
+@pytest.mark.parametrize("code,exc", [(404, mc.MpartParseError), (410, mc.MpartParseError),
+                                      (500, mc.MpartFetchError), (503, mc.MpartFetchError), (429, mc.MpartFetchError)])
+def test_a_retired_layer_is_structural_while_server_errors_are_transient(monkeypatch, code, exc):
+    import urllib.error
+
+    class _Op:
+        def open(self, url, timeout=60):
+            raise urllib.error.HTTPError(url, code, "x", None, None)
+    monkeypatch.setattr(mc, "_opener", lambda: _Op())
+    with pytest.raises(exc) as e:
+        mc.fetch_surface_water()
+    assert str(code) in str(e.value)
 
 
 def test_snapshot_refuses_to_truncate():
@@ -378,9 +387,29 @@ def test_screening_ignores_blank_and_unparseable_values_and_analytes_without_a_t
     assert mw.screen_surface_water(mc.surface_water_view(sw_rows()[1]), {"PFOA": 170.0}, VY) == []
 
 
-def test_hit_keys_are_row_and_analyte_pairs():
+NAPIER_HIT = "19-UUTJD-0010|2021-08-05|PFOS"
+
+
+def test_hits_are_identified_by_site_date_analyte_not_by_row_key():
     views = mc.views_by_index_key([mc.surface_water_view(r) for r in sw_rows()], mc.SW_VIEW)
-    assert mw.hit_keys(views, TH, VY) == {f"{NAPIER}|PFOS"}
+    hit_map = mw.screen_all(views, TH, VY)
+    assert list(hit_map) == [NAPIER] and mw.hits_by_id(hit_map) == {NAPIER_HIT: "16.5"}
+    # the same result re-issued under a new lab id / duplicate flag keeps its identity
+    reissued = mc.views_by_index_key([mc.surface_water_view(dict(sw_rows()[1], LabSampleId="UT-0100R", Duplicate=1))], mc.SW_VIEW)
+    assert mw.hits_by_id(mw.screen_all(reissued, TH, VY)) == {NAPIER_HIT: "16.5"}
+    undated = mc.surface_water_view(dict(sw_rows()[1], CollectionDate=None, SiteCode=None))
+    assert mw.hit_id(undated, "PFOS") == f"{undated['key']}|PFOS"                               # falls back to the row key
+
+
+def test_an_undated_row_is_screened_against_the_current_value():
+    v = mc.surface_water_view(dict(sw_row("x", "s", "2024-01-01", "w", "d", 30.0, "", 1, pfna=99.0), CollectionDate=None))
+    assert v["date"] == "" and sorted(h["analyte"] for h in mw.screen_surface_water(v, TH, VY)) == ["PFNA", "PFOS"]
+
+
+def test_rescreened_keys_are_unchanged_rows_carrying_a_new_hit_id():
+    hit_map = {"a": [{"id": "x|d|PFOS"}], "b": [{"id": "y|d|PFOS"}], "c": [{"id": "z|d|PFOS"}]}
+    diff = {"added": ["a"], "changed": [], "removed": []}
+    assert mw.rescreened_keys(hit_map, {"x|d|PFOS", "y|d|PFOS"}, diff) == ["b"]        # `a` is already shown as NEW; `c` is not new
 
 
 def test_threshold_config_is_validated():
@@ -390,6 +419,18 @@ def test_threshold_config_is_validated():
         mw.load_thresholds({"thresholds_ng_l": {"PFHXS": 1}})
     with pytest.raises(ValueError):
         mw.load_thresholds({"thresholds_verified_year": {"BOGUS": 2020}})
+    with pytest.raises(ValueError, match="> 0"):
+        mw.load_thresholds({"thresholds_ng_l": {"PFOS": 0}})
+    # overriding ONE analyte's verified year must not silently drop the others' (they would then screen every old sample)
+    assert mw.load_thresholds({"thresholds_verified_year": {"PFOS": 2016}})[1] == {**VY, "PFOS": 2016}
+
+
+def test_guard_config_is_validated():
+    assert mw.load_guards({}) == (3, 0.5, 2)
+    assert mw.load_guards({"stale_alert_after_skips": 0, "max_shrink_fraction": 1, "accept_shrink_after_skips": 0}) == (1, 1.0, 1)
+    for bad in (0, -0.1, 1.5, "0"):
+        with pytest.raises(ValueError, match="max_shrink_fraction"):
+            mw.load_guards({"max_shrink_fraction": bad})
 
 
 # ==============================================================================
@@ -401,6 +442,9 @@ def _row(item, change, h="", note="", snap=""):
     return ["2026-09-28", item, "label", change, h, note, "now", snap]
 
 
+_ZERO = {"skips": 0, "held": 0, "held_stable": 0, "held_hash": ""}
+
+
 def test_build_state_takes_the_last_snapshot_row_and_counts_consecutive_skips():
     st = mw.build_state([_row("mpart:sw", "baseline", "h1", snap="S1"), _row("mpart:sw", "fetch-skipped", "h1"),
                          _row("mpart:sw", "fetch-skipped", "h1"), _row("mpart:fish", "baseline", "f1"),
@@ -409,9 +453,22 @@ def test_build_state_takes_the_last_snapshot_row_and_counts_consecutive_skips():
     assert st["mpart:fish"]["skips"] == 1                                                     # the fetch-ok reset the count
     st2 = mw.build_state([_row("mpart:sw", "baseline", "h1"), _row("mpart:sw", "fetch-skipped"),
                           _row("mpart:sw", "changed", "h2", snap="S")])
-    assert st2["mpart:sw"] == {"hash": "h2", "snapshot": "S", "skips": 0}
+    assert st2["mpart:sw"] == {"hash": "h2", "snapshot": "S", **_ZERO}
     assert mw.build_state([_row("mpart:sw", "fetch-skipped")]) == {}                          # never baselined
-    assert mw.build_state([["d", "mpart:sw", "l", "baseline", "h9"]])["mpart:sw"] == {"hash": "h9", "snapshot": "", "skips": 0}  # trailing cells stripped
+    assert mw.build_state([["d", "mpart:sw", "l", "baseline", "h9"]])["mpart:sw"] == {"hash": "h9", "snapshot": "", **_ZERO}  # trailing cells stripped
+
+
+def test_build_state_keeps_fetch_failures_and_shrink_holds_in_separate_counters():
+    rows = [_row("mpart:sw", "baseline", "h1", snap="S"), _row("mpart:sw", "fetch-skipped", "h1"), _row("mpart:sw", "fetch-skipped", "h1"),
+            _row("mpart:sw", "shrink-held", "X"), _row("mpart:sw", "shrink-held", "X"), _row("mpart:sw", "shrink-held", "Y")]
+    st = mw.build_state(rows)["mpart:sw"]
+    assert st["skips"] == 2 and st["held"] == 3                        # two failed fetches never count toward the holds
+    assert st["held_hash"] == "Y" and st["held_stable"] == 1           # X, X, Y: the streak of the SAME response restarted
+    assert mw.build_state(rows[:5])["mpart:sw"]["held_stable"] == 2
+    assert mw.build_state(rows + [_row("mpart:sw", "fetch-ok")])["mpart:sw"]["held"] == 3      # a fetch-ok is about fetching only
+    for reset in ("held-cleared", "changed", "baseline"):
+        st2 = mw.build_state(rows + [_row("mpart:sw", reset, "h2", snap="S2")])["mpart:sw"]
+        assert (st2["held"], st2["held_stable"], st2["held_hash"]) == (0, 0, ""), reset
 
 
 def test_diff_index():
@@ -428,17 +485,32 @@ def _sw_views(rows=None):
     return mc.views_by_index_key([mc.surface_water_view(r) for r in (rows or sw_rows())], mc.SW_VIEW)
 
 
+def _hit_map(views, keys):
+    return {k: mw.screen_surface_water(views[k], TH, VY) for k in keys}
+
+
 def test_surface_water_copy_prints_values_verbatim_with_flags_and_the_screening_caveats():
     views = _sw_views()
-    hit_map = {NAPIER: mw.screen_surface_water(views[NAPIER], TH, VY)}
     diff = {"added": [NAPIER], "removed": [], "changed": []}
-    body = mw.format_change_body(mw.ITEM_SW, diff, views, hit_map, {f"{NAPIER}|PFOS"}, TH, VY)
+    body = mw.format_change_body(mw.ITEM_SW, diff, views, _hit_map(views, [NAPIER]), {NAPIER_HIT}, TH, VY)
     assert "PFOS 16.5 (MDL 1.03)" in body and "PFNA 1.04 [J]" in body and "collected 2021-08-05" in body and "Napier Rd" in body
     assert ">>> PFOS 16.5 ng/L is ABOVE the published Rule 57 non-drinking-water value of 12 ng/L" in body
     assert "SCREENING comparison" in body and "PFOS 12 ng/L (verified 2014)" in body and "PFHxS 210 ng/L (verified 2023)" in body
-    assert "PFHxS and PFNA values were added in 2023" in body and "'K' flag" in body and "vary by report" in body
-    assert "static pull" in body and "republished the layer" in body
+    # the non-drink designation is documented for one water body; the values are applied to every row — and the note says so
+    assert "applied to EVERY surface-water row" in body and "Johnson Drain / Johnson Creek only" in body
+    assert "PFOS 11, PFOA 66, PFHxS 59, PFNA 19 ng/L" in body                              # the lower drink-water values
+    assert "CURRENT value was verified" in body and "for PFOA, a much higher one" in body and "a row with no collection date is screened" in body
+    assert "no such value was in force" not in body and "vary by report" not in body       # both were inaccurate
+    assert "qualifiers are analytical-laboratory specific" in body and "'K' flag" in body
     assert "revised in 2022-2023" not in body                                              # PFHxS/PFNA were ADDED, not revised
+
+
+def test_the_static_pull_note_attributes_the_dates_to_the_saved_layer_description():
+    views = _sw_views()
+    body = mw.format_change_body(mw.ITEM_SW, {"added": [NAPIER], "removed": [], "changed": []}, views, {}, set(), TH, VY)
+    assert "as saved 2026-09-26" in body and "'last pulled 2/2025'" in body and "current pull date" in body
+    assert "republished the layer" in body
+    assert "static pull" not in mw.format_change_body(mw.ITEM_SITES, {"added": [], "removed": ["x"], "changed": []}, {}, {}, set())
 
 
 def test_the_screening_note_is_rendered_from_the_thresholds_in_use():
@@ -448,9 +520,33 @@ def test_the_screening_note_is_rendered_from_the_thresholds_in_use():
 
 def test_a_hit_that_was_already_recorded_is_not_announced_as_new():
     views = _sw_views()
-    hit_map = {NAPIER: mw.screen_surface_water(views[NAPIER], TH, VY)}
-    body = mw.format_change_body(mw.ITEM_SW, {"added": [], "removed": [], "changed": [NAPIER]}, views, hit_map, set(), TH, VY)
-    assert "was already above (previously recorded)" in body and "is ABOVE" not in body
+    body = mw.format_change_body(mw.ITEM_SW, {"added": [], "removed": [], "changed": [NAPIER]}, views,
+                                 _hit_map(views, [NAPIER]), set(), TH, VY, {NAPIER_HIT: "16.5"})
+    assert "already recorded; not new" in body and "is ABOVE" not in body and "recorded earlier" not in body
+
+
+def test_a_revised_value_on_an_already_recorded_hit_says_what_was_recorded_and_is_still_not_new():
+    views = _sw_views([dict(sw_rows()[1], CAS1763231_PFOS=18.0)])
+    key = next(iter(views))
+    body = mw.format_change_body(mw.ITEM_SW, {"added": [], "removed": [], "changed": [key]}, views,
+                                 _hit_map(views, [key]), set(), TH, VY, {NAPIER_HIT: "16.5"})
+    assert ">>> PFOS 18 ng/L" in body.replace("18.0", "18") and "recorded earlier at 16.5 ng/L; not new" in body and "is ABOVE" not in body
+
+
+def test_an_estimated_J_hit_is_rendered_as_estimated():
+    views = _sw_views([sw_row("x", "s", "2024-01-01", "w", "d", 13.0, "J", 1)])
+    key = next(iter(views))
+    body = mw.format_change_body(mw.ITEM_SW, {"added": [key], "removed": [], "changed": []}, views, _hit_map(views, [key]),
+                                 {mw.hit_id(views[key], "PFOS")}, TH, VY)
+    assert ">>> PFOS 13 [J] ng/L (J: estimated value) is ABOVE" in body
+
+
+def test_unchanged_rows_newly_above_a_value_get_their_own_section():
+    views = _sw_views()
+    body = mw.format_change_body(mw.ITEM_SW, {"added": [], "removed": [], "changed": [], "rescreened": [NAPIER]}, views,
+                                 _hit_map(views, [NAPIER]), {NAPIER_HIT}, TH, VY)
+    assert "UNCHANGED rows now above a screening value" in body and "the row itself did not change" in body and "(1):" in body
+    assert "is ABOVE" in body and "NEW rows" not in body
 
 
 def test_subject_wording_is_a_screening_not_a_determination_and_counts_are_honest():
@@ -459,6 +555,7 @@ def test_subject_wording_is_a_screening_not_a_determination_and_counts_are_hones
     assert "EXCEEDANCE" not in mw.subject_for(mw.ITEM_SW, d, True)
     assert mw.subject_for(mw.ITEM_SW, d, False) == "[MPART data] 1 new, 2 changed: surface-water PFAS"
     assert mw.subject_for(mw.ITEM_SITES, {"added": [], "removed": ["x"], "changed": []}, False) == "[MPART data] 1 removed: PFAS sites/AOIs"
+    assert mw.subject_for(mw.ITEM_SW, {"added": [], "removed": [], "changed": []}, False) == "[MPART data] changed: surface-water PFAS"   # never an empty list
 
 
 def test_fish_copy_uses_EGLEs_definitions_and_never_calls_an_I_code_a_detection_or_a_publication_gap():
@@ -480,7 +577,7 @@ def test_screened_rows_are_listed_first_so_the_cap_cannot_hide_them():
     hk = next(k for k in views if k.startswith("ZZZ-LAST"))
     hit_map = {hk: mw.screen_surface_water(views[hk], TH, VY)}
     body = mw.format_change_body(mw.ITEM_SW, {"added": sorted(views), "removed": [], "changed": []}, views, hit_map,
-                                 {f"{hk}|PFOS"}, TH, VY)
+                                 {mw.hit_id(views[hk], "PFOS")}, TH, VY)
     assert "NEW rows (41)" in body and "+ 16 more" in body and "sample ZZZ-LAST" in body
     assert body.index("ZZZ-LAST") < body.index("sample L000") and "Snapshot JSON cell" in body
 
@@ -556,7 +653,8 @@ def test_first_run_baselines_all_three_items_silently_and_records_the_hits_alrea
     assert sent == []
     snap = json.loads(rows_of(fake, "mpart:sw")[0][7])
     assert set(snap["rows"]) == {mc.surface_water_view(r)["key"] for r in sw_rows()}
-    assert snap["hits"] == [f"{NAPIER}|PFOS"] and "1 already above a screening value" in rows_of(fake, "mpart:sw")[0][5]
+    assert snap["hits"] == {NAPIER_HIT: "16.5"} and "1 result(s) already above a screening value" in rows_of(fake, "mpart:sw")[0][5]
+    assert "above a screening" not in rows_of(fake, "mpart:fish")[0][5] + rows_of(fake, "mpart:sites")[0][5]   # only surface water is screened
 
 
 def test_second_run_unchanged_writes_nothing(monkeypatch):
@@ -577,10 +675,10 @@ def test_a_new_screened_sample_writes_the_durable_row_BEFORE_the_alert(monkeypat
     world.sw = sw_rows()                                      # ...then EGLE republishes with it
     assert mw.run([]) == 0
     ch = rows_of(fake, "mpart:sw", "changed")
-    assert len(ch) == 1 and "1 added, 0 changed, 0 removed" in ch[0][5] and NAPIER in ch[0][5] and "NEW screening hits" in ch[0][5]
+    assert len(ch) == 1 and "1 added, 0 changed, 0 removed" in ch[0][5] and NAPIER in ch[0][5] and f"NEW screening hits: {NAPIER_HIT}" in ch[0][5]
     assert seen_at_send == [(1, "[MPART data] Rule 57 screening: a reported value is above a non-drink value — new/changed surface-water PFAS result(s)")]
     assert mw.run([]) == 0 and len(rows_of(fake, "mpart:sw", "changed")) == 1     # not re-alerted
-    assert json.loads(ch[0][7])["hits"] == [f"{NAPIER}|PFOS"]                     # the hit is now on record
+    assert json.loads(ch[0][7])["hits"] == {NAPIER_HIT: "16.5"}                   # the hit is now on record
 
 
 def test_an_already_recorded_hit_is_not_re_announced_when_its_row_changes(monkeypatch):
@@ -591,7 +689,7 @@ def test_an_already_recorded_hit_is_not_re_announced_when_its_row_changes(monkey
     assert len(sent) == 1
     subj, body, _ = sent[0]
     assert "Rule 57 screening" not in subj and subj == "[MPART data] 1 changed: surface-water PFAS"
-    assert "was already above (previously recorded)" in body and "is ABOVE" not in body
+    assert "already recorded; not new" in body and "is ABOVE" not in body
 
 
 def test_a_hit_that_newly_appears_on_a_changed_row_is_announced(monkeypatch):
@@ -688,7 +786,8 @@ def test_a_fetch_failure_is_recorded_alerts_at_the_threshold_repeats_weekly_and_
     world.error.clear()
     assert mw.run([]) == 0 and len(rows_of(fake, "mpart:fish", "fetch-ok")) == 1
     world.error["fish"] = mc.MpartFetchError("blip")
-    assert mw.run([]) == 0 and len(sent) == 2                                              # the counter was reset
+    assert mw.run([]) == 0 and mw.run([]) == 0 and len(sent) == 2                          # skips 1, 2 after the reset: quiet
+    assert mw.run([]) == 0 and len(sent) == 3 and "unreadable for 3 runs" in sent[2][0]    # the counter DID restart (3, not 13)
     assert rows_of(fake, "mpart:fish", "changed") == []                                     # skips never invent changes
 
 
@@ -699,20 +798,24 @@ def test_an_empty_success_is_a_suspect_response_not_a_mass_removal(monkeypatch):
     world.sw = []                                             # a republish window: 200 OK with zero features
     assert mw.run([]) == 0
     assert sent == [] and rows_of(fake, "mpart:sw", "changed") == []
-    sk = rows_of(fake, "mpart:sw", "fetch-skipped")
-    assert len(sk) == 1 and "suspect response: 0 row(s) now vs 3 recorded" in sk[0][5]
+    held = rows_of(fake, "mpart:sw", "shrink-held")
+    assert len(held) == 1 and "suspect response: 0 row(s) now vs 3 recorded" in held[0][5]
+    assert rows_of(fake, "mpart:sw", "fetch-skipped") == []   # a shrink is NOT a fetch failure
     world.sw = good                                           # ...and it recovers: nothing was lost, nothing re-announced
-    assert mw.run([]) == 0 and sent == [] and len(rows_of(fake, "mpart:sw", "fetch-ok")) == 1
+    assert mw.run([]) == 0 and sent == []
+    assert len(rows_of(fake, "mpart:sw", "held-cleared")) == 1
 
 
 def test_a_shrink_that_persists_is_accepted_as_real(monkeypatch):
     world, fake, sent = _wire(monkeypatch)
     assert mw.run([]) == 0
     world.sites = world.sites[:0]                             # the sites layer really is emptied
-    assert mw.run([]) == 0 and mw.run([]) == 0 and sent == []                             # two suspect runs: skipped
-    assert mw.run([]) == 0                                                                  # the third observation: accepted
+    assert mw.run([]) == 0 and mw.run([]) == 0 and sent == []                             # two identical suspect runs: held
+    assert len(rows_of(fake, "mpart:sites", "shrink-held")) == 2
+    assert mw.run([]) == 0                                                                  # the third identical observation: accepted
     assert len(sent) == 1 and "REMOVED rows (2" in sent[0][1]
     assert len(rows_of(fake, "mpart:sites", "changed")) == 1
+    assert rows_of(fake, "mpart:sites", "held-cleared") == []                               # the changed row ends the streak itself
 
 
 def test_a_partial_shrink_below_the_fraction_is_also_held_back(monkeypatch):
@@ -723,10 +826,131 @@ def test_a_partial_shrink_below_the_fraction_is_also_held_back(monkeypatch):
     world.fish = full[:3]                                     # 10 -> 3 (< 50%): a republish glitch, not a real change
     assert mw.run([]) == 0
     assert rows_of(fake, "mpart:fish", "changed") == [] and sent == []
-    assert len(rows_of(fake, "mpart:fish", "fetch-skipped")) == 1
+    assert len(rows_of(fake, "mpart:fish", "shrink-held")) == 1
     world.fish = full[:6]                                     # 6 of 10 is a normal-sized drop: diffed and alerted at once
     assert mw.run([]) == 0
     assert len(rows_of(fake, "mpart:fish", "changed")) == 1 and "REMOVED rows (4" in sent[-1][1]
+
+
+def _ten_fish(world):
+    world.fish = [fish_row(f"2021{i:03d}-S01", 1507, "Sucker", 6.0, None) for i in range(10)]
+    return world.fish
+
+
+def test_fetch_failures_never_pre_authorize_accepting_a_truncated_response(monkeypatch):
+    """The HIGH finding: a shared counter let two failed fetches (skips=2) satisfy the shrink guard,
+    so the first truncated response after an outage was accepted and a mass-removal alert fired."""
+    world, fake, sent = _wire(monkeypatch)
+    full = _ten_fish(world)
+    assert mw.run([]) == 0
+    world.error["fish"] = mc.MpartFetchError("GET failed: OSError")
+    assert mw.run([]) == 0 and mw.run([]) == 0                                              # skips == 2
+    world.error.clear()
+    world.fish = full[:2]                                                                    # the outage ends with a TRUNCATED response
+    assert mw.run([]) == 0
+    assert rows_of(fake, "mpart:fish", "changed") == [] and sent == []                       # held, not accepted
+    assert len(rows_of(fake, "mpart:fish", "shrink-held")) == 1 and len(rows_of(fake, "mpart:fish", "fetch-ok")) == 1
+    assert mw.run([]) == 0 and sent == []                                                    # still held (2nd identical)
+    assert mw.run([]) == 0                                                                   # 3rd identical: accepted
+    assert len(rows_of(fake, "mpart:fish", "changed")) == 1 and "REMOVED rows (8" in sent[-1][1]
+
+
+def test_a_flapping_shrunken_response_is_never_accepted_and_the_liveness_alert_fires(monkeypatch):
+    world, fake, sent = _wire(monkeypatch)
+    full = _ten_fish(world)
+    assert mw.run([]) == 0
+    for n in (1, 2, 3, 1, 2):                                                                # a DIFFERENT shrunken response each run
+        world.fish = full[:n]
+        assert mw.run([]) == 0
+    assert rows_of(fake, "mpart:fish", "changed") == []
+    assert len(rows_of(fake, "mpart:fish", "shrink-held")) == 5
+    assert [s[0] for s in sent] == ["[MPART data] mpart:fish returning a suspect (much smaller) response for 3 runs"]
+
+
+def test_a_recovery_clears_the_hold_streak_so_a_later_shrink_starts_over(monkeypatch):
+    world, fake, sent = _wire(monkeypatch)
+    full = _ten_fish(world)
+    assert mw.run([]) == 0
+    world.fish = full[:2]
+    assert mw.run([]) == 0 and mw.run([]) == 0                                               # two identical holds
+    world.fish = full                                                                        # normal again
+    assert mw.run([]) == 0 and len(rows_of(fake, "mpart:fish", "held-cleared")) == 1
+    world.fish = full[:2]                                                                    # the SAME shrunken shape, weeks later
+    assert mw.run([]) == 0
+    assert rows_of(fake, "mpart:fish", "changed") == [] and sent == []                       # held again from scratch, not accepted
+    assert len(rows_of(fake, "mpart:fish", "shrink-held")) == 3
+
+
+def test_an_empty_first_response_is_loud_and_baselines_nothing(monkeypatch, capsys):
+    world, fake, sent = _wire(monkeypatch)
+    world.sites = []
+    assert mw.run([]) == 1
+    assert rows_of(fake, "mpart:sites") == [] and len(rows_of(fake, "mpart:sw", "baseline")) == 1   # the others still ran
+    assert "refusing to baseline nothing" in capsys.readouterr().out
+    world.sites = site_rows()                                                                # fixed: the next run baselines normally
+    assert mw.run([]) == 0 and len(rows_of(fake, "mpart:sites", "baseline")) == 1
+
+
+def test_a_hits_only_change_is_alerted_with_the_rows_and_never_as_an_empty_alert(monkeypatch):
+    """Tightening a screening value re-screens rows the layer did not change: the alert must
+    list them (not a subject-only 'changed:' email), and the durable row records why."""
+    world, fake, sent = _wire(monkeypatch)
+    assert mw.run([]) == 0
+    tight = copy.deepcopy(CFG)
+    tight["mpart"]["thresholds_ng_l"] = {"PFOS": 2.0}                                        # JD-0105's 3.1 is now above 2
+    monkeypatch.setattr(mw, "load_config", lambda: copy.deepcopy(tight))
+    assert mw.run([]) == 0
+    ch = rows_of(fake, "mpart:sw", "changed")
+    assert len(ch) == 1 and "0 added, 0 changed, 0 removed, 1 re-screened" in ch[0][5]
+    assert len(sent) == 1 and sent[0][0].startswith("[MPART data] Rule 57 screening")
+    body = sent[0][1]
+    assert "UNCHANGED rows now above a screening value" in body and "19-JD-0105" in body and "3.1" in body and "is ABOVE" in body
+    assert mw.run([]) == 0 and len(sent) == 1                                                # and it is not re-announced
+
+
+def test_a_reissued_row_with_a_new_lab_id_is_not_announced_as_a_new_exceedance(monkeypatch):
+    world, fake, sent = _wire(monkeypatch)
+    assert mw.run([]) == 0                                                                   # Napier PFOS 16.5 baselined as a hit
+    world.sw[1] = dict(world.sw[1], LabSampleId="UT-0100R", CAS1763231_PFOS=18.0)            # re-issued under a new id, value revised
+    assert mw.run([]) == 0
+    assert len(sent) == 1
+    subj, body, _ = sent[0]
+    assert "Rule 57 screening" not in subj and "recorded earlier at 16.5 ng/L; not new" in body and "is ABOVE" not in body
+
+
+def test_a_result_that_leaves_the_layer_and_returns_is_not_announced_twice(monkeypatch):
+    world, fake, sent = _wire(monkeypatch)
+    assert mw.run([]) == 0
+    napier = world.sw.pop(1)
+    assert mw.run([]) == 0 and len(sent) == 1 and "REMOVED rows" in sent[0][1]
+    world.sw.insert(1, napier)                                                               # EGLE puts it back
+    assert mw.run([]) == 0 and len(sent) == 2
+    assert "Rule 57 screening" not in sent[1][0] and "already recorded; not new" in sent[1][1]      # the union kept the hit on record
+
+
+def test_a_snapshot_that_moved_with_nothing_to_say_writes_its_row_and_no_email(monkeypatch):
+    world, fake, sent = _wire(monkeypatch)
+    assert mw.run([]) == 0
+    monkeypatch.setattr(mw, "hits_by_id", lambda hm: {**{i: v for k in hm for h in hm[k] for i, v in [(h["id"], h["value"])]},
+                                                       "ghost|2020-01-01|PFOS": "99"})       # a value with no row change behind it
+    assert mw.run([]) == 0
+    assert len(rows_of(fake, "mpart:sw", "changed")) == 1 and sent == []
+
+
+def test_a_failed_liveness_alert_makes_the_run_red(monkeypatch):
+    world, fake, sent = _wire(monkeypatch, send=lambda *a: False)
+    assert mw.run([]) == 0
+    world.error["fish"] = mc.MpartFetchError("GET failed: OSError")
+    assert mw.run([]) == 0 and mw.run([]) == 0
+    assert mw.run([]) == 1                                                                   # the 3rd skip's liveness email failed
+    assert len(rows_of(fake, "mpart:fish", "fetch-skipped")) == 3
+
+
+def test_an_oversized_snapshot_is_a_loud_structural_failure_for_that_item_only(monkeypatch, capsys):
+    world, fake, sent = _wire(monkeypatch)
+    monkeypatch.setattr(mc, "MAX_SNAPSHOT_CHARS", 200)
+    assert mw.run([]) == 1
+    assert "STRUCTURAL failure" in capsys.readouterr().out and len(rows_of(fake, "mpart:sites", "baseline")) == 1
 
 
 def test_a_fetch_failure_without_a_baseline_is_loud(monkeypatch):
@@ -743,10 +967,12 @@ def test_a_structural_error_is_always_loud_even_with_a_baseline(monkeypatch):
     assert mw.run([]) == 1
 
 
-def test_a_blank_row_key_is_structural(monkeypatch):
+def test_a_blank_row_key_is_structural_and_loud(monkeypatch):
     world, fake, sent = _wire(monkeypatch)
-    monkeypatch.setattr(mw.mc, "fish_view", lambda a: dict(mc.fish_view.__wrapped__(a) if hasattr(mc.fish_view, "__wrapped__") else {}, key=""))
+    original = mc.fish_view
+    monkeypatch.setattr(mw.mc, "fish_view", lambda a: dict(original(a), key=""))
     assert mw.run([]) == 1 and rows_of(fake, "mpart:fish") == []
+    assert len(rows_of(fake, "mpart:sw", "baseline")) == 1                # the other items were unaffected
 
 
 @pytest.mark.parametrize("stored", ["not json", '{"rows": {"a": "1"}}', '{"v": 999, "rows": {}}'])
@@ -825,6 +1051,7 @@ def test_shipped_config_ships_disabled_scoped_and_screens_the_four_rule_57_value
     cfg = load_config()["mpart"]
     assert cfg["enabled"] is False and cfg["recipients"] == ["arbor-hills@trishakunst.com"]
     thresholds, years = mw.load_thresholds(cfg)                       # also validates the keys
+    assert mw.load_guards(cfg) == (3, 0.5, 2)                         # ...and the shrink-guard numbers
     assert thresholds == mw.DEFAULT_THRESHOLDS_NG_L and years == mw.DEFAULT_VERIFIED_YEAR
     assert [float(x) for x in cfg["bbox"]] == list(mc.DEFAULT_BBOX) and [int(s) for s in cfg["fish"]["stations"]] == [1484, 1507]
     assert float(cfg["max_shrink_fraction"]) == 0.5 and int(cfg["accept_shrink_after_skips"]) == 2
@@ -846,9 +1073,14 @@ def test_workflow_is_public_data_only_and_never_passes_the_coalition_extras():
     assert "schedule:" in wf and "workflow_dispatch:" in wf
 
 
-def test_no_print_in_the_new_modules_interpolates_a_url_or_raw_exception_text_from_the_client():
-    """The layers are public data, but the habit is pinned: prints carry counts, keys the
-    watcher built, and exception CLASS names — never a bare `{e}` from a fetch's message
-    that could embed a URL."""
+def test_the_client_never_prints_and_its_error_messages_carry_no_query_string():
+    """The client returns/raises; only the watcher prints. Its fetch errors name the layer URL
+    (public, from config) but never the query (where clause / outFields)."""
     src = (ROOT / "mpart_client.py").read_text()
     assert "print(" not in src
+    checked = 0
+    for line in src.splitlines():
+        if "raise Mpart" in line and 'f"' in line:
+            checked += 1
+            assert "params" not in line and "where" not in line.split("f\"", 1)[1], line
+    assert checked >= 6                                                # the scan really looked at the raise sites

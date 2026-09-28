@@ -458,8 +458,9 @@ PFAS_PWS_WATCH_HEADERS = [
 ]
 
 # MPART PFAS open-data layers watch (Stream V, ADR 060). Same row shape as
-# RIDE_WATCH_HEADERS; Snapshot JSON is {"rows": {row_key: row_hash}}. "Change" is
-# baseline (silent) / changed / fetch-skipped / fetch-ok.
+# RIDE_WATCH_HEADERS; Snapshot JSON is {"v", "rows": {row_key: row_hash}, "hits": {...}}.
+# "Change" is baseline (silent) / changed / fetch-skipped / fetch-ok / shrink-held /
+# held-cleared (for `shrink-held`, "Snapshot Hash" is the hash of the held response).
 MPART_WATCH_HEADERS = [
     "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
     "Snapshot JSON",
