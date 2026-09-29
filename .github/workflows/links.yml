@@ -13,6 +13,9 @@ on:
       - "**/*.md"
       - "site/**/*.html"
 
+permissions:
+  contents: read
+
 jobs:
   lychee:
     runs-on: ubuntu-latest

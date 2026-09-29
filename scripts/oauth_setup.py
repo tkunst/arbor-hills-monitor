@@ -2,8 +2,10 @@
 oauth_setup.py — one-time local setup for the durable PDF archive (ADR 007).
 
 Runs the OAuth consent flow as Trisha, creates the Drive mirror folder, and
-prints the four values to store as GitHub secrets. Run it ONCE, locally, on a
-machine with a browser.
+writes the four values to store as GitHub secrets into a private local folder
+(one file per secret, owner-only permissions). The values are never printed, so
+they can't end up in terminal scrollback. Run it ONCE, locally, on a machine
+with a browser.
 
 Prereqs (in the GCP console, project arbor-hills-monitor):
   1. APIs & Services -> Library -> enable the Google Drive API.
@@ -18,15 +20,17 @@ Then:
     pip install -r requirements.txt        # provides google-auth-oauthlib
     python scripts/oauth_setup.py ~/Downloads/client_secret_XXXX.json
 
-A browser opens; sign in as Trisha and approve. The script prints the refresh
-token + folder ID and the exact `gh secret set` commands. Finally, share the new
+A browser opens; sign in as Trisha and approve. The script writes the secret
+values to ~/.arbor-hills-oauth/<run timestamp>/ and prints the exact
+`gh secret set` loop command (values piped from the files, never shown).
+Delete that folder once the secrets are set. Finally, share the new
 mirror folder in Drive as "Anyone with the link -> Viewer" so anyone with the
 link can open Archive Links (these are already-public EGLE filings).
 
 To add ANOTHER app-only mirror folder later (e.g. the GFL air exhibit, ADR 026),
 reuse this flow with an explicit name + secret:
     python scripts/oauth_setup.py <client.json> --folder-name "Arbor Hills GFL Air Exhibit" --secret-name GOAUTH_GFL_AIR_FOLDER_ID
-Only the printed folder-ID secret is new; CLIENT_ID/SECRET/REFRESH_TOKEN are
+Only the folder-ID secret is new; CLIENT_ID/SECRET/REFRESH_TOKEN are
 already set from the first run. The exhibit is already-public GFL fenceline data,
 so share the folder the same way (Anyone with the link -> Viewer). The folder is
 created at your Drive root (the drive.file scope can't place it inside a hand-made
@@ -35,6 +39,7 @@ by its stable ID.
 """
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -47,10 +52,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=(
             "One-time OAuth setup: consent as Trisha, create an app-only Drive "
-            "folder, and print the GitHub secrets to store. Reuse it to add a NEW "
+            "folder, and write the GitHub secret values to a private local folder. Reuse it to add a NEW "
             "mirror folder for another stream (e.g. the GFL air exhibit) via "
             "--folder-name + --secret-name — only the folder-ID secret is new; the "
-            "CLIENT_ID/SECRET/REFRESH_TOKEN it prints are already set from the "
+            "CLIENT_ID/SECRET/REFRESH_TOKEN it writes are already set from the "
             "first run and can be left as-is."))
     ap.add_argument("client_json", help="path to the OAuth client JSON (Desktop app)")
     ap.add_argument(
@@ -101,22 +106,33 @@ def main() -> int:
     client_id = flow.client_config.get("client_id", "")
     client_secret = flow.client_config.get("client_secret", "")
 
+    # Write each secret to its own owner-only file instead of printing it, so
+    # the values never land in terminal scrollback (CodeQL
+    # py/clear-text-logging-sensitive-data). `gh secret set NAME < file` reads
+    # the value from the file without echoing it.
+    out_dir = os.path.join(os.path.expanduser("~/.arbor-hills-oauth"),
+                           time.strftime("%Y%m%d-%H%M%S"))
+    os.makedirs(out_dir, mode=0o700, exist_ok=True)
+    os.chmod(os.path.dirname(out_dir), 0o700)
+    secret_names = ["GOAUTH_CLIENT_ID", "GOAUTH_CLIENT_SECRET",
+                    "GOAUTH_REFRESH_TOKEN", args.secret_name]
+    secret_values = [client_id, client_secret, creds.refresh_token, fid]
+    for name, value in zip(secret_names, secret_values):
+        fd = os.open(os.path.join(out_dir, name),
+                     os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(value)
+
     print("\n" + "=" * 72)
     print("OAuth setup complete. Mirror folder created:")
-    print(f"  {folder_name}  (id: {fid})")
+    print(f"  {folder_name}")
     print("=" * 72)
-    print("\nSet these four GitHub secrets (the prompt form keeps them out of "
-          "shell history):\n")
-    print("  gh secret set GOAUTH_CLIENT_ID")
-    print(f"      -> {client_id}")
-    print("  gh secret set GOAUTH_CLIENT_SECRET")
-    print(f"      -> {client_secret}")
-    print("  gh secret set GOAUTH_REFRESH_TOKEN")
-    print(f"      -> {creds.refresh_token}")
-    print(f"  gh secret set {args.secret_name}")
-    print(f"      -> {fid}")
-    print("\nThese values are SENSITIVE. After copying them into the secrets, "
-          "clear your terminal scrollback.")
+    print(f"\nThe four secret values were written (owner-only) to:\n  {out_dir}")
+    # One loop command: each file is named after its secret, so the names come
+    # from the folder listing rather than being printed here.
+    print("\nSet the GitHub secrets from those files (values are not shown):\n")
+    print(f'  for f in "{out_dir}"/*; do gh secret set "$(basename "$f")" < "$f"; done')
+    print(f"\nThen delete the folder:\n  rm -r {out_dir}")
     print("\nLAST STEP: in Google Drive, right-click the new "
           f"'{folder_name}' folder -> Share -> General access -> "
           "'Anyone with the link' -> Viewer, so readers can open "
