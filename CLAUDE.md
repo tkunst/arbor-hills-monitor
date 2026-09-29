@@ -564,8 +564,9 @@ external users but no sensitive data). Public repo.
   coalition list. stdout is public: printed errors are class + HTTP status only,
   `main()` silences googleapiclient's retry logger. Alerts show BOTH document date
   and added-to-RIDE date (backlog digitization). `--probe` = pre-activation runner
-  check (exit 1 if any program doesn't resolve). Gated on
-  `ride_docs.enabled` (shipped `false`; ACTIVATED 2026-09-28). See ADR 061.
+  check (exit 1 if any program doesn't resolve). Manual dispatch input
+  `mirror_uris` (comma-separated RIDE file ids) mirrors just those files now.
+  Gated on `ride_docs.enabled` (shipped `false`; ACTIVATED 2026-09-28). See ADR 061.
 
 ## Forbidden patterns (do not do these)
 

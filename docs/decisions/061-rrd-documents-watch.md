@@ -3,7 +3,8 @@
 *Status: built — 2026-09-28; review fixes the same day (drafted as "ADR 058",
 renumbered 061 on merge because 058-060 were taken). Shipped `ride_docs.enabled:
 false`; ACTIVATED 2026-09-28 after the GitHub-runner probe passed (5 locations, 95
-files). Mirror pending its folder secret; see Activation.*
+files). The private mirror is LIVE since 2026-09-28 (folder secret set; see
+Activation).*
 Builds on: ADR 019 (Stream J, RRD status; this ADR corrects its "no anonymous
 document API" premise), ADR 007/010 (Drive mirror idiom), ADR 015/017/019
 (snapshot-diff watches), ADR 041 (Stream S: probe mode, display-only recipients).
@@ -253,3 +254,28 @@ Ships `ride_docs.enabled: false` (a brand-new external source). To activate:
 4. Flip `ride_docs.enabled: true`. The first run baselines ~95 files silently.
 
 Pause = flip back to `false` (tab state survives).
+
+**Done 2026-09-28.** The runner probe passed (5 programs, 5 locations, 95 files).
+The first run baselined 95 files silently and a second run showed zero events.
+The mirror folder was created with the `create-oauth-folder` workflow (kunst
+identity, app-only, not shared) and stored as `GOAUTH_RRD_FOLDER_ID`. The public
+Actions logs of the live runs were checked against every RIDE title, facility
+name and folder address: zero matches.
+
+### Pulling specific files now: the `mirror_uris` input
+
+The daily mirror drains the backlog newest RIDE `uri` first, which is upload
+order, not document date. To get particular files sooner, run the workflow
+manually with `mirror_uris` set to a comma-separated list of RIDE file ids
+(digits only; anything else refuses the run). Only those files are mirrored that
+run, uncapped by `max_mirror_per_run`; the 25-minute mirror budget still applies,
+and each file is recorded in the RRD Documents tab like any other mirror.
+Already-mirrored, skipped or unlisted ids are ignored.
+
+### Publishing stays a hand-curation step
+
+Nothing here publishes. A mirrored file reaches the public record only through
+the hand-curated intake (`docs/hand-curated-intake-design.md`): a publish-clean
+title, a `Hand-Curated Files` row, and the public feed's publish-safety gate.
+Letters addressed to residents (for example county water-well sampling
+notices) are held back by default.
