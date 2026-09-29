@@ -521,6 +521,12 @@ def run(argv: list[str] | None = None) -> int:
     max_mirror = int(rcfg.get("max_mirror_per_run", 8))
     max_bytes = int(float(rcfg.get("max_file_mb", 250)) * 1024 * 1024)
     stale_after = max(1, int(rcfg.get("stale_alert_after_skips", _DEFAULT_STALE_SKIPS)))
+    # Manual dispatch can ask for specific files NOW (workflow input `mirror_uris`):
+    # only those are mirrored this run, uncapped (the time budget still applies).
+    wanted = [u.strip() for u in (os.environ.get("RIDE_DOCS_MIRROR_URIS") or "").split(",") if u.strip()]
+    if any(not re.fullmatch(r"[0-9]+", u) for u in wanted):
+        print("[ride-docs] RIDE_DOCS_MIRROR_URIS must be comma-separated RIDE file ids (digits only).")
+        return 1
 
     sheets = dc.sheets_service()
     if looks_like_public_sheet(sheets, priv_id):
@@ -745,6 +751,11 @@ def run(argv: list[str] | None = None) -> int:
                       f"{len(mirror_todo)} file(s) listed but not mirrored (alerts/rows unaffected).")
         else:
             mirror_todo.sort(key=lambda t: (t[4], -int(t[2]["uri"])))   # fewest failures, newest first
+            if wanted:
+                mirror_todo = [t for t in mirror_todo if t[2]["uri"] in set(wanted)]
+                max_mirror = max(max_mirror, len(mirror_todo))
+                print(f"[ride-docs] mirroring {len(mirror_todo)} requested file(s) of {len(wanted)} asked "
+                      "(the rest are already mirrored, skipped, or not listed).")
             counts["mirrored"] = _mirror_pass(session, sheets, priv_id, today, mirror_todo,
                                               folder, max_bytes, max_mirror)
 
