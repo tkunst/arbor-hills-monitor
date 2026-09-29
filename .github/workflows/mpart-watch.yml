@@ -9,7 +9,7 @@ name: mpart-watch
 #
 # Safe to leave scheduled from day one: mpart.enabled gates the run —
 # mpart_watcher._should_run() makes every run a quiet no-op (exit 0) while it is
-# false (ships disabled — a brand-new external source). No Anthropic (a deterministic
+# false (activated 2026-09-29). No Anthropic (a deterministic
 # snapshot-diff), no Drive/OAuth, and public data only, so the case-file Sheet
 # (GSHEET_ID) is the right home for the "MPART Data Watch" tab. State is that tab,
 # NOT _meta, so it never races the other jobs. `probe: true` (manual dispatch) fetches

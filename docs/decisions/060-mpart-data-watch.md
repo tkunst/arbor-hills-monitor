@@ -1,7 +1,6 @@
 # ADR 060 — MPART PFAS open-data layers watch (Stream V)
 
-*Status: built — 2026-09-28 (`mpart.enabled: false` pending Trisha's review of the alert
-copy; see Activation).*
+*Status: built 2026-09-28, activated 2026-09-29 (`mpart.enabled: true`; see Activation).*
 Builds on: ADR 012 (MPART web-page watch), ADR 042 (Stream R: the public-water-supply
 layer), ADR 018/019 (keyless ArcGIS status watches; explicit `outFields`, OID/GlobalID/
 coordinates kept out), ADR 023 (digest snapshots for large tables).
@@ -213,7 +212,8 @@ returns zero rows at first sighting is refused loudly rather than baselined.
 
 ## Activation
 
-Ships `mpart.enabled: false`. Keyless — nothing to provision. Review the alert copy (the
-Rule 57 wording especially), optionally run the workflow once with `probe=true`, then flip
-`enabled: true` (and update `test_shipped_config…`, which pins the shipped `false`). The
-first run baselines all three items silently. Pause = flip back to `false`.
+**Activated 2026-09-29 (Trisha-directed).** Keyless — nothing to provision. A runner probe
+(`workflow_dispatch` with `probe=true`, run 36519697233) confirmed all three layers answer
+and parse (17 surface-water / 388 fish / 7 sites rows) before flipping `mpart.enabled: true`;
+`test_shipped_config…` was updated to pin the activated state. The first run baselines all
+three items silently. Pause = flip back to `false`.

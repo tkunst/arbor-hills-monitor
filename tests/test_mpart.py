@@ -1104,10 +1104,10 @@ def test_probe_failure_exits_nonzero(monkeypatch):
 # --- shipped config + scope pins -----------------------------------------------------------------------
 
 
-def test_shipped_config_ships_disabled_scoped_and_screens_the_four_rule_57_values():
+def test_shipped_config_is_activated_scoped_and_screens_the_four_rule_57_values():
     from config_loader import load_config
     cfg = load_config()["mpart"]
-    assert cfg["enabled"] is False and cfg["recipients"] == ["arbor-hills@trishakunst.com"]
+    assert cfg["enabled"] is True and cfg["recipients"] == ["arbor-hills@trishakunst.com"]    # activated 2026-09-29
     thresholds, years = mw.load_thresholds(cfg)                       # also validates the keys
     assert mw.load_guards(cfg) == (3, 0.5, 2)                         # ...and the shrink-guard numbers
     assert thresholds == mw.DEFAULT_THRESHOLDS_NG_L and years == mw.DEFAULT_VERIFIED_YEAR
