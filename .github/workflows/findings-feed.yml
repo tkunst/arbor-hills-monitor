@@ -45,7 +45,7 @@ jobs:
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
           # Source-privacy: names to redact from public titles/summaries (a
-          # courtesy for a source who asked to be anonymous). Comma-separated
+          # courtesy the site extends; not requested by anyone). Comma-separated
           # surnames; findings_feed.redact_names() reads it. Unset -> no-op.
           REDACT_NAMES: ${{ secrets.REDACT_NAMES }}
         run: python scripts/gen_findings_feed.py
