@@ -503,7 +503,7 @@ external users but no sensitive data). Public repo.
   shrunken snapshot has been held twice; an empty FIRST response is loud, nothing baselined;
   recorded-skip liveness alert (weekly repeat); a lost alert (change or liveness) or an item
   exception makes the run red; the Sheet read raises (no silent re-baseline); empty recipients =
-  display-only. `--probe`. Gated on `mpart.enabled` (ships `false`). See ADR 060.
+  display-only. `--probe`. Gated on `mpart.enabled` (activated 2026-09-29). See ADR 060.
 - `govqa_client.py` — Stream U: fetch + parse for EGLE's PUBLIC FOIA archive on GovQA (ADR 059),
   following the handoff's §1C-bis method. KEYWORD LIST via lazily imported headless Playwright
   (`PlaywrightGrid`; NOT in requirements.txt — the workflow installs a pinned version only when

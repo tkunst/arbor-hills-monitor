@@ -1738,7 +1738,9 @@ alert_recipients:
 # Ships DISABLED (a brand-new external source): review the alert copy, then flip
 # `enabled`. Keyless — nothing to provision.
 mpart:
-  enabled: false
+  enabled: true                            # activated 2026-09-29 (Trisha-directed) — runner probe green
+                                            # (run 36519697233: 17 surface-water / 388 fish / 7 sites rows,
+                                            # all parsed). First run baselines silently. See ADR 060.
   # Johnson Drain / Johnson Creek / upper Rouge box: [lon_min, lat_min, lon_max, lat_max].
   bbox: [-83.66, 42.34, -83.40, 42.46]
   surface_water:
