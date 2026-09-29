@@ -23,6 +23,11 @@ on:
         description: "Fetch-path diagnostic only (no Sheet/Drive/email writes)"
         type: boolean
         default: false
+      mirror_uris:
+        description: "Optional: comma-separated RIDE file ids to mirror NOW (only these, uncapped)"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -54,6 +59,7 @@ jobs:
       - name: Watch RIDE's RRD document listing
         env:
           PROBE: ${{ inputs.probe }}
+          RIDE_DOCS_MIRROR_URIS: ${{ inputs.mirror_uris }}
           # PRIVATE Sheet only. GSHEET_ID (public) is intentionally NOT passed.
           GSHEET_ID_PRIVATE: ${{ secrets.GSHEET_ID_PRIVATE }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}

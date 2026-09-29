@@ -491,6 +491,7 @@ def _wire(monkeypatch, tmp_path, world=None, cfg=CFG):
     for k in [k for k in os.environ if re.fullmatch(r"GOAUTH_.*", k)]:
         monkeypatch.delenv(k)
     monkeypatch.delenv("GDRIVE_FOLDER_ID", raising=False)
+    monkeypatch.delenv("RIDE_DOCS_MIRROR_URIS", raising=False)
     monkeypatch.setattr(rdw, "load_config", lambda: copy.deepcopy(cfg))
     monkeypatch.setattr(rdw.dc, "sheets_service", lambda: fake)
     monkeypatch.setattr(rdw.ea, "send_email",
@@ -859,6 +860,23 @@ def test_mirror_refuses_the_public_pdf_archive_folder(monkeypatch, tmp_path):
     _mirror_env(monkeypatch, folder="PUBPDF", GDRIVE_FOLDER_ID="PUBPDF")
     _wire_mirror(monkeypatch, world)
     assert rdw.run([]) == 1 and world.downloads == []
+
+
+def test_requested_uris_are_mirrored_now_uncapped_and_nothing_else(monkeypatch, tmp_path):
+    cfg = copy.deepcopy(CFG)
+    cfg["ride_docs"].update(mirror=True, max_mirror_per_run=1)
+    world, fake, sent = _wire(monkeypatch, tmp_path, cfg=cfg)
+    _mirror_env(monkeypatch)
+    _wire_mirror(monkeypatch, world)
+    monkeypatch.setenv("RIDE_DOCS_MIRROR_URIS", "35715058, 34838960")
+    assert rdw.run([]) == 0
+    assert sorted(world.downloads) == ["34838960", "35715058"]       # both, despite the cap of 1
+
+
+def test_requested_uris_must_be_digits(monkeypatch, tmp_path):
+    world, fake, sent = _wire(monkeypatch, tmp_path)
+    monkeypatch.setenv("RIDE_DOCS_MIRROR_URIS", "1,$(id)")
+    assert rdw.run([]) == 1 and _rows(fake) == []
 
 
 def test_mirror_not_configured_is_a_quiet_skip(monkeypatch, tmp_path, capsys):
