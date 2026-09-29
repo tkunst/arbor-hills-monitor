@@ -173,7 +173,8 @@ the sites layer's EGLE staff contact, is never fetched.
 1. **The public-water-supply layer is not included.** It is already watched by the live
    Stream R; re-watching it would double-alert. WSSN 2046881 (above) is a candidate to add
    to `pfas_pws.wssns` — a one-line live-path edit left for Trisha, deliberately not made
-   here. WSSN 2037081 returns no rows.
+   here. WSSN 2037081 returns no rows. **Resolved 2026-09-29 (Trisha): both 2046881 and
+   2037081 were added to `pfas_pws.wssns`.**
 2. **`SiteLead` is not diffed.** The handoff said to diff the site lead; it is a named
    EGLE employee (and reassignment churn), so it is neither fetched nor displayed.
 3. **Surface-water key is composite, not `GlobalID`** (a service-assigned id, like

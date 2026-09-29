@@ -1643,6 +1643,8 @@ pfas_pws:
   # are identified — no code change needed.
   wssns:
     - 2001381    # SALEM ELEMENTARY SCHOOL, 7806 Salem Rd (Type 2 provisional WHPA; capture zone)
+    - 2046881    # the landfill's own Type II supply, 10690 Six Mile Rd (EGLE name "GFL ENV - COMPOST FACILITY"); 7 rows at add, last sampled 2025-07-09 — first run baselines them silently. Added 2026-09-29 (Trisha).
+    - 2037081    # the landfill's other listed supply; NO rows at add (2026-09-29) — an empty snapshot is valid, so its FIRST sampling round will alert. Added 2026-09-29 (Trisha).
   # Recipient override: Trisha only to start (Meeting Watch / MMD / RIDE / GFL-info
   # precedent for a brand-new stream). Delete/comment this block to send to the
   # full alert_recipients list once the alert copy has been seen in the wild.
