@@ -22,7 +22,7 @@ Then:
 
 A browser opens; sign in as Trisha and approve. The script writes the secret
 values to ~/.arbor-hills-oauth/<run timestamp>/ and prints the exact
-`gh secret set NAME < file` commands (values piped from the files, never shown).
+`gh secret set` loop command (values piped from the files, never shown).
 Delete that folder once the secrets are set. Finally, share the new
 mirror folder in Drive as "Anyone with the link -> Viewer" so anyone with the
 link can open Archive Links (these are already-public EGLE filings).
@@ -128,9 +128,10 @@ def main() -> int:
     print(f"  {folder_name}")
     print("=" * 72)
     print(f"\nThe four secret values were written (owner-only) to:\n  {out_dir}")
+    # One loop command: each file is named after its secret, so the names come
+    # from the folder listing rather than being printed here.
     print("\nSet the GitHub secrets from those files (values are not shown):\n")
-    for name in secret_names:
-        print(f"  gh secret set {name} < {os.path.join(out_dir, name)}")
+    print(f'  for f in "{out_dir}"/*; do gh secret set "$(basename "$f")" < "$f"; done')
     print(f"\nThen delete the folder:\n  rm -r {out_dir}")
     print("\nLAST STEP: in Google Drive, right-click the new "
           f"'{folder_name}' folder -> Share -> General access -> "
