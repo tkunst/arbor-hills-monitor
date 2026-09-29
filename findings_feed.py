@@ -277,8 +277,8 @@ def _esc(v) -> str:
 
 
 # --- Source-privacy redaction (added 2026-09-15) -------------------------------
-# An EGLE staffer asked to be kept anonymous on the public site (a courtesy for a
-# source who volunteered public-information media). The name(s) to redact come
+# As a courtesy (not at anyone's request), the site keeps the names of certain EGLE
+# staff off its public pages, e.g. a source who volunteered public-information media. The name(s) to redact come
 # from the REDACT_NAMES env var (comma-separated surnames) -- deliberately NOT
 # hardcoded here, so the name never lands in this public repo's source. In CI the
 # value is the REDACT_NAMES secret (wired in findings-feed.yml); locally, export
