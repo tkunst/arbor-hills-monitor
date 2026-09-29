@@ -1,5 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
+<!--
+  Arbor Hills Monitor — Two-Cluster Thermal Map
+  Copyright (c) 2026 Trisha Kunst
+
+  Code:          SPDX-License-Identifier: MIT
+  Data & charts: SPDX-License-Identifier: CC-BY-4.0
+
+  You may embed, reproduce, and adapt this visualization royalty-free.
+  Attribution: "Arbor Hills Monitor — arborhillsmonitor.org"
+  Full terms: https://opensource.org/license/mit  and
+              https://creativecommons.org/licenses/by/4.0/
+-->
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -102,6 +114,10 @@
     aside.open{transform:translateX(0)}
     #panelToggle{display:inline-block}
   }
+  footer.license-foot{flex:0 0 auto;padding:7px 20px;border-top:1px solid var(--line);
+    background:var(--panel);font-size:12px;color:var(--muted);text-align:center}
+  footer.license-foot a{color:var(--accent);text-decoration:none}
+  footer.license-foot a:hover{text-decoration:underline}
 </style>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
@@ -177,6 +193,8 @@
     <div class="note" id="foot"></div>
   </aside>
 </div>
+
+<footer class="license-foot">Source: <a href="https://arborhillsmonitor.org/" target="_blank" rel="noopener">Arbor Hills Monitor</a> &middot; <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY-4.0</a></footer>
 
 <script src="../thermal-map/leaflet.js"></script>
 <script src="../thermal-map/spatial-data.js"></script>
