@@ -2,17 +2,22 @@
 ride_client.py — fetch + canonicalize for the EGLE RIDE / Part 201 + UST status
 watch (Stream J). See docs/decisions/019-ride-part201-watch.md.
 
-RIDE (EGLE's Remediation Information Data Exchange) itself is an auth-walled
-Angular SPA with no anonymous document API (confirmed by worker #69's recon).
-But EGLE separately publishes the underlying per-site STATUS as a KEYLESS
+RIDE (EGLE's Remediation Information Data Exchange) is an Angular SPA; this
+module deliberately does not use the app. (Worker #69's 7/2026 recon reported it
+as behind a login with no anonymous document API; on 2026-09-28 its public
+Inventory of Facilities page was found to list FILES anonymously — see the ADR
+019 addendum. Whether the app exposes STATUS anonymously was not investigated.)
+EGLE separately publishes the underlying per-site STATUS as a KEYLESS
 ArcGIS REST MapServer (gisagoegle.state.mi.us — the same host/idiom as Stream
 I's MMD watch, just a different service and, here, two layers instead of one):
 
   - Layer 0 "RRD Sites" (Part 201 contaminated-site remediation), key field
     SiteID — the 5 Arbor Hills-area sites (Salem Landfill, Arbor Hills - East,
     7667 Chubb Rd, 7941 Salem Rd, MITC Corridor).
-  - Layer 1 "USTs" (Part 211 underground storage tanks), key field
-    FacilityID — the GFL Environmental USA UST at 7811 Chubb Rd.
+  - Layer 1 "USTs" (underground storage tanks; each record carries a
+    RegulatoryProgram of 211 or 213), key field FacilityID — the two watched
+    facilities: 00040223 (registry name "GFL Environmental USA, LLC") and
+    00038889 (registry name "Arbor Hills Landfill Inc"; ADR 019 addendum).
 
 This is a STATUS watch, not a measurement poller: the service returns per-site
 strings (RiskCondition, Contaminants) and a per-facility open-release count,
@@ -51,13 +56,16 @@ _BASE = "https://gisagoegle.state.mi.us/arcgis/rest/services/EGLE/RRDOpenData/Ma
 
 # Layer 0 = Part 201 remediation sites (key field SiteID).
 DEFAULT_LAYER0_URL = f"{_BASE}/0/query"
-# Layer 1 = Part 211 underground storage tanks (key field FacilityID).
+# Layer 1 = underground storage tanks, RegulatoryProgram 211 or 213 per record
+# (key field FacilityID).
 DEFAULT_LAYER1_URL = f"{_BASE}/1/query"
 
 # The 5 Arbor Hills-area Part 201 sites (worker #69's recon).
 DEFAULT_SITE_IDS = ("81000033", "81000004", "81000835", "81000840", "82008712")
-# The GFL Part 211 UST at 7811 Chubb Rd.
-DEFAULT_FACILITY_IDS = ("00040223",)
+# The two watched UST facilities, identified by the registry's own FacilityName:
+# 00040223 "GFL Environmental USA, LLC" and 00038889 "Arbor Hills Landfill Inc"
+# (added 2026-09-28; ADR 019 addendum).
+DEFAULT_FACILITY_IDS = ("00040223", "00038889")
 
 # The canonical Layer-0 record: every watched field EXCEPT OID/geometry (never
 # fetched at all — see module docstring) and ProjectManaager (fetched only if
@@ -163,7 +171,7 @@ def fetch_site_records(site_ids=DEFAULT_SITE_IDS, url: str = DEFAULT_LAYER0_URL,
 
 def fetch_ust_records(facility_ids=DEFAULT_FACILITY_IDS, url: str = DEFAULT_LAYER1_URL,
                       timeout: int = 60) -> list[dict]:
-    """ONE query for every watched Part 211 UST's Layer-1 record; returns the
+    """ONE query for every watched UST facility's Layer-1 record; returns the
     raw attribute dicts (canonicalization is ust_record_view's job)."""
     return _fetch(url, _in_clause("FacilityID", facility_ids), LAYER1_FIELDS, timeout)
 
@@ -203,5 +211,5 @@ def site_record_view(attrs: dict) -> dict:
 
 
 def ust_record_view(attrs: dict) -> dict:
-    """Canonical view of one Layer-1 (Part 211 UST) record."""
+    """Canonical view of one Layer-1 (UST facility) record."""
     return _record_view(attrs, LAYER1_FIELDS)

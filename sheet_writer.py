@@ -233,6 +233,22 @@ TAB_PFAS_PWS = "Public Water Supply PFAS Watch"
 # until mpart_watcher runs; keyed by Item (`mpart:sw` / `mpart:fish` / `mpart:sites`)
 # in col B. Public-data only (lab results + a state agency's site list); no PII.
 TAB_MPART = "MPART Data Watch"
+# EGLE GovQA public FOIA archive watch (Stream U, ADR 059). PRIVATE Sheet only
+# (GSHEET_ID_PRIVATE): request text and attachment names from OTHER people's FOIA
+# requests can name residents and street addresses. Append-only events keyed by
+# request number (E######-######), `file:<E-number>:<name>#<n>`, `list:<E-number>`
+# (release-listing pending/done marker), `term:<keyword>` (a keyword's first-sweep
+# baseline marker) and `csv:<Drive file id>:<content hash>`; the LAST row for a key
+# is its state. See govqa_watcher.py.
+TAB_GOVQA = "GovQA Archive Watch"
+# EGLE RIDE anonymous DOCUMENT listing watch (Stream T, ADR 061). Lives on the
+# PRIVATE Sheet (GSHEET_ID_PRIVATE — shared only with the service account and
+# Trisha), NEVER the public case-file Sheet: RIDE file titles can carry
+# residents' names and street addresses. Append-only, one row per observed
+# EVENT for a file (key `rrd:<uri>`) or a location baseline marker (key
+# `loc:<locationId>`); the LAST row for a key is its current state. See
+# ride_docs_watcher.py.
+TAB_RRD_DOCS = "RRD Documents"
 # nSITE Submissions watch (Stream K, ADR 020) — same on-demand policy: no tab
 # appears until nsite_submissions_watcher actually runs. Append-only, keyed by
 # Item (e.g. "subm:N2688") in col B for dedup/state — the PFAS/Meeting/ROP/MMD/
@@ -464,6 +480,27 @@ PFAS_PWS_WATCH_HEADERS = [
 MPART_WATCH_HEADERS = [
     "Date", "Item", "Label", "Change", "Snapshot Hash", "Note", "Checked At",
     "Snapshot JSON",
+]
+
+# EGLE GovQA public FOIA archive watch (Stream U, ADR 059) — PRIVATE Sheet only.
+# Event: baseline (silent first sighting) / new / nomatch / partial / status / ingested /
+# list-pending / file-list-done / list-failed / list-skipped / file-listed / file-staged /
+# file-held / file-skipped / file-failed.
+GOVQA_HEADERS = [
+    "Date", "Key", "Event", "Created", "Closed", "Status", "Matched Terms", "Rid",
+    "Request Excerpt", "File Name", "Size (bytes)", "SHA-256", "MD5", "Staging Link",
+    "Note", "Checked At",
+]
+
+# RIDE anonymous document listing (Stream T, ADR 061) — PRIVATE Sheet only.
+# Event is baseline (silent first sighting) / new / changed / moved / removed /
+# mirrored / mirror-skipped / mirror-failed / fetch-skipped / fetch-ok. Record Hash covers the canonical
+# file view (ride_docs_client.record_hash); Mirror Link / SHA-256 / MD5 are set
+# only on a "mirrored" row.
+RRD_DOCS_HEADERS = [
+    "Date", "Key", "Event", "Location ID", "Program", "Title", "Index Type", "Ext",
+    "Size (bytes)", "Date of Document", "Added to RIDE", "Folder No.", "Doc No.",
+    "Record Hash", "Mirror Link", "SHA-256", "MD5", "Note", "Checked At",
 ]
 
 # nSITE Submissions watch (Stream K, ADR 020). Same row shape and rationale as
@@ -1940,6 +1977,90 @@ def append_mpart_watch_row(
     append_rows(service, sheet_id, TAB_MPART, [[
         date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
     ]])
+
+
+# ---------------------------------------------------------------------------
+# EGLE GovQA public FOIA archive watch (Stream U, ADR 059) — PRIVATE Sheet. The
+# helpers take the sheet id as an argument like every other tab helper; the
+# WATCHER guarantees it passes GSHEET_ID_PRIVATE and never GSHEET_ID.
+# ---------------------------------------------------------------------------
+
+
+def ensure_govqa_tabs(service, sheet_id: str) -> None:
+    """Create the GovQA Archive Watch tab if missing and reconcile its header row on
+    every run (same self-healing policy as ensure_ride_tabs)."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_GOVQA not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_GOVQA}}}]},
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    _set_header(service, sheet_id, TAB_GOVQA, GOVQA_HEADERS)
+
+
+def read_govqa_rows(service, sheet_id: str) -> list[list]:
+    """Every data row of the GovQA Archive Watch tab, in append order. Like
+    read_rrd_docs_rows this does NOT swallow read errors: a transient failure
+    returning [] would read as 'nothing known' and every request would look new
+    (an alert storm and re-downloads). ensure_govqa_tabs() runs first, so any
+    exception here is a real read failure and must propagate."""
+    resp = (
+        service.spreadsheets().values()
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_GOVQA}'!A2:P")
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    )
+    return [r for r in resp.get("values", []) if r]
+
+
+def append_govqa_rows(service, sheet_id: str, rows: list[list]) -> None:
+    """Append GovQA Archive Watch rows (durable record first, alert email second)."""
+    append_rows(service, sheet_id, TAB_GOVQA, rows)
+
+
+# ---------------------------------------------------------------------------
+# RIDE anonymous document listing (Stream T, ADR 061) — PRIVATE Sheet. These
+# helpers take the sheet id as an argument like every other tab helper; the
+# WATCHER is what guarantees it passes GSHEET_ID_PRIVATE and never GSHEET_ID.
+# ---------------------------------------------------------------------------
+
+
+def ensure_rrd_docs_tabs(service, sheet_id: str) -> None:
+    """Create the RRD Documents tab if missing and reconcile its header row on
+    every run (same self-healing policy as ensure_ride_tabs). Called only from
+    ride_docs_watcher.py, so the tab doesn't appear until the watch runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_RRD_DOCS not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_RRD_DOCS}}}]},
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    _set_header(service, sheet_id, TAB_RRD_DOCS, RRD_DOCS_HEADERS)
+
+
+def read_rrd_docs_rows(service, sheet_id: str) -> list[list]:
+    """Every data row of the RRD Documents tab, in append order (the watcher
+    folds them into per-key state: the last row for a key wins). ONE tab read.
+
+    Unlike the other tabs' helpers this does NOT swallow read errors via
+    _tab_rows: a transient Sheets error returning [] would read as "never
+    baselined" and the watcher would silently absorb every genuinely-new file
+    into a fresh baseline (a missed alert). ensure_rrd_docs_tabs() runs first
+    and guarantees the tab exists, so any exception here is a real read failure
+    and must propagate (the run fails loudly; the next run re-reads)."""
+    resp = (
+        service.spreadsheets().values()
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_RRD_DOCS}'!A2:S")
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    )
+    return [r for r in resp.get("values", []) if r]
+
+
+def append_rrd_docs_rows(service, sheet_id: str, rows: list[list]) -> None:
+    """Append RRD Documents rows (durable record first, alert email second —
+    the same crash-safe ordering as append_ride_watch_row)."""
+    append_rows(service, sheet_id, TAB_RRD_DOCS, rows)
 
 
 # ---------------------------------------------------------------------------

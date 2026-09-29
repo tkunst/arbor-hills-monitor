@@ -194,16 +194,19 @@ external users but no sensitive data). Public repo.
   at all (465941, the expansion-parcel trip-wire; an empty record set is a
   valid baseline). Gated on `mmd.enabled`. See ADR 018.
 - `ride_client.py` — Stream J: EGLE RIDE / Part 201 + UST status (keyless public
-  ArcGIS RRDOpenData, two layers — RIDE's own web app is auth-walled with no
-  anonymous API). One `SiteID IN (...)` / `FacilityID IN (...)` query per layer;
+  ArcGIS RRDOpenData, two layers — status only; RIDE's app itself is not used
+  — its public inventory page was found on 2026-09-28 to list FILES anonymously,
+  see the ADR 019 addendum). One `SiteID IN (...)` / `FacilityID IN (...)` query per layer;
   explicit `outFields` (never `*`) + `returnGeometry=false` keep OID/geometry
   out of the fetch entirely (`ProjectManaager` excluded too — admin churn, not
   signal). Fetch-vs-structural error split mirrors mmd_client. Structured-API
   source, never goes through `egle_doc_parser`. See ADR 019.
 - `ride_watcher.py` — Stream J: daily snapshot-diff of each watched Part 201
-  site's / Part 211 UST's record vs. the `RIDE Watch` tab — a `RiskCondition`
+  site's / UST facility's record vs. the `RIDE Watch` tab — a `RiskCondition`
   flip, a `Contaminants` change, or a new `Open_Release` alerts (R5, water
-  quality). Gated on `ride.enabled` (new source; ships `false`). See ADR 019.
+  quality). Gated on `ride.enabled` (built disabled; live `true` since
+  2026-08-07). Watches Layer-1 facilities 00040223 (GFL) and 00038889 (Arbor
+  Hills Landfill Inc, added 2026-09-28). See ADR 019.
 - `nsite_submissions_watcher.py` — Stream K: snapshot-diff of every site in
   the `nsite_sites` registry that has a `nsite_submissions.tiers` entry (a
   SEPARATE, wider 19-entry set than the Documents `facilities:` list — ADR
@@ -501,6 +504,68 @@ external users but no sensitive data). Public repo.
   recorded-skip liveness alert (weekly repeat); a lost alert (change or liveness) or an item
   exception makes the run red; the Sheet read raises (no silent re-baseline); empty recipients =
   display-only. `--probe`. Gated on `mpart.enabled` (ships `false`). See ADR 060.
+- `govqa_client.py` — Stream U: fetch + parse for EGLE's PUBLIC FOIA archive on GovQA (ADR 059),
+  following the handoff's §1C-bis method. KEYWORD LIST via lazily imported headless Playwright
+  (`PlaywrightGrid`; NOT in requirements.txt — the workflow installs a pinned version only when
+  enabled/probing; any launch error becomes a structural error): one term per search, newest first,
+  paged with `ASPx.GVPagerOnClick`; `sweep_term` stops at the first page whose requests are ALL
+  already known (mixed pages keep reading) and flags `overflow`; `with_backoff` = fresh context +
+  30 s/2 min retries, then a structural error and move on. A zero-row grid is believed only with
+  its "No data to display" marker (`parse_grid_state`). ONE REQUEST BY NUMBER via a plain
+  `requests` cookie session (`ArchiveSession`: lookup -> details (opens the session itself if
+  needed) -> streamed download that re-POSTs the form and follows the 302 by hand, https-only to
+  EXACTLY the archive host and the state's Azure storage account; size cap = `GovqaTooLargeError`).
+  Cells are parsed by aria-label. `scrub()` strips URLs from every message that can reach a log.
+  `parse_gridview_csv` for a human-exported CSV. Never writes anywhere.
+- `govqa_watcher.py` — Stream U: daily, in GUARDED phases with the report sent from a `finally`
+  (an exception cannot lose an alert; a hard kill mid-staging could): keyword sweep (a keyword's first sweep reads all pages to
+  `max_pages_per_term`, baselines silently, `term:` marker last; a page-cap hit writes a `partial`
+  marker and asks for a CSV once; `nomatch` rows are upgradeable), CSV drop (AFTER the sweep; keyed
+  by Drive id + content hash), re-check of watched/open requests by number (unknown status = open;
+  truncation, mass-misses, a watch_requests entry the archive never shows, and a keyword that goes
+  dark are reported), file listing for EVERY new/status event (`file:<E>:<name>#<n>`; a
+  `list-pending` marker is written in the SAME append as the new/status row and a `file-list-done`
+  marker — carrying the rid — after the detail page was read, so a failed/killed listing is retried
+  next run even though the request is terminal; 5 failed attempts give up as `list-skipped`; the
+  detail page's Reference No must match and its attachment-link count must equal the names read), and optional staging under CONTENT-ADDRESSED names `<E>__<sha16>[.<known ext>]`
+  (attachment names never reach Drive queries/logs; in-run retry on a FRESH session; 5 strikes then
+  reported). A grid with data rows none of which parse, or >10 rows with no pager, is a fetch error
+  (never "no requests"); a first sweep of a full page with no pager text is marked `partial`. Circuit breaker + wall-clock budget.
+  **HARD RULE: private only** — rows to `GSHEET_ID_PRIVATE` (fails closed if unset, equal to
+  `GSHEET_ID`, or — the CI-effective check — the spreadsheet already holds public case-file tabs);
+  staging folder != any other `GOAUTH_*_FOLDER_ID` / `GDRIVE_FOLDER_ID`; nothing feeds `findings_feed`; EMPTY
+  `recipients` = display-only; a report that can't be sent makes the run red. stdout is public: no
+  print interpolates request text or an attachment name (AST-pinned), googleapiclient's retry logger
+  is silenced, `main()` prints class + scrubbed message only. `--probe`. Gated on `govqa.enabled`
+  (ships `false`). See ADR 059.
+- `ride_docs_client.py` — Stream T: fetch + canonicalize for RIDE's ANONYMOUS
+  document listing (ADR 061). RIDE's public Inventory of Facilities page gives
+  every visitor a "Public User" session (no credentials, no login); its own front
+  end then calls three JSON endpoints (program -> locationId; the location's file
+  list, keyed by unique `uri`; file bytes by `uri`) that plain `requests` replays
+  after a cookie warm-up (a bare POST is 405). Stable paging (sort on `uri`),
+  streaming size-capped downloads with SHA-256/MD5, the 1900-01-31 placeholder
+  date -> blank, a TITLE-FREE mirror filename (`<uri>_<hash8>.<ext>`: the name
+  lands in Drive queries, which googleapiclient prints), and `probe()`. Never touches a
+  credential, never routes through `egle_doc_parser`.
+- `ride_docs_watcher.py` — Stream T: daily watch on the DOCUMENTS RRD lists for the
+  `ride:` Part 201 sites (95 files across 5 locations at build). Events append to
+  the `RRD Documents` tab (last row per key = state): silent baseline per location
+  (file rows + `loc:` marker in one append), then new / changed / removed alerts, a
+  bounded PRIVATE Drive mirror, and a liveness alert after N consecutive skipped
+  runs; an EMPTY listing where files were listed, a baselined program that stops
+  resolving, or one that resolves to a different locationId is a skipped run (never
+  a diff; the relocation is red + alerted, never silently re-baselined).
+  **HARD RULE: private only** — rows go to `GSHEET_ID_PRIVATE` (fails closed if
+  unset, or — the CI-effective check — the spreadsheet holds public case-file tabs;
+  the `GSHEET_ID` equality check is local-only, the workflow never receives it),
+  files to a private folder that must not equal any other `GOAUTH_*_FOLDER_ID`,
+  nothing feeds `findings_feed`; EMPTY `recipients` = display-only, never the
+  coalition list. stdout is public: printed errors are class + HTTP status only,
+  `main()` silences googleapiclient's retry logger. Alerts show BOTH document date
+  and added-to-RIDE date (backlog digitization). `--probe` = pre-activation runner
+  check (exit 1 if any program doesn't resolve). Gated on
+  `ride_docs.enabled` (shipped `false`; ACTIVATED 2026-09-28). See ADR 061.
 
 ## Forbidden patterns (do not do these)
 

@@ -98,6 +98,25 @@ large_doc_max_keyword_pages: 10
 woi:
   auto_route: true
 
+# --- Named single-well temperature trip-wires (ADR 058, well_watch.py) ---
+# Fires a dedicated email naming the well when a newly processed WOI-format
+# filing shows it at/above threshold_f. `pattern` matches the well NUMBER across
+# redrills/prefix/zero-pad drift; `since` ignores re-printed history rows.
+well_watch:
+  recipients:
+    - arbor-hills@trishakunst.com        # Trisha only
+  wells:
+    - label: "AHW263R5 (Cell 1D, north; SSO-tagged)"
+      pattern: '^AHW{1,2}0*263R\d*$'
+      threshold_f: 145
+      since: "2026-05-01"
+      note: >-
+        145F is the federal MACT Subpart AAAA wellhead limit. AHW263R5 got a
+        170F HOV on 7/23/2025 (letter states no end date) but is NOT in the
+        4/7/2026 16-well HOV renewal (through 5/1/2028), so whether a waiver
+        still covers it is unconfirmed. Through 6/30/2026 it held at
+        142.1-144.2F.
+
 # --- Backfill ---
 backfill_batch_size: 50          # docs per nightly run
 
@@ -674,15 +693,17 @@ mmd:
 # Daily snapshot-diff on EGLE's KEYLESS RRDOpenData ArcGIS registry
 # (gisagoegle.state.mi.us .../EGLE/RRDOpenData/MapServer) — Layer 0 (Part 201
 # contaminated-site remediation status) for the 5 Arbor Hills-area sites, and
-# Layer 1 (Part 211 underground storage tanks) for the GFL UST. RIDE's own web
-# app is auth-walled with no anonymous document API; this is the underlying
-# public status data. A RiskCondition flip, a Contaminants change, or a new
+# Layer 1 (underground storage tanks) for the watched UST facilities
+# (registry names: GFL Environmental USA, LLC 00040223; Arbor Hills Landfill Inc 00038889). This is the underlying
+# public STATUS data (RIDE's document listing is a separate source — see the
+# ADR 019 addendum). A RiskCondition flip, a Contaminants change, or a new
 # Open_Release is early, citable R5 (water quality) signal. Statuses change
 # rarely — near-silent in steady state. The FIRST sighting of each watched
 # item baselines silently. See ride_client.py / ride_watcher.py.
 #
 # Built 2026-07-23/24 (unattended overnight) and shipped disabled per the
-# new-source gate; the live feasibility re-check confirmed all 6 records return.
+# new-source gate; the live feasibility re-check confirmed all 6 records return
+# (7 since 00038889 was added 2026-09-28).
 # ACTIVATED 2026-08-07 (Trisha-directed) — keyless, nothing to provision. The
 # first run baselines every watched item silently; alerts go to `recipients`
 # below (Trisha only to start).
@@ -694,12 +715,46 @@ ride:
     - "81000835"   # 7667 Chubb Rd
     - "81000840"   # 7941 Salem Rd
     - "82008712"   # MITC Corridor
-  facility_ids:                      # Layer 1 (Part 211 UST) — key field FacilityID
+  facility_ids:                      # Layer 1 (UST; RegulatoryProgram 211 or 213 per record) — key field FacilityID
     - "00040223"   # GFL Environmental USA, LLC, 7811 Chubb Rd
+    - "00038889"   # Registry FacilityName "Arbor Hills Landfill Inc" (RegulatoryProgram 213, ReleaseStatus
+                   # Closed, RiskCondition "No Longer A Facility", 0 open releases as of 2026-09-28). Added
+                   # 2026-09-28 so a change to RiskCondition / Open_Release / LastUpdated is caught (NOT a
+                   # ReleaseStatus flip or the tank/release counters -- those aren't fetched); see ADR 019.
   # Recipient override: Trisha only to start (Meeting Watch/MMD precedent for
   # a brand-new stream). Delete/comment this block to send to the full
   # alert_recipients list once the alert copy has been seen in the wild.
   recipients:
+    - arbor-hills@trishakunst.com
+
+# --- EGLE RIDE anonymous DOCUMENT listing watch (Stream T, ADR 061) ---
+# RRD (Remediation and Redevelopment Division) is the one EGLE division the
+# monitor watched only for STATUS (`ride:` above), never for DOCUMENTS. RIDE's
+# public Inventory of Facilities page gives every anonymous visitor a "Public
+# User" session and lists each Part 201 location's files (no credentials, no
+# login). Daily: list every watched location's files; the FIRST sighting of a
+# location baselines silently; a new file / a changed record / a vanished file
+# alerts; not-yet-mirrored files are copied to a PRIVATE Drive folder.
+# HARD RULES (pinned by tests): rows go ONLY to the PRIVATE Sheet
+# (GSHEET_ID_PRIVATE) — RIDE titles can carry residents' names/addresses;
+# nothing here reaches the public Sheet, the findings feed or the site; an
+# EMPTY `recipients` = display-only (NEVER the coalition list).
+# Ships DISABLED (brand-new external source). To activate: (1) share the private
+# Sheet with the service account as EDITOR, (2) run the workflow with probe=true
+# to confirm the Azure runner isn't bot-challenged, (3) optionally create a
+# PRIVATE Drive folder and set the GOAUTH_RRD_FOLDER_ID secret (mirroring is
+# skipped without it), then flip `enabled`.
+ride_docs:
+  enabled: true                # activated 2026-09-28 (Trisha: "Public User" is not logging in; runner probe OK, 5 locations / 95 files)
+  # Part 201 program numbers to watch. Omit to reuse `ride.site_ids` (the same 5
+  # Arbor Hills-area sites). UST facility ids (`ride.facility_ids`) are not RIDE
+  # inventory programs; 00038889's files are listed under 81000004's location.
+  # program_nums: ["81000033", "81000004", "81000835", "81000840", "82008712"]
+  mirror: true                 # copy files to the private Drive folder (needs GOAUTH_RRD_FOLDER_ID)
+  max_mirror_per_run: 8        # bounds run time; the ~95-file backlog drains over ~12 daily runs
+  max_file_mb: 250             # larger files are recorded as mirror-skipped (some reach 216 MB)
+  stale_alert_after_skips: 3   # ONE liveness alert after this many consecutive skipped (unreadable) runs
+  recipients:                  # Trisha only; EMPTY = display-only (rows, no email)
     - arbor-hills@trishakunst.com
 
 # --- nSITE site registry (ADR 022) ---
@@ -1592,6 +1647,63 @@ pfas_pws:
   # precedent for a brand-new stream). Delete/comment this block to send to the
   # full alert_recipients list once the alert copy has been seen in the wild.
   recipients:
+    - arbor-hills@trishakunst.com
+
+# --- EGLE GovQA public FOIA archive watch (Stream U, ADR 059) ---
+# EGLE answers other people's FOIA requests — the operator's law firm, neighbors,
+# peer-landfill watchers — and posts the requests and what it released on a PUBLIC
+# archive (michiganegle.govqa.us). E614007 (8/2026) surfaced ~45 RRD files we had
+# never seen that way. Daily: sweep each keyword newest-first (headless browser,
+# one term per search, stopping at the first page whose requests are ALL known), re-check open/watched
+# requests by number (plain session, no browser), and alert on a new matching
+# request or a status change (e.g. "Cost estimate sent" -> "Closed").
+# HARD RULES (pinned by tests): rows go ONLY to the PRIVATE Sheet
+# (GSHEET_ID_PRIVATE) — request text and attachment names can name residents and
+# street addresses; attachments (when enabled) go ONLY to a private staging Drive
+# folder; nothing is ever published; an EMPTY `recipients` = display-only.
+# Ships DISABLED. To activate: (1) share the private Sheet with the service account
+# as EDITOR; (2) run the workflow with probe=true (checks the browser + the runner);
+# (3) optional: a private staging folder (GOAUTH_GOVQA_STAGING_FOLDER_ID) + set
+# download_attachments: true; (4) flip `enabled`. The first sweep of each keyword
+# baselines silently. A backfill too large to scrape makes the run STOP AND ASK for
+# a gridView CSV export (drop it in the folder named by GOAUTH_GOVQA_CSV_FOLDER_ID,
+# shared with the service account) rather than loop on timeouts.
+govqa:
+  enabled: false
+  # ONE term per site search. Observed 2026-09-28: the site ORs the words of an UNQUOTED
+  # multi-word term (Great Lakes Recycling -> 213 items, Arbor Hills -> 97, mostly "Ann
+  # Arbor …"), but honours a DOUBLE-QUOTED phrase (-> 1 and 13 items) and also matches
+  # text its grid doesn't show. So multi-word terms are quoted. `require` (every listed
+  # phrase must appear in the request text) is an OPTIONAL extra filter and is NOT used
+  # by default: a `require: ["Salem"]` on "Six Mile" would have dropped the landfill's own
+  # requests, which write "10690 6 Mile Road, Northville".
+  keywords:
+    - {term: '"Arbor Hills"'}
+    - {term: "Holloway"}
+    - {term: "10690"}
+    - {term: '"Six Mile"'}
+    - {term: "Napier"}
+    - {term: '"Great Lakes Recycling"'}
+    - {term: "10833"}            # 10833 Five Mile Rd (the number is the distinctive part; a quoted "10833 Five Mile" returns 1,637 items)
+    - {term: "N2688"}
+    - {term: "475946"}
+    - {term: "81000004"}
+  # FULL E-numbers to track by number regardless of keywords, in the archive's own form
+  # E######-MMDDYY (e.g. a peer site's open request "E614606-<MMDDYY>", Liddle Sheets / Pine
+  # Tree — take the date suffix from the archive). A malformed entry is reported, never a
+  # crash. First sighting baselines silently; an explicit watch also overrides a no-match.
+  watch_requests: []
+  max_pages_per_term: 12       # a first sweep needing more pages than this => records what it read, then "export a CSV" (once)
+  max_open_rechecks: 25        # recorded open requests re-checked per run, newest first
+  max_attempts: 3              # per term / request: retry with a fresh session (30 s, 2 min), then report and move on
+  download_attachments: false  # stage released files to the PRIVATE folder (needs the staging secret)
+  time_budget_minutes: 40      # wall-clock cap per run; a phase stops and reports when it is spent (the job timeout is 60)
+  max_downloads_per_run: 10
+  max_file_mb: 200
+  staging_folder_env: GOAUTH_GOVQA_STAGING_FOLDER_ID
+  csv_folder_env: GOAUTH_GOVQA_CSV_FOLDER_ID
+  held_folder_envs: []         # env names of Drive folders (read by the service account) whose files are "already held" by MD5; e.g. [GOAUTH_ARCHIVE_FOLDER_ID]
+  recipients:                  # Trisha only; EMPTY = display-only (rows, no email)
     - arbor-hills@trishakunst.com
 
 # --- Alerts ---

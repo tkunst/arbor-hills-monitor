@@ -40,6 +40,7 @@ import nsite_client as nc
 import email_alerts as ea
 import retry_policy as rp
 import woi_router
+import well_watch
 import archiver as av
 from egle_doc_parser import parse_document
 from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
@@ -245,6 +246,12 @@ def run() -> int:
                     sw.write_woi_summary(sheets, sheet_id, routed["summary"], d, link)
                 except Exception as we:  # noqa: BLE001 — summary tab is best-effort
                     print(f"  WOI summary-tab write skipped (doc still recorded): {we}")
+                # Named single-well trip-wires (ADR 058). Best-effort, like the
+                # summary tab: never blocks recording the doc.
+                try:
+                    well_watch.check_and_alert(routed.get("readings") or [], d, link, cfg)
+                except Exception as ww:  # noqa: BLE001 — alert is best-effort
+                    print(f"  well_watch skipped (doc still recorded): {ww}")
 
             _route_urgent_or_digest(parsed, d, link, cfg, state, sheets, sheet_id)
 

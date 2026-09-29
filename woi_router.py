@@ -199,4 +199,7 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict) -> Opti
         "validity_pct": validity,
         "n_measurements": len(measurements),
         "n_co": len(co_measurements),
+        # Every valid reading (as-found AND ADJ) for well_watch (ADR 058), which
+        # needs single-well rows below the watch band trim and the ADJ rows.
+        "readings": valid,
     }
