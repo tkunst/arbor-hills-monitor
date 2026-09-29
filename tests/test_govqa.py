@@ -1956,13 +1956,13 @@ def test_no_path_reaches_the_public_feed_the_public_sheet_or_another_archiver():
     assert "sheets_service" not in client_src and "drive_service" not in client_src and "send_email" not in client_src
 
 
-def test_the_workflow_never_receives_the_public_sheet_id_ships_disabled_and_pins_playwright():
+def test_the_workflow_never_receives_the_public_sheet_id_is_notify_only_and_pins_playwright():
     wf = (ROOT / ".github" / "workflows" / "govqa-watch.yml").read_text()
     assert "secrets.GSHEET_ID_PRIVATE" in wf and not re.search(r"secrets\.GSHEET_ID\s*\}\}", wf)
     assert re.search(r"pip install playwright==\d+\.\d+\.\d+", wf)
     from config_loader import load_config
     cfg = load_config()["govqa"]
-    assert cfg["enabled"] is False and cfg["download_attachments"] is False
+    assert cfg["enabled"] is True and cfg["download_attachments"] is False    # activated 2026-09-28, notify-only
     assert cfg["recipients"] == ["arbor-hills@trishakunst.com"]
     assert (ROOT / "requirements.txt").read_text().lower().count("playwright") == 0     # optional, installed by the workflow only
     assert "secrets.GDRIVE_FOLDER_ID" in wf                                            # passed for the staging guard only

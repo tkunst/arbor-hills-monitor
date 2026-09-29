@@ -537,7 +537,7 @@ external users but no sensitive data). Public repo.
   `recipients` = display-only; a report that can't be sent makes the run red. stdout is public: no
   print interpolates request text or an attachment name (AST-pinned), googleapiclient's retry logger
   is silenced, `main()` prints class + scrubbed message only. `--probe`. Gated on `govqa.enabled`
-  (ships `false`). See ADR 059.
+  (shipped `false`; ACTIVATED 2026-09-28, notify-only). See ADR 059.
 - `ride_docs_client.py` — Stream T: fetch + canonicalize for RIDE's ANONYMOUS
   document listing (ADR 061). RIDE's public Inventory of Facilities page gives
   every visitor a "Public User" session (no credentials, no login); its own front
