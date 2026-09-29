@@ -1669,7 +1669,7 @@ pfas_pws:
 # a gridView CSV export (drop it in the folder named by GOAUTH_GOVQA_CSV_FOLDER_ID,
 # shared with the service account) rather than loop on timeouts.
 govqa:
-  enabled: false
+  enabled: true                            # activated 2026-09-28 (Trisha) — runner probe green (run 36518570536: by-number lookup + keyword "Arbor Hills" -> 13 items); notify-only, download_attachments stays false. See ADR 059.
   # ONE term per site search. Observed 2026-09-28: the site ORs the words of an UNQUOTED
   # multi-word term (Great Lakes Recycling -> 213 items, Arbor Hills -> 97, mostly "Ann
   # Arbor …"), but honours a DOUBLE-QUOTED phrase (-> 1 and 13 items) and also matches

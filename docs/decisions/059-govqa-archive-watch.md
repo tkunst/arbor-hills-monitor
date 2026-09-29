@@ -1,7 +1,7 @@
 # ADR 059 — GovQA public FOIA archive watch (Stream U)
 
-*Status: built — 2026-09-28 (`govqa.enabled: false` pending Trisha's review; see
-Activation).*
+*Status: built — 2026-09-28; ACTIVATED 2026-09-28 (Trisha) after a green runner probe
+(run 36518570536), notify-only (`download_attachments: false`). See Activation.*
 Builds on: ADR 061's pattern (private-Sheet-only, display-only recipients; the RRD documents
 watch, drafted as "ADR 058" and renumbered on merge); ADR 015/017/019 (snapshot-diff watches); ADR 041
 (Stream S: probe mode).
