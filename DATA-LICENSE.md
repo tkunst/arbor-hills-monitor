@@ -7,8 +7,8 @@ The **data compilations and visual presentations** produced by this project are
 licensed under the **Creative Commons Attribution 4.0 International License
 (CC BY 4.0)**.
 
-- License deed: https://creativecommons.org/licenses/by/4.0/
-- Legal code: https://creativecommons.org/licenses/by/4.0/legalcode
+- License deed: <https://creativecommons.org/licenses/by/4.0/>
+- Legal code: <https://creativecommons.org/licenses/by/4.0/legalcode>
 
 SPDX-License-Identifier: CC-BY-4.0
 
