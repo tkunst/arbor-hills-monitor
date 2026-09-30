@@ -705,15 +705,15 @@ def test_build_search_index_leaves_a_short_excerpt_unchanged():
 
 
 def test_build_search_index_truncates_excerpt_on_a_word_boundary():
-    long_summary = ("word " * 60).strip()  # 300 chars -- well over the 200-char limit
+    # "words " (6 chars) deliberately does NOT divide EXCERPT_MAX_CHARS (200),
+    # so the cutoff can never coincidentally land exactly between two tokens --
+    # unlike a 5-char "word " token, which would make this test pass even with
+    # no word-boundary logic at all (a plain text[:200] would also end cleanly
+    # on a token boundary). The exact expected value pins the real cut point.
+    long_summary = ("words " * 40).strip()  # 239 chars -- well over the limit
     row = ff.parse_feed_rows([_row(summary=long_summary)])[0]
     entry = json.loads(ff.build_search_index([row]))[0]
-    assert entry["excerpt"].endswith("...")
-    assert len(entry["excerpt"]) <= ff.EXCERPT_MAX_CHARS + len("...")
-    # Cut on a word boundary -- the body before "..." is never mid-word (every
-    # "word" in the source is a full 4-char token followed by a space).
-    body = entry["excerpt"][:-3]
-    assert body == "" or body.endswith("word") or body[-1] == "d"
+    assert entry["excerpt"] == ("words " * 33).strip() + "..."
 
 
 def test_build_search_index_hard_cuts_a_single_run_with_no_space():
@@ -733,11 +733,34 @@ def test_build_search_index_hard_cuts_when_the_only_early_space_would_collapse_t
     # bound-less implementation would honor, collapsing a 300+ char summary
     # down to "a..." -- a 4-character excerpt. Must hard-cut near the limit
     # instead whenever the nearest word boundary is too far back to be useful.
+    # Exact expected value pinned (not just a length bound) so a future change
+    # to the floor (e.g. an accidental limit // 3) would be caught.
     long_summary = "a " + "b" * 300
     row = ff.parse_feed_rows([_row(summary=long_summary)])[0]
     entry = json.loads(ff.build_search_index([row]))[0]
-    assert len(entry["excerpt"]) > ff.EXCERPT_MAX_CHARS // 2
-    assert entry["excerpt"].endswith("...")
+    assert entry["excerpt"] == "a " + ("b" * (ff.EXCERPT_MAX_CHARS - 2)) + "..."
+
+
+# --- _truncate_excerpt (internal helper, tested directly for precision) ----
+# A small `limit` makes the boundary arithmetic legible; the build_search_index
+# -level tests above pin the same logic at the real EXCERPT_MAX_CHARS=200.
+
+def test_truncate_excerpt_credits_a_word_ending_exactly_at_the_limit():
+    # The word-boundary search must look ONE char past `limit` -- otherwise a
+    # word that ends exactly at the boundary (its own delimiting space sitting
+    # at index `limit`, just outside a naive text[:limit] window) is dropped
+    # even though it fit perfectly. text[:14] here is "aa bb cc dd ee" --
+    # already a complete run of words -- with the next space at index 14.
+    text = "aa bb cc dd ee ff gg hh ii jj"
+    assert text[14] == " "  # the space right after "ee" -- outside a naive text[:14] window
+    assert ff._truncate_excerpt(text, limit=14) == "aa bb cc dd ee..."
+
+
+def test_truncate_excerpt_still_drops_a_word_that_does_not_fit():
+    # Contrast with the case above: here the word after the cutoff-adjacent
+    # space genuinely doesn't fit within limit+1, so it's correctly dropped.
+    text = "aa bb cc dd eeee ff"
+    assert ff._truncate_excerpt(text, limit=14) == "aa bb cc dd..."
 
 
 # --- build_search_index: never publishes risks -------------------------------
@@ -800,10 +823,16 @@ def test_build_search_index_redacts_names_matching_redact_names_env_var(monkeypa
     assert "EGLE inspector" in entry["title"]
 
 
-def test_build_search_index_redaction_control_name_appears_when_redactor_unset():
+def test_build_search_index_redaction_control_name_appears_when_redactor_unset(monkeypatch):
     # Control for the test above, proving it can actually fail: with no
-    # REDACT_NAMES configured (the default test environment), the same name
-    # is NOT redacted.
+    # REDACT_NAMES configured, the same name is NOT redacted. Explicitly
+    # clears the env var and rebuilds the redactor (rather than relying on
+    # "the default test environment has none set") so this test is hermetic
+    # even in a shell where a developer has REDACT_NAMES exported locally
+    # (the module's own comment tells them to, to preview redaction) --
+    # without this, the test would spuriously fail outside CI.
+    monkeypatch.delenv("REDACT_NAMES", raising=False)
+    monkeypatch.setattr(ff, "_NAME_REDACTOR", ff._build_name_redactor())
     assert ff._NAME_REDACTOR is None
     row = ff.parse_feed_rows([_row(name="Inspection by Zzyzxqplonk Testtoken")])[0]
     entry = json.loads(ff.build_search_index([row]))[0]
@@ -814,12 +843,27 @@ def test_build_search_index_redacts_a_name_straddling_the_truncation_boundary(mo
     # Order matters: _public_view redacts the FULL text, and only the already-
     # redacted result is truncated. If a row were truncated first and redacted
     # second, a name landing at/near char EXCERPT_MAX_CHARS could be cut into a
-    # fragment ("...Zzyzx") the redaction regex no longer matches -- leaking a
-    # name fragment into a new public file. Placed at char 195, so the 22-char
-    # name straddles the 200-char cutoff.
+    # fragment the redaction regex no longer matches -- leaking a name
+    # fragment into a new public file.
+    #
+    # Construction matters here, verified by hand-tracing both orders: with
+    # prefix="x"*195, the word-boundary snap-back in _truncate_excerpt ALONE
+    # (independent of redaction) happens to cut the text right at the space
+    # immediately before "Zzyzxqplonk" -- so that construction passes under
+    # BOTH the correct order and a simulated buggy reversed order, making it
+    # a non-discriminating test (verified empirically before fixing this).
+    # With prefix="x"*183, "Zzyzxqplonk" (a name-redactor variant ONLY when
+    # immediately followed by "Testtoken" -- see _build_name_redactor's
+    # trailing-subsequence variants, which never include "Zzyzxqplonk" alone)
+    # lands FULLY inside the 200-char window while "Testtoken" straddles the
+    # cutoff. Under a buggy truncate-then-redact order, truncation leaves the
+    # raw, unredactable fragment "...Zzyzxqplonk" in the excerpt (confirmed by
+    # hand-simulating that order against this exact input); under the correct
+    # (shipped) redact-then-truncate order, the whole name is substituted
+    # before truncation ever runs, so nothing survives.
     monkeypatch.setenv("REDACT_NAMES", "Zzyzxqplonk Testtoken")
     monkeypatch.setattr(ff, "_NAME_REDACTOR", ff._build_name_redactor())
-    prefix = "x" * 195
+    prefix = "x" * 183
     summary = prefix + " Zzyzxqplonk Testtoken discovered a violation during the site visit today."
     row = ff.parse_feed_rows([_row(summary=summary)])[0]
     entry = json.loads(ff.build_search_index([row]))[0]
@@ -828,12 +872,14 @@ def test_build_search_index_redacts_a_name_straddling_the_truncation_boundary(mo
 
 
 def test_build_search_index_redacts_a_name_straddling_the_boundary_via_the_kdp_fallback_path(monkeypatch):
-    # Same property as the test above, exercised on the key_data_point ->
-    # excerpt fallback path (a blank summary) rather than summary directly --
-    # same code path in _search_entry, but a separate branch worth covering.
+    # Same property and construction as the test above (see its comment for
+    # why prefix="x"*183 is the discriminating choice), exercised on the
+    # key_data_point -> excerpt fallback path (a blank summary) rather than
+    # summary directly -- same code path in _search_entry, but a separate
+    # branch worth covering.
     monkeypatch.setenv("REDACT_NAMES", "Zzyzxqplonk Testtoken")
     monkeypatch.setattr(ff, "_NAME_REDACTOR", ff._build_name_redactor())
-    prefix = "x" * 195
+    prefix = "x" * 183
     kdp = prefix + " Zzyzxqplonk Testtoken discovered a violation during the site visit today."
     row = ff.parse_feed_rows([_row(summary="", kdp=kdp)])[0]
     entry = json.loads(ff.build_search_index([row]))[0]
@@ -843,18 +889,31 @@ def test_build_search_index_redacts_a_name_straddling_the_boundary_via_the_kdp_f
 
 # --- _public_view (shared helper) -------------------------------------------
 
-def test_public_view_none_and_blank_summary_produce_identical_render_entry_output():
+def test_public_view_none_and_blank_summary_are_both_normalized_to_blank():
     # _public_view normalizes redact_names(row.get("summary")) with `or ""`,
     # so a row where "summary"/"key_data_point" is literally None (not just a
     # blank string -- parse_feed_rows/parse_handcurated_rows never produce
     # None themselves, but _public_view/render_entry take a bare dict and
-    # shouldn't assume a particular caller) must render identically to one
-    # where it's "". Confirms _esc's `str(v or "")` and _public_view's
-    # `or ""` compose to the same output either way -- the refactor introduced
-    # this `or ""` normalization and it must not be a behavior change.
+    # shouldn't assume a particular caller) must be treated the same as "".
+    # Tested directly against _public_view's own return value (NOT routed
+    # through render_entry's _esc(), which would paper over this regardless
+    # of whether _public_view's own `or ""` normalization existed at all --
+    # build_search_index has no such safety net, since it never calls _esc).
     row_with_none = {"document_name": "Doc", "summary": None, "key_data_point": None, "link": ""}
     row_with_blank = {"document_name": "Doc", "summary": "", "key_data_point": "", "link": ""}
-    assert ff.render_entry(row_with_none) == ff.render_entry(row_with_blank)
+    assert ff._public_view(row_with_none) == ff._public_view(row_with_blank)
+    assert ff._public_view(row_with_none)["summary"] == ""
+    assert ff._public_view(row_with_none)["key_data_point"] == ""
+
+
+def test_public_view_carries_source_key_presence_from_row():
+    # source folded into _public_view (not re-derived independently by each
+    # caller) -- key-PRESENCE on the input row, not a value check, carried
+    # through as key-presence on the returned dict.
+    assert "source" not in ff._public_view({"document_name": "Doc"})
+    assert ff._public_view({"document_name": "Doc", "source": ""})["source"] == ""
+    assert ff._public_view({"document_name": "Doc", "source": "GFL"})["source"] == "GFL"
+
 
 def test_public_view_shared_by_render_entry_and_build_search_index(monkeypatch):
     # Pins that render_entry and build_search_index really do share ONE
