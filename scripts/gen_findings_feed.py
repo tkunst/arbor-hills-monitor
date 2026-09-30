@@ -120,8 +120,6 @@ def main() -> None:
             f.write(page_html)
 
     index_path = os.path.join(OUT_DIR, "search-index.json")
-    if os.path.exists(index_path):
-        os.remove(index_path)
     with open(index_path, "w", encoding="utf-8") as f:
         f.write(index_json)
 

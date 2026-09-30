@@ -41,10 +41,11 @@ def _page(*articles):
 # instead of render_entry -- the JSON-side equivalent, exercised against
 # evaluate_search_index the same way _hc/_auto feed evaluate_pages.
 
-def _hc_entry(title="Quarterly monitoring report, Arbor Hills", source_public="EGLE / nSITE"):
+def _hc_entry(title="Quarterly monitoring report, Arbor Hills", source_public="EGLE / nSITE",
+              doc_date="2026-01-01", doc_type="procedural"):
     row = ff.parse_handcurated_rows([[
-        "f.pdf", title, "internal-source-with-a-name", "2026-01-01", "N2688",
-        "procedural", "", "", "internal note", "https://drive.google.com/x",
+        "f.pdf", title, "internal-source-with-a-name", doc_date, "N2688",
+        doc_type, "", "", "internal note", "https://drive.google.com/x",
         "2026-01-01T00:00:00", "no", source_public]])[0]
     return json.loads(ff.build_search_index([row]))[0]
 
@@ -99,6 +100,53 @@ def test_mixed_index_blocks_on_handcurated_only():
     assert len(r["warn_auto"]) == 1
 
 
+# --- regression: evaluate_search_index must scan EVERY field, not an -------
+# allowlist (an earlier version scanned only title/excerpt/facility/source,
+# missing hand-curated `type`/`date` -- both free Sheet-cell text with no
+# schema validation, same as `source`/`title`).
+
+def test_denylist_name_in_handcurated_entry_type_blocks():
+    r = cps.evaluate_search_index([_hc_entry(doc_type="Report (Kovalchick)")])
+    assert len(r["block"]) == 1
+
+
+def test_heuristic_name_shape_in_handcurated_entry_date_blocks():
+    r = cps.evaluate_search_index([_hc_entry(doc_date="2026-01-01 (Jane Doe)")])
+    assert len(r["block"]) == 1
+
+
+def test_evaluate_search_index_never_scans_link():
+    # `link` is excluded from the field scan because the HTML path is
+    # equally blind to it (_visible_text strips tag attributes, so an href
+    # is never scanned there either) -- this is a deliberate parity choice,
+    # not an oversight, so pin it explicitly rather than let a future
+    # "scan everything" refactor silently start blocking on link contents.
+    row = ff.parse_handcurated_rows([[
+        "f.pdf", "Clean title", "internal", "2026-01-01", "N2688", "procedural", "",
+        "", "note", "https://drive.google.com/x?Kovalchick", "2026-01-01T00:00:00",
+        "no", "EGLE / nSITE"]])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "Kovalchick" in entry["link"]  # the link really does carry the name
+    r = cps.evaluate_search_index([entry])
+    assert r["block"] == []
+
+
+def _write_index(out_dir, *rows):
+    index_json = ff.build_search_index(list(rows))
+    (out_dir / cps.SEARCH_INDEX_FILENAME).write_text(index_json, encoding="utf-8")
+
+
+_LEAKING_HC_ROW = ff.parse_handcurated_rows([[
+    "f.pdf", "On-Site Inspection (Kovalchick)", "internal", "2026-01-01",
+    "N2688", "procedural", "", "", "note", "https://drive.google.com/x",
+    "2026-01-01T00:00:00", "no", "EGLE / nSITE"]])[0]
+
+_CLEAN_HC_ROW = ff.parse_handcurated_rows([[
+    "f.pdf", "Quarterly monitoring report, Arbor Hills", "internal",
+    "2026-01-01", "N2688", "procedural", "", "", "note",
+    "https://drive.google.com/x", "2026-01-01T00:00:00", "no", "EGLE / nSITE"]])[0]
+
+
 def test_main_merges_json_block_into_html_result(tmp_path, monkeypatch):
     # End-to-end through main(): an HTML-clean page but a leaking JSON index
     # must still fail the whole gate -- one exit code covers both files.
@@ -106,15 +154,8 @@ def test_main_merges_json_block_into_html_result(tmp_path, monkeypatch):
     out_dir.mkdir()
     (out_dir / "index.html").write_text(_page(_hc(title="Clean title"))["index.html"],
                                          encoding="utf-8")
-    index_json = ff.build_search_index([
-        ff.parse_handcurated_rows([[
-            "f.pdf", "On-Site Inspection (Kovalchick)", "internal", "2026-01-01",
-            "N2688", "procedural", "", "", "note", "https://drive.google.com/x",
-            "2026-01-01T00:00:00", "no", "EGLE / nSITE"]])[0],
-    ])
-    (out_dir / "search-index.json").write_text(index_json, encoding="utf-8")
+    _write_index(out_dir, _LEAKING_HC_ROW)
     monkeypatch.setattr(cps, "OUT_DIR", str(out_dir))
-    monkeypatch.setattr(cps, "INDEX_PATH", str(out_dir / "search-index.json"))
     assert cps.main() == 1
 
 
@@ -122,15 +163,8 @@ def test_main_passes_when_both_html_and_json_are_clean(tmp_path, monkeypatch):
     out_dir = tmp_path / "public-records"
     out_dir.mkdir()
     (out_dir / "index.html").write_text(_page(_hc())["index.html"], encoding="utf-8")
-    index_json = ff.build_search_index([
-        ff.parse_handcurated_rows([[
-            "f.pdf", "Quarterly monitoring report, Arbor Hills", "internal",
-            "2026-01-01", "N2688", "procedural", "", "", "note",
-            "https://drive.google.com/x", "2026-01-01T00:00:00", "no", "EGLE / nSITE"]])[0],
-    ])
-    (out_dir / "search-index.json").write_text(index_json, encoding="utf-8")
+    _write_index(out_dir, _CLEAN_HC_ROW)
     monkeypatch.setattr(cps, "OUT_DIR", str(out_dir))
-    monkeypatch.setattr(cps, "INDEX_PATH", str(out_dir / "search-index.json"))
     assert cps.main() == 0
 
 
@@ -141,7 +175,33 @@ def test_main_tolerates_a_missing_search_index_json(tmp_path, monkeypatch):
     out_dir.mkdir()
     (out_dir / "index.html").write_text(_page(_hc())["index.html"], encoding="utf-8")
     monkeypatch.setattr(cps, "OUT_DIR", str(out_dir))
-    monkeypatch.setattr(cps, "INDEX_PATH", str(out_dir / "search-index.json"))
+    assert cps.main() == 0
+
+
+# --- regression: the JSON index must be scanned even when NO HTML pages ----
+# exist (an earlier version's `if not pages: return 0` skipped the JSON
+# check entirely in that case).
+
+def test_main_blocks_on_a_leaking_json_index_with_zero_html_pages(tmp_path, monkeypatch):
+    out_dir = tmp_path / "public-records"
+    out_dir.mkdir()
+    _write_index(out_dir, _LEAKING_HC_ROW)  # no index.html written at all
+    monkeypatch.setattr(cps, "OUT_DIR", str(out_dir))
+    assert cps.main() == 1
+
+
+def test_main_passes_on_a_clean_json_index_with_zero_html_pages(tmp_path, monkeypatch):
+    out_dir = tmp_path / "public-records"
+    out_dir.mkdir()
+    _write_index(out_dir, _CLEAN_HC_ROW)
+    monkeypatch.setattr(cps, "OUT_DIR", str(out_dir))
+    assert cps.main() == 0
+
+
+def test_main_warns_zero_to_gate_only_when_both_pages_and_index_are_absent(tmp_path, monkeypatch):
+    out_dir = tmp_path / "public-records"
+    out_dir.mkdir()  # empty: no HTML, no search-index.json
+    monkeypatch.setattr(cps, "OUT_DIR", str(out_dir))
     assert cps.main() == 0
 
 
