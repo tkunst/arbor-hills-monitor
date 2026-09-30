@@ -350,13 +350,25 @@ def _public_view(row: dict) -> dict:
     path, and this scheme check is its actual defense, not just defense in
     depth for a path that doesn't exist. By the time a row reaches here `link`
     may already be a Drive archive-mirror URL, not the original nSITE one --
-    see resolve_display_link; both are https."""
+    see resolve_display_link; both are https.
+
+    source: the `"source" in row` key-PRESENCE check (auto rows have no
+    `source` key at all; Hand-Curated rows always do, even blank) -- carried
+    into the returned dict the same way, as `"source" in pv`, so BOTH callers
+    read this one check instead of each re-deriving it from `row` directly
+    (the drift this whole helper exists to prevent). No redaction/escaping
+    applied -- `source` is already the public-safe `source_public` column by
+    the time it reaches a row (see parse_handcurated_rows), never a raw
+    internal value."""
     title = redact_names(strip_embedded_date(row.get("document_name") or "")) or "(untitled document)"
     summary = redact_names(row.get("summary")) or ""
     key_data_point = redact_names(row.get("key_data_point")) or ""
     raw_link = row.get("link") or ""
     link = raw_link if raw_link.startswith(("http://", "https://")) else ""
-    return {"title": title, "summary": summary, "key_data_point": key_data_point, "link": link}
+    pv = {"title": title, "summary": summary, "key_data_point": key_data_point, "link": link}
+    if "source" in row:
+        pv["source"] = row.get("source") or ""
+    return pv
 
 
 def render_entry(row: dict) -> str:
@@ -390,8 +402,8 @@ def render_entry(row: dict) -> str:
     # with a BLANK source renders "Source: not stated" rather than silently
     # dropping the tag -- a missing source stays visible on the page (and is
     # reported by scripts/check_handcurated_sources.py), never quietly hidden.
-    if "source" in row:
-        src = _esc(row.get("source"))
+    if "source" in pv:
+        src = _esc(pv["source"])
         source_bit = f"Source: {src}" if src else "Source: not stated"
     else:
         source_bit = ""
@@ -570,20 +582,22 @@ EXCERPT_MAX_CHARS = 200
 
 
 def _truncate_excerpt(text: str, limit: int = EXCERPT_MAX_CHARS) -> str:
-    """Cut text to ~limit chars on a word boundary, never mid-word. Only cuts
-    back to a space that's past the halfway point of the window -- a run with
-    no space at all before the limit, OR a space so early that honoring it
-    would collapse the excerpt to a sliver (e.g. a short first word followed
-    by one long unbroken run -- a URL, a well ID, a concatenated identifier,
-    all plausible in this domain), hard-cuts at limit instead. Text already
-    at or under the limit is returned unchanged (no ellipsis appended)."""
+    """Cut text to ~limit chars, preferring a word boundary -- but only when
+    that boundary is close enough to the limit to still leave a useful
+    excerpt (past the halfway point of the window). A run with no space at
+    all before the limit, OR a space so early that honoring it would
+    collapse the excerpt to a sliver (e.g. a short first word followed by
+    one long unbroken run -- a URL, a well ID, a concatenated identifier,
+    all plausible in this domain), hard-cuts at limit instead -- this can
+    cut mid-word, a deliberate tradeoff against the alternative (a
+    near-empty excerpt). Looks one character past limit so a word ending
+    EXACTLY at the boundary isn't needlessly dropped. Text already at or
+    under the limit is returned unchanged (no ellipsis appended)."""
     if len(text) <= limit:
         return text
-    truncated = text[:limit]
-    last_space = truncated.rfind(" ")
-    if last_space > limit // 2:
-        truncated = truncated[:last_space]
-    return truncated.rstrip() + "..."
+    last_space = text[:limit + 1].rfind(" ")
+    cut = text[:last_space] if last_space > limit // 2 else text[:limit]
+    return cut.rstrip() + "..."
 
 
 def _search_entry(row: dict) -> dict:
@@ -599,11 +613,12 @@ def _search_entry(row: dict) -> dict:
     A blank field is OMITTED from the object entirely (not written as null or
     ""), keeping the file smaller and mirroring render_entry's own "never
     render an empty <p>" rule -- EXCEPT `source`, which is present (even as
-    "") whenever the row is hand-curated-origin at all ("source" in row),
-    absent entirely for an auto/EGLE row. That key-presence split is exactly
-    render_entry's own "source" in row check, and is the signal Phase 2's
-    check_publish_safety.py extension uses to tell hand-curated entries from
-    auto entries -- a sentinel value would not serve the same purpose."""
+    "") whenever the row is hand-curated-origin at all ("source" in pv, via
+    _public_view's own "source" in row check), absent entirely for an
+    auto/EGLE row. That key-presence split mirrors render_entry's identical
+    check on the same pv, and is the signal Phase 2's check_publish_safety.py
+    extension uses to tell hand-curated entries from auto entries -- a
+    sentinel value would not serve the same purpose."""
     pv = _public_view(row)
     entry = {}
 
@@ -625,8 +640,8 @@ def _search_entry(row: dict) -> dict:
     if severity:
         entry["severity"] = severity
 
-    if "source" in row:
-        entry["source"] = row.get("source") or ""
+    if "source" in pv:
+        entry["source"] = pv["source"]
 
     excerpt = pv["summary"] or pv["key_data_point"]
     if excerpt:
