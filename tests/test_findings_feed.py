@@ -247,6 +247,26 @@ def test_render_entry_includes_populated_fields():
     assert "Key data point:" in out and "180F at AHW272." in out
 
 
+def test_render_entry_exact_output_for_a_populated_row():
+    # A literal, byte-for-byte pin of render_entry's full output (not just the
+    # substring assertions elsewhere in this file) -- the strongest available
+    # guard that the _public_view extraction (and any future change here)
+    # can't silently alter the live, daily-regenerated public HTML.
+    row = ff.parse_feed_rows([_row()])[0]
+    assert ff.render_entry(row) == (
+        '<article class="finding">\n'
+        '<p class="finding-meta">2026-08-01 &middot; Arbor Hills Remediation Area '
+        '&middot; evidence &middot; notable</p>\n'
+        '<h3><a href="https://x/1">Doc</a></h3>\n'
+        '<p class="finding-auto-label">Automated summary of the linked document above. '
+        'This summary and any key data point below are machine-generated and may '
+        'contain errors. Consult the source document before relying on them.</p>\n'
+        '<p>A summary.</p>\n'
+        '<p class="finding-kdp"><strong>Key data point:</strong> 180F at AHW272.</p>\n'
+        '</article>'
+    )
+
+
 def test_render_entry_shows_automated_summary_label_when_summary_present():
     # The insurance-readiness label (master analysis 5.4): a per-item disclaimer
     # framing the auto-generated content as a summary-of-a-primary-source. A row
@@ -705,6 +725,21 @@ def test_build_search_index_hard_cuts_a_single_run_with_no_space():
     assert entry["excerpt"] == ("a" * ff.EXCERPT_MAX_CHARS) + "..."
 
 
+def test_build_search_index_hard_cuts_when_the_only_early_space_would_collapse_the_excerpt():
+    # Regression: a naive "cut at the LAST space anywhere in the window" has no
+    # lower bound on how far back that space is. A short first word followed
+    # by one long unbroken run (a URL, a well ID, a concatenated identifier --
+    # all plausible in this domain) has its only space at position 1, which a
+    # bound-less implementation would honor, collapsing a 300+ char summary
+    # down to "a..." -- a 4-character excerpt. Must hard-cut near the limit
+    # instead whenever the nearest word boundary is too far back to be useful.
+    long_summary = "a " + "b" * 300
+    row = ff.parse_feed_rows([_row(summary=long_summary)])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert len(entry["excerpt"]) > ff.EXCERPT_MAX_CHARS // 2
+    assert entry["excerpt"].endswith("...")
+
+
 # --- build_search_index: never publishes risks -------------------------------
 
 def test_build_search_index_never_includes_risks():
@@ -792,7 +827,34 @@ def test_build_search_index_redacts_a_name_straddling_the_truncation_boundary(mo
     assert "Testtoken" not in entry["excerpt"]
 
 
+def test_build_search_index_redacts_a_name_straddling_the_boundary_via_the_kdp_fallback_path(monkeypatch):
+    # Same property as the test above, exercised on the key_data_point ->
+    # excerpt fallback path (a blank summary) rather than summary directly --
+    # same code path in _search_entry, but a separate branch worth covering.
+    monkeypatch.setenv("REDACT_NAMES", "Zzyzxqplonk Testtoken")
+    monkeypatch.setattr(ff, "_NAME_REDACTOR", ff._build_name_redactor())
+    prefix = "x" * 195
+    kdp = prefix + " Zzyzxqplonk Testtoken discovered a violation during the site visit today."
+    row = ff.parse_feed_rows([_row(summary="", kdp=kdp)])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "Zzyzx" not in entry["excerpt"]
+    assert "Testtoken" not in entry["excerpt"]
+
+
 # --- _public_view (shared helper) -------------------------------------------
+
+def test_public_view_none_and_blank_summary_produce_identical_render_entry_output():
+    # _public_view normalizes redact_names(row.get("summary")) with `or ""`,
+    # so a row where "summary"/"key_data_point" is literally None (not just a
+    # blank string -- parse_feed_rows/parse_handcurated_rows never produce
+    # None themselves, but _public_view/render_entry take a bare dict and
+    # shouldn't assume a particular caller) must render identically to one
+    # where it's "". Confirms _esc's `str(v or "")` and _public_view's
+    # `or ""` compose to the same output either way -- the refactor introduced
+    # this `or ""` normalization and it must not be a behavior change.
+    row_with_none = {"document_name": "Doc", "summary": None, "key_data_point": None, "link": ""}
+    row_with_blank = {"document_name": "Doc", "summary": "", "key_data_point": "", "link": ""}
+    assert ff.render_entry(row_with_none) == ff.render_entry(row_with_blank)
 
 def test_public_view_shared_by_render_entry_and_build_search_index(monkeypatch):
     # Pins that render_entry and build_search_index really do share ONE
