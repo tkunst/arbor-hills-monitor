@@ -103,6 +103,10 @@ def main() -> None:
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     pages = findings_feed.build_pages(rows, generated_at)
+    # Same `rows`, same run as `pages` above -- no second Sheet read, so the
+    # HTML and the JSON search index can never drift out of lockstep with
+    # each other (ADR 062 Phase 2).
+    index_json = findings_feed.build_search_index(rows)
 
     os.makedirs(OUT_DIR, exist_ok=True)
     # Clear existing pages first — a shrinking dataset (a purge/re-dump) must
@@ -114,6 +118,12 @@ def main() -> None:
     for filename, page_html in pages.items():
         with open(os.path.join(OUT_DIR, filename), "w", encoding="utf-8") as f:
             f.write(page_html)
+
+    index_path = os.path.join(OUT_DIR, "search-index.json")
+    if os.path.exists(index_path):
+        os.remove(index_path)
+    with open(index_path, "w", encoding="utf-8") as f:
+        f.write(index_json)
 
     print(f"Wrote {len(pages)} page(s), {len(rows)} document(s), to {OUT_DIR}")
 
