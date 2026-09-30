@@ -38,6 +38,7 @@ No Sheet/network access -- reads only the generated HTML files on disk.
 from __future__ import annotations
 
 import html as _html
+import json
 import os
 import re
 import sys
@@ -48,6 +49,7 @@ import name_check  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.join(REPO_ROOT, "site", "public-records")
+INDEX_PATH = os.path.join(OUT_DIR, "search-index.json")
 
 _ARTICLE_RE = re.compile(r'<article class="finding">(.*?)</article>', re.DOTALL)
 _META_RE = re.compile(r'<p class="finding-meta">(.*?)</p>', re.DOTALL)
@@ -92,6 +94,47 @@ def evaluate_pages(pages: dict[str, str]) -> dict:
     return {"block": block, "warn_handcurated": warn_hc, "warn_auto": warn_auto}
 
 
+def evaluate_search_index(entries: list[dict]) -> dict:
+    """Same rules as evaluate_pages(), applied to search-index.json entries
+    (ADR 062 Phase 2) instead of rendered HTML articles. An entry is
+    hand-curated iff it carries a "source" key at all (even ""; see
+    findings_feed._search_entry's docstring) -- the JSON-side equivalent of
+    _is_handcurated's "Source:" check on the rendered HTML. JSON values are
+    already raw text (no HTML tags to strip), so the denylist/heuristic
+    scanners run directly on the concatenated visible fields -- no
+    _visible_text needed. Returns the same {block, warn_handcurated,
+    warn_auto} shape as evaluate_pages() so the two can be merged at the
+    call site."""
+    block, warn_hc, warn_auto = [], [], []
+    for entry in entries:
+        text = " ".join(
+            str(entry[k]) for k in ("title", "excerpt", "facility", "source")
+            if entry.get(k)
+        )
+        deny = name_check.find_denylist_hits(text)
+        heur = name_check.find_heuristic_hits(text)
+        title = entry.get("title") or "(untitled)"
+        if "source" in entry:
+            hits = deny + heur
+            if hits:
+                block.append({"name": title, "hits": hits})
+        elif deny:
+            warn_auto.append({"name": title, "hits": deny})
+    return {"block": block, "warn_handcurated": warn_hc, "warn_auto": warn_auto}
+
+
+def _load_search_index(path: str) -> list[dict]:
+    """[] if the file is missing (same "warn, don't crash" tolerance as the
+    HTML loader -- gen_findings_feed.py runs before this script and always
+    writes it, but a missing file here must not hard-crash the gate)."""
+    if not os.path.exists(path):
+        print(f"::warning::no {path} found -- run gen_findings_feed.py first. "
+              f"Skipping the JSON index check.")
+        return []
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 def _load_pages(out_dir: str) -> dict:
     pages = {}
     if not os.path.isdir(out_dir):
@@ -115,6 +158,12 @@ def main() -> int:
         return 0
 
     result = evaluate_pages(pages)
+
+    index_entries = _load_search_index(INDEX_PATH)
+    if index_entries:
+        index_result = evaluate_search_index(index_entries)
+        result["block"] += index_result["block"]
+        result["warn_auto"] += index_result["warn_auto"]
 
     for w in result["warn_auto"]:
         print(f"::warning title=Name in auto feed (pre-existing, not blocking)::"

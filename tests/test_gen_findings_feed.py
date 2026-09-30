@@ -1,0 +1,67 @@
+"""Hermetic tests for scripts/gen_findings_feed.py's search-index wiring (ADR 062
+Phase 2) -- no Sheet/network access. Builds the same `rows` -> build_pages() +
+build_search_index() pairing main() performs, and asserts the two artifacts stay
+in lockstep: same entry count, and a stable (byte-identical) JSON output across
+repeated calls with unchanged input (no embedded timestamp, no dict-ordering
+flakiness -- see build_search_index's docstring)."""
+import importlib.util
+import json
+import os
+
+import findings_feed as ff
+
+_SPEC = importlib.util.spec_from_file_location(
+    "gen_findings_feed",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                 "scripts", "gen_findings_feed.py"),
+)
+assert _SPEC is not None and _SPEC.loader is not None
+gff = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(gff)
+
+
+def _rows(n):
+    return ff.parse_feed_rows([
+        [f"2026-08-{i + 1:02d}", f"Doc {i}", "evidence", "R5", "notable",
+         f"A summary for doc {i}.", "", f"https://x/{i}", "Arbor Hills Remediation Area"]
+        for i in range(n)
+    ])
+
+
+def test_search_index_entry_count_matches_html_total():
+    rows = _rows(5)
+    pages = ff.build_pages(rows, "2026-01-01 00:00 UTC")
+    index_json = ff.build_search_index(rows)
+
+    m = gff._COUNT_RE.search(pages["index.html"])
+    assert m is not None
+    html_total = int(m.group(1).replace(",", ""))
+
+    assert html_total == len(rows)
+    assert len(json.loads(index_json)) == len(rows)
+
+
+def test_search_index_entry_count_matches_html_total_across_pagination():
+    # Same invariant with enough rows to force multiple HTML pages -- the
+    # index stays one flat array regardless of the HTML's pagination.
+    rows = _rows(ff.PAGE_SIZE + 3)
+    pages = ff.build_pages(rows, "2026-01-01 00:00 UTC")
+    index_json = ff.build_search_index(rows)
+
+    m = gff._COUNT_RE.search(pages["index.html"])
+    assert m is not None
+    html_total = int(m.group(1).replace(",", ""))
+
+    assert len(pages) > 1
+    assert html_total == len(rows)
+    assert len(json.loads(index_json)) == len(rows)
+
+
+def test_search_index_is_deterministic_across_repeated_calls():
+    # Same input, run twice -- must be byte-identical (no timestamp, stable
+    # key order) so findings-feed.yml's diff-quiet guard stays a no-op on an
+    # unchanged day.
+    rows = _rows(5)
+    first = ff.build_search_index(rows)
+    second = ff.build_search_index(rows)
+    assert first == second

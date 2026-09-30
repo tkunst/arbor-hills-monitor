@@ -33,3 +33,10 @@ egle-n2688-state.json
 # legitimate public site file, not a data file. (data-guard CI only scans files
 # newly ADDED in a pull request, so a file committed straight to main is not caught.)
 !site/sitemap.xml
+# ADR 062 Phase 2: the client-side search index is a legitimate generated public
+# site file (same idiom as site/sitemap.xml above), not a data file the *.json
+# rule is meant to catch -- without this exception, findings-feed.yml's
+# `git add site/public-records` would silently never stage it (git ignores an
+# ignored path even when it's inside an added directory), so the file would be
+# written on every run but never actually committed/deployed.
+!site/public-records/search-index.json
