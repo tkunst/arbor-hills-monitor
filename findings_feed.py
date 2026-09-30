@@ -570,15 +570,18 @@ EXCERPT_MAX_CHARS = 200
 
 
 def _truncate_excerpt(text: str, limit: int = EXCERPT_MAX_CHARS) -> str:
-    """Cut text to ~limit chars on a word boundary, never mid-word. A run with
-    no space before the limit (one very long "word") hard-cuts at limit rather
-    than emitting an untruncated string. Text already at or under the limit is
-    returned unchanged (no ellipsis appended)."""
+    """Cut text to ~limit chars on a word boundary, never mid-word. Only cuts
+    back to a space that's past the halfway point of the window -- a run with
+    no space at all before the limit, OR a space so early that honoring it
+    would collapse the excerpt to a sliver (e.g. a short first word followed
+    by one long unbroken run -- a URL, a well ID, a concatenated identifier,
+    all plausible in this domain), hard-cuts at limit instead. Text already
+    at or under the limit is returned unchanged (no ellipsis appended)."""
     if len(text) <= limit:
         return text
     truncated = text[:limit]
     last_space = truncated.rfind(" ")
-    if last_space > 0:
+    if last_space > limit // 2:
         truncated = truncated[:last_space]
     return truncated.rstrip() + "..."
 
