@@ -5,6 +5,8 @@ import importlib.util
 import json
 import os
 
+import pytest
+
 import findings_feed as ff
 
 _SPEC = importlib.util.spec_from_file_location(
@@ -203,6 +205,59 @@ def test_main_warns_zero_to_gate_only_when_both_pages_and_index_are_absent(tmp_p
     out_dir.mkdir()  # empty: no HTML, no search-index.json
     monkeypatch.setattr(cps, "OUT_DIR", str(out_dir))
     assert cps.main() == 0
+
+
+def test_main_blocks_with_both_origins_tagged_when_both_artifacts_leak(tmp_path, monkeypatch):
+    out_dir = tmp_path / "public-records"
+    out_dir.mkdir()
+    (out_dir / "index.html").write_text(
+        _page(_hc(title="On-Site Inspection (Kovalchick)"))["index.html"], encoding="utf-8")
+    _write_index(out_dir, _LEAKING_HC_ROW)
+    monkeypatch.setattr(cps, "OUT_DIR", str(out_dir))
+    assert cps.main() == 1
+
+    pages = cps._load_pages(cps.OUT_DIR)
+    html_block = cps.evaluate_pages(pages)["block"]
+    entries = cps._load_search_index(os.path.join(cps.OUT_DIR, cps.SEARCH_INDEX_FILENAME))
+    json_block = cps.evaluate_search_index(entries)["block"]
+    assert len(html_block) == 1 and html_block[0]["origin"] == "html"
+    assert len(json_block) == 1 and json_block[0]["origin"] == "json"
+
+
+# --- regression: a falsy-but-malformed search-index.json (not just bad ----
+# JSON syntax) must fail closed, never silently read as "no entries, same
+# as absent" -- an earlier version's `not index_entries` check in main()
+# couldn't distinguish a present-but-`{}` file from a genuinely absent one.
+
+@pytest.mark.parametrize("bad_json", ["{}", "null", "0", '""', "[1, 2]",
+                                       '[{"title": "ok"}, "not a dict"]'])
+def test_load_search_index_raises_on_wrong_shape_json(tmp_path, bad_json):
+    p = tmp_path / cps.SEARCH_INDEX_FILENAME
+    p.write_text(bad_json, encoding="utf-8")
+    with pytest.raises(ValueError):
+        cps._load_search_index(str(p))
+
+
+def test_main_fails_closed_on_a_falsy_wrong_shape_json_index_with_zero_html_pages(
+        tmp_path, monkeypatch):
+    out_dir = tmp_path / "public-records"
+    out_dir.mkdir()
+    (out_dir / cps.SEARCH_INDEX_FILENAME).write_text("{}", encoding="utf-8")  # no index.html
+    monkeypatch.setattr(cps, "OUT_DIR", str(out_dir))
+    with pytest.raises(ValueError):
+        cps.main()
+
+
+def test_evaluate_pages_never_scans_html_href_attributes():
+    # Parity with evaluate_search_index's deliberate exclusion of `link`
+    # (see its docstring) -- _visible_text strips whole tags including
+    # attributes, so a name embedded only in an href never surfaces in the
+    # scanned text on the HTML side either. Pinned explicitly rather than
+    # left as an unverified assumption in a comment.
+    art = ('<article class="finding"><h3><a href="https://x/?Kovalchick">Clean title</a>'
+           '</h3><p class="finding-meta">Source: EGLE</p></article>')
+    r = cps.evaluate_pages({"index.html": art})
+    assert r["block"] == []
 
 
 def test_handcurated_articles_carry_a_source_tag_auto_do_not():

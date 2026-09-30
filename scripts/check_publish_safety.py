@@ -149,17 +149,26 @@ def _load_search_index(path: str) -> list[dict]:
     """[] if the file is missing (same "warn, don't crash" tolerance as the
     HTML loader -- gen_findings_feed.py runs before this script and always
     writes it, but a missing file here must not hard-crash the gate).
-    Malformed JSON (bad syntax, or valid JSON of the wrong shape) is NOT
-    caught here and propagates as an uncaught exception -- deliberately:
-    this is a privacy gate, and a corrupted/partial write must fail closed
-    (nonzero exit, nothing published), never silently read as "no entries,
-    same as absent" and pass."""
+    Malformed JSON -- bad syntax, OR valid JSON of the wrong shape (an earlier
+    version only caught bad syntax; a falsy-but-valid wrong-shape value like
+    `{}`/`null`/`0`/`""` parsed fine and was then indistinguishable from "file
+    absent" by the `not index_entries` check in main(), silently skipping the
+    scan instead of failing) -- raises. Deliberate: this is a privacy gate,
+    and a corrupted/partial write must fail closed (nonzero exit, nothing
+    published), never silently read as "no entries, same as absent" and
+    pass."""
     if not os.path.exists(path):
         print(f"::warning::no {path} found -- run gen_findings_feed.py first. "
               f"Skipping the JSON index check.")
         return []
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    if not isinstance(data, list) or not all(isinstance(e, dict) for e in data):
+        raise ValueError(
+            f"{path} is not a JSON array of objects -- refusing to treat a "
+            f"malformed index as empty/absent."
+        )
+    return data
 
 
 def _load_pages(out_dir: str) -> dict:
