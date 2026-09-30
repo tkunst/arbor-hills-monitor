@@ -1,6 +1,8 @@
 """Findings feed render/format logic — pagination boundaries, blank-field
 handling, sort order, link passthrough, archive-link resolution, title
 date-stripping."""
+import json
+
 import findings_feed as ff
 import sheet_writer as sw
 
@@ -555,3 +557,253 @@ def test_render_entry_blank_source_public_shows_not_stated():
     # ...but an AUTO row (no `source` key at all) still shows no Source tag.
     auto = ff.parse_feed_rows([_row(name="Auto Doc")])[0]
     assert "Source:" not in ff.render_entry(auto)
+
+
+# --- build_search_index (ADR 062 Phase 1) -----------------------------------
+
+def test_build_search_index_is_valid_json_with_one_entry_per_row():
+    rows = ff.parse_feed_rows([_row(name="Doc A"), _row(name="Doc B")])
+    entries = json.loads(ff.build_search_index(rows))
+    assert len(entries) == len(rows) == 2
+
+
+def test_build_search_index_empty_rows_is_empty_array():
+    assert ff.build_search_index([]) == "[]"
+
+
+def test_build_search_index_schema_fields_for_a_populated_row():
+    row = ff.parse_feed_rows([_row(
+        date="2026-08-01", name="On-Site Inspection (06/01/2025)", doc_type="evidence",
+        severity="notable", summary="A summary.", kdp="180F at AHW272.",
+        link="https://mienviro.michigan.gov/ncore/downloadpdf/123",
+        facility="GFL-Arbor Hills Landfill-Washtenaw Co",
+    )])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["date"] == "2026-08-01"
+    assert entry["title"] == "On-Site Inspection"  # embedded date stripped, same as render_entry
+    assert entry["facility"] == "Arbor Hills Landfill (Land & Water Interface)"  # facility_display aliasing
+    assert entry["type"] == "evidence"
+    assert entry["severity"] == "notable"
+    assert entry["excerpt"] == "A summary."
+    assert entry["link"] == "https://mienviro.michigan.gov/ncore/downloadpdf/123"
+    assert "source" not in entry  # auto row, no source key at all
+    assert "risks" not in entry
+
+
+def test_build_search_index_omits_blank_facility_type_severity_date_and_link():
+    row = ff.parse_feed_rows([_row(
+        date="", facility="", doc_type="", severity="", summary="", kdp="", link="",
+    )])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    # title is never blank (the "(untitled document)" fallback), so it's the
+    # only key a row with every other field blank still carries.
+    assert set(entry.keys()) == {"title"}
+
+
+# --- build_search_index: hand-curated source key-presence signal -----------
+
+def test_build_search_index_handcurated_row_carries_source_key_even_when_blank():
+    # "source" in row iff the row is hand-curated-origin at all, even with a
+    # blank source_public -- this key-PRESENCE signal (not a sentinel value)
+    # is what Phase 2's check_publish_safety.py extension will use to tell
+    # hand-curated entries from auto entries.
+    hc = ff.parse_handcurated_rows([_hc_row(source_public="")])[0]
+    entry = json.loads(ff.build_search_index([hc]))[0]
+    assert "source" in entry
+    assert entry["source"] == ""
+
+
+def test_build_search_index_handcurated_row_source_present():
+    hc = ff.parse_handcurated_rows([_hc_row(source="Charter Township of Salem")])[0]
+    entry = json.loads(ff.build_search_index([hc]))[0]
+    assert entry["source"] == "Charter Township of Salem"
+
+
+def test_build_search_index_auto_row_has_no_source_key():
+    row = ff.parse_feed_rows([_row()])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "source" not in entry
+
+
+def test_build_search_index_never_publishes_internal_handcurated_source_or_note():
+    # Same safety property test_handcurated_never_publishes_internal_source_or_note
+    # pins for the HTML -- must hold for the JSON index too.
+    hc = ff.parse_handcurated_rows([_hc_row(
+        source="EGLE AQD (Diane Kavanaugh Vetort)",
+        source_public="EGLE AQD",
+        note="Hand-curated 2026-07-24, Trisha-directed; found in full-circle folder",
+    )])[0]
+    out = ff.build_search_index([hc])
+    assert "EGLE AQD" in out
+    assert "Vetort" not in out
+    assert "Trisha" not in out
+    assert "full-circle" not in out
+
+
+# --- build_search_index: link scheme safety ---------------------------------
+
+def test_build_search_index_rejects_non_http_link_scheme():
+    row = ff.parse_feed_rows([_row(link="javascript:alert(1)")])[0]
+    out = ff.build_search_index([row])
+    assert "javascript:" not in out
+    entry = json.loads(out)[0]
+    assert "link" not in entry  # omitted -- never the raw unsafe value
+
+
+def test_build_search_index_blank_link_omits_the_key():
+    row = ff.parse_feed_rows([_row(link="")])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "link" not in entry
+
+
+def test_build_search_index_keeps_a_valid_https_link_raw_and_unescaped():
+    link = "https://mienviro.michigan.gov/ncore/downloadpdf/1?a=1&b=2"
+    row = ff.parse_feed_rows([_row(link=link)])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["link"] == link  # verbatim, including the query-string "&"
+
+
+# --- build_search_index: excerpt (summary / key_data_point fallback) -------
+
+def test_build_search_index_excerpt_falls_back_to_key_data_point_when_summary_blank():
+    row = ff.parse_feed_rows([_row(summary="", kdp="180F at AHW272.")])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["excerpt"] == "180F at AHW272."
+
+
+def test_build_search_index_omits_excerpt_when_both_summary_and_kdp_blank():
+    row = ff.parse_feed_rows([_row(summary="", kdp="")])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "excerpt" not in entry
+
+
+def test_build_search_index_leaves_a_short_excerpt_unchanged():
+    row = ff.parse_feed_rows([_row(summary="A short summary.")])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["excerpt"] == "A short summary."
+    assert not entry["excerpt"].endswith("...")
+
+
+def test_build_search_index_truncates_excerpt_on_a_word_boundary():
+    long_summary = ("word " * 60).strip()  # 300 chars -- well over the 200-char limit
+    row = ff.parse_feed_rows([_row(summary=long_summary)])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["excerpt"].endswith("...")
+    assert len(entry["excerpt"]) <= ff.EXCERPT_MAX_CHARS + len("...")
+    # Cut on a word boundary -- the body before "..." is never mid-word (every
+    # "word" in the source is a full 4-char token followed by a space).
+    body = entry["excerpt"][:-3]
+    assert body == "" or body.endswith("word") or body[-1] == "d"
+
+
+def test_build_search_index_hard_cuts_a_single_run_with_no_space():
+    # No space before the limit at all -- must still truncate (not emit an
+    # untruncated string), even though there's no word boundary to cut on.
+    long_summary = "a" * 300
+    row = ff.parse_feed_rows([_row(summary=long_summary)])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["excerpt"] == ("a" * ff.EXCERPT_MAX_CHARS) + "..."
+
+
+# --- build_search_index: never publishes risks -------------------------------
+
+def test_build_search_index_never_includes_risks():
+    row = ff.parse_feed_rows([_row(risks="R1, R2, R5")])[0]
+    out = ff.build_search_index([row])
+    entry = json.loads(out)[0]
+    assert "risks" not in entry
+    assert "R1" not in out
+
+
+# --- build_search_index: untitled fallback -----------------------------------
+
+def test_build_search_index_untitled_document_fallback():
+    row = ff.parse_feed_rows([_row(name="")])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["title"] == "(untitled document)"
+
+
+# --- build_search_index: escaping (must NOT be HTML-escaped) ---------------
+
+def test_build_search_index_output_is_not_html_escaped():
+    # _public_view (the helper build_search_index shares with render_entry)
+    # returns RAW text -- render_entry HTML-escapes it for display, but the
+    # JSON index must NOT, or a title/excerpt would show a literal "&amp;"/
+    # "&lt;" to a reader (Phase 3 renders via textContent, not innerHTML) and
+    # an "&" in a link's query string would be corrupted into "&amp;".
+    row = ff.parse_feed_rows([_row(
+        name="Smith & Sons <Report>", summary="A & B",
+        link="https://mienviro.michigan.gov/ncore/downloadpdf/1?a=1&b=2",
+    )])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["title"] == "Smith & Sons <Report>"
+    assert "&amp;" not in entry["title"]
+    assert "&lt;" not in entry["title"]
+    assert entry["excerpt"] == "A & B"
+    assert entry["link"] == "https://mienviro.michigan.gov/ncore/downloadpdf/1?a=1&b=2"
+
+
+# --- build_search_index: name redaction (shared with render_entry) ---------
+# No existing test in this repo exercises REDACT_NAMES (checked before writing
+# these -- _NAME_REDACTOR is built once at import time from the env var, so
+# setting the env var alone in a test is a no-op; the module-level redactor
+# must be rebuilt too). The synthetic name below is never a real person's --
+# this is a public repo and the whole point of the env-var design is keeping
+# a real name out of it.
+
+def test_build_search_index_redacts_names_matching_redact_names_env_var(monkeypatch):
+    monkeypatch.setenv("REDACT_NAMES", "Zzyzxqplonk Testtoken")
+    monkeypatch.setattr(ff, "_NAME_REDACTOR", ff._build_name_redactor())
+    row = ff.parse_feed_rows([_row(
+        name="Inspection by Zzyzxqplonk Testtoken",
+        summary="Zzyzxqplonk Testtoken reviewed the file.",
+        kdp="Per Zzyzxqplonk Testtoken, 180F.",
+    )])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "Zzyzxqplonk" not in entry["title"]
+    assert "Zzyzxqplonk" not in entry["excerpt"]
+    assert "EGLE inspector" in entry["title"]
+
+
+def test_build_search_index_redaction_control_name_appears_when_redactor_unset():
+    # Control for the test above, proving it can actually fail: with no
+    # REDACT_NAMES configured (the default test environment), the same name
+    # is NOT redacted.
+    assert ff._NAME_REDACTOR is None
+    row = ff.parse_feed_rows([_row(name="Inspection by Zzyzxqplonk Testtoken")])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "Zzyzxqplonk Testtoken" in entry["title"]
+
+
+def test_build_search_index_redacts_a_name_straddling_the_truncation_boundary(monkeypatch):
+    # Order matters: _public_view redacts the FULL text, and only the already-
+    # redacted result is truncated. If a row were truncated first and redacted
+    # second, a name landing at/near char EXCERPT_MAX_CHARS could be cut into a
+    # fragment ("...Zzyzx") the redaction regex no longer matches -- leaking a
+    # name fragment into a new public file. Placed at char 195, so the 22-char
+    # name straddles the 200-char cutoff.
+    monkeypatch.setenv("REDACT_NAMES", "Zzyzxqplonk Testtoken")
+    monkeypatch.setattr(ff, "_NAME_REDACTOR", ff._build_name_redactor())
+    prefix = "x" * 195
+    summary = prefix + " Zzyzxqplonk Testtoken discovered a violation during the site visit today."
+    row = ff.parse_feed_rows([_row(summary=summary)])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "Zzyzx" not in entry["excerpt"]  # no fragment of the name survives
+    assert "Testtoken" not in entry["excerpt"]
+
+
+# --- _public_view (shared helper) -------------------------------------------
+
+def test_public_view_shared_by_render_entry_and_build_search_index(monkeypatch):
+    # Pins that render_entry and build_search_index really do share ONE
+    # _public_view implementation (see the handoff's "one thing that must be
+    # exactly right") rather than two independent reimplementations that could
+    # silently drift apart: patching it changes both call sites' output
+    # identically.
+    def fake_public_view(row):
+        return {"title": "PATCHED TITLE", "summary": "", "key_data_point": "", "link": ""}
+
+    monkeypatch.setattr(ff, "_public_view", fake_public_view)
+    row = ff.parse_feed_rows([_row()])[0]
+    assert "PATCHED TITLE" in ff.render_entry(row)
+    assert json.loads(ff.build_search_index([row]))[0]["title"] == "PATCHED TITLE"
