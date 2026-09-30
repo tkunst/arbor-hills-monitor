@@ -31,6 +31,12 @@ import sheet_writer  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.join(REPO_ROOT, "site", "public-records")
+# Must stay equal to check_publish_safety.SEARCH_INDEX_FILENAME -- the two
+# scripts are separate entry points with no shared import between them, so
+# this isn't enforced by the type system; tests/test_gen_findings_feed.py
+# pins the two constants equal so a rename on one side without the other
+# fails CI instead of silently degrading the gate to "file not found, skip."
+SEARCH_INDEX_FILENAME = "search-index.json"
 
 
 _COUNT_RE = re.compile(r'class="findings-count">([\d,]+) documents')
@@ -119,7 +125,7 @@ def main() -> None:
         with open(os.path.join(OUT_DIR, filename), "w", encoding="utf-8") as f:
             f.write(page_html)
 
-    index_path = os.path.join(OUT_DIR, "search-index.json")
+    index_path = os.path.join(OUT_DIR, SEARCH_INDEX_FILENAME)
     with open(index_path, "w", encoding="utf-8") as f:
         f.write(index_json)
 

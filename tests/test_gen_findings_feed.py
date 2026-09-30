@@ -10,14 +10,21 @@ import os
 
 import findings_feed as ff
 
+_SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
+
 _SPEC = importlib.util.spec_from_file_location(
-    "gen_findings_feed",
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                 "scripts", "gen_findings_feed.py"),
+    "gen_findings_feed", os.path.join(_SCRIPTS_DIR, "gen_findings_feed.py"),
 )
 assert _SPEC is not None and _SPEC.loader is not None
 gff = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(gff)
+
+_CPS_SPEC = importlib.util.spec_from_file_location(
+    "check_publish_safety", os.path.join(_SCRIPTS_DIR, "check_publish_safety.py"),
+)
+assert _CPS_SPEC is not None and _CPS_SPEC.loader is not None
+cps = importlib.util.module_from_spec(_CPS_SPEC)
+_CPS_SPEC.loader.exec_module(cps)
 
 
 def _rows(n):
@@ -65,3 +72,14 @@ def test_search_index_is_deterministic_across_repeated_calls():
     first = ff.build_search_index(rows)
     second = ff.build_search_index(rows)
     assert first == second
+
+
+def test_search_index_filename_matches_the_gate_script():
+    # gen_findings_feed.py (the writer) and check_publish_safety.py (the
+    # gate) each hardcode this filename independently -- no shared import
+    # between the two entry points. If either side ever drifts (a rename, a
+    # typo), the gate's `_load_search_index` silently treats the real file
+    # as "not found" and skips the scan instead of failing -- pin the two
+    # constants equal so that drift fails CI instead of silently degrading
+    # the gate.
+    assert gff.SEARCH_INDEX_FILENAME == cps.SEARCH_INDEX_FILENAME
