@@ -659,6 +659,6 @@ def build_search_index(rows: list[dict]) -> str:
     for the per-field rules. No generation timestamp is embedded (unlike
     build_pages()'s footer) so a byte-identical dataset produces a byte-
     identical file -- required for findings-feed.yml's diff-quiet guard to stay
-    a no-op on an unchanged day (see is_suspicious_shrink's module comment and
-    the handoff). Fixed separators keep the output deterministic across runs."""
+    a no-op on an unchanged day (see render_page's footer comment and the
+    handoff). Fixed separators keep the output deterministic across runs."""
     return json.dumps([_search_entry(r) for r in rows], separators=(",", ":"))
