@@ -10,6 +10,7 @@ its row-building functions and its API calls.
 from __future__ import annotations
 
 import html
+import json
 import os
 import re
 
@@ -325,6 +326,39 @@ def redact_names(text):
     return _NAME_REDACTOR.sub(_sub, text)
 
 
+# --- Shared public-safety view (added for build_search_index) -----------------
+# render_entry and build_search_index both need the SAME redacted title/summary/
+# key-data-point and the SAME link scheme check -- the one thing that must be
+# exactly right (see docs/overnight-coder-handoffs/public-records-search-index.md).
+# Computed once here so there is exactly one place this logic lives, not two
+# that can silently drift apart. Returns RAW, unescaped text: render_entry HTML-
+# escapes it with _esc() same as before; build_search_index needs no escaping of
+# its own (json.dumps handles that) -- escaping here would double-escape the
+# JSON (literal "&amp;" shown to a reader) and would corrupt a link containing
+# "&" in its query string.
+def _public_view(row: dict) -> dict:
+    """title/summary/key_data_point: redact_names() applied (title also has
+    strip_embedded_date() applied first, and falls back to "(untitled
+    document)" when empty after that -- baked in here so every caller gets the
+    same non-empty title). link: the same http(s)-only scheme check render_entry
+    has always applied -- "" for anything else (javascript:, data:, malformed
+    text, or a blank cell). Every auto-tab producer of `link` builds it from a
+    fixed nSITE base URL + a numeric doc_id (see nsite_client.native_download_url)
+    -- never classifier or free-text output. Hand-Curated Files' `drive_link` is
+    different: it's typed by a human directly into a Sheet cell (see
+    parse_handcurated_rows), so `link` IS genuinely untrusted free-text on that
+    path, and this scheme check is its actual defense, not just defense in
+    depth for a path that doesn't exist. By the time a row reaches here `link`
+    may already be a Drive archive-mirror URL, not the original nSITE one --
+    see resolve_display_link; both are https."""
+    title = redact_names(strip_embedded_date(row.get("document_name") or "")) or "(untitled document)"
+    summary = redact_names(row.get("summary")) or ""
+    key_data_point = redact_names(row.get("key_data_point")) or ""
+    raw_link = row.get("link") or ""
+    link = raw_link if raw_link.startswith(("http://", "https://")) else ""
+    return {"title": title, "summary": summary, "key_data_point": key_data_point, "link": link}
+
+
 def render_entry(row: dict) -> str:
     """One finding as an HTML <article>. A blank optional field (summary, key
     data point) is left out of the markup entirely — never rendered as the
@@ -334,28 +368,20 @@ def render_entry(row: dict) -> str:
     cleanly, not crash the whole page. Risks (R1-R8) are deliberately never
     rendered here -- they're this project's own internal case-file taxonomy,
     meaningless to a public reader with no legend to decode them against."""
+    pv = _public_view(row)
     date = _esc(row.get("date_filed"))
-    name = _esc(redact_names(strip_embedded_date(row.get("document_name") or ""))) or "(untitled document)"
+    name = _esc(pv["title"])
     doc_type = _esc(row.get("type"))
     severity = _esc(row.get("severity"))
     facility = _esc(facility_display(row.get("facility") or ""))
-    # Every auto-tab producer of `link` builds it from a fixed nSITE base URL
-    # + a numeric doc_id (see nsite_client.native_download_url) -- never
-    # classifier or free-text output. Hand-Curated Files' `drive_link` is
-    # different: it's typed by a human directly into a Sheet cell (see
-    # parse_handcurated_rows), so `link` IS genuinely untrusted free-text on
-    # that path. The scheme check below is this row's actual defense against
-    # that input, not just defense in depth for a path that doesn't exist: an
-    # http(s) link renders as a clickable href (still HTML-escaped by _esc,
-    # so an attribute-breakout attempt fails closed too), anything else
-    # (javascript:, data:, malformed text) renders as plain text instead of
-    # ever reaching an <a href="..."> attribute. By the time a row reaches
-    # here `link` may already be a Drive archive-mirror URL, not the
-    # original nSITE one -- see resolve_display_link; both are https.
-    raw_link = row.get("link") or ""
-    link = _esc(raw_link) if raw_link.startswith(("http://", "https://")) else ""
-    summary = _esc(redact_names(row.get("summary")))
-    kdp = _esc(redact_names(row.get("key_data_point")))
+    # link/summary/kdp: redacted + scheme-checked by _public_view above (the
+    # shared helper); _esc() here is the same HTML-escape render_entry always
+    # applied -- an http(s) link renders as a clickable href (still escaped,
+    # so an attribute-breakout attempt fails closed too), anything else was
+    # already reduced to "" by the shared helper and renders as plain text.
+    link = _esc(pv["link"])
+    summary = _esc(pv["summary"])
+    kdp = _esc(pv["key_data_point"])
     # `source` (issuing/holding body) is present only on Hand-Curated rows
     # (see parse_handcurated_rows) -- auto/EGLE rows have no `source` key at
     # all, so they never show a Source tag. Surfacing it keeps the public
@@ -531,3 +557,90 @@ def build_pages(rows: list[dict], generated_at: str, page_size: int = PAGE_SIZE)
         page_filename(i): render_page(page_rows, i, total_pages, total_count, generated_at)
         for i, page_rows in enumerate(pages, start=1)
     }
+
+
+# --- Client-side search index (ADR 062 Phase 1) --------------------------------
+# A compact JSON array mirroring build_pages()'s rows for client-side search over
+# site/public-records/ -- NOT wired to anything live yet (Phase 2 adds the caller
+# in gen_findings_feed.py plus the check_publish_safety.py gate extension; see the
+# handoff). Uses the exact same redaction/link-safety rules as render_entry, via
+# the shared _public_view() helper above, so nothing published in HTML can leak
+# un-redacted into this new file.
+EXCERPT_MAX_CHARS = 200
+
+
+def _truncate_excerpt(text: str, limit: int = EXCERPT_MAX_CHARS) -> str:
+    """Cut text to ~limit chars on a word boundary, never mid-word. A run with
+    no space before the limit (one very long "word") hard-cuts at limit rather
+    than emitting an untruncated string. Text already at or under the limit is
+    returned unchanged (no ellipsis appended)."""
+    if len(text) <= limit:
+        return text
+    truncated = text[:limit]
+    last_space = truncated.rfind(" ")
+    if last_space > 0:
+        truncated = truncated[:last_space]
+    return truncated.rstrip() + "..."
+
+
+def _search_entry(row: dict) -> dict:
+    """One row -> one search-index object. Every field computed from the SAME
+    redacted/scheme-checked values render_entry uses (via _public_view) --
+    never row["document_name"]/row["summary"]/row["key_data_point"]/row["link"]
+    directly, which would be the raw, un-redacted/unsafe values (see
+    _public_view's docstring and the handoff's "one thing that must be exactly
+    right"). risks is deliberately never included here, same reason
+    render_entry never shows it (R1-R8 is this project's own internal
+    case-file taxonomy, meaningless to a public reader).
+
+    A blank field is OMITTED from the object entirely (not written as null or
+    ""), keeping the file smaller and mirroring render_entry's own "never
+    render an empty <p>" rule -- EXCEPT `source`, which is present (even as
+    "") whenever the row is hand-curated-origin at all ("source" in row),
+    absent entirely for an auto/EGLE row. That key-presence split is exactly
+    render_entry's own "source" in row check, and is the signal Phase 2's
+    check_publish_safety.py extension uses to tell hand-curated entries from
+    auto entries -- a sentinel value would not serve the same purpose."""
+    pv = _public_view(row)
+    entry = {}
+
+    date = row.get("date_filed") or ""
+    if date:
+        entry["date"] = date
+
+    entry["title"] = pv["title"]  # never blank -- _public_view bakes in the fallback
+
+    facility = facility_display(row.get("facility") or "")
+    if facility:
+        entry["facility"] = facility
+
+    doc_type = row.get("type") or ""
+    if doc_type:
+        entry["type"] = doc_type
+
+    severity = row.get("severity") or ""
+    if severity:
+        entry["severity"] = severity
+
+    if "source" in row:
+        entry["source"] = row.get("source") or ""
+
+    excerpt = pv["summary"] or pv["key_data_point"]
+    if excerpt:
+        entry["excerpt"] = _truncate_excerpt(excerpt)
+
+    if pv["link"]:
+        entry["link"] = pv["link"]
+
+    return entry
+
+
+def build_search_index(rows: list[dict]) -> str:
+    """rows: already merged+sorted (merge_and_sort()), same input build_pages()
+    takes. Returns a JSON array string, one object per row -- see _search_entry
+    for the per-field rules. No generation timestamp is embedded (unlike
+    build_pages()'s footer) so a byte-identical dataset produces a byte-
+    identical file -- required for findings-feed.yml's diff-quiet guard to stay
+    a no-op on an unchanged day (see is_suspicious_shrink's module comment and
+    the handoff). Fixed separators keep the output deterministic across runs."""
+    return json.dumps([_search_entry(r) for r in rows], separators=(",", ":"))
