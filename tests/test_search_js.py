@@ -42,15 +42,19 @@ def test_search_js_filename_matches_the_generator_and_the_gate():
     assert f'"{gff.SEARCH_INDEX_FILENAME}"' in js
 
 
-def test_search_js_never_assigns_innerhtml():
+def test_search_js_never_interpolates_markup():
     # The data is already curated/redacted by the time it reaches this file
     # (see findings_feed._public_view), but every field is still rendered via
-    # textContent/createElement -- never raw innerHTML interpolation of field
+    # textContent/createElement -- never raw markup interpolation of field
     # text -- matching the Python side's own blanket _esc() discipline as
-    # defense in depth. Checks for an actual assignment, not the bare word,
-    # since a comment is allowed to mention innerHTML by name.
+    # defense in depth. Bans the bare tokens (not just a `.innerHTML =`
+    # assignment) so a `+=`, an `.outerHTML` write, or an
+    # `.insertAdjacentHTML(...)` call would also fail this test; comments in
+    # this file must describe the rule without naming these APIs, or this
+    # test would flag its own comment.
     js = _search_js_text()
-    assert not re.search(r"\.innerHTML\s*=", js)
+    for forbidden in ("innerHTML", "outerHTML", "insertAdjacentHTML"):
+        assert forbidden not in js, f"found {forbidden!r} in search.js"
 
 
 def test_search_js_fetches_without_credentials():
@@ -63,6 +67,19 @@ def test_search_js_fetches_without_credentials():
 def test_search_js_checks_link_scheme_before_using_it():
     # A hand-curated `link` is human-typed free text (see
     # findings_feed._public_view); search.js must re-check the http(s)-only
-    # scheme itself rather than trusting the JSON blindly.
+    # scheme itself rather than trusting the JSON blindly. Matches the actual
+    # regex literal, not just the substring "https?" (which a stray comment
+    # could satisfy without a real check behind it).
     js = _search_js_text()
-    assert "https?" in js
+    assert re.search(r"/\^https\?:\\/\\//i", js)
+
+
+def test_search_js_loads_facets_on_opening_filters_not_only_on_typing():
+    # A <select> holding only its default "All ..." option never fires
+    # "change" by itself, so a visitor who opens Filters and clicks straight
+    # into a facet dropdown -- without first typing search text or picking a
+    # date -- must still get the fetch that populates it. Pins the fix for
+    # the Step 5 review finding: facets used to load only from the text/date
+    # listeners, leaving them permanently empty on that path.
+    js = _search_js_text()
+    assert re.search(r'addEventListener\(\s*"toggle"', js)
