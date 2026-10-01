@@ -9,10 +9,13 @@ its row-building functions and its API calls.
 """
 from __future__ import annotations
 
+import functools
 import html
 import json
 import os
 import re
+
+from config_loader import load_config
 
 # Only this one pure helper is reused from sheet_writer -- a plain string
 # parse with zero I/O of its own (see its docstring), so importing it doesn't
@@ -39,14 +42,27 @@ PAGE_SIZE = 50
 # Water Interface program) from N2688's own Documents profile, even though
 # both track facilities at the same physical landfill (see config.yml's
 # `facilities:` comment). Every other facility's raw name already reads fine
-# as a public label, so this is a single, deliberate alias, not a general
-# renaming layer.
+# as a public label, so this stays a short list of deliberate aliases, not a
+# general renaming layer. (SRN codes resolve to config names first, below.)
 FACILITY_DISPLAY = {
     "GFL-Arbor Hills Landfill-Washtenaw Co": "Arbor Hills Landfill (Land & Water Interface)",
+    # Hand-entered variant of N2688 seen in Hand-Curated Files.
+    "Arbor Hills Landfill (N2688)": "Arbor Hills Landfill",
 }
 
 
+@functools.lru_cache(maxsize=1)
+def _srn_names() -> dict:
+    """config.yml `facilities:` SRN code -> name. Hand-Curated Files' facility
+    column takes the bare SRN by design (docs/hand-curated-intake-design.md:
+    "N2688 | RA | N1504 | P1488"), while auto rows carry the full name; without
+    this the public facility filter lists "N2688" and "Arbor Hills Landfill" as
+    two different facilities. Read lazily so importing this module stays I/O-free."""
+    return {f["srn"]: f["name"] for f in load_config().get("facilities", [])}
+
+
 def facility_display(name: str) -> str:
+    name = _srn_names().get(name, name)
     return FACILITY_DISPLAY.get(name, name)
 
 
