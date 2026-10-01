@@ -335,8 +335,11 @@
       return;
     }
     if (!indexData) {
-      // Still loading -- ensureData() already set a "Loading..." status;
-      // the pending promise's .then will call runFilter() again once ready.
+      // Defensive only: both current callers (the ensureData().then()
+      // callback, and resetFilters() where `active` is already false above)
+      // guarantee indexData is set by the time this line runs. Guards a
+      // future caller that invokes runFilter() directly before data loads,
+      // rather than crashing on indexData.filter(...) below.
       return;
     }
     var results = indexData.filter(function (entry) {

@@ -560,7 +560,7 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
 <label>To <input type="date" id="pr-filter-date-max" autocomplete="off"></label>
 </div>
 </details>
-<p class="search-ui-status" id="pr-search-status" hidden></p>
+<p class="search-ui-status" id="pr-search-status" aria-live="polite" hidden></p>
 <div class="findings-list" id="pr-search-results" hidden></div>
 </div>
 
