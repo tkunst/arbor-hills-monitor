@@ -435,8 +435,10 @@ def test_summarize_notice_change_names_the_passed_srn():
 
 
 def test_format_change_body_has_essentials():
-    body = rw.format_change_body("ROP monthly report — N2688", "task/version row updated", "~ CHANGED foo")
+    body = rw.format_change_body("ROP monthly report — N2688", "http://x/EPA Monthly Report.csv",
+                                  "task/version row updated", "~ CHANGED foo")
     assert "N2688" in body and "task/version row updated" in body and "CHANGED foo" in body
+    assert "http://x/EPA Monthly Report.csv" in body
 
 
 # --- gate (pure) ------------------------------------------------------------
@@ -553,6 +555,7 @@ def test_csv_task_status_change_emails_full_recipient_list(monkeypatch):
     matches = [s for s in sent if "N2688" in s[0]]
     assert len(matches) == 1
     assert matches[0][2] is None   # None -> send_email resolves the full alert_recipients list
+    assert rw.rc.DEFAULT_CSV_URL in matches[0][1]   # alert links to the actual EGLE source
 
 
 def test_folder_new_file_emails_alert(monkeypatch):
@@ -569,6 +572,7 @@ def test_folder_new_file_emails_alert(monkeypatch):
     matches = [s for s in sent if "folder" in s[0].lower() or "N2688" in s[0]]
     assert len(matches) == 1
     assert "Draft Renewal" in matches[0][1]
+    assert rw.rc.DEFAULT_N2688_FOLDER_URL in matches[0][1]
 
 
 def test_notice_mention_appearing_emails_alert(monkeypatch):
@@ -578,6 +582,7 @@ def test_notice_mention_appearing_emails_alert(monkeypatch):
                         lambda url=None, timeout=60: _notice_bytes_ok(mentioned=True))
     assert rw.run() == 0
     assert any("public comment window" in body for _, body, _ in sent)
+    assert any(rw.rc.DEFAULT_NOTICE_URL in body for _, body, _ in sent)
 
 
 def test_notice_p1488_appearing_emails_alert_the_exact_gap(monkeypatch):
@@ -711,10 +716,10 @@ def test_alert_formatting_crash_on_one_item_does_not_abort_the_run(monkeypatch):
 
     real_format = rw.format_change_body
 
-    def _boom(label, note, body):
+    def _boom(label, url, note, body):
         if label == "ROP monthly report — N2688":
             raise RuntimeError("simulated formatting bug")
-        return real_format(label, note, body)
+        return real_format(label, url, note, body)
 
     monkeypatch.setattr(rw, "format_change_body", _boom)
 

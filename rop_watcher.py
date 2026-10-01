@@ -240,12 +240,17 @@ def summarize_notice_change(old: dict, new: dict, srn: str = "N2688") -> tuple[s
     return "changed (mention status unchanged, context text shifted)", new.get("context", "")
 
 
-def format_change_body(label: str, note: str, body: str) -> str:
-    """The change-alert email body. Pure — unit-tested."""
+def format_change_body(label: str, url: str, note: str, body: str) -> str:
+    """The change-alert email body. Pure — unit-tested. `url` is the one actual
+    EGLE source this item was fetched from (the CSV, the N2688 folder, or the
+    statewide notice PDF — see run()'s three call sites) — same "Link:" idiom
+    civicclerk_watcher/gfl_info_site_watcher/pfas_watcher already use, so a
+    reader can jump straight to the source instead of hunting for it."""
     shown = body or "(no further detail — see the ROP Watch tab's Snapshot JSON.)"
     return (
         "A watched Arbor Hills ROP (air Title V permit) source changed.\n\n"
         f"Source:  {label}\n"
+        f"Link:    {url}\n"
         f"Change:  {note}\n\n"
         "What changed:\n\n"
         f"{shown}\n\n"
@@ -261,12 +266,16 @@ def format_change_body(label: str, note: str, body: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _diff_and_record(sheets, sheet_id, today, key, label, snap, summarize_fn,
-                      cfg, recipients) -> str:
+def _diff_and_record(sheets, sheet_id, today, key, label, source_url, snap,
+                      summarize_fn, cfg, recipients) -> str:
     """Baseline/compare/record/alert for one item. Returns "baseline" / "changed"
     / "unchanged". Durable row FIRST, alert email SECOND (best-effort) — a crash
     between them loses the alert, never the record, and never re-fires next run
-    since the row already advanced the stored hash."""
+    since the row already advanced the stored hash. `source_url` is the one
+    EGLE URL this item's data actually came from (passed straight through to
+    format_change_body); it never varies per-call within one source (`run()`
+    always fetches with rop_client's own default URL), so it isn't part of the
+    snapshot/hash — only the alert email cares about it."""
     new_hash = snapshot_hash(snap)
     snap_json = json.dumps(snap, sort_keys=True, ensure_ascii=False)
     last = sw.last_rop_snapshot(sheets, sheet_id, key)
@@ -295,7 +304,7 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, summarize_fn,
     # notice check) — the "partial activation block, not all-or-nothing"
     # guarantee (ADR 017 section 4) applies per ITEM, not just per SOURCE.
     try:
-        email_body = format_change_body(label, note, body)
+        email_body = format_change_body(label, source_url, note, body)
     except Exception as e:  # noqa: BLE001 — formatting is best-effort; row is recorded
         print(f"[rop-watch] {label}: change recorded but alert body FORMATTING failed: {e}")
         return "changed"
@@ -371,7 +380,8 @@ def run() -> int:
             label = f"ROP monthly report — {srn}"
             snap = facility_snapshot(rows, srn)
             result = _diff_and_record(sheets, sheet_id, today, f"csv:{srn}", label,
-                                       snap, summarize_facility_change, cfg, recipients)
+                                       rc.DEFAULT_CSV_URL, snap,
+                                       summarize_facility_change, cfg, recipients)
             counts[result] += 1
 
     # --- 2. N2688 folder listing --------------------------------------------
@@ -392,7 +402,8 @@ def run() -> int:
     if entries is not None:
         snap = folder_snapshot(entries)
         result = _diff_and_record(sheets, sheet_id, today, "folder:N2688",
-                                   "N2688 ROP renewal folder — file list", snap,
+                                   "N2688 ROP renewal folder — file list",
+                                   rc.DEFAULT_N2688_FOLDER_URL, snap,
                                    summarize_folder_change, cfg, recipients)
         counts[result] += 1
 
@@ -425,7 +436,8 @@ def run() -> int:
             snap = notice_snapshot(mentioned, context)
             result = _diff_and_record(
                 sheets, sheet_id, today, f"notice:{srn}",
-                f"Statewide ROP public notice — {srn} mention", snap,
+                f"Statewide ROP public notice — {srn} mention",
+                rc.DEFAULT_NOTICE_URL, snap,
                 lambda o, n, _srn=srn: summarize_notice_change(o, n, _srn),
                 cfg, recipients)
             counts[result] += 1
