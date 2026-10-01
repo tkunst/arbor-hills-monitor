@@ -39,6 +39,7 @@
   var searchResults = document.getElementById("pr-search-results");
   var browseList = document.getElementById("pr-browse-list");
   var browseNav = document.getElementById("pr-browse-nav");
+  var filtersDetails = container.querySelector(".search-ui-filters");
 
   var indexData = null;
   var indexPromise = null;
@@ -232,10 +233,10 @@
   // Mirrors findings_feed.render_entry's structure (.finding / .finding-meta
   // / .finding-auto-label / .finding-kdp) so a search result and a
   // chronological entry are visually identical. Every field is written via
-  // textContent, never innerHTML -- the index is already curated/redacted
-  // (see findings_feed._public_view), but this matches the Python side's own
-  // blanket _esc() discipline as defense in depth, not because the data is
-  // expected to be hostile.
+  // textContent/createElement, never interpolated as markup -- the index is
+  // already curated/redacted (see findings_feed._public_view), but this
+  // matches the Python side's own blanket _esc() discipline as defense in
+  // depth, not because the data is expected to be hostile.
   function renderCard(entry) {
     var article = document.createElement("article");
     article.className = "finding";
@@ -377,4 +378,13 @@
   dateMin.addEventListener("change", onFilterChange);
   dateMax.addEventListener("change", onFilterChange);
   clearBtn.addEventListener("click", resetFilters);
+  // A <select> with only its default "All ..." option never fires "change"
+  // on its own, so a visitor who opens Filters and clicks straight into a
+  // facet dropdown (without first typing text or picking a date) would see
+  // permanently empty-looking options with nothing left to trigger the
+  // fetch that populates them. Loading on the panel's own "toggle" event
+  // covers that path while keeping the fetch lazy (still not on page load).
+  if (filtersDetails) {
+    filtersDetails.addEventListener("toggle", onFilterChange);
+  }
 })();
