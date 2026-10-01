@@ -230,6 +230,16 @@ def test_facility_display_passes_through_unmapped_names():
     assert ff.facility_display("") == ""
 
 
+def test_facility_display_resolves_hand_curated_srn_codes():
+    # Hand-Curated Files stores bare SRNs; they must land on the same public
+    # label as the auto rows, or the facility filter shows duplicates.
+    assert ff.facility_display("N2688") == "Arbor Hills Landfill"
+    assert ff.facility_display("RA") == "Arbor Hills Remediation Area"
+    assert ff.facility_display("N1504") == "Arbor Hills Energy"
+    assert ff.facility_display("WRD") == "Arbor Hills Landfill (Land & Water Interface)"
+    assert ff.facility_display("Arbor Hills Landfill (N2688)") == "Arbor Hills Landfill"
+
+
 # --- render_entry ---------------------------------------------------------
 
 def test_render_entry_omits_blank_optional_fields():
