@@ -438,6 +438,41 @@ def test_build_pages_empty_feed_renders_single_page():
     assert "No documents found." in pages["index.html"]
 
 
+# --- search UI markup (ADR 062 Phase 3) ------------------------------------
+
+def test_render_page_includes_search_ui_hidden_by_default():
+    # The search container ships `hidden` in the markup -- search.js removes
+    # it once it confirms JS is actually running, so a visitor with
+    # JavaScript disabled never sees an inert search box (progressive
+    # enhancement, not a replacement for the base page).
+    rows = ff.parse_feed_rows([_row()])
+    pages = ff.build_pages(rows, generated_at="2026-08-21 12:00 UTC")
+    html = pages["index.html"]
+    assert '<div class="search-ui" id="public-records-search" hidden>' in html
+    assert '<script src="search.js" defer></script>' in html
+
+
+def test_render_page_search_ui_present_on_every_page_including_empty_feed():
+    # The handoff requires the search UI on every page, including an empty
+    # feed's single page -- no special-casing by row count.
+    pages = ff.build_pages([], generated_at="2026-08-21 12:00 UTC")
+    assert 'id="public-records-search"' in pages["index.html"]
+
+
+def test_render_page_chronological_list_and_nav_unchanged_by_search_ui():
+    # The existing chronological view must stay exactly as before -- same
+    # classes (findings-list/findings-nav), now also addressable by id so
+    # search.js can toggle it, but never replaced or restructured.
+    rows = ff.parse_feed_rows([_row(date=f"2026-01-{i:02d}") for i in range(1, 7)])
+    pages = ff.build_pages(rows, generated_at="2026-08-21 12:00 UTC", page_size=5)
+    assert '<div class="findings-list" id="pr-browse-list">' in pages["index.html"]
+    assert '<p class="findings-nav" id="pr-browse-nav">' in pages["index.html"]
+    # The search results container reuses the same findings-list class (so
+    # results look identical to chronological entries) but is a distinct,
+    # separately-hidden element.
+    assert '<div class="findings-list" id="pr-search-results" hidden></div>' in pages["index.html"]
+
+
 # --- Hand-Curated Files -----------------------------------------------------
 
 def _hc_row(filename="2026-08-21-arbor-hills-gfl-120-day-gccs-extension-request.pdf",

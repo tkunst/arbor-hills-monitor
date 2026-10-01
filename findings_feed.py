@@ -534,6 +534,7 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
 <link rel="stylesheet" href="../style.css">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
+<script src="search.js" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -543,11 +544,31 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
 <h1>Public Records on Arbor Hills</h1>
 {intro}<p class="findings-count">{total_count:,} documents &middot; page {page_num} of {total_pages}</p>
 
-<div class="findings-list">
+<div class="search-ui" id="public-records-search" hidden>
+<div class="search-ui-bar">
+<label for="pr-search-q" class="sr-only">Search all records</label>
+<input type="search" id="pr-search-q" class="search-ui-input" placeholder="Search all records" aria-label="Search all records" autocomplete="off">
+<button type="button" id="pr-search-clear" class="search-ui-clear" hidden>Clear search</button>
+</div>
+<details class="search-ui-filters">
+<summary>Filters</summary>
+<div class="search-ui-facets">
+<label>Facility <select id="pr-filter-facility"><option value="">All facilities</option></select></label>
+<label>Type <select id="pr-filter-type"><option value="">All types</option></select></label>
+<label>Severity <select id="pr-filter-severity"><option value="">All severities</option></select></label>
+<label>From <input type="date" id="pr-filter-date-min"></label>
+<label>To <input type="date" id="pr-filter-date-max"></label>
+</div>
+</details>
+<p class="search-ui-status" id="pr-search-status" hidden></p>
+<div class="findings-list" id="pr-search-results" hidden></div>
+</div>
+
+<div class="findings-list" id="pr-browse-list">
 {entries}
 </div>
 
-<p class="findings-nav">{nav}</p>
+<p class="findings-nav" id="pr-browse-nav">{nav}</p>
 
 <footer class="site-footer">
 <p>Generated {_esc(generated_at)} from the monitor's case file. An independent project. All source data is public regulatory records from Michigan EGLE and other public sources.</p>
