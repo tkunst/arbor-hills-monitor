@@ -236,6 +236,59 @@ def test_notice_mentions_srn_true_with_context():
     assert "N2688" in context
 
 
+# --- per-entity context extraction (the N1504 false-alert fix) --------------
+#
+# The real statewide PDF lists dozens of unrelated facilities, each as a
+# "<Name> - SRN: <code>" header line followed by that facility's own notice
+# text. The bug: a fixed ±150-char window around the match shifts whenever an
+# EARLIER facility's entry changes length, producing a spurious "context text
+# shifted" alert for an SRN whose own entry never changed (live on N1504:
+# 2026-08-24/09-22/10-01, all showing the identical already-closed comment
+# period). The fix bounds the context by the document's own per-entity
+# delimiter instead of a byte offset.
+
+def _entry(name: str, srn: str, body: str) -> str:
+    return f"{name} - SRN: {srn} \n{body}\n"
+
+
+def test_notice_context_unaffected_by_an_earlier_unrelated_entrys_length():
+    # THE regression test: padding ONLY the entry BEFORE our target SRN must
+    # not change our target's own extracted context at all.
+    target = _entry("Arbor Hills Energy, LLC", "N1504",
+                     "EGLE is holding a public comment period from August 10, 2026 "
+                     "until September 9, 2026 on a draft ROP renewal.")
+    short_pdf = make_notice_pdf(_entry("Corteva LLC", "B4942", "Short notice text.") + target)
+    long_pdf = make_notice_pdf(
+        _entry("Corteva LLC", "B4942",
+               "A much longer notice with extra unrelated padding text that "
+               "changes nothing about N1504's own entry below it at all.")
+        + target)
+    _, short_ctx = rc.notice_mentions_srn(short_pdf, "N1504")
+    _, long_ctx = rc.notice_mentions_srn(long_pdf, "N1504")
+    assert short_ctx == long_ctx
+    assert "N1504" in short_ctx and "September 9, 2026" in short_ctx
+
+
+def test_notice_context_does_not_bleed_into_the_next_entry():
+    pdf = make_notice_pdf(
+        _entry("Corteva LLC", "B4942", "First company's own notice text.")
+        + _entry("Arbor Hills Energy, LLC", "N1504", "Second company's own notice text.")
+        + _entry("Third Company", "P9999", "Third company's own notice text, unique marker ZZQQ."))
+    _, context = rc.notice_mentions_srn(pdf, "N1504")
+    assert "Second company" in context
+    assert "ZZQQ" not in context and "Third Company" not in context
+
+
+def test_notice_context_falls_back_to_window_without_an_entry_header():
+    # No "<Name> - SRN: <code>" line at all (an unexpected layout) -- must
+    # still return SOME context via the old fixed-window extraction, not an
+    # empty string, since `mentioned` is already True from the generic search.
+    pdf = make_notice_pdf("Some free-form mention of N1504 with no entry header format.")
+    mentioned, context = rc.notice_mentions_srn(pdf, "N1504")
+    assert mentioned is True
+    assert "N1504" in context
+
+
 def test_notice_mentions_srn_false_when_absent():
     pdf = make_notice_pdf("Public notice for an unrelated facility N9999.")
     mentioned, context = rc.notice_mentions_srn(pdf, "N2688")
