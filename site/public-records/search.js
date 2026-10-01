@@ -284,16 +284,19 @@
 
     if (entry.excerpt) {
       // The index doesn't record whether this came from `summary` or
-      // `key_data_point` (see findings_feed._search_entry), so this uses
-      // neutral "excerpt" wording rather than render_entry's "Automated
-      // summary of ..." text -- same disclosure intent (insurance-readiness
-      // / master analysis 5.4: machine-generated text is always labeled),
-      // worded for what this file actually knows.
+      // `key_data_point` (see findings_feed._search_entry), so this covers
+      // both rather than picking render_entry's summary-only wording.
+      // Deliberately avoids the word "excerpt" in this user-facing label --
+      // that word denotes a verbatim passage lifted from the source, but the
+      // text is Claude's own paraphrase (egle_doc_parser._classify_with_claude),
+      // never literal document text. Same disclosure intent as render_entry
+      // (insurance-readiness / master analysis 5.4: machine-generated text is
+      // always labeled), worded to not imply a direct quotation.
       var label = document.createElement("p");
       label.className = "finding-auto-label";
       var sourceRef = hasLink ? "the linked document above" : "this document";
-      label.textContent = "Automated excerpt from " + sourceRef + ". It is " +
-        "machine-generated and may contain errors. Consult the source " +
+      label.textContent = "Automated summary or key data point from " + sourceRef +
+        ". It is machine-generated and may contain errors. Consult the source " +
         "document before relying on it.";
       article.appendChild(label);
 
@@ -362,6 +365,7 @@
   }
 
   function resetFilters() {
+    clearTimeout(debounceTimer);
     searchInput.value = "";
     filterFacility.value = "";
     filterType.value = "";

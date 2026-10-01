@@ -556,8 +556,8 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
 <label>Facility <select id="pr-filter-facility"><option value="">All facilities</option></select></label>
 <label>Type <select id="pr-filter-type"><option value="">All types</option></select></label>
 <label>Severity <select id="pr-filter-severity"><option value="">All severities</option></select></label>
-<label>From <input type="date" id="pr-filter-date-min"></label>
-<label>To <input type="date" id="pr-filter-date-max"></label>
+<label>From <input type="date" id="pr-filter-date-min" autocomplete="off"></label>
+<label>To <input type="date" id="pr-filter-date-max" autocomplete="off"></label>
 </div>
 </details>
 <p class="search-ui-status" id="pr-search-status" hidden></p>
