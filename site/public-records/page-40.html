@@ -17,6 +17,7 @@
 <link rel="stylesheet" href="../style.css">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
+<script src="search.js" defer></script>
 </head>
 <body>
 <div class="wrap">
@@ -26,7 +27,27 @@
 <h1>Public Records on Arbor Hills</h1>
 <p class="findings-count">2,275 documents &middot; page 40 of 46</p>
 
-<div class="findings-list">
+<div class="search-ui" id="public-records-search" hidden>
+<div class="search-ui-bar">
+<label for="pr-search-q" class="sr-only">Search all records</label>
+<input type="search" id="pr-search-q" class="search-ui-input" placeholder="Search all records" aria-label="Search all records" autocomplete="off">
+<button type="button" id="pr-search-clear" class="search-ui-clear" hidden>Clear search</button>
+</div>
+<details class="search-ui-filters">
+<summary>Filters</summary>
+<div class="search-ui-facets">
+<label>Facility <select id="pr-filter-facility"><option value="">All facilities</option></select></label>
+<label>Type <select id="pr-filter-type"><option value="">All types</option></select></label>
+<label>Severity <select id="pr-filter-severity"><option value="">All severities</option></select></label>
+<label>From <input type="date" id="pr-filter-date-min" autocomplete="off"></label>
+<label>To <input type="date" id="pr-filter-date-max" autocomplete="off"></label>
+</div>
+</details>
+<p class="search-ui-status" id="pr-search-status" aria-live="polite" hidden></p>
+<div class="findings-list" id="pr-search-results" hidden></div>
+</div>
+
+<div class="findings-list" id="pr-browse-list">
 <article class="finding">
 <p class="finding-meta">2016-11-08 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
 <h3><a href="https://drive.google.com/file/d/1Rell9uyHDeazMXe9pbtnzW5VRHYeIBFH/view?usp=drivesdk">Violation Notice</a></h3>
@@ -370,10 +391,10 @@
 </article>
 </div>
 
-<p class="findings-nav"><a href="page-39.html">&larr; Newer</a> &middot; <a href="page-41.html">Older &rarr;</a></p>
+<p class="findings-nav" id="pr-browse-nav"><a href="page-39.html">&larr; Newer</a> &middot; <a href="page-41.html">Older &rarr;</a></p>
 
 <footer class="site-footer">
-<p>Generated 2026-10-01 02:09 UTC from the monitor's case file. An independent project. All source data is public regulatory records from Michigan EGLE and other public sources.</p>
+<p>Generated 2026-10-01 03:53 UTC from the monitor's case file. An independent project. All source data is public regulatory records from Michigan EGLE and other public sources.</p>
 </footer>
 
 </div>
