@@ -222,3 +222,7 @@ def test_state_read_error_raises_not_rebaselines(monkeypatch):
 def test_config_recipients_are_scoped_owner_alias():
     nc = _real_cfg()["egle_newsroom"]
     assert nc["recipients"] == ["arbor-hills@trishakunst.com"]
+
+
+def test_text_strips_script_with_spaced_end_tag():
+    assert w._text('<p>keep</p><script>bad landfill</script >tail<STYLE x>y</style\n>') == "keep tail"
