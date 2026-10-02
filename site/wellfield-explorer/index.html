@@ -442,6 +442,14 @@
   const descriptions = data.descriptions;
   const allWellIds = Object.keys(wells).sort();
 
+  // Escape text before it goes into innerHTML templates (well IDs can arrive via the URL hash).
+  function esc(v) {
+    return String(v).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function isWell(id) { return Object.prototype.hasOwnProperty.call(wells, id); }
+
   document.getElementById("header-sub").textContent =
     `${data.well_count.toLocaleString()} well locations · pick up to ${MAX_SELECTED} individually, or toggle a whole group`;
   document.getElementById("source-csv-name").textContent = data.source_csv;
@@ -567,11 +575,11 @@
     const disabled = (!isSelected(id) && !inActiveGroup(id) && !individualRoom()) ? "disabled" : "";
     const merged = w.m ? `<span class="merged-badge">${w.m.length} wells</span>` : "";
     return (
-      `<label class="well-row${disabled ? " disabled" : ""}" data-well="${id}">` +
-        `<input type="checkbox" ${checked} ${disabled} data-well-checkbox="${id}">` +
+      `<label class="well-row${disabled ? " disabled" : ""}" data-well="${esc(id)}">` +
+        `<input type="checkbox" ${checked} ${disabled} data-well-checkbox="${esc(id)}">` +
         `<span class="well-main">` +
-          `<span class="well-id">${id}</span> <span class="well-n">(n=${w.n})</span>${merged}<br>` +
-          `<span class="well-desc">${desc}</span>` +
+          `<span class="well-id">${esc(id)}</span> <span class="well-n">(n=${w.n})</span>${merged}<br>` +
+          `<span class="well-desc">${esc(desc)}</span>` +
         `</span>` +
       `</label>`
     );
@@ -632,8 +640,8 @@
         const n = selected.filter(function (id) { return activeGroupOf(id) === gk; }).length;
         parts.push(
           `<span class="chip">` +
-            `<span class="swatch" style="background:${groupColor(gk)}"></span>${GROUP_LABEL[gk]} (${n})` +
-            `<button type="button" data-remove-cluster="${gk}" aria-label="Remove ${GROUP_LABEL[gk]}">×</button>` +
+            `<span class="swatch" style="background:${groupColor(gk)}"></span>${esc(GROUP_LABEL[gk])} (${n})` +
+            `<button type="button" data-remove-cluster="${gk}" aria-label="Remove ${esc(GROUP_LABEL[gk])}">×</button>` +
           `</span>`
         );
       }
@@ -641,8 +649,8 @@
     selected.filter(function (id) { return !inActiveGroup(id); }).forEach(function (id) {
       parts.push(
         `<span class="chip">` +
-          `<span class="swatch" style="background:${colorOf(id)}"></span>${id}` +
-          `<button type="button" data-remove="${id}" aria-label="Remove ${id}">×</button>` +
+          `<span class="swatch" style="background:${colorOf(id)}"></span>${esc(id)}` +
+          `<button type="button" data-remove="${esc(id)}" aria-label="Remove ${esc(id)}">×</button>` +
         `</span>`
       );
     });
@@ -669,7 +677,7 @@
         const n = selected.filter(function (id) { return activeGroupOf(id) === gk; }).length;
         parts.push(
           `<div class="desc-item">` +
-            `<span class="well-id" style="color:${groupColor(gk)}">${GROUP_LABEL[gk]}</span> ` +
+            `<span class="well-id" style="color:${groupColor(gk)}">${esc(GROUP_LABEL[gk])}</span> ` +
             `<span style="color:var(--text-muted)">(${n} wells plotted in one color; expand the group at left to remove individual wells)</span>` +
           `</div>`
         );
@@ -677,11 +685,11 @@
     });
     indiv.forEach(function (id) {
       const d = descriptionOf(id);
-      const tag = d.group ? ` <span style="color:var(--text-muted)">(${d.group})</span>` : "";
+      const tag = d.group ? ` <span style="color:var(--text-muted)">(${esc(d.group)})</span>` : "";
       parts.push(
         `<div class="desc-item">` +
-          `<span class="well-id" style="color:${colorOf(id)}">${id}</span>${tag}<br>` +
-          `<span>${d.text}</span>` +
+          `<span class="well-id" style="color:${colorOf(id)}">${esc(id)}</span>${tag}<br>` +
+          `<span>${esc(d.text)}</span>` +
         `</div>`
       );
     });
@@ -864,7 +872,7 @@
       for (let i = 0; i < w.d.length; i++) {
         if (rows.length >= MAX_ROWS) { truncated = true; break; }
         rows.push(
-          `<tr><td class="well-cell" style="color:${colorOf(id)}">${id}</td><td>${w.d[i]}</td>` +
+          `<tr><td class="well-cell" style="color:${colorOf(id)}">${esc(id)}</td><td>${esc(w.d[i])}</td>` +
           `<td>${w.t[i] === null ? "" : w.t[i]}</td>` +
           `<td>${w.o2[i] === null ? "" : w.o2[i]}</td>` +
           `<td>${w.r[i] === null ? "" : w.r[i]}</td></tr>`
@@ -919,7 +927,7 @@
       }
     });
     if (H.w) H.w.split(",").forEach(function (id) {
-      if (wells[id] && !isSelected(id) && !inActiveGroup(id) && individualRoom()) { assignSlot(id); selected.push(id); }
+      if (isWell(id) && !isSelected(id) && !inActiveGroup(id) && individualRoom()) { assignSlot(id); selected.push(id); }
     });
     if (selected.length === 0 && wells["AHW272R4"]) { selected.push("AHW272R4"); assignSlot("AHW272R4"); }
   })();
