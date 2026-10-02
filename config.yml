@@ -1867,3 +1867,33 @@ unsubscribe:
   # NOTE: the SUPPRESSION LIST is intentionally NOT here — opted-out third-party
   # addresses are PII and this repo + the case-file Sheet are PUBLIC. They live in
   # the UNSUBSCRIBED_EMAILS secret (comma/semicolon list), read at send time.
+
+# --- EGLE newsroom watch (egle_newsroom_watcher.py; Trisha-directed 2026-10-01) ---
+# Polls https://www.michigan.gov/egle/newsroom (server-renders only the newest 4
+# items, hence the frequent schedule in egle-newsroom-watch.yml) and emails the
+# scoped recipients when a NEW item matches the keywords below (article body
+# only; "Related News" excluded). First run baselines silently. Enabled at ship
+# on Trisha's explicit request (not the overnight-coder default): the first run
+# sends nothing, and a runner-side bot wall fails loudly (exit 1).
+egle_newsroom:
+  enabled: true
+  listing_url: "https://www.michigan.gov/egle/newsroom"
+  recipients:
+    - arbor-hills@trishakunst.com          # Trisha (scoped; never the shared list)
+  gap_min_items: 4    # all listed items new => "you may have missed some" email
+  keywords:
+    # Alert on any hit (title or body).
+    specific: ["Arbor Hills", "GFL", "Emerald RNG", "N2688", "Johnson Creek",
+               "Johnson Drain", "Salem Township", "Arbor Hills Energy"]
+    # Alert only together with a topic term (county names show up in statewide
+    # lists, e.g. the 2026-09-28 spotted-lanternfly item lists Washtenaw).
+    area: ["Washtenaw", "Northville", "Plymouth Township", "Superior Township",
+           "Rouge River", "Middle Rouge", "Wayne County", "Salem"]
+    # Alert if one is in the title, or topic_min_body_hits distinct ones in the body.
+    topic: ["landfill", "landfills", "solid waste", "Part 115", "materials management",
+            "wetland", "wetlands", "water quality monitoring", "monitoring request",
+            "Targeted Monitoring Request", "GLWARM", "public comment", "public hearing",
+            "PFAS", "leachate", "groundwater", "permit to install", "consent order",
+            "consent judgment", "violation notice", "odor", "landfill gas",
+            "renewable natural gas", "methane", "Part 303", "Part 201", "dewatering"]
+    topic_min_body_hits: 2

@@ -1,0 +1,53 @@
+name: egle-newsroom-watch
+
+# Polls EGLE's newsroom landing page (https://www.michigan.gov/egle/newsroom) and
+# emails the scoped egle_newsroom.recipients when a NEW item matches the config
+# keywords (egle_newsroom_watcher.py). The landing page server-renders only the
+# newest 4 items, so this runs every 3 hours; a gap-notice email fires if all 4
+# are new at once. First run baselines silently. State is the append-only
+# "EGLE Newsroom Watch" tab (not _meta), so it never races the other jobs.
+# A zero-parse or fetch failure on the landing page exits 1, so a runner-side
+# bot wall surfaces as a workflow-failure email instead of a silent green no-op.
+on:
+  schedule:
+    - cron: "23 */3 * * *"   # every 3 hours at :23 (off the top-of-hour cluster)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: egle-newsroom-watch
+  cancel-in-progress: false
+
+jobs:
+  egle-newsroom-watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Watch the EGLE newsroom
+        env:
+          # Sheets I/O via the service account; alerts via SMTP to the SCOPED
+          # egle_newsroom.recipients only (no ALERT_RECIPIENTS_EXTRA on purpose).
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+        run: python egle_newsroom_watcher.py

@@ -228,6 +228,10 @@ TAB_RIDE = "RIDE Watch"
 # sampling record, keyed by Item (e.g. "pws:2001381") in col B. See
 # pfas_pws_watcher.py.
 TAB_PFAS_PWS = "Public Water Supply PFAS Watch"
+# EGLE newsroom watch (egle_newsroom_watcher.py): one row per newsroom item ever
+# seen. Same tab-is-the-state, append-only policy as TAB_PFAS: no tab until the
+# watcher first runs.
+TAB_EGLE_NEWS = "EGLE Newsroom Watch"
 # MPART PFAS open-data layers watch (Stream V, ADR 060) — same on-demand,
 # append-only, Sheet-derived-state idiom as the RIDE / PFAS PWS Watch tabs: no tab
 # until mpart_watcher runs; keyed by Item (`mpart:sw` / `mpart:fish` / `mpart:sites`)
@@ -1486,6 +1490,44 @@ def append_pfas_snapshot_row(
     append_rows(service, sheet_id, TAB_PFAS, [[
         date, page, url, change, content_hash, chars, note, fetched_at, normalized_text,
     ]])
+
+
+EGLE_NEWS_HEADERS = [
+    "Date Seen", "URL", "Title", "Published", "Relevant", "Matched", "Alerted",
+    "Note", "Seen At",
+]
+
+
+def ensure_egle_news_tab(service, sheet_id: str) -> None:
+    """Create the EGLE Newsroom Watch tab if missing and reconcile its header row
+    every run (same self-healing policy as ensure_pfas_tabs)."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_EGLE_NEWS not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_EGLE_NEWS}}}]},
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    _set_header(service, sheet_id, TAB_EGLE_NEWS, EGLE_NEWS_HEADERS)
+
+
+def egle_news_seen_urls(service, sheet_id: str) -> set:
+    """Every newsroom URL ever recorded. Deliberately does NOT use _tab_rows:
+    that helper returns [] on a read error, which here would look like a first
+    run and silently re-baseline the current items (a missed alert). A read
+    failure must raise so the run aborts instead."""
+    resp = (
+        service.spreadsheets().values()
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_EGLE_NEWS}'!A2:B")
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    )
+    return {r[1] for r in resp.get("values", []) if len(r) > 1 and r[1]}
+
+
+def append_egle_news_rows(service, sheet_id: str, rows: list[list]) -> None:
+    """Append EGLE Newsroom Watch rows (EGLE_NEWS_HEADERS order). Written BEFORE
+    any alert email, same crash-safe ordering as the PFAS watch."""
+    append_rows(service, sheet_id, TAB_EGLE_NEWS, rows)
 
 
 # ---------------------------------------------------------------------------
