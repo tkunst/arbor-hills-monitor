@@ -83,7 +83,8 @@ def _should_run(cfg: dict) -> tuple[bool, str]:
 
 
 def _text(fragment: str) -> str:
-    fragment = re.sub(r"<script.*?</script>|<style.*?</style>", " ", fragment, flags=re.S | re.I)
+    # Text extraction for keyword matching only (never rendered as HTML).
+    fragment = re.sub(r"<(script|style)\b[^>]*>.*?</\1\b[^>]*>", " ", fragment, flags=re.S | re.I)
     return re.sub(r"\s+", " ", _html.unescape(re.sub(r"<[^>]+>", " ", fragment))).strip()
 
 
