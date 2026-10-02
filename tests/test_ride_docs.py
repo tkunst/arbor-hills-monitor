@@ -1317,3 +1317,12 @@ def test_workflow_passes_every_other_mirror_folder_id_for_the_equality_guard():
             others |= set(re.findall(r"\b(GOAUTH_[A-Z0-9_]+_FOLDER_ID|GDRIVE_FOLDER_ID)\s*:", f.read_text()))
     passed = set(re.findall(r"\b(GOAUTH_[A-Z0-9_]+_FOLDER_ID|GDRIVE_FOLDER_ID)\s*:", mine))
     assert others and others <= passed, sorted(others - passed)
+
+
+def test_needs_mirror_respects_exclude_list():
+    from ride_docs_watcher import needs_mirror
+    st = {"mirror_link": "", "skipped": False, "removed": False}
+    assert needs_mirror(st, 123, set()) is True
+    assert needs_mirror(st, 123, {"123"}) is False
+    assert needs_mirror(None, 123, set()) is False
+    assert needs_mirror({**st, "mirror_link": "x"}, 123, set()) is False

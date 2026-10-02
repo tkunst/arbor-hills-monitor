@@ -226,6 +226,15 @@ def build_state(rows: list[list]) -> tuple[dict, dict]:
     return files, locs
 
 
+def needs_mirror(st: dict | None, uri, exclude: set[str]) -> bool:
+    """True when a listed file should be (re)mirrored: known, not yet mirrored, not
+    skipped or removed, and not on the `mirror_exclude_uris` quarantine list (files
+    Trisha has pulled out of the mirror as not Arbor Hills related; a later RIDE
+    change to the record must not bring them back)."""
+    return bool(st and not st["mirror_link"] and not st["skipped"] and not st["removed"]
+                and str(uri) not in exclude)
+
+
 def diff_location(location_id: int, views: dict[str, dict], files_state: dict,
                   baselined: bool, owned: set[str] | None = None,
                   listed_at: dict[str, set[str]] | None = None) -> dict:
@@ -521,6 +530,7 @@ def run(argv: list[str] | None = None) -> int:
     max_mirror = int(rcfg.get("max_mirror_per_run", 8))
     max_bytes = int(float(rcfg.get("max_file_mb", 250)) * 1024 * 1024)
     stale_after = max(1, int(rcfg.get("stale_alert_after_skips", _DEFAULT_STALE_SKIPS)))
+    mirror_exclude = {str(u) for u in (rcfg.get("mirror_exclude_uris") or [])}
     # Manual dispatch can ask for specific files NOW (workflow input `mirror_uris`):
     # only those are mirrored this run, uncapped (the time budget still applies).
     wanted = [u.strip() for u in (os.environ.get("RIDE_DOCS_MIRROR_URIS") or "").split(",") if u.strip()]
@@ -735,7 +745,7 @@ def run(argv: list[str] | None = None) -> int:
 
         for v in views.values():
             st = files_state.get(f"rrd:{v['uri']}")
-            if st and not st["mirror_link"] and not st["skipped"] and not st["removed"]:
+            if needs_mirror(st, v["uri"], mirror_exclude):
                 mirror_todo.append((loc, program, v, st["hash"], st["fails"]))
 
     if do_mirror and mirror_todo:

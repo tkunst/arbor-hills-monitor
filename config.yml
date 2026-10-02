@@ -751,6 +751,9 @@ ride_docs:
   # inventory programs; 00038889's files are listed under 81000004's location.
   # program_nums: ["81000033", "81000004", "81000835", "81000840", "82008712"]
   mirror: true                 # copy files to the private Drive folder (needs GOAUTH_RRD_FOLDER_ID)
+  # RIDE uris never to (re)mirror: files moved to the private quarantine folder as not
+  # Arbor Hills related (misfiled in RIDE). Alerts/Sheet rows are unaffected.
+  mirror_exclude_uris: ["35715073", "35715083", "35715084", "35715096"]
   max_mirror_per_run: 8        # bounds run time; the ~95-file backlog drains over ~12 daily runs
   max_file_mb: 250             # larger files are recorded as mirror-skipped (some reach 216 MB)
   stale_alert_after_skips: 3   # ONE liveness alert after this many consecutive skipped (unreadable) runs
