@@ -42,11 +42,12 @@ import retry_policy as rp
 import woi_router
 import well_watch
 import archiver as av
+import poison_stub
 from egle_doc_parser import parse_document
 from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
 from config_loader import load_config
 
-MAX_ERRORS_PER_DOC = 3  # give up on a poison doc after this many failures (cf. backfill)
+MAX_ERRORS_PER_DOC = poison_stub.MAX_ERRORS_PER_DOC  # give up on a poison doc after this many failures (cf. backfill)
 
 
 def _today():
@@ -283,7 +284,13 @@ def run() -> int:
             cnt = state["errors"].get(did, 0) + 1
             state["errors"][did] = cnt
             sw.mark_error(sheets, sheet_id, did, cnt, _now())
-            print(f"  ERR {d['document_name'][:50]}: {e}")
+            print(f"  ERR {d['document_name'][:50]}: {e} "
+                  f"(attempt {cnt}/{MAX_ERRORS_PER_DOC})")
+            # Terminal failure → stub feed row + 'skipped', same as backfill.py.
+            # Without this a doc whose 3rd strike came from the watcher was
+            # silently parked by both jobs' poison gates (issue #82).
+            poison_stub.stub_if_poisoned(sheets, sheet_id, state, d, cnt, e, _now(),
+                                         feed_tab=sw.TAB_NEW)
         finally:
             if os.path.exists(local):
                 os.remove(local)

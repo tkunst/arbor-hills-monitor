@@ -80,6 +80,10 @@ external users but no sensitive data). Public repo.
 - `backfill.py` — nightly batch of 50, self-terminating, resumable. Mirrors
   each doc to Drive inline (`archiver.mirror_one_now()`) before writing its
   Sheet row.
+- `poison_stub.py` — shared terminal step for a poison doc: on its
+  `MAX_ERRORS_PER_DOC`-th failure, write a stub feed row + mark it `skipped`.
+  Called from BOTH watcher.py's and backfill.py's per-doc except handlers, so
+  the doc is stubbed whichever job caused the last strike (issue #82).
 - `watcher.py` — daily new-doc check + alerts (+ WDS Stream C when enabled).
   Stream C (`wds_watcher.py` + `wds_client.py`) polls eight WDS collections for
   site 475946: applications/qmr/annual/evaluations/compliance_actions plus

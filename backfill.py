@@ -35,11 +35,12 @@ import nsite_client as nc
 import retry_policy as rp
 import woi_router
 import archiver as av
+import poison_stub
 from egle_doc_parser import parse_document
 from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
 from config_loader import load_config
 
-MAX_ERRORS_PER_DOC = 3  # give up on a poison doc after this many failures
+MAX_ERRORS_PER_DOC = poison_stub.MAX_ERRORS_PER_DOC  # give up on a poison doc after this many failures
 
 
 def _now() -> str:
@@ -300,25 +301,9 @@ def run() -> int:
             print(f"  ERR {d['document_name'][:50]}: {e} "
                   f"(attempt {cnt}/{MAX_ERRORS_PER_DOC})")
             # On the terminal failure, make the doc VISIBLE instead of silently
-            # dropping it: write a stub feed row (title/date/native-download link)
-            # and mark it 'skipped' so it isn't retried. The link uses the
-            # downloadfile endpoint (serves the original bytes for legacy .doc /
-            # zips / images that downloadpdf 400s on), so a human can open it.
-            if cnt >= MAX_ERRORS_PER_DOC and did not in state["skipped"]:
-                reason = f"Source not classifiable after {cnt} attempts: {str(e)[:140]}"
-                link = nc.native_download_url(did)
-                try:
-                    sw.write_stub_row(sheets, sheet_id, d, link, reason)
-                    sw.mark_skipped(sheets, sheet_id, did,
-                                    {"document_name": d["document_name"],
-                                     "date_filed": d["date_filed"], "reason": reason},
-                                    _now())
-                    state["skipped"][did] = {"reason": reason}
-                    state["errors"].pop(did, None)
-                    print(f"  ->  stubbed + skipped (now visible in feed): "
-                          f"{d['document_name'][:50]}")
-                except Exception as e2:  # noqa: BLE001
-                    print(f"  ->  stub/skip write failed: {e2}")
+            # dropping it: stub feed row + 'skipped' (shared with watcher.py —
+            # see poison_stub / issue #82).
+            poison_stub.stub_if_poisoned(sheets, sheet_id, state, d, cnt, e, _now())
         finally:
             if os.path.exists(local):
                 os.remove(local)
