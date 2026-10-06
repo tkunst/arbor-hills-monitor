@@ -134,18 +134,24 @@ Trisha chose hourly saves.
 **Decision.** `gfl_air_hourly_capture.py`, run by `.github/workflows/gfl-air-hourly-capture.yml`
 at 23 minutes past each hour (GitHub's cron often runs late, so in practice every 1-2
 hours). It saves every new perimeter reading to the same app-only Drive folder in the same
-`gfl-air-capture-<date>-oid<max>.json` format, reusing `_capture_row` and `_write_capture`.
+capture format, named `gfl-air-capture-<date>-oid<max>-h.json` (the `-h` keeps its files
+distinct from the daily run's, so neither silently replaces the other), reusing
+`_capture_row` and `_write_capture`.
 No alerts and no Sheet writes. Its cursor is derived from Drive (the highest `oid<N>` among
 existing capture file names, listing the last 3 days first and widening only if nothing is
 found), so it shares no state with the daily run and a failed hour is simply retried by the
-next. Overlap with the daily run's batch is harmless: identical batches dedupe by file name,
-and otherwise a reading may appear in two files. A large backlog is captured oldest-first,
-`max_readings_per_run` (5,000) per run.
+next. Both jobs' files count toward the cursor, and a reading may appear in two files
+(harmless). With no capture file visible at all (a new folder or a rotated OAuth client),
+the job saves the source's newest rows at once so a cursor exists from then on. A large
+backlog is captured oldest-first, `max_readings_per_run` (5,000) per run.
 
 **Failure policy.** A failed hour logs and exits 0, because the next hour retries and the
 daily run still captures everything since its own Sheet cursor and exits 1 on any capture
-gap. The run in one fixed UTC hour (15:00) exits 1 on failure, so a persistent problem sends
-at most one GitHub failure email a day. A missing Drive configuration always exits 1.
+gap. Runs starting in four UTC hours (03, 09, 15, 21) exit 1 on failure, so a persistent
+problem sends a few GitHub failure emails a day, and a late or dropped scheduled run cannot
+hide it for a whole day. Source OBJECTIDs going backwards (a table reset that would make
+the cursor miss new readings) and new rows that are not perimeter readings both count as
+failures. A missing Drive configuration always exits 1.
 
 **Residual.** A source-side reinsert that renumbers every OBJECTID would make this job copy
 the whole table again, 5,000 readings per run, until it catches up (duplicates, no loss).

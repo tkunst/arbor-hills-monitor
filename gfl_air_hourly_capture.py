@@ -19,9 +19,11 @@ state and a failed hour is simply picked up by the next one. Files reuse
 Failure policy: nothing is lost by a failed hour. The source keeps its history, the
 next hour retries from the same Drive-derived cursor, and the daily gfl-air run (its
 own Sheet cursor) still captures every reading since its last poll and exits 1 on any
-capture gap. So a failed hour logs and exits 0, except in one fixed UTC hour a day
-(LOUD_HOUR_UTC), when it exits 1: a persistent failure surfaces as at most one GitHub
-failure email a day instead of 24. A missing Drive configuration always exits 1.
+capture gap. So a failed hour logs and exits 0, except runs starting in four fixed UTC
+hours a day (LOUD_HOURS_UTC), which exit 1: a persistent failure surfaces as a few GitHub
+failure emails a day instead of 24, and a late or dropped scheduled run cannot hide it
+for a whole day. Source OBJECTIDs going backwards, or new rows that are not perimeter
+readings, count as failures. A missing Drive configuration always exits 1.
 """
 from __future__ import annotations
 
@@ -35,11 +37,14 @@ import gfl_air_watcher as gw
 from config_loader import load_config
 
 # A failed hour exits 0 (the next hour retries, and the daily gfl-air run captures
-# everything since its own Sheet cursor regardless), EXCEPT the run in this UTC hour,
-# which exits 1 so a persistent failure surfaces as at most one GitHub email a day.
-LOUD_HOUR_UTC = 15
+# everything since its own Sheet cursor regardless), EXCEPT runs that start in these
+# UTC hours, which exit 1: a persistent failure surfaces as a few GitHub emails a day,
+# and four spread-out windows survive GitHub starting or dropping a scheduled run late.
+LOUD_HOURS_UTC = (3, 9, 15, 21)
+HOURLY_SUFFIX = "-h"
 
-_CAPTURE_RE = re.compile(r"^gfl-air-capture-\d{4}-\d{2}-\d{2}-oid(\d+)\.json$")
+# Both the daily run's files and this job's ("-h") files count toward the cursor.
+_CAPTURE_RE = re.compile(r"^gfl-air-capture-\d{4}-\d{2}-\d{2}-oid(\d+)(?:-h)?\.json$")
 
 
 def max_captured_oid(names) -> int | None:
@@ -94,28 +99,41 @@ def run(now: datetime | None = None) -> int:
     try:
         drive = ac.oauth_drive_service()
         folder = ac.folder_id(gw._CAPTURE_FOLDER_ENV)
+        when = now.strftime("%Y-%m-%dT%H:%M:%SZ")
         cursor = find_cursor(drive, folder, now)
         if cursor is None:
-            # Nothing captured yet anywhere: start from the source's current newest
-            # rows (history is covered by the monthly full snapshot, ADR 063).
+            # Nothing captured yet that this app can see (new folder / rotated OAuth
+            # client): save the source's newest rows NOW so a cursor exists from here
+            # on (history is covered by the monthly full snapshot, ADR 063).
             base = gc.fetch_baseline(cfg_gfl, station_prefix=prefix)
-            cursor = max((gc.oid_of(r) or 0) for r in base) if base else 0
-            print(f"[gfl-hourly] no capture files yet; starting at OBJECTID {cursor}.")
+            rows = gw.select_capture_rows(base, {}, None, None, 1, prefix, mode="all")
+            if not rows:
+                raise RuntimeError("no capture files and no baseline rows to start from")
+            n = gw._write_capture(cfg_gfl, rows, when, HOURLY_SUFFIX)
+            print(f"[gfl-hourly] no capture files yet; saved {n} baseline reading(s) to start the cursor.")
+            return 0
         readings = gc.fetch_readings(cfg_gfl, cursor, limit=per_run)
         if len(readings) > per_run:
             readings = readings[:per_run]      # catch up over several runs, oldest first
         if not readings:
+            base = gc.fetch_baseline(cfg_gfl, station_prefix=prefix)
+            top = max((gc.oid_of(r) or 0) for r in base) if base else None
+            if top is not None and top < cursor:
+                raise RuntimeError(f"source OBJECTIDs went BACKWARDS (newest {top} < captured "
+                                   f"{cursor}): table reset? new readings would be missed")
             print(f"[gfl-hourly] no new readings past OBJECTID {cursor}.")
             return 0
         rows = gw.select_capture_rows(readings, {}, None, None, 1, prefix, mode="all")
-        when = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-        n = gw._write_capture(cfg_gfl, rows, when)
+        if not rows:
+            raise RuntimeError(f"{len(readings)} new row(s) past OBJECTID {cursor} but none "
+                               "were perimeter readings; the cursor cannot advance")
+        n = gw._write_capture(cfg_gfl, rows, when, HOURLY_SUFFIX)
         print(f"[gfl-hourly] captured {n} reading(s) past OBJECTID {cursor} -> Drive.")
         return 0
     except Exception as e:  # noqa: BLE001 — see the failure policy in the docstring
         print(f"[gfl-hourly] capture attempt failed: {type(e).__name__}: {e}")
-        if now.hour == LOUD_HOUR_UTC:
-            print("[gfl-hourly] failing loudly (the once-a-day report hour).")
+        if now.hour in LOUD_HOURS_UTC:
+            print("[gfl-hourly] failing loudly (a report hour).")
             return 1
         print("[gfl-hourly] the next run retries; the daily gfl-air run still captures "
               "everything since its own cursor — exiting 0.")
