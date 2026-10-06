@@ -827,7 +827,8 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
                            watch_thresholds: dict, *, link: str, retrieved_iso: str,
                            coords: dict | None = None, context: dict | None = None,
                            historical: bool = False, stations_reporting: int | None = None,
-                           n_stations_expected: int = 6) -> tuple[str, str]:
+                           n_stations_expected: int = 6,
+                           registry_available: bool = True) -> tuple[str, str]:
     """The consolidated per-run SCREENING (OPEN) email — Model A. ONE email listing ALL
     monitors' verbatim per-station readings for BOTH gases (▲ = strictly above the
     benchmark), the newly-detected + continuing episodes, a ±2h context block per
@@ -872,14 +873,21 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
     body.append("")
 
     # The all-six-monitors table.
-    body.append("ALL PERIMETER MONITORS (latest reading this run; ▲ = public "
+    body.append("ALL PERIMETER MONITORS (latest reading this run, or when a silent "
+                "station last reported; ▲ = public "
                 "hourly value STRICTLY ABOVE the benchmark):")
     body.append("  Station  H2S (ppb)        CH4 (ppm)        Wind            As-Of (ET)")
     near = False
+    # "no data since X" only when X predates every reading in this batch; otherwise
+    # (historical backfill, or a reading that landed between the layer-4 and layer-0
+    # fetches) the honest statement is just that this batch has no reading for it.
+    batch_start = min((r["as_of"] for r in monitor_rows if r.get("as_of")), default="")
     for row in monitor_rows:
         if row.get("silent"):
             last = row.get("last_read_iso") or ""
-            since = f"no data since {et_label(last)}" if last else "no data this run"
+            since = (f"no data since {et_label(last)}"
+                     if last and (not batch_start or last < batch_start)
+                     else "no reading in this run's batch")
             body.append(f"  {row['station']:<7}  {since}")
             continue
 
@@ -902,8 +910,10 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
         body.append(f"  {row['station']:<7}  {cell('h2s'):<15}  {cell('ch4'):<15}  "
                     f"{_wind_str(row):<14}  {et_label(row.get('as_of',''))}")
     if len(monitor_rows) < n_stations_expected:
+        why = ("the station list could not be retrieved this run" if not registry_available
+               else "not in the source's station list")
         body.append(f"  ({n_stations_expected - len(monitor_rows)} station(s) not listed: "
-                    "the station list could not be retrieved this run.)")
+                    f"{why}.)")
     if near:
         body.append("  * value is ABOVE the benchmark but rounds to it — shown to full "
                     "precision (the raw unrounded value drives the flag, not the "
@@ -1517,9 +1527,11 @@ def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds
 
     # Best-effort station coordinates (layer 0) — a nicety; never blocks an alert.
     coords: dict = {}
+    registry_available = True
     try:
         coords = gc.fetch_station_coords(cfg_gfl, station_prefix=prefix)
     except Exception as e:  # noqa: BLE001
+        registry_available = False
         print(f"[gfl-air]   station coords unavailable (using dashboard link): {e}")
 
     # Durable log rows for CLOSED episodes FIRST (Sheet row before state entry — the
@@ -1567,7 +1579,7 @@ def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds
         subject, body = format_screening_email(
             result.opened, continuing, monitor_rows, watch_thresholds, link=link,
             retrieved_iso=retrieved_iso, coords=coords, context=context, historical=hist,
-            stations_reporting=len(latest))
+            stations_reporting=len(latest), registry_available=registry_available)
         try:
             ea.send_email(subject, body, cfg, recipients=watch_recipients)
             print(f"[gfl-air]   SCREENING emailed: {subject}")
