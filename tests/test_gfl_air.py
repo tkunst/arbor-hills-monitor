@@ -6,6 +6,7 @@ committed data — the ArcGIS response is a SMALL synthetic fixture built in-pro
 incremental / skip-seen / over-cap / sentinel) driven through a fake Sheets service.
 """
 import copy
+import json
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -1457,7 +1458,7 @@ def test_capture_row_keeps_labels_and_every_raw_field():
 
 def test_reading_fields_request_every_measurement_field():
     for f in ("H2S", "CH4", "H2S_Text", "CH4_Text", "Speed", "Direction", "Temp",
-              "Relative_Humidity", "Barometric_Pressure", "Direction_Text"):
+              "Relative_Humidity", "Barometric_Pressure", "Direction_Text", "Date_Text"):
         assert f in gc._READING_FIELDS.split(",")
 
 
@@ -1465,6 +1466,86 @@ def test_live_config_captures_every_reading():
     import config_loader
     cap = config_loader.load_config()["gfl_air"]["capture"]
     assert cap["enabled"] is True and cap["mode"] == "all"
+
+
+def test_capture_mode_normalizes_and_fails_safe_to_all():
+    assert gw.capture_mode({"capture": {"mode": " ALL "}}) == "all"
+    assert gw.capture_mode({"capture": {"mode": "sample"}}) == "sample"
+    assert gw.capture_mode({"capture": {"mode": "full"}}) == "all"      # typo -> keep MORE
+    assert gw.capture_mode({}) == "sample"                              # legacy default
+
+
+def test_capture_payload_with_raw_round_trips_as_json():
+    r = _reading(7, "MS-3", 3.1, 12.0, DAY0, h2s_text="BDL", ch4_text="12")
+    r.update(Relative_Humidity=81.0, Barometric_Pressure=None, Date_Text="10/05/2026, 01:00 PM")
+    rows = [gw._capture_row(r)]
+    back = json.loads(json.dumps({"readings": rows}, sort_keys=True))["readings"][0]
+    assert back["raw"] == r and back["h2s_text"] == "BDL"
+
+
+def test_query_readings_falls_back_to_core_fields_on_arcgis_error(monkeypatch):
+    calls = []
+
+    def fake(url, layer, params, **k):
+        calls.append(params["outFields"])
+        if params["outFields"] == gc._READING_FIELDS:
+            raise gc.GflAirFetchError("ArcGIS error from U: Invalid field Relative_Humidity")
+        return {"features": []}
+    monkeypatch.setattr(gc, "_query", fake)
+    gc.fetch_readings({"service_url": "U"}, 5)
+    assert calls == [gc._READING_FIELDS, gc._CORE_READING_FIELDS]
+
+
+def test_query_readings_does_not_retry_network_errors(monkeypatch):
+    calls = []
+
+    def down(url, layer, params, **k):
+        calls.append(1)
+        raise gc.GflAirFetchError("GET U failed: timed out")
+    monkeypatch.setattr(gc, "_query", down)
+    with pytest.raises(gc.GflAirFetchError):
+        gc.fetch_readings({"service_url": "U"}, 5)
+    assert calls == [1]
+
+
+def test_capture_batch_failure_is_loud(monkeypatch):
+    monkeypatch.setattr(gw, "_CAPTURE_FAILED", False)
+    monkeypatch.setattr(gw.ac, "is_configured", lambda *a, **k: True)
+
+    def boom(*a, **k):
+        raise RuntimeError("Drive 503")
+    monkeypatch.setattr(gw, "_write_capture", boom)
+    n = gw._capture_batch({"capture": {"enabled": True, "mode": "all"}},
+                          [_reading(1, "MS-1", 0.0, 2.0, DAY0)], THRESH, SENT, WATCH, "MS-")
+    assert n == 0 and gw._CAPTURE_FAILED is True
+
+
+def test_capture_batch_enabled_but_unconfigured_is_loud(monkeypatch):
+    monkeypatch.setattr(gw, "_CAPTURE_FAILED", False)
+    monkeypatch.setattr(gw.ac, "is_configured", lambda *a, **k: False)
+    gw._capture_batch({"capture": {"enabled": True, "mode": "all"}},
+                      [_reading(1, "MS-1", 0.0, 2.0, DAY0)], THRESH, SENT, WATCH, "MS-")
+    assert gw._CAPTURE_FAILED is True
+
+
+def test_run_passes_config_mode_and_captures_over_cap_batch(monkeypatch):
+    cfg = copy.deepcopy(CFG)
+    cfg["gfl_air"]["capture"] = {"enabled": True, "mode": "all", "baseline_hours": 8}
+    cfg["gfl_air"]["max_new_readings_per_run"] = 3
+    fake, sent = _wire(monkeypatch, cfg)
+    _baseline_then(monkeypatch)
+    seen = []
+    monkeypatch.setattr(gw, "_write_capture", lambda c, rows, when: seen.append(rows) or len(rows))
+    calm = [_reading(106 + i, "MS-1", 0.0, 2.0, DAY1 + i * 3_600_000) for i in range(3)]
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in calm if r["OBJECTID"] > since])
+    assert gw.run() == 0
+    assert [len(b) for b in seen] == [3]                   # mode "all": no 8h downsample
+    over = [_reading(200 + i, "MS-2", 0.0, 2.0, DAY1 + i * 3_600_000) for i in range(5)]
+    monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: list(over))
+    monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": over[-1:])
+    assert gw.run() == 0
+    assert len(seen) == 2 and len(seen[1]) == 5             # over-cap batch captured first
 
 
 def test_write_capture_is_a_safe_noop_when_disabled_or_unconfigured(monkeypatch):

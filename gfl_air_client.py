@@ -82,8 +82,9 @@ SELF_REPORTED = "GFL self-reported perimeter air monitoring"
 # Every measurement field the source publishes per reading (ADR 026 addendum
 # 2026-10-06: the durable capture keeps them all verbatim, so nothing depends on the
 # public dashboard, which shows only the _Text labels).
-_READING_FIELDS = ("OBJECTID,LocName,Date,H2S,CH4,H2S_Text,CH4_Text,Speed,Direction,Temp,"
-                   "Relative_Humidity,Barometric_Pressure,Direction_Text,Date_Text")
+_CORE_READING_FIELDS = "OBJECTID,LocName,Date,H2S,CH4,H2S_Text,CH4_Text,Speed,Direction,Temp"
+_READING_FIELDS = (_CORE_READING_FIELDS
+                   + ",Relative_Humidity,Barometric_Pressure,Direction_Text,Date_Text")
 
 # Pollutant spec: (result-key, ArcGIS field, unit, threshold/sentinel config key,
 # metric name). One place both the mapping and the classifier read from.
@@ -148,6 +149,20 @@ def _query(service_url: str, layer, params: dict, *, timeout: int = 60) -> dict:
     return data
 
 
+def _query_readings(service_url: str, layer, params: dict) -> dict:
+    """_query for the readings table, requesting every measurement field. If the
+    source rejects the extended field list (an ArcGIS error body, e.g. a renamed
+    humidity field), retry with the core fields so live alerting never stalls on a
+    field that only the durable capture needs. Network errors are not retried here."""
+    try:
+        return _query(service_url, layer, params)
+    except GflAirFetchError as e:
+        if "ArcGIS error" not in str(e) or params.get("outFields") != _READING_FIELDS:
+            raise
+        print(f"[gfl-air]   extended field list rejected ({e}); retrying with core fields")
+        return _query(service_url, layer, {**params, "outFields": _CORE_READING_FIELDS})
+
+
 def _features(data: dict) -> list[dict]:
     return [f.get("attributes", {}) for f in (data.get("features") or [])]
 
@@ -180,7 +195,7 @@ def fetch_readings(cfg_gfl: dict, since_oid: int, *, limit: Optional[int] = None
     out: list[dict] = []
     offset = 0
     while True:
-        data = _query(c["service_url"], c["readings_layer"], {
+        data = _query_readings(c["service_url"], c["readings_layer"], {
             "where": f"OBJECTID > {int(since_oid)}",
             "outFields": _READING_FIELDS,
             "orderByFields": "OBJECTID ASC",
@@ -206,7 +221,7 @@ def fetch_baseline(cfg_gfl: dict, *, station_prefix: str = DEFAULT_STATION_PREFI
     A little headroom (60 rows) over the six stations covers a poll landing on an
     hour boundary where two hours' rows interleave."""
     c = _svc(cfg_gfl)
-    data = _query(c["service_url"], c["readings_layer"], {
+    data = _query_readings(c["service_url"], c["readings_layer"], {
         "where": "1=1",
         "outFields": _READING_FIELDS,
         "orderByFields": "OBJECTID DESC",
@@ -362,7 +377,7 @@ def fetch_station_window(cfg_gfl: dict, station: str, center_epoch_ms: int,
     start = _epoch_ms_to_utc_date_literal(center_epoch_ms - span_ms)
     end = _epoch_ms_to_utc_date_literal(center_epoch_ms + span_ms)
     st = str(station).replace("'", "")
-    data = _query(c["service_url"], c["readings_layer"], {
+    data = _query_readings(c["service_url"], c["readings_layer"], {
         "where": f"LocName = '{st}' AND Date >= date '{start}' AND Date <= date '{end}'",
         "outFields": _READING_FIELDS,
         "orderByFields": "Date ASC",

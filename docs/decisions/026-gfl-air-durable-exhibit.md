@@ -108,8 +108,16 @@ actual readings for both CH4 and H2S... Don't want to rely on that dashboard sta
 (adds `Relative_Humidity`, `Barometric_Pressure`, `Direction_Text`, `Date_Text`).
 About 150 readings and about 80 KB of JSON per daily poll.
 
-**Not covered here.** A reading the daily poll never sees (an over-cap re-baseline skips
-a batch; a failed Drive upload after the cursor advanced) is not captured. The monthly
+**Failure handling.** The over-cap branch now captures the fetched batch before it
+re-baselines, so a long Actions outage does not drop real readings. A failed capture, or
+capture enabled without the Drive folder/creds, no longer just logs: the run finishes its
+alert path and then exits 1, so the GitHub failure email surfaces it. An unknown
+`capture.mode` value captures everything (fails safe). If the source rejects the extended
+field list, the readings query retries with the core fields so live alerting never stalls
+on a field only the capture needs.
+
+**Still not covered here.** Readings past the over-cap batch in a very long outage, and a
+failed upload after the cursor advanced, are not re-fetched by this job. The monthly
 full-feed snapshot (separate change) is the backstop for those gaps and for upstream
 deletions or edits. A one-time full snapshot of the whole feed (225,699 readings,
 2022-05-01 to 2026-10-06) was taken by hand on 2026-10-06.
