@@ -444,6 +444,20 @@ gfl_air:
     enabled: true
     baseline_hours: 8
 
+# --- GFL perimeter feed: monthly FULL snapshot + change detection (ADR 063) ---
+# Once a month, pull EVERY row of every layer of GFL's public perimeter-air feed
+# (~226k hourly H2S/CH4 readings, all fields verbatim) + the dashboard config into
+# one zip with a manifest (row counts checked against the server's own count,
+# SHA-256 per file), upload it to the app-only GFL Air Exhibit Drive folder
+# (GOAUTH_GFL_AIR_FOLDER_ID), and diff it against the previous snapshot: past
+# readings DELETED or EDITED upstream email the OWNER list only. The backstop for
+# anything the daily capture (gfl_air.capture) misses. Ships false (new job
+# against a live external system); a human flips it on.
+gfl_feed_snapshot:
+  enabled: false
+  page_size: 5000
+  dashboard_item_url: "https://barrgisonline.maps.arcgis.com/sharing/rest/content/items/ac08a03f8018403ba6ae1c2243c00e99"
+
 # --- CivicClerk meeting-change watch (Stream F, ADR 015, added 2026-07-14) ---
 # Watches a HAND-PICKED list of Washtenaw County CivicClerk meeting events for ANY
 # change — title, date/time, publish status, cancellation, or its agenda/minutes/
