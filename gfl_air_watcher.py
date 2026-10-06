@@ -561,11 +561,23 @@ def latest_per_station(readings: list[dict],
     return latest
 
 
-def _monitor_rows(latest: dict, watch_thresholds: dict, sentinels: dict | None) -> list[dict]:
-    """Per-station display rows for the six-monitor table, built from raw latest rows."""
+def _monitor_rows(latest: dict, watch_thresholds: dict, sentinels: dict | None,
+                  registry: dict | None = None) -> list[dict]:
+    """Per-station display rows for the six-monitor table, built from raw latest rows.
+
+    `registry` is the station layer (gc.fetch_station_coords: {station: {..,
+    'last_read_iso'}}). Every registry station with NO reading this run still gets a
+    row, marked `silent` with its `last_read_iso`, so a station that stopped sending
+    data is listed as "no data since ..." rather than vanishing from the table
+    (MS-1, silent from 2026-09-17, dropped out this way). A silent row's `as_of` is
+    '' so its stale time never widens the email's reporting period."""
     wt = watch_thresholds or {}
     rows = []
-    for st in sorted(latest):
+    for st in sorted(set(latest) | set(registry or {})):
+        if st not in latest:
+            rows.append({"station": st, "as_of": "", "silent": True,
+                         "last_read_iso": ((registry or {}).get(st) or {}).get("last_read_iso", "")})
+            continue
         r = latest[st]
         row = {"station": st, "as_of": gc.reading_iso(r),
                "wind": r.get("Speed"), "dir": r.get("Direction"),
@@ -842,7 +854,8 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
     period = (f"{et_label(min(opened_isos))} to {et_label(max(period_isos))}"
               if opened_isos else "n/a")
 
-    n_report = stations_reporting if stations_reporting is not None else len(monitor_rows)
+    n_report = (stations_reporting if stations_reporting is not None
+                else sum(1 for r in monitor_rows if not r.get("silent")))
     dq = (f"stations reporting {n_report}/{n_stations_expected} · 999/99999 "
           "no-data & TEST-marker readings excluded from flagging · calibration "
           "status: not published by the source")
@@ -864,6 +877,12 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
     body.append("  Station  H2S (ppb)        CH4 (ppm)        Wind            As-Of (ET)")
     near = False
     for row in monitor_rows:
+        if row.get("silent"):
+            last = row.get("last_read_iso") or ""
+            since = f"no data since {et_label(last)}" if last else "no data this run"
+            body.append(f"  {row['station']:<7}  {since}")
+            continue
+
         def cell(gas):
             nonlocal near
             g = row[gas]
@@ -882,6 +901,9 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
             return txt or "·"
         body.append(f"  {row['station']:<7}  {cell('h2s'):<15}  {cell('ch4'):<15}  "
                     f"{_wind_str(row):<14}  {et_label(row.get('as_of',''))}")
+    if len(monitor_rows) < n_stations_expected:
+        body.append(f"  ({n_stations_expected - len(monitor_rows)} station(s) not listed: "
+                    "the station list could not be retrieved this run.)")
     if near:
         body.append("  * value is ABOVE the benchmark but rounds to it — shown to full "
                     "precision (the raw unrounded value drives the flag, not the "
@@ -1540,12 +1562,12 @@ def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds
                 context[st] = gc.fetch_station_window(cfg_gfl, st, center, 2)
             except Exception as e:  # noqa: BLE001 — context is best-effort
                 print(f"[gfl-air]   ±2h context for {st} unavailable: {e}")
-        monitor_rows = _monitor_rows(latest_per_station(readings, prefix),
-                                     watch_thresholds, sentinels)
+        latest = latest_per_station(readings, prefix)
+        monitor_rows = _monitor_rows(latest, watch_thresholds, sentinels, registry=coords)
         subject, body = format_screening_email(
             result.opened, continuing, monitor_rows, watch_thresholds, link=link,
             retrieved_iso=retrieved_iso, coords=coords, context=context, historical=hist,
-            stations_reporting=len(monitor_rows))
+            stations_reporting=len(latest))
         try:
             ea.send_email(subject, body, cfg, recipients=watch_recipients)
             print(f"[gfl-air]   SCREENING emailed: {subject}")
