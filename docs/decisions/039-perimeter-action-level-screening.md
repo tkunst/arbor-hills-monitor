@@ -273,14 +273,18 @@ too while it was silent 2026-09-29 to 2026-10-05.
 for coordinates is now also the station registry. It returns every perimeter station
 (even one with no geometry) plus `last_read_iso`, from that layer's `Current_ReadDate`.
 `_monitor_rows(..., registry=coords)` gives every registry station with no reading this
-run a `silent` row, rendered as `MS-1  no data since <ET label>` (or `no data this
-run` if the layer has no date). The wording states the fact only, not "offline" or
-"sensor down". A silent row has an empty `as_of`, so its stale date never widens the
-email's reporting period, and it is not counted in "stations reporting N/6". If the
-layer-0 fetch fails (it is best-effort), the table falls back to reporting stations
-only and adds one line saying how many stations are not listed, so a station is never
-dropped without a mention. `Current_ReadDate` is used, not the layer's `Date_Text`,
-which reads an hour behind during daylight time.
+run a `silent` row, rendered as `MS-1  no data since <ET label>`. That wording is
+used only when the layer's date is earlier than every reading in this run's batch;
+otherwise (no date, a historical backfill, or a reading that arrived between the two
+fetches) the row says `no reading in this run's batch`. The wording states the fact
+only, not "offline" or "sensor down". A silent row has an empty `as_of`, so its stale
+date never widens the email's reporting period, and it is not counted in "stations
+reporting N/6". If the layer-0 fetch fails (it is best-effort), the table falls back
+to reporting stations only and adds one line saying how many stations are not listed
+and why (fetch failed, or not in the source's station list), so a station is never
+dropped without a mention. If the source drops the `Current_ReadDate` field, the fetch
+retries with `Name` only so coordinates survive. `Current_ReadDate` is used, not the
+layer's `Date_Text`, which reads an hour behind during daylight time.
 
 **Scope.** Email display only. The episode engine, the EXCEEDANCE tier,
 `station_snapshot`, and the `GFL Air` tab (the cursor store) are untouched. Detecting

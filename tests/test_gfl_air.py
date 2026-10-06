@@ -1448,6 +1448,7 @@ def test_write_capture_is_a_safe_noop_when_disabled_or_unconfigured(monkeypatch)
 # silently dropped (MS-1 went silent 2026-09-17 and vanished from the emails).
 
 MS1_LAST_MS = 1_789_660_800_000                 # 2026-09-17 16:00 UTC = 12:00 PM EDT
+BATCH_MS = MS1_LAST_MS + 18 * 86_400_000       # 2026-10-05: this run's batch, after it
 
 
 def _registry(silent_last_ms=MS1_LAST_MS):
@@ -1479,13 +1480,13 @@ def test_fetch_station_coords_is_a_registry_with_last_read(monkeypatch):
 
 
 def test_silent_station_is_listed_not_dropped():
-    latest = {s: _elev(i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS) if s != "MS-1"}
-    latest["MS-3"] = _elev(9, "MS-3", 45.0, 5.0, DAY1)
+    latest = {s: _elev(i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"}
+    latest["MS-3"] = _elev(9, "MS-3", 45.0, 5.0, BATCH_MS)
     rows = gw._monitor_rows(latest, WT, SENT, registry=_registry())
     assert [r["station"] for r in rows] == STATIONS     # all six, in order
     ms1 = rows[0]
     assert ms1["silent"] is True and ms1["as_of"] == ""
-    opened = [_opened("MS-3", "h2s", 45.0, DAY1)]
+    opened = [_opened("MS-3", "h2s", 45.0, BATCH_MS)]
     _, body = gw.format_screening_email(opened, [], rows, WT, link="L",
                                         retrieved_iso="2026-10-06T13:00:00Z",
                                         stations_reporting=len(latest))
@@ -1501,37 +1502,107 @@ def test_silent_station_is_listed_not_dropped():
 
 
 def test_silent_station_count_defaults_to_reporting_rows_only():
-    latest = {s: _elev(i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS) if s != "MS-1"}
+    latest = {s: _elev(i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"}
     rows = gw._monitor_rows(latest, WT, SENT, registry=_registry())
-    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, DAY1)], [], rows, WT,
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
                                         link="L", retrieved_iso="2026-10-06T13:00:00Z")
     assert "stations reporting 5/6" in body
 
 
-def test_silent_station_without_last_read_says_no_data_this_run():
+def test_silent_station_without_last_read_says_no_reading_in_batch():
     reg = _registry()
     reg["MS-1"]["last_read_iso"] = ""
-    latest = {s: _elev(i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS) if s != "MS-1"}
+    latest = {s: _elev(i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"}
     rows = gw._monitor_rows(latest, WT, SENT, registry=reg)
-    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, DAY1)], [], rows, WT,
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
                                         link="L", retrieved_iso="2026-10-06T13:00:00Z")
-    assert "MS-1     no data this run" in body
+    assert "MS-1     no reading in this run's batch" in body
 
 
 def test_registry_unavailable_flags_unlisted_stations():
-    latest = {s: _elev(i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS) if s != "MS-1"}
+    latest = {s: _elev(i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"}
     rows = gw._monitor_rows(latest, WT, SENT)            # no registry (layer-0 fetch failed)
-    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, DAY1)], [], rows, WT,
-                                        link="L", retrieved_iso="2026-10-06T13:00:00Z")
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z",
+                                        registry_available=False)
     assert "(1 station(s) not listed: the station list could not be retrieved this run.)" in body
+
+
+def test_registry_short_of_six_says_not_in_station_list():
+    reg = _registry()
+    del reg["MS-1"]                                      # fetch OK, but layer 0 lacks MS-1
+    latest = {s: _elev(i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"}
+    rows = gw._monitor_rows(latest, WT, SENT, registry=reg)
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z")
+    assert "(1 station(s) not listed: not in the source's station list.)" in body
+    assert "could not be retrieved" not in body
+
+
+def test_reporting_station_missing_from_registry_is_still_listed():
+    reg = _registry()
+    del reg["MS-4"]
+    latest = {s: _elev(i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"}
+    rows = gw._monitor_rows(latest, WT, SENT, registry=reg)
+    assert [r["station"] for r in rows] == STATIONS     # union, not registry-only
+    assert not next(r for r in rows if r["station"] == "MS-4").get("silent")
+
+
+def test_silent_station_last_read_not_before_batch_is_not_called_no_data_since():
+    # historical backfill / fetch-timing gap: layer 0's date is newer than this batch
+    reg = _registry(silent_last_ms=BATCH_MS + 3_600_000)
+    latest = {s: _elev(i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"}
+    rows = gw._monitor_rows(latest, WT, SENT, registry=reg)
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z")
+    assert "MS-1     no reading in this run's batch" in body
+    assert "no data since" not in body
+
+
+def test_fetch_station_coords_retries_name_only_when_date_field_errors(monkeypatch):
+    calls = []
+
+    def fake_query(url, layer, params, **k):
+        calls.append(params["outFields"])
+        if "Current_ReadDate" in params["outFields"]:
+            raise gc.GflAirFetchError("Invalid field: Current_ReadDate")
+        return {"features": [{"attributes": {"Name": "MS-1"},
+                              "geometry": {"x": -83.5, "y": 42.4}}]}
+    monkeypatch.setattr(gc, "_query", fake_query)
+    reg = gc.fetch_station_coords({"service_url": "U"})
+    assert calls == ["Name,Current_ReadDate", "Name"]
+    assert reg == {"MS-1": {"lat": 42.4, "lon": -83.5, "last_read_iso": ""}}
+
+
+def test_fetch_station_coords_garbage_date_is_blank(monkeypatch):
+    monkeypatch.setattr(gc, "_query", lambda *a, **k: {"features": [
+        {"attributes": {"Name": "MS-1", "Current_ReadDate": "not-a-date"}}]})
+    assert gc.fetch_station_coords({"service_url": "U"})["MS-1"]["last_read_iso"] == ""
+
+
+def test_run_registry_fetch_failure_notes_unlisted_station(monkeypatch):
+    fake, sent = _wire_with_recipients(monkeypatch, _watch_cfg())
+    _baseline_then(monkeypatch)
+
+    def boom(*a, **k):
+        raise gc.GflAirFetchError("layer 0 down")
+    monkeypatch.setattr(gw.gc, "fetch_station_coords", boom)
+    new = [_elev(106 + i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"]
+    new[1] = _elev(108, "MS-3", 0.0, 45.0, BATCH_MS)
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0
+    assert len(sent) == 1
+    assert ("(1 station(s) not listed: the station list could not be retrieved this run.)"
+            in sent[0][1])
 
 
 def test_run_screening_email_lists_silent_station(monkeypatch):
     fake, sent = _wire_with_recipients(monkeypatch, _watch_cfg())
     _baseline_then(monkeypatch)
     monkeypatch.setattr(gw.gc, "fetch_station_coords", lambda *a, **k: _registry())
-    new = [_elev(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS) if s != "MS-1"]
-    new[1] = _elev(108, "MS-3", 0.0, 45.0, DAY1)                # MS-3 CH4 opens (>40)
+    new = [_elev(106 + i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"]
+    new[1] = _elev(108, "MS-3", 0.0, 45.0, BATCH_MS)                # MS-3 CH4 opens (>40)
     monkeypatch.setattr(gw.gc, "fetch_readings",
                         lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
     assert gw.run() == 0

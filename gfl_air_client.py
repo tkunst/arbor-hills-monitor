@@ -315,13 +315,15 @@ def fetch_station_coords(cfg_gfl: dict, *, station_prefix: str = DEFAULT_STATION
     missing) so the screening email can list a station that sent nothing new this
     run as "no data since ..." instead of dropping it (ADR 039 addendum 2026-10-06)."""
     layer = cfg_gfl.get("stations_layer", 0)
-    data = _query(cfg_gfl.get("service_url", ""), layer, {
-        "where": "1=1",
-        "outFields": "Name,Current_ReadDate",
-        "returnGeometry": "true",
-        "outSR": 4326,
-        "resultRecordCount": 60,
-    })
+    params = {"where": "1=1", "outFields": "Name,Current_ReadDate",
+              "returnGeometry": "true", "outSR": 4326, "resultRecordCount": 60}
+    try:
+        data = _query(cfg_gfl.get("service_url", ""), layer, params)
+    except GflAirFetchError:
+        # Current_ReadDate is a nicety on top of coordinates: if the source renames or
+        # drops it, ArcGIS errors the whole query — retry Name-only so coordinates and
+        # the station list survive (every last_read_iso is then '').
+        data = _query(cfg_gfl.get("service_url", ""), layer, {**params, "outFields": "Name"})
     out: dict[str, dict] = {}
     for f in (data.get("features") or []):
         attrs = f.get("attributes") or {}
