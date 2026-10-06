@@ -1260,6 +1260,47 @@ def select_capture_rows(readings: list[dict], thresholds: dict, sentinels: dict 
     return kept
 
 
+# Set when the durable capture of a fetched batch fails (or is enabled but not
+# configured). run() still finishes the alert path; __main__ then exits 1 so the
+# GitHub failure email surfaces it — with capture.mode "all" a silent miss would be
+# real data loss (the cursor has already moved past those readings).
+_CAPTURE_FAILED = False
+
+
+def capture_mode(cfg_gfl: dict) -> str:
+    """Normalized capture.mode. Anything other than "sample" captures everything:
+    a typo must fail SAFE (keep more data), never quietly fall back to sampling."""
+    raw = str((cfg_gfl.get("capture") or {}).get("mode", "sample")).strip().lower()
+    if raw not in ("all", "sample"):
+        print(f"[gfl-air]   WARNING: unknown gfl_air.capture.mode {raw!r}; capturing ALL readings")
+        return "all"
+    return raw
+
+
+def _capture_batch(cfg_gfl: dict, readings: list[dict], thresholds: dict,
+                   sentinels: dict | None, watch_thresholds: dict | None,
+                   prefix: str) -> int:
+    """Select + upload one fetched batch (best-effort; never raises). A failure, or
+    capture enabled without the Drive folder/creds, sets _CAPTURE_FAILED."""
+    global _CAPTURE_FAILED
+    cap = cfg_gfl.get("capture") or {}
+    if cap.get("enabled") and not ac.is_configured(_CAPTURE_FOLDER_ENV):
+        _CAPTURE_FAILED = True
+    try:
+        captured_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        rows = select_capture_rows(
+            readings, thresholds, sentinels, watch_thresholds,
+            float(cap.get("baseline_hours", 8)), prefix, mode=capture_mode(cfg_gfl))
+        n = _write_capture(cfg_gfl, rows, captured_at)
+        if n:
+            print(f"[gfl-air]   durable capture: {n} reading(s) -> Drive.")
+        return n
+    except Exception as ce:  # noqa: BLE001 — durable capture is best-effort, but LOUD
+        _CAPTURE_FAILED = True
+        print(f"[gfl-air]   durable capture FAILED ({len(readings)} reading(s) not saved): {ce}")
+        return 0
+
+
 def _capture_filename(rows: list[dict], when_utc: str) -> str:
     """Immutable per-poll name: run date + max OBJECTID in the batch, so a re-run
     of the same batch dedups (upload_file reuses by name) and files sort by date."""
@@ -1376,7 +1417,10 @@ def run() -> int:
     if len(readings) > cap:
         # Over-cap: almost certainly a source-side full-table reinsert (every
         # OBJECTID bumped), not thousands of real new readings. Re-baseline instead
-        # of blasting the case file (WDS Rule B(ii)).
+        # of blasting the case file (WDS Rule B(ii)). The fetched batch is still
+        # durably captured first (ADR 026 addendum 2026-10-06): if these ARE real
+        # readings (e.g. a long Actions outage), re-baselining must not lose them.
+        _capture_batch(cfg_gfl, readings, thresholds, sentinels, watch_thresholds, prefix)
         try:
             _baseline(sheets, sheet_id, cfg_gfl, link, prefix, thresholds, sentinels,
                       f"OVER-CAP ({len(readings)} > {cap}) — suspected feed reinsert",
@@ -1416,17 +1460,7 @@ def run() -> int:
     # hour + baseline downsample). Best-effort
     # and gated OFF until the folder/secret exist, so it can't affect the live
     # stream; it never touches measurements, the cursor, or the alert path.
-    try:
-        captured_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        cap_rows = select_capture_rows(
-            readings, thresholds, sentinels, watch_thresholds,
-            float((cfg_gfl.get("capture") or {}).get("baseline_hours", 8)), prefix,
-            mode=str((cfg_gfl.get("capture") or {}).get("mode", "sample")))
-        n_cap = _write_capture(cfg_gfl, cap_rows, captured_at)
-        if n_cap:
-            print(f"[gfl-air]   durable capture: {n_cap} reading(s) -> Drive.")
-    except Exception as ce:  # noqa: BLE001 — durable capture is best-effort
-        print(f"[gfl-air]   durable capture skipped: {ce}")
+    _capture_batch(cfg_gfl, readings, thresholds, sentinels, watch_thresholds, prefix)
 
     # The full-list EXCEEDANCE / anomaly email (unchanged tier: CH4 500 ppm / H2S
     # 72 ppb 24-hr avg). include_watch=False ALWAYS now: the action-level (watch) tier
@@ -1614,4 +1648,8 @@ def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds
 
 
 if __name__ == "__main__":
-    sys.exit(run())
+    rc = run()
+    if not rc and _CAPTURE_FAILED:
+        print("[gfl-air] exiting 1: the durable capture did not save this run's readings.")
+        rc = 1
+    sys.exit(rc)
