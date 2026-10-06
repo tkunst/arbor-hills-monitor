@@ -1563,7 +1563,10 @@ def test_main_exit_code_reflects_capture_gaps(monkeypatch):
         gw.gc.FIELDS_FALLBACK_USED = True
         return 0
     monkeypatch.setattr(gw, "run", fallback_run)
+    monkeypatch.setattr(gw, "load_config", lambda: {"gfl_air": {"capture": {"enabled": True}}})
     assert gw.main() == 1                                   # thinner capture -> exit 1
+    monkeypatch.setattr(gw, "load_config", lambda: {"gfl_air": {"capture": {"enabled": False}}})
+    assert gw.main() == 0                                   # capture off: log only
     monkeypatch.setattr(gw, "run", lambda: 0)
     assert gw.main() == 0                                   # flags reset per run
 

@@ -115,8 +115,10 @@ capture is enabled without the Drive folder/creds, when the over-cap branch re-b
 when the source rejected the extended field list and the readings query fell back to
 the core fields (live alerting keeps working; the capture is thinner). An unknown or empty
 `capture.mode` captures everything (fails safe). The monthly full-feed snapshot (separate
-change) is the backstop that recovers anything a flagged run missed, and it also catches
-upstream deletions or edits.
+change, ADR 063) is the backstop that recovers anything a flagged run missed, and it also
+catches upstream deletions or edits. A one-time manual full snapshot of the whole feed
+(225,699 readings, 2022-05-01 to 2026-10-06, every field, SHA-256 manifest) was taken on
+2026-10-06 and kept outside the repo, with an off-site copy in Trisha's private Drive.
 
 **Real-specimen check.** Live fetch with the new field list: the server returned all 14
 fields; `mode: all` captured 120 of 120 perimeter readings, each with numeric values,
