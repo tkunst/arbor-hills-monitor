@@ -55,6 +55,10 @@ MEASUREMENT_FIELDS = ("LocName", "Date", "H2S", "CH4", "H2S_Text", "CH4_Text",
                       "Speed", "Direction", "Direction_Text", "Temp",
                       "Relative_Humidity", "Barometric_Pressure")
 _UA = "arbor-hills-monitor (independent public-records archive)"
+# Hard caps against a hostile or broken source (one page of 5,000 readings is ~2 MB;
+# the whole readings CSV is ~50 MB today).
+MAX_RESPONSE_BYTES = 200_000_000
+MAX_CSV_BYTES = 1_000_000_000
 
 
 class SnapshotError(RuntimeError):
@@ -77,7 +81,10 @@ def _get_json(url: str, params: dict | None = None, *, tries: int = 5,
         try:
             req = urllib.request.Request(url, headers={"User-Agent": _UA})
             with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310  # nosec B310 — https URL from trusted config, not user input
-                data = json.loads(r.read().decode("utf-8"))
+                raw = r.read(MAX_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_RESPONSE_BYTES:
+                raise SnapshotError(f"response from {url} exceeds {MAX_RESPONSE_BYTES:,} bytes")
+            data = json.loads(raw.decode("utf-8"))
         except Exception as e:  # noqa: BLE001 — transient network/server errors retry
             last = e
             if i < tries - 1:
@@ -342,7 +349,10 @@ def build_snapshot(cfg: dict, stamp: str, get=_get_json) -> tuple[bytes, list[di
                 "layers": [], "files": {}, "warnings": []}
     readings: list[dict] | None = None
     for lyr in (svc.get("layers") or []) + (svc.get("tables") or []):
-        lid = lyr["id"]
+        try:
+            lid = int(lyr["id"])            # used in file names and URL paths
+        except (KeyError, TypeError, ValueError):
+            raise SnapshotError(f"service lists a layer with a non-integer id: {lyr.get('id')!r}")
         meta = get(f"{svc_url}/{lid}", {})
         files[f"layer{lid}-meta.json"] = json.dumps(meta, indent=1, sort_keys=True).encode()
         fields = [f["name"] for f in meta.get("fields") or []]
@@ -387,6 +397,8 @@ def readings_from_zip(blob: bytes) -> list[dict]:
         csv_name = next((lyr.get("csv") for lyr in m.get("layers", []) if lyr.get("id") == rid), None)
         if not csv_name or csv_name not in z.namelist():
             raise SnapshotError("previous snapshot has no readings CSV")
+        if z.getinfo(csv_name).file_size > MAX_CSV_BYTES:
+            raise SnapshotError(f"readings CSV in previous snapshot exceeds {MAX_CSV_BYTES:,} bytes")
         return list(csv.DictReader(io.StringIO(z.read(csv_name).decode("utf-8"))))
 
 
