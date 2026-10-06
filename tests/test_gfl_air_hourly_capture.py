@@ -124,7 +124,7 @@ def test_run_unconfigured_fails_loudly(monkeypatch):
     assert hc.run(NOW) == 1
 
 
-def test_failed_hour_is_quiet_except_the_daily_report_hour(monkeypatch):
+def test_failed_hour_is_quiet_except_the_report_hours(monkeypatch):
     _wire(monkeypatch, names=["gfl-air-capture-2026-10-06-oid1.json"],
           fetch_raises=hc.gc.GflAirFetchError("timed out"))
     quiet = NOW.replace(hour=10)

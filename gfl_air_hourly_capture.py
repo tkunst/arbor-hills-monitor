@@ -10,8 +10,8 @@ often runs late, so in practice 1-2 hours).
 
 It is deliberately separate and minimal: no alerts, no Sheet, no cursor in the case
 file. Its cursor is DERIVED FROM DRIVE: the highest `oid<N>` in the existing
-`gfl-air-capture-*.json` names in the app-only GFL Air Exhibit folder (the daily run
-writes the same kind of file, same naming), so the two jobs never race over shared
+`gfl-air-capture-*.json` names in the app-only GFL Air Exhibit folder (the daily run's
+files and this job's `-h` files both count), so the two jobs never race over shared
 state and a failed hour is simply picked up by the next one. Files reuse
 `gfl_air_watcher._capture_row`/`_write_capture`, so each row has the same shape
 (numeric values, the source's labels, and a verbatim `raw` copy).

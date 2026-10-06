@@ -155,7 +155,9 @@ failures. A missing Drive configuration always exits 1.
 
 **Residual.** A source-side reinsert that renumbers every OBJECTID would make this job copy
 the whole table again, 5,000 readings per run, until it catches up (duplicates, no loss).
-The monthly snapshot reports such a reinsert (ADR 063).
+The monthly snapshot reports such a reinsert (ADR 063). The opposite case, OBJECTIDs
+restarting lower after a table reset, makes every hourly run fail loudly until a person
+steps in (and the daily run's Sheet cursor shares the same blind spot).
 
 **Real-specimen check.** With a cursor three hours behind the live feed and the upload
 stubbed out, the job fetched and captured 15 readings (MS-2 to MS-6, 3 hours; MS-1 is
