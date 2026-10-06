@@ -91,3 +91,29 @@ cursor, or the alert path.
 - **Snapshot-level episode state for the capture boundary.** More machinery;
   per-reading classification already captures every elevated hour faithfully
   without tracking cross-poll episode markers.
+
+## Addendum 2026-10-06: capture every reading, every field
+
+**Why.** GFL's public dashboard shows only the `H2S_Text`/`CH4_Text` labels, which read
+"BDL" for every value below 7 ppb, including stuck sensors' constant values; the numbers
+exist only in the ArcGIS feed. The `sample` capture kept about 3 of every 24 calm hourly
+readings per station (one poll on 2026-10-06 captured 14 of about 144), so most numeric
+values were preserved nowhere but GFL's feed. Trisha: "make sure we have a backup of all
+actual readings for both CH4 and H2S... Don't want to rely on that dashboard staying live."
+
+**Decision.** New `gfl_air.capture.mode`: `all` (now live) keeps every perimeter reading;
+`sample` keeps the original behavior. Each capture row now also carries `h2s_text`,
+`ch4_text`, and `raw`, a verbatim copy of every field the source returned.
+`_READING_FIELDS` now requests every measurement field the layer publishes
+(adds `Relative_Humidity`, `Barometric_Pressure`, `Direction_Text`, `Date_Text`).
+About 150 readings and about 80 KB of JSON per daily poll.
+
+**Not covered here.** A reading the daily poll never sees (an over-cap re-baseline skips
+a batch; a failed Drive upload after the cursor advanced) is not captured. The monthly
+full-feed snapshot (separate change) is the backstop for those gaps and for upstream
+deletions or edits. A one-time full snapshot of the whole feed (225,699 readings,
+2022-05-01 to 2026-10-06) was taken by hand on 2026-10-06.
+
+**Real-specimen check.** Live fetch with the new field list: the server returned all 14
+fields; `mode: all` captured 120 of 120 perimeter readings, each with numeric values,
+labels, and the full raw record.

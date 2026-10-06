@@ -440,8 +440,14 @@ gfl_air:
   # summary PDF is rendered from these files only when an exhibit is actually needed
   # (deferred). Rollback lever: set enabled: false to return _write_capture() to a
   # silent no-op (the folder + secret can stay).
+  # 2026-10-06 (Trisha: "make sure we have a backup of all actual readings for both
+  # CH4 and H2S... Don't want to rely on that dashboard staying live"): mode "all"
+  # captures EVERY hourly perimeter reading with every source field verbatim
+  # (numeric H2S/CH4, the BDL labels, wind, temp, humidity, pressure). ~150
+  # readings/day. "sample" restores the original 1-per-baseline_hours downsample.
   capture:
     enabled: true
+    mode: all
     baseline_hours: 8
 
 # --- CivicClerk meeting-change watch (Stream F, ADR 015, added 2026-07-14) ---
