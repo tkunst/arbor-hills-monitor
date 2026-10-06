@@ -449,6 +449,13 @@ gfl_air:
     enabled: true
     mode: all
     baseline_hours: 8
+  # 2026-10-06 (Trisha): HOURLY capture too, so a reading sits in GFL's feed for about
+  # an hour (not up to a day) before we hold a copy. gfl_air_hourly_capture.py via its
+  # own workflow; cursor derived from the capture file names in Drive (no Sheet
+  # state); no alerts. Rollback: enabled: false (the daily capture is unaffected).
+  hourly_capture:
+    enabled: true
+    max_readings_per_run: 5000
 
 # --- GFL perimeter feed: monthly FULL snapshot + change detection (ADR 063) ---
 # Once a month, pull EVERY row of every layer of GFL's public perimeter-air feed

@@ -123,3 +123,34 @@ catches upstream deletions or edits. A one-time manual full snapshot of the whol
 **Real-specimen check.** Live fetch with the new field list: the server returned all 14
 fields; `mode: all` captured 120 of 120 perimeter readings, each with numeric values,
 labels, and the full raw record.
+
+## Addendum 2026-10-06 (hourly): capture about every hour
+
+**Why.** The daily run (8am ET) captures every reading since its last poll, so a reading
+could sit in GFL's feed for up to about 24 hours before we held a copy. If the source
+changed or removed a reading inside that window, the original would never be seen.
+Trisha chose hourly saves.
+
+**Decision.** `gfl_air_hourly_capture.py`, run by `.github/workflows/gfl-air-hourly-capture.yml`
+at 23 minutes past each hour (GitHub's cron often runs late, so in practice every 1-2
+hours). It saves every new perimeter reading to the same app-only Drive folder in the same
+`gfl-air-capture-<date>-oid<max>.json` format, reusing `_capture_row` and `_write_capture`.
+No alerts and no Sheet writes. Its cursor is derived from Drive (the highest `oid<N>` among
+existing capture file names, listing the last 3 days first and widening only if nothing is
+found), so it shares no state with the daily run and a failed hour is simply retried by the
+next. Overlap with the daily run's batch is harmless: identical batches dedupe by file name,
+and otherwise a reading may appear in two files. A large backlog is captured oldest-first,
+`max_readings_per_run` (5,000) per run.
+
+**Failure policy.** A failed hour logs and exits 0, because the next hour retries and the
+daily run still captures everything since its own Sheet cursor and exits 1 on any capture
+gap. The run in one fixed UTC hour (15:00) exits 1 on failure, so a persistent problem sends
+at most one GitHub failure email a day. A missing Drive configuration always exits 1.
+
+**Residual.** A source-side reinsert that renumbers every OBJECTID would make this job copy
+the whole table again, 5,000 readings per run, until it catches up (duplicates, no loss).
+The monthly snapshot reports such a reinsert (ADR 063).
+
+**Real-specimen check.** With a cursor three hours behind the live feed and the upload
+stubbed out, the job fetched and captured 15 readings (MS-2 to MS-6, 3 hours; MS-1 is
+silent), each with all 14 source fields in `raw`.

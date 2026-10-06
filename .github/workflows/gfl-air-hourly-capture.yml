@@ -1,0 +1,41 @@
+name: gfl-air-hourly-capture
+
+# ADR 026 addendum (2026-10-06, hourly): save every new GFL perimeter reading to the
+# app-only GFL Air Exhibit Drive folder about once an hour, so a reading is held by us
+# within ~1-2 hours of appearing in GFL's feed (the daily gfl-air run is unchanged).
+# No alerts, no Sheet. A failed hour exits 0 (the next hour retries) except in one
+# fixed UTC hour a day, so a persistent failure sends at most one failure email a day.
+on:
+  schedule:
+    - cron: "23 * * * *"    # hourly, off the hour (readings land on the hour)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gfl-air-hourly-capture
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Capture new GFL perimeter readings
+        env:
+          # Same kunst.trisha OAuth identity + folder as the daily capture (gfl-air.yml).
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID_KUNST }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET_KUNST }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN_KUNST }}
+          GOAUTH_GFL_AIR_FOLDER_ID: ${{ secrets.GOAUTH_GFL_AIR_FOLDER_ID }}
+        run: python gfl_air_hourly_capture.py
