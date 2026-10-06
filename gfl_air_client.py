@@ -301,8 +301,8 @@ def _epoch_ms_to_utc_date_literal(ms: int) -> str:
 
 
 def fetch_station_coords(cfg_gfl: dict, *, station_prefix: str = DEFAULT_STATION_PREFIX) -> dict:
-    """BEST-EFFORT {station_name: {'lat': float, 'lon': float}} for the perimeter
-    stations, reprojected to WGS84 (outSR=4326). Layer 4 (the readings table) has NO
+    """BEST-EFFORT {station_name: {'last_read_iso': str, ['lat': float, 'lon': float]}}
+    for the perimeter stations, reprojected to WGS84 (outSR=4326). Layer 4 (the readings table) has NO
     geometry (spike 2026-09-14), so coordinates come from the current-per-station
     Feature Layer (config `stations_layer`, default 0), whose station name is in the
     `Name` field (NOT `LocName`). Raises GflAirFetchError on failure — the alert path
@@ -319,10 +319,13 @@ def fetch_station_coords(cfg_gfl: dict, *, station_prefix: str = DEFAULT_STATION
               "returnGeometry": "true", "outSR": 4326, "resultRecordCount": 60}
     try:
         data = _query(cfg_gfl.get("service_url", ""), layer, params)
-    except GflAirFetchError:
+    except GflAirFetchError as e:
         # Current_ReadDate is a nicety on top of coordinates: if the source renames or
         # drops it, ArcGIS errors the whole query — retry Name-only so coordinates and
-        # the station list survive (every last_read_iso is then '').
+        # the station list survive (every last_read_iso is then ''). Logged, so a
+        # permanent field change is visible in the run log rather than silent.
+        print(f"[gfl-air]   station layer query with Current_ReadDate failed ({e}); "
+              "retrying Name-only")
         data = _query(cfg_gfl.get("service_url", ""), layer, {**params, "outFields": "Name"})
     out: dict[str, dict] = {}
     for f in (data.get("features") or []):

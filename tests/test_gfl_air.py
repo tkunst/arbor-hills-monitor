@@ -1610,3 +1610,20 @@ def test_run_screening_email_lists_silent_station(monkeypatch):
     _, body, _ = sent[0]
     assert "MS-1     no data since 2026-09-17 12:00 PM ET" in body
     assert "stations reporting 5/6" in body
+
+
+def test_silent_station_last_read_equal_to_batch_start_is_not_no_data_since():
+    reg = _registry(silent_last_ms=BATCH_MS)
+    latest = {s: _elev(i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"}
+    rows = gw._monitor_rows(latest, WT, SENT, registry=reg)
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z")
+    assert "MS-1     no reading in this run's batch" in body
+
+
+def test_fetch_station_coords_double_failure_raises(monkeypatch):
+    def down(*a, **k):
+        raise gc.GflAirFetchError("timed out")
+    monkeypatch.setattr(gc, "_query", down)
+    with pytest.raises(gc.GflAirFetchError):
+        gc.fetch_station_coords({"service_url": "U"})   # caller -> registry_available=False
