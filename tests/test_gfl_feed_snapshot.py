@@ -403,3 +403,8 @@ def test_run_same_minute_rerun_does_not_recompare(monkeypatch):
     assert gs.run() == 0
     n = len(drive.files_by_name)
     assert gs.run() == 0 and len(drive.files_by_name) == n and sent == []
+
+
+def test_unmarked_baselines_are_tried_oldest_first():
+    a, b = "gfl-feed-snapshot-2026-08-02T1417Z.zip", "gfl-feed-snapshot-2026-09-02T1417Z.zip"
+    assert gs.baseline_candidates([b, a], current="z") == [a, b]

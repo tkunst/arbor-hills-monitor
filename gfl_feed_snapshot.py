@@ -251,11 +251,12 @@ def snapshot_names(names) -> list[str]:
 
 def baseline_candidates(names, current: str | None = None) -> list[str]:
     """Baselines to try, best first: the compared snapshots newest-first, or (if none
-    was ever compared) the oldest earlier snapshot."""
+    was ever compared) every earlier snapshot oldest-first, so an unreadable oldest one
+    falls through to the next instead of failing every run."""
     names = set(names)
     snaps = [n for n in snapshot_names(names) if n != current]
     marked = sorted((n for n in snaps if n + _MARKER in names), reverse=True)
-    return marked or ([min(snaps)] if snaps else [])
+    return marked or sorted(snaps)
 
 
 def baseline_snapshot_name(names, current: str | None = None) -> str | None:
