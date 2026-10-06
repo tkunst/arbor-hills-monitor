@@ -15,56 +15,70 @@
 #     are bad when those rows were fine.
 #
 # Times are Eastern (America/Detroit). Source for every figure: GFL's public perimeter feed
-# (Barr Engineering FeatureServer, layer 4), queried 2026-09-25 ~10:40 ET; checked by two
-# independent reviewers against the raw feed (MS-6 onset corrected to 2025-05-28 and MS-1's
-# final 16 hours of double zeros added after review).
+# (Barr Engineering FeatureServer, layer 4). The 2026-09-25 version was queried 2026-09-25 ~10:40 ET
+# and checked by two independent reviewers against the raw feed. The 2026-10-06 update re-queried
+# the feed through 2026-10-06 11:00 ET and CORRECTED the bundle bullets: MS-1 (constant 3.0/3.1,
+# 2025-05-28 to 2026-05-28) and MS-3 (constant 5.4, 2025-07-15 to 10-16; 3.1 for a week in
+# Nov-Dec 2025) had been described as varying normally. Two blind refuters checked this version.
 
 id: perimeter-h2s
-as_of: "September 25, 2026, 10:00 a.m. ET"
+as_of: "October 6, 2026, 11:00 a.m. ET"
 
 # Rendered inside <p class="data-quality-note"> (variant "callout") on every page.
 html: >-
-  <strong>Data-quality note (updated September 25, 2026):</strong> only two of the six
-  fence-line stations, MS-3 and MS-4, are currently producing usable hydrogen-sulfide
-  readings. MS-2, historically the station with the most exceedances, reported a flat
-  0.0&nbsp;ppb from June 30, 2025 until two small readings (0.1 and 0.5&nbsp;ppb) on
-  September 24&ndash;25, 2026; whether its sensor is responding again is not yet clear.
-  MS-5 reported a flat 0.0&nbsp;ppb from May 28, 2025 (apart from a single 0.1&nbsp;ppb
-  reading on September 14, 2026) and has sent no data since September 16, 2026. MS-6
-  has read a near-constant 3.0&ndash;3.2&nbsp;ppb since May 28, 2025, the same hour MS-5
-  went flat, apart from a brief dip on June 11, 2026 (3.1&nbsp;ppb since September 23).
-  MS-1 was working normally until the evening of September 16, 2026, the same hour MS-5
-  stopped reporting; it then read exactly 0.0 for both hydrogen sulfide and methane until
-  it stopped sending data at noon on September 17. A working sensor produces small, fluctuating values, not an
-  unbroken run of one number, so these flat stretches point to non-responsive or
-  uncalibrated sensors rather than clean air, and a quiet record at those stations is
-  not verified compliance. The stations that were working did record readings above the
-  30&nbsp;ppb level on September 14, 2026, up to 153.4&nbsp;ppb at MS-1. Status as of September 25, 2026, 10:00&nbsp;a.m.&nbsp;ET.
-  Source: GFL's own public perimeter feed (Barr Engineering).
+  <strong>Data-quality note (updated October 6, 2026; corrects the September 25 note):</strong>
+  for long stretches, several fence-line stations' hydrogen-sulfide (H2S) channels have
+  reported a single constant value while the station kept reporting and its methane channel
+  kept varying. A sensor in clean air can legitimately read 0.0 for weeks or even months, but a
+  constant non-zero value for months, or a constant 0.0 for more than a year while
+  neighboring stations vary, is a standard data-quality flag, not evidence of clean air.
+  (The feed labels readings below 7&nbsp;ppb "BDL", and a small number carry no label;
+  all the constant values described here are in that range.) <strong>Now:</strong> MS-3 and MS-4 are reporting
+  varying readings. MS-5 and MS-2 have resumed varying readings only recently, so their
+  records are short: MS-5 since September 26, 2026 (up to 11.0&nbsp;ppb), after reading
+  0.0 from May 28, 2025 (apart from one 0.1&nbsp;ppb reading) and sending no data from
+  September 16 to 26; MS-2 since September 24, 2026 (up to 2.3&nbsp;ppb), after reading
+  0.0 from June 30, 2025. MS-6 read 3.0&ndash;3.2&nbsp;ppb from May 28, 2025 (apart from
+  two readings on June 11, 2026) until September 29, 2026, and since resuming on October 5
+  has read 0.0&nbsp;ppb H2S and 0&ndash;1&nbsp;ppm methane every hour. MS-1 has sent no data
+  since noon on September 17, 2026, after reading exactly 0.0 for both gases from 9&nbsp;p.m.
+  on September 16. <strong>Earlier:</strong> MS-1 read a constant 3.0 or 3.1&nbsp;ppb from
+  May 28, 2025 to May 28, 2026, starting the same hour MS-5 and MS-6 went flat; MS-3 read
+  a constant 5.4&nbsp;ppb from July 15 to October 16, 2025, and 3.1&nbsp;ppb from November
+  24 to December 1, 2025, the same value MS-1 and MS-6 read in those hours. A quiet record
+  at a station during these periods is not evidence of clean air. The stations reporting
+  varying readings recorded hourly values above 30&nbsp;ppb (the 2022 Consent Judgment's
+  fence-line action level, which is defined on a 15-minute rolling average; an hourly value
+  from the public feed is a screening signal, not a confirmed crossing), most recently on
+  September 14, 2026, up to 153.4&nbsp;ppb at MS-1. None of them has recorded an hourly
+  value at or above 30&nbsp;ppb since. These are observations from GFL's public perimeter
+  feed, hosted by Barr Engineering; the cause has not been publicly confirmed by GFL, EGLE
+  or Barr Engineering. Status as of October 6, 2026, 11:00&nbsp;a.m.&nbsp;ET.
 
 # Rendered as the text of a page footer (variant "footer").
 footer_html: >-
-  An independent project. Ambient fence-line readings (ppb) are what reach the property
-  boundary; as of September 25, 2026, only two of the six stations are producing usable
-  hydrogen-sulfide readings. Source data is the operator's public perimeter feed
-  (Barr Engineering).
+  An independent project. Fence-line readings come from the operator's public perimeter
+  feed, hosted by Barr Engineering; as of October 6, 2026, several stations'
+  hydrogen-sulfide readings have known data-quality problems (see the data-quality note).
 
 # Markdown for the GitHub release notes and the README inside the release zip.
 release_md: |-
-  **Data-quality note (updated 2026-09-25).** Several stations' hydrogen-sulfide (H2S) channels have reported a single constant value for long stretches while the station kept reporting and its methane channel kept varying. That is a constant value on a live station, not a data gap. A working H2S sensor produces small, fluctuating values even in clean air, so a continuous identical value is consistent with a non-responsive or uncalibrated sensor.
+  **Data-quality note (updated 2026-10-06; corrects the 2026-09-25 note, which described MS-1 and MS-3 as varying normally).** Several stations' hydrogen-sulfide (H2S) channels have reported a single constant value for long stretches while the station kept reporting and its methane channel kept varying. That is a constant value on a live station, not a data gap. A sensor in clean air can read 0.0 for weeks or even months, but a constant non-zero value for months, or a constant 0.0 for more than a year while neighboring stations vary, is a standard data-quality flag. The feed's `H2S_Text` column reads `BDL` for readings below 7 ppb (a small number of rows carry no label), so it does not distinguish these periods.
 
   *Affects the data in this bundle (which ends 2026-09-06 00:00 UTC):*
 
+  - **MS-1** `h2s_ppb` is a constant `3.0` from 2025-05-28 16:00 ET (previous hour 1.3), `3.1` from 2025-07-03 11:00 ET, and `3.0` again from 2026-05-14 11:00 ET, through 2026-05-28 12:00 ET; it varies again from 2026-05-28 13:00 ET (0.6). Treat 2025-05-28 16:00 to 2026-05-28 12:00 ET as suspect.
   - **MS-2** `h2s_ppb` is a constant `0.0` from 2025-06-30 07:00 ET onward (last non-zero reading 2025-06-30 06:00 ET). Treat as suspect.
-  - **MS-5** `h2s_ppb` is a constant `0.0` from 2025-05-28 16:00 ET onward (last non-zero reading 2025-05-28 15:00 ET). Treat as suspect.
-  - **MS-6** `h2s_ppb` jumped from `0.0` to a constant `3.2` at 2025-05-28 16:00 ET, the same hour MS-5 went flat, and has read only `3.0`-`3.2` since, apart from two readings on 2026-06-11 (2.4 ppb at 13:00 ET and 0.5 ppb at 14:00 ET). Treat as suspect from 2025-05-28 16:00 ET.
-  - **MS-1, MS-3 and MS-4** vary normally through the end of this bundle.
+  - **MS-3** `h2s_ppb` is a constant `5.4` from 2025-07-15 14:00 ET through 2025-10-16 17:00 ET, and a constant `3.1` from 2025-11-24 12:00 ET through 2025-12-01 12:00 ET (the same value MS-1 and MS-6 read in those hours). Treat both periods as suspect. Its long runs of exactly `0.0` at other times are consistent with clean air.
+  - **MS-4** varies through the end of this bundle; its long runs are exactly `0.0`, consistent with clean air.
+  - **MS-5** `h2s_ppb` is a constant `0.0` from 2025-05-28 16:00 ET onward (last non-zero reading 0.2 at 2025-05-28 15:00 ET, a single-hour value; apart from it, MS-5 had read `0.0` since 2025-02-21 20:00 ET). Treat as suspect.
+  - **MS-6** `h2s_ppb` moved from `0.7` (2025-05-28 15:00 ET) to a constant `3.2` at 2025-05-28 16:00 ET, the same hour MS-1 and MS-5 went flat, and has read only `3.0`-`3.2` since, apart from two readings on 2026-06-11 (2.4 ppb at 13:00 ET and 0.5 ppb at 14:00 ET). Treat as suspect from 2025-05-28 16:00 ET.
 
-  Do not read the absence of H2S exceedances at MS-2, MS-5 or MS-6 in those periods as verified clean air.
+  Do not read the absence of high H2S readings at a station during its suspect period as verified clean air.
 
-  *Live feed after this bundle's cutoff (status as of 2026-09-25 10:00 ET; these readings are not in this bundle):* MS-5 has sent no data since 2026-09-16 21:00 ET. In that same hour MS-1 began reading exactly `0.0` for both H2S and CH4, and it has sent no data since 2026-09-17 12:00 ET (MS-5's only non-zero value in the flat period was 0.1 ppb on 2026-09-14 15:00 ET). MS-6 moved to a constant `3.1` on 2026-09-23. MS-2 reported 0.1 ppb (2026-09-24 23:00 ET) and 0.5 ppb (2026-09-25 05:00 ET), its first non-zero values since June 2025; whether the sensor is responding again is not yet clear. That leaves MS-3 and MS-4 as the only stations currently producing usable H2S data. On 2026-09-14 the working stations recorded hourly H2S above 30 ppb: MS-1 153.4 ppb (13:00 ET), MS-3 65.4 ppb (14:00 ET), and MS-4 67.9 ppb (14:00 ET) and 46.8 ppb (15:00 ET).
+  *Live feed after this bundle's cutoff (status as of 2026-10-06 11:00 ET; these readings are not in this bundle):* MS-5's last reading before a gap was 2026-09-16 21:00 ET and its next was 2026-09-26 19:00 ET (its only non-zero value in the flat period was 0.1 ppb on 2026-09-14 15:00 ET); since then it has reported varying values, up to 11.0 ppb (2026-09-29 04:00 ET). From 2026-09-16 21:00 ET, MS-1 read exactly `0.0` for both H2S and CH4; its last reading was 2026-09-17 12:00 ET. MS-2 reported its first non-zero value since June 2025 on 2026-09-24 (0.1 ppb at 23:00 ET) and has since reported small varying values, up to 2.3 ppb (2026-10-01 19:00 ET). MS-6 moved to a constant `3.1` on 2026-09-23, read `0.0` from 2026-09-29 11:00 ET, had no readings between 2026-09-29 17:00 ET and 2026-10-05 11:00 ET, and from 2026-10-05 11:00 ET has read `0.0` ppb H2S and 0-1 ppm CH4 every hour. MS-3 and MS-4 are reporting varying readings; MS-5 and MS-2 have resumed only recently. On 2026-09-14 the stations then reporting varying readings recorded hourly H2S above 30 ppb (the 2022 Consent Judgment's fence-line action level, defined on a 15-minute rolling average; an hourly value is a screening signal, not a confirmed crossing): MS-1 153.4 ppb (13:00 ET), MS-3 65.4 ppb (14:00 ET), and MS-4 67.9 ppb (14:00 ET) and 46.8 ppb (15:00 ET). None of the stations reporting varying readings has recorded hourly H2S at or above 30 ppb since.
 
-  These are observations from the operator's self-reported feed; the cause has not been publicly confirmed by EGLE or Barr Engineering.
+  These are observations from GFL's public perimeter feed, hosted by Barr Engineering; the cause has not been publicly confirmed by GFL, EGLE or Barr Engineering.
 
 # Where the release copy lives, and the integrity guard for re-packing the zip.
 release:
