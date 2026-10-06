@@ -33,13 +33,19 @@ each month at 14:17 UTC, off the hour when hourly rows land, plus manual dispatc
    identity as the daily capture). The data is saved before any comparison runs.
 3. Compare the readings with the baseline: the newest earlier snapshot that was itself
    fully compared (it has a `<name>.compared` marker), or, if none was, the oldest
-   earlier snapshot. Rows match by OBJECTID; a row whose OBJECTID is gone is then matched
-   on station + time, so a source-side reinsert that renumbers OBJECTIDs reads as
-   "renumbered", not deleted (the source is known to do full reinserts; see ADR 014).
+   earlier snapshot. Rows match by OBJECTID and station + time first; an unmatched
+   earlier row may then take an unmatched current row with the same station + time whose
+   OBJECTID is new or was held by a different reading (a renumbered copy), so a
+   source-side reinsert reads as "renumbered", not deleted (the source is known to do
+   full reinserts; see ADR 014), while a deletion among duplicate-time rows is still a
+   deletion. A mass renumbering (100 or more rows) is itself reported.
    Measurement fields (station, time, H2S, CH4, both labels, wind, temperature,
    humidity, pressure) present in both snapshots are compared; a change in the field set
-   is reported once, not as an edit on every row. Deleted readings, edited readings, or a
-   field-set change email the owner list only, never the public recipient lists.
+   is reported once, not as an edit on every row. Deleted readings, edited readings, a
+   field-set change, or a mass renumbering email the owner list only, never the public
+   recipient lists. If the preferred baseline cannot be read, the next-older compared
+   snapshot is used and the email names the one skipped; only when no baseline is
+   readable does the run fail.
 4. The new snapshot gets its `.compared` marker only after the comparison and any email
    succeed. A failed comparison or email therefore exits 1 and is retried against the
    same baseline next run, instead of the next run comparing against the unreported
@@ -52,7 +58,13 @@ The first run with no earlier snapshot in the folder is a silent baseline.
 Every failure exits 1 so the GitHub failure email surfaces it: an incomplete pull, a
 missing Drive folder or credentials, an unreadable baseline snapshot, changes found but an
 empty owner list, or a change email that fails or raises. A partial pull is never
-uploaded. Network errors retry with backoff; an ArcGIS error body fails at once.
+uploaded. Network errors and ArcGIS server-side errors (code 500 or above, which the
+server returns under load) retry with backoff; other ArcGIS errors fail at once. A re-run
+within the same UTC minute finds its snapshot already saved and stops.
+
+Recovery if every compared snapshot became unreadable: remove the unreadable snapshots'
+`.compared` markers from the Drive folder; the next run then compares against the oldest
+readable snapshot.
 
 ## Real-specimen check
 

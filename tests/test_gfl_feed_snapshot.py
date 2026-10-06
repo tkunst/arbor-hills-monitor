@@ -334,3 +334,72 @@ def test_live_config_ships_disabled():
     import config_loader
     c = config_loader.load_config()["gfl_feed_snapshot"]
     assert c["enabled"] is False
+
+
+# ----- round-2 review cases --------------------------------------------------------
+
+def test_deletion_among_duplicate_time_rows_is_still_a_deletion():
+    a, b = _row(1, date=10), _row(2, date=10)            # same station + time
+    d = gs.diff_readings([a, b], [_row(2, date=10)])
+    assert [r["OBJECTID"] for r in d["deleted"]] == [1] and d["renumbered"] == 0
+    assert gs.has_alertable_change(d)
+
+
+def test_blank_station_or_time_never_matches_by_key():
+    d = gs.diff_readings([_row(1, LocName=None, date="")], [_row(9, LocName=None, date="")])
+    assert len(d["deleted"]) == 1 and d["renumbered"] == 0
+
+
+def test_edited_time_on_same_objectid_is_an_edit():
+    d = gs.diff_readings([_row(1, date=10)], [_row(1, date=11)])
+    assert d["deleted"] == [] and d["edited"] == [("1", {"Date": (10, 11)})]
+
+
+def test_mass_renumbering_is_reported_not_silent():
+    prev = [_row(i) for i in range(1, gs.RENUMBER_ALERT_MIN + 1)]
+    cur = [_row(i + 10_000, date=_row(i)["Date"]) for i in range(1, gs.RENUMBER_ALERT_MIN + 1)]
+    d = gs.diff_readings(prev, cur)
+    assert d["deleted"] == [] and d["renumbered"] == gs.RENUMBER_ALERT_MIN
+    assert gs.has_alertable_change(d)
+    subj, _ = gs.format_change_email(d, "a", "b")
+    assert "renumbered (not deleted)" in subj
+
+
+def test_get_json_retries_arcgis_5xx_but_not_4xx(monkeypatch):
+    bodies = [{"error": {"code": 500, "message": "Unable to complete operation."}}, {"ok": 1}]
+
+    class Resp:
+        def __init__(self, b):
+            self.b = json.dumps(b).encode()
+
+        def read(self):
+            return self.b
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+    monkeypatch.setattr(gs.urllib.request, "urlopen", lambda req, timeout=None: Resp(bodies.pop(0)))
+    assert gs._get_json("https://x.test", {}, sleep=lambda s: None) == {"ok": 1}
+    bodies[:] = [{"error": {"code": 400, "message": "Invalid query"}}, {"ok": 1}]
+    with pytest.raises(gs.SnapshotError, match="Invalid query"):
+        gs._get_json("https://x.test", {}, sleep=lambda s: None)
+    assert bodies == [{"ok": 1}]                         # 400 was not retried
+
+
+def test_run_falls_back_to_older_compared_baseline(monkeypatch):
+    good, _, _ = _BUILD(CFG, "old", get=FakeFeed([_row(1), _row(2)]))
+    a, b = "gfl-feed-snapshot-2026-08-02T1417Z.zip", "gfl-feed-snapshot-2026-09-02T1417Z.zip"
+    drive = FakeDrive({a: good, a + ".compared": b"{}", b: b"corrupt", b + ".compared": b"{}"})
+    drive, sent = _wire(monkeypatch, drive=drive, readings=[_row(1), _row(2)])
+    assert gs.run() == 0
+    assert len(sent) == 1 and "baseline snapshot was unreadable" in sent[0][0]
+    assert b in sent[0][1]                                 # the skipped one is named
+
+
+def test_run_same_minute_rerun_does_not_recompare(monkeypatch):
+    drive, sent = _wire(monkeypatch)
+    assert gs.run() == 0
+    n = len(drive.files_by_name)
+    assert gs.run() == 0 and len(drive.files_by_name) == n and sent == []
