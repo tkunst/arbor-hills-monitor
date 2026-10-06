@@ -259,3 +259,35 @@ block, PR #68). The block now makes only the robust **measurement-basis** distin
 per-station distance** (the exact-vs-context data disagree; a defensible number awaits an
 authoritative full-landfill / active-cell boundary layer). Additive email text only — no
 logic change; the episode engine and the EXCEEDANCE tier are untouched.
+
+## Addendum 2026-10-06: silent stations stay in the monitor table
+
+**Problem.** The SCREENING email's "ALL PERIMETER MONITORS" table was built only from
+stations with at least one reading in this run's batch (`latest_per_station(readings)`).
+A station that stopped sending data simply vanished from the table, with no row and
+no note. The only trace was the "stations reporting N/6" count. MS-1 has sent nothing
+since 2026-09-17 12:00 PM ET and dropped out of the emails this way; MS-6 would have
+too while it was silent 2026-09-29 to 2026-10-05.
+
+**Decision.** The station layer (layer 0) that `fetch_station_coords` already queries
+for coordinates is now also the station registry. It returns every perimeter station
+(even one with no geometry) plus `last_read_iso`, from that layer's `Current_ReadDate`.
+`_monitor_rows(..., registry=coords)` gives every registry station with no reading this
+run a `silent` row, rendered as `MS-1  no data since <ET label>` (or `no data this
+run` if the layer has no date). The wording states the fact only, not "offline" or
+"sensor down". A silent row has an empty `as_of`, so its stale date never widens the
+email's reporting period, and it is not counted in "stations reporting N/6". If the
+layer-0 fetch fails (it is best-effort), the table falls back to reporting stations
+only and adds one line saying how many stations are not listed, so a station is never
+dropped without a mention. `Current_ReadDate` is used, not the layer's `Date_Text`,
+which reads an hour behind during daylight time.
+
+**Scope.** Email display only. The episode engine, the EXCEEDANCE tier,
+`station_snapshot`, and the `GFL Air` tab (the cursor store) are untouched. Detecting
+a station that reports but is stuck on one value (MS-6's flat 0.0) is a separate item.
+
+**Real-specimen check (live path).** Rendered against live data captured 2026-10-06:
+layer 0 through the new `fetch_station_coords` (MS-1 `last_read_iso` =
+`2026-09-17T16:00Z`) and the 2026-10-05 layer-4 readings. The table listed all six
+stations, MS-1 as `no data since 2026-09-17 12:00 PM ET (16:00 UTC)`, and the header
+read `stations reporting 5/6`.

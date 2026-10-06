@@ -1441,3 +1441,101 @@ def test_write_capture_is_a_safe_noop_when_disabled_or_unconfigured(monkeypatch)
     # Enabled but Drive not configured -> still a safe no-op (ships-safe guarantee).
     monkeypatch.setattr(gw.ac, "is_configured", lambda env: False)
     assert gw._write_capture({"capture": {"enabled": True}}, [{"oid": 1}], "2026-07-26T00:00:00Z") == 0
+
+
+# ----- silent stations stay in the monitor table (ADR 039 addendum 2026-10-06) --
+# A station that sends nothing new must be LISTED as "no data since ...", never
+# silently dropped (MS-1 went silent 2026-09-17 and vanished from the emails).
+
+MS1_LAST_MS = 1_789_660_800_000                 # 2026-09-17 16:00 UTC = 12:00 PM EDT
+
+
+def _registry(silent_last_ms=MS1_LAST_MS):
+    reg = {s: {"lat": 42.4, "lon": -83.5, "last_read_iso": gc.reading_iso({"Date": DAY0})}
+           for s in STATIONS}
+    reg["MS-1"] = {"lat": 42.4, "lon": -83.5,
+                   "last_read_iso": gc.reading_iso({"Date": silent_last_ms})}
+    return reg
+
+
+def test_fetch_station_coords_is_a_registry_with_last_read(monkeypatch):
+    feats = [
+        {"attributes": {"Name": "MS-1", "Current_ReadDate": MS1_LAST_MS},
+         "geometry": {"x": -83.5, "y": 42.4}},
+        {"attributes": {"Name": "MS-2", "Current_ReadDate": DAY0}},          # no geometry
+        {"attributes": {"Name": "MS-3", "Current_ReadDate": None},
+         "geometry": {"x": -83.4, "y": 42.5}},
+        {"attributes": {"Name": "10-Meter MET Tower", "Current_ReadDate": DAY0},
+         "geometry": {"x": -83.0, "y": 42.0}},
+    ]
+    monkeypatch.setattr(gc, "_query", lambda *a, **k: {"features": feats})
+    reg = gc.fetch_station_coords({"service_url": "U"})
+    assert set(reg) == {"MS-1", "MS-2", "MS-3"}          # MET tower excluded by prefix
+    assert reg["MS-1"] == {"lat": 42.4, "lon": -83.5, "last_read_iso": "2026-09-17T16:00Z"}
+    assert "lat" not in reg["MS-2"]                      # kept even without geometry
+    assert reg["MS-2"]["last_read_iso"] == gc.reading_iso({"Date": DAY0})
+    assert reg["MS-3"]["last_read_iso"] == ""            # missing date -> blank, no raise
+    assert gw._coord_str(reg, "MS-2") == "see dashboard"
+
+
+def test_silent_station_is_listed_not_dropped():
+    latest = {s: _elev(i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS) if s != "MS-1"}
+    latest["MS-3"] = _elev(9, "MS-3", 45.0, 5.0, DAY1)
+    rows = gw._monitor_rows(latest, WT, SENT, registry=_registry())
+    assert [r["station"] for r in rows] == STATIONS     # all six, in order
+    ms1 = rows[0]
+    assert ms1["silent"] is True and ms1["as_of"] == ""
+    opened = [_opened("MS-3", "h2s", 45.0, DAY1)]
+    _, body = gw.format_screening_email(opened, [], rows, WT, link="L",
+                                        retrieved_iso="2026-10-06T13:00:00Z",
+                                        stations_reporting=len(latest))
+    table = body.split("ALL PERIMETER MONITORS", 1)[1].split("NEWLY DETECTED", 1)[0]
+    line = next(ln for ln in table.splitlines() if ln.strip().startswith("MS-1"))
+    assert "no data since 2026-09-17 12:00 PM ET" in line
+    for st in STATIONS:
+        assert any(ln.strip().startswith(st) for ln in table.splitlines()), st
+    assert "stations reporting 5/6" in body             # silent row not counted as reporting
+    assert "not listed" not in table
+    # a silent row's stale date never widens the reporting period
+    assert "2026-09-17" not in body.split("WHAT TRIGGERED THIS", 1)[0]
+
+
+def test_silent_station_count_defaults_to_reporting_rows_only():
+    latest = {s: _elev(i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS) if s != "MS-1"}
+    rows = gw._monitor_rows(latest, WT, SENT, registry=_registry())
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, DAY1)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z")
+    assert "stations reporting 5/6" in body
+
+
+def test_silent_station_without_last_read_says_no_data_this_run():
+    reg = _registry()
+    reg["MS-1"]["last_read_iso"] = ""
+    latest = {s: _elev(i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS) if s != "MS-1"}
+    rows = gw._monitor_rows(latest, WT, SENT, registry=reg)
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, DAY1)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z")
+    assert "MS-1     no data this run" in body
+
+
+def test_registry_unavailable_flags_unlisted_stations():
+    latest = {s: _elev(i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS) if s != "MS-1"}
+    rows = gw._monitor_rows(latest, WT, SENT)            # no registry (layer-0 fetch failed)
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, DAY1)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z")
+    assert "(1 station(s) not listed: the station list could not be retrieved this run.)" in body
+
+
+def test_run_screening_email_lists_silent_station(monkeypatch):
+    fake, sent = _wire_with_recipients(monkeypatch, _watch_cfg())
+    _baseline_then(monkeypatch)
+    monkeypatch.setattr(gw.gc, "fetch_station_coords", lambda *a, **k: _registry())
+    new = [_elev(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS) if s != "MS-1"]
+    new[1] = _elev(108, "MS-3", 0.0, 45.0, DAY1)                # MS-3 CH4 opens (>40)
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0
+    assert len(sent) == 1
+    _, body, _ = sent[0]
+    assert "MS-1     no data since 2026-09-17 12:00 PM ET" in body
+    assert "stations reporting 5/6" in body

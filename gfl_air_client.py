@@ -307,23 +307,33 @@ def fetch_station_coords(cfg_gfl: dict, *, station_prefix: str = DEFAULT_STATION
     Feature Layer (config `stations_layer`, default 0), whose station name is in the
     `Name` field (NOT `LocName`). Raises GflAirFetchError on failure — the alert path
     treats coordinates as a nicety and degrades to the dashboard link, so a coords
-    outage NEVER blocks a screening/closeout email. See ADR 039."""
+    outage NEVER blocks a screening/closeout email. See ADR 039.
+
+    The same layer is also the station REGISTRY: every perimeter station appears in
+    the result (even one with no geometry — it just has no 'lat'/'lon'), and each
+    entry carries 'last_read_iso' (the layer's `Current_ReadDate`, ISO UTC; '' if
+    missing) so the screening email can list a station that sent nothing new this
+    run as "no data since ..." instead of dropping it (ADR 039 addendum 2026-10-06)."""
     layer = cfg_gfl.get("stations_layer", 0)
     data = _query(cfg_gfl.get("service_url", ""), layer, {
         "where": "1=1",
-        "outFields": "Name",
+        "outFields": "Name,Current_ReadDate",
         "returnGeometry": "true",
         "outSR": 4326,
         "resultRecordCount": 60,
     })
     out: dict[str, dict] = {}
     for f in (data.get("features") or []):
-        name = ((f.get("attributes") or {}).get("Name") or "").strip()
+        attrs = f.get("attributes") or {}
+        name = (attrs.get("Name") or "").strip()
         g = f.get("geometry") or {}
-        if station_prefix and not name.startswith(station_prefix):
+        if not name or (station_prefix and not name.startswith(station_prefix)):
             continue
-        if name and g.get("x") is not None and g.get("y") is not None:
-            out[name] = {"lat": float(g["y"]), "lon": float(g["x"])}
+        entry: dict = {"last_read_iso": reading_iso({"Date": attrs.get("Current_ReadDate")})}
+        if g.get("x") is not None and g.get("y") is not None:
+            entry["lat"] = float(g["y"])
+            entry["lon"] = float(g["x"])
+        out[name] = entry
     return out
 
 
