@@ -35,7 +35,11 @@ html: >-
   The feed marks every reading below 7&nbsp;ppb as "BDL" (below detection limit), apart
   from a small number with no label, and that includes the stuck 3.0&ndash;3.2 and
   5.4&nbsp;ppb values described here. So the BDL label cannot tell a stuck sensor from a
-  working one, and a "BDL" reading is not on its own evidence that the air was clean. <strong>Now:</strong> MS-3 and MS-4 are reporting
+  working one, and a "BDL" reading is not on its own evidence that the air was clean.
+  GFL's public dashboard shows only these labels (for both hydrogen sulfide and methane),
+  not the numbers, so a stuck sensor and a working one look the same there; the numeric
+  values are available in the feed's underlying data service and in this project's
+  dataset. <strong>Now:</strong> MS-3 and MS-4 are reporting
   varying readings. MS-5 and MS-2 have resumed varying readings only recently, so their
   records are short: MS-5 since September 26, 2026 (up to 11.0&nbsp;ppb), after reading
   0.0 from May 28, 2025 (apart from one 0.1&nbsp;ppb reading) and sending no data from
@@ -65,7 +69,7 @@ footer_html: >-
 
 # Markdown for the GitHub release notes and the README inside the release zip.
 release_md: |-
-  **Data-quality note (updated 2026-10-06; corrects the 2026-09-25 note, which described MS-1 and MS-3 as varying normally).** Several stations' hydrogen-sulfide (H2S) channels have reported a single constant value for long stretches while the station kept reporting and its methane channel kept varying. That is a constant value on a live station, not a data gap. A sensor in clean air can read 0.0 for weeks or even months, but a constant non-zero value for months, or a constant 0.0 for more than a year while neighboring stations vary, is a standard data-quality flag. The feed's `H2S_Text` column marks every reading below 7 ppb as `BDL` (below detection limit), apart from a small number of rows with no label, and that includes the stuck `3.0`-`3.2` and `5.4` values listed below. So the `BDL` label cannot tell a stuck sensor from a working one: do not treat `BDL` as evidence of clean air, and use the suspect periods below rather than the label to filter.
+  **Data-quality note (updated 2026-10-06; corrects the 2026-09-25 note, which described MS-1 and MS-3 as varying normally).** Several stations' hydrogen-sulfide (H2S) channels have reported a single constant value for long stretches while the station kept reporting and its methane channel kept varying. That is a constant value on a live station, not a data gap. A sensor in clean air can read 0.0 for weeks or even months, but a constant non-zero value for months, or a constant 0.0 for more than a year while neighboring stations vary, is a standard data-quality flag. The feed's `H2S_Text` column marks every reading below 7 ppb as `BDL` (below detection limit), apart from a small number of rows with no label, and that includes the stuck `3.0`-`3.2` and `5.4` values listed below. So the `BDL` label cannot tell a stuck sensor from a working one: do not treat `BDL` as evidence of clean air, and use the suspect periods below rather than the label to filter. GFL's public dashboard shows only the `H2S_Text` and `CH4_Text` labels, not the numeric values, so a stuck sensor and a working one look the same there; this dataset keeps the numeric `H2S` and `CH4` values.
 
   *Affects the data in this bundle (which ends 2026-09-06 00:00 UTC):*
 
