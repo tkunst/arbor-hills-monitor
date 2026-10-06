@@ -372,7 +372,7 @@ def test_get_json_retries_arcgis_5xx_but_not_4xx(monkeypatch):
         def __init__(self, b):
             self.b = json.dumps(b).encode()
 
-        def read(self):
+        def read(self, n=-1):
             return self.b
 
         def __enter__(self):
@@ -408,3 +408,36 @@ def test_run_same_minute_rerun_does_not_recompare(monkeypatch):
 def test_unmarked_baselines_are_tried_oldest_first():
     a, b = "gfl-feed-snapshot-2026-08-02T1417Z.zip", "gfl-feed-snapshot-2026-09-02T1417Z.zip"
     assert gs.baseline_candidates([b, a], current="z") == [a, b]
+
+
+def test_non_integer_layer_id_is_refused():
+    class Bad(FakeFeed):
+        def __call__(self, url, params=None, **k):
+            if url == SVC:
+                return {"layers": [{"id": "../../x", "name": "Evil"}]}
+            return super().__call__(url, params, **k)
+    with pytest.raises(gs.SnapshotError, match="non-integer id"):
+        _BUILD(CFG, "s", get=Bad([_row(1)]))
+
+
+def test_oversized_previous_csv_is_refused(monkeypatch):
+    blob, _, _ = _BUILD(CFG, "s", get=FakeFeed([_row(1), _row(2)]))
+    monkeypatch.setattr(gs, "MAX_CSV_BYTES", 10)
+    with pytest.raises(gs.SnapshotError, match="exceeds"):
+        gs.readings_from_zip(blob)
+
+
+def test_oversized_response_is_refused(monkeypatch):
+    class Resp:
+        def read(self, n=-1):
+            return b"x" * (n if n > 0 else 50)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+    monkeypatch.setattr(gs, "MAX_RESPONSE_BYTES", 10)
+    monkeypatch.setattr(gs.urllib.request, "urlopen", lambda req, timeout=None: Resp())
+    with pytest.raises(gs.SnapshotError, match="exceeds"):
+        gs._get_json("https://x.test", {}, tries=1, sleep=lambda s: None)

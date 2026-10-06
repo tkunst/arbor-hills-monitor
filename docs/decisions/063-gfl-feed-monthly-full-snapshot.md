@@ -83,6 +83,19 @@ separate manual snapshot taken a few hours earlier: 0 deleted, 0 edited, 0 renum
 5 new readings (one hour from the five stations still reporting). Nothing was uploaded
 from the local check.
 
+## Security notes (security review 2026-10-06: no high or medium findings)
+
+- The CSVs are the source's values verbatim (they are evidence, and the manifest's SHA-256
+  covers them), so they are NOT sanitized against spreadsheet formula injection. Open
+  them by importing as text (Sheets/Excel "import", all columns as text), not by
+  double-clicking into Excel.
+- Layer ids from the service JSON must be integers (they go into file names and URL
+  paths); a response over 200 MB, or a readings CSV over 1 GB in a stored snapshot, is
+  refused.
+- Tracked follow-up (repo-wide, not this change): `send_email` failures are logged with
+  the exception text in every stream; an SMTP recipient refusal can include an address.
+  Redact once inside `email_alerts.send_email`.
+
 ## Consequences
 
 - About 13 MB a month in the Drive folder (about 150 MB a year).
