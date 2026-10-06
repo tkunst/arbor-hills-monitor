@@ -13,7 +13,9 @@ _BUILD = gs.build_snapshot   # the real one, before any monkeypatch
 SVC = "https://example.test/FeatureServer"
 
 
-def _row(oid, st="MS-1", date=1_789_660_800_000, h2s=0.0, ch4=2.0, **kw):
+def _row(oid, st="MS-1", date=None, h2s=0.0, ch4=2.0, **kw):
+    # distinct hourly time per OBJECTID by default, like the real feed
+    date = 1_789_660_800_000 + oid * 3_600_000 if date is None else date
     r = {"OBJECTID": oid, "LocName": st, "Date": date, "H2S": h2s, "CH4": ch4,
          "H2S_Text": "BDL", "CH4_Text": str(int(ch4)), "Speed": 1.5, "Direction": 200,
          "Direction_Text": "SSW", "Temp": 60.1, "Relative_Humidity": 70.0,
@@ -41,8 +43,13 @@ class FakeFeed:
             lid = url.split("/")[-2]
             rows = ([{"OBJECTID": 1, "Name": "MS-1"}] if lid == "0" else self.readings)
             if params.get("returnCountOnly"):
-                n = self.server_count if (lid == "4" and self.server_count is not None) else len(rows)
-                return {"count": n}
+                if lid == "4" and self.server_count is not None:
+                    return {"count": self.server_count}
+                w = params["where"]
+                if w.startswith("OBJECTID <="):
+                    lim = int(w.split("<=")[1])
+                    return {"count": sum(1 for r in rows if r["OBJECTID"] <= lim)}
+                return {"count": len(rows)}
             last = int(params["where"].split(">")[1])
             batch = [r for r in rows if r["OBJECTID"] > last][: int(params["resultRecordCount"])]
             feats = [{"attributes": dict(r)} for r in batch]
@@ -71,25 +78,64 @@ def test_diff_finds_deleted_edited_and_added():
 
 def test_diff_ignores_bookkeeping_fields():
     d = gs.diff_readings([_row(1, last_edited_date=1)], [_row(1, last_edited_date=999)])
-    assert d == {"deleted": [], "edited": [], "added": 0}
+    assert not gs.has_alertable_change(d) and d["added"] == 0
 
 
 def test_diff_csv_strings_equal_fresh_json_values():
     # The previous snapshot is read back from CSV (all strings, '' for null); the
     # current one is fresh JSON. Equal readings must not show as edits.
     prev = [{k: ("" if v is None else str(v)) for k, v in _row(1, Temp=None).items()}]
-    assert gs.diff_readings(prev, [_row(1, Temp=None)]) == {"deleted": [], "edited": [], "added": 0}
+    d = gs.diff_readings(prev, [_row(1, Temp=None)])
+    assert not gs.has_alertable_change(d) and d["added"] == 0
     prev = [{k: str(v) for k, v in _row(1, ch4=5.0).items()}]
     prev[0]["CH4"] = "5"                                   # 5 vs 5.0 is the same value
     assert gs.diff_readings(prev, [_row(1, ch4=5.0)])["edited"] == []
 
 
-def test_previous_snapshot_name_picks_newest_other():
-    names = ["gfl-feed-snapshot-2026-09-02T1400Z.zip", "gfl-feed-snapshot-2026-10-02T1400Z.zip",
-             "gfl-air-capture-2026-10-01-oid5.json", "gfl-feed-snapshot-2026-08-02T1400Z.zip"]
-    assert gs.previous_snapshot_name(names, current="gfl-feed-snapshot-2026-10-02T1400Z.zip") \
-        == "gfl-feed-snapshot-2026-09-02T1400Z.zip"
-    assert gs.previous_snapshot_name(["gfl-air-capture-x.json"]) is None
+def test_baseline_is_newest_compared_snapshot_else_oldest():
+    a, b, c = (f"gfl-feed-snapshot-2026-0{m}-02T1417Z.zip" for m in (7, 8, 9))
+    names = [a, a + ".compared", b, b + ".compared", c, "gfl-air-capture-x.json"]
+    assert gs.baseline_snapshot_name(names, current="gfl-feed-snapshot-2026-10-02T1417Z.zip") == b
+    # c was uploaded but its comparison failed (no marker): still compare against b
+    assert gs.baseline_snapshot_name(names + ["new.zip"], current=c) == b
+    # nothing ever compared: compare against the OLDEST, so no change is missed
+    assert gs.baseline_snapshot_name([b, c], current="z") == b
+    assert gs.baseline_snapshot_name(["gfl-air-capture-x.json"]) is None
+
+
+def test_renumbered_rows_are_not_reported_deleted():
+    prev = [_row(1, date=10), _row(2, date=20)]
+    cur = [_row(501, date=10), _row(502, date=20, h2s=9.9), _row(503, date=30)]
+    d = gs.diff_readings(prev, cur)
+    assert d["deleted"] == [] and d["renumbered"] == 2 and d["added"] == 1
+    assert d["edited"] == [("2", {"H2S": (0.0, 9.9)})]       # values still compared
+
+
+def test_reused_objectid_for_another_reading_is_not_an_edit():
+    prev = [_row(1, date=10), _row(2, date=20)]
+    cur = [_row(1, date=20), _row(7, date=10)]             # OID 1 now holds the date-20 row
+    d = gs.diff_readings(prev, cur)
+    assert d["deleted"] == [] and d["edited"] == []
+
+
+def test_field_set_change_is_one_schema_note_not_every_row_edited():
+    prev = [_row(i) for i in range(1, 4)]
+    cur = []
+    for i in range(1, 4):
+        r = _row(i)
+        r.pop("Relative_Humidity")
+        cur.append(r)
+    d = gs.diff_readings(prev, cur)
+    assert d["edited"] == [] and d["schema"] == {"dropped": ["Relative_Humidity"], "added": []}
+    assert gs.has_alertable_change(d)
+    subj, body = gs.format_change_email(d, "a", "b")
+    assert "field list changed" in subj and "no longer in the feed: Relative_Humidity" in body
+
+
+def test_csv_columns_keep_unlisted_fields_and_require_objectid():
+    assert gs.csv_columns([{"OBJECTID": 1, "X": 2}], ["OBJECTID"]) == ["OBJECTID", "X"]
+    with pytest.raises(gs.SnapshotError):
+        gs.csv_columns([{"A": 1}], [])
 
 
 # ----- fetch + build -------------------------------------------------------------
@@ -117,14 +163,16 @@ def test_build_snapshot_zip_manifest_and_roundtrip():
             "layer0-Monitoring_Locations.csv", "dashboard-data.json"} <= names
     m = json.loads(z.read("manifest.json"))
     assert m["fetched_at"] == "2026-10-06T1829Z"
-    assert {"id": 4, "name": "Monitoring Data", "rows": 5, "server_count": 5} in m["layers"]
+    assert {"id": 4, "name": "Monitoring Data", "csv": "layer4-Monitoring_Data.csv",
+            "rows": 5, "server_count": 5} in m["layers"]
     import hashlib
     assert m["files"]["layer4-Monitoring_Data.csv"] == hashlib.sha256(
         z.read("layer4-Monitoring_Data.csv")).hexdigest()
     assert "_geometry" in z.read("layer0-Monitoring_Locations.csv").decode()
     # what we upload, read back, compares clean against the same live pull
     back = gs.readings_from_zip(blob)
-    assert gs.diff_readings(back, got) == {"deleted": [], "edited": [], "added": 0}
+    d = gs.diff_readings(back, got)
+    assert not gs.has_alertable_change(d) and d["added"] == 0 and d["renumbered"] == 0
 
 
 def test_build_snapshot_refuses_short_pull():
@@ -151,8 +199,12 @@ class FakeDrive:
         return self
 
     def list(self, q=None, fields=None, pageSize=None, pageToken=None):
-        out = [{"id": n, "name": n} for n in self.files_by_name if gs._PREFIX in n]
-        return _Exec({"files": out})
+        assert "in parents" in q and "name contains" not in q   # filter in Python
+        names = sorted(self.files_by_name)
+        start = int(pageToken or 0)
+        page = names[start:start + 2]                            # force pagination
+        nxt = str(start + 2) if start + 2 < len(names) else None
+        return _Exec({"files": [{"id": n, "name": n} for n in page], "nextPageToken": nxt})
 
 
 class _Exec:
@@ -201,32 +253,74 @@ def test_run_enabled_but_unconfigured_fails_loudly(monkeypatch):
 def test_run_first_snapshot_is_a_silent_baseline(monkeypatch):
     drive, sent = _wire(monkeypatch)
     assert gs.run() == 0
-    assert len(drive.files_by_name) == 1 and sent == []
+    zips = [n for n in drive.files_by_name if n.endswith(".zip")]
+    assert len(zips) == 1 and zips[0] + ".compared" in drive.files_by_name and sent == []
 
 
 def test_run_emails_owner_only_when_past_readings_change(monkeypatch):
     old_blob, _, _ = gs.build_snapshot(CFG, "old", get=FakeFeed([_row(1), _row(2, h2s=3.1)]))
-    drive = FakeDrive({"gfl-feed-snapshot-2026-09-02T1400Z.zip": old_blob})
+    drive = FakeDrive({"gfl-feed-snapshot-2026-09-02T1400Z.zip": old_blob,
+                       "gfl-feed-snapshot-2026-09-02T1400Z.zip.compared": b"{}",
+                       "unrelated-a.json": b"", "unrelated-b.json": b""})
     drive, sent = _wire(monkeypatch, drive=drive, readings=[_row(2, h2s=0.0), _row(3)])
     assert gs.run() == 0
     assert len(sent) == 1
     subj, body, recipients = sent[0]
     assert recipients == ["owner@example.test"]
     assert "1 past reading(s) deleted, 1 edited" in subj
+    assert sum(n.endswith(".compared") for n in drive.files_by_name) == 2
 
 
 def test_run_unchanged_history_sends_nothing(monkeypatch):
     old_blob, _, _ = gs.build_snapshot(CFG, "old", get=FakeFeed([_row(1), _row(2)]))
-    drive = FakeDrive({"gfl-feed-snapshot-2026-09-02T1400Z.zip": old_blob})
+    drive = FakeDrive({"gfl-feed-snapshot-2026-09-02T1400Z.zip": old_blob,
+                       "gfl-feed-snapshot-2026-09-02T1400Z.zip.compared": b"{}",
+                       "unrelated-a.json": b"", "unrelated-b.json": b""})
     drive, sent = _wire(monkeypatch, drive=drive, readings=[_row(1), _row(2), _row(3)])
     assert gs.run() == 0 and sent == []
 
 
 def test_run_changes_with_no_owner_list_fails_loudly(monkeypatch):
     old_blob, _, _ = gs.build_snapshot(CFG, "old", get=FakeFeed([_row(1), _row(2)]))
-    drive = FakeDrive({"gfl-feed-snapshot-2026-09-02T1400Z.zip": old_blob})
+    drive = FakeDrive({"gfl-feed-snapshot-2026-09-02T1400Z.zip": old_blob,
+                       "gfl-feed-snapshot-2026-09-02T1400Z.zip.compared": b"{}",
+                       "unrelated-a.json": b"", "unrelated-b.json": b""})
     _, sent = _wire(monkeypatch, drive=drive, readings=[_row(2)], owners=())
     assert gs.run() == 1 and sent == []
+
+
+def test_run_failed_email_keeps_data_and_retries_same_baseline(monkeypatch):
+    old_blob, _, _ = _BUILD(CFG, "old", get=FakeFeed([_row(1), _row(2)]))
+    base = "gfl-feed-snapshot-2026-09-02T1400Z.zip"
+    drive = FakeDrive({base: old_blob, base + ".compared": b"{}"})
+    drive, sent = _wire(monkeypatch, drive=drive, readings=[_row(2)], send_ok=False)
+    assert gs.run() == 1
+    new = [n for n in drive.files_by_name if n.endswith(".zip") and n != base]
+    assert len(new) == 1                                   # the data was still saved
+    assert new[0] + ".compared" not in drive.files_by_name  # but not marked compared
+    assert gs.baseline_snapshot_name(drive.files_by_name, current="later.zip") == base
+
+
+def test_run_unreadable_baseline_fails_loudly(monkeypatch):
+    base = "gfl-feed-snapshot-2026-09-02T1400Z.zip"
+    drive = FakeDrive({base: b"not a zip", base + ".compared": b"{}"})
+    drive, sent = _wire(monkeypatch, drive=drive)
+    assert gs.run() == 1 and sent == []
+
+
+def test_count_check_ignores_rows_arriving_mid_pull():
+    class Growing(FakeFeed):
+        def __call__(self, url, params=None, **k):
+            out = super().__call__(url, params, **k)
+            if url.endswith("/4/query") and not params.get("returnCountOnly"):
+                if not out["features"] and len(self.readings) == 3:
+                    self.readings.append(_row(99))           # lands after the last page
+            return out
+    feed = Growing([_row(1), _row(2), _row(3)], page=2)
+    _, got, m = _BUILD(CFG, "s", get=feed)
+    assert len(got) == 3
+    assert {"id": 4, "name": "Monitoring Data", "csv": "layer4-Monitoring_Data.csv",
+            "rows": 3, "server_count": 3} in m["layers"]
 
 
 def test_run_short_pull_uploads_nothing(monkeypatch):

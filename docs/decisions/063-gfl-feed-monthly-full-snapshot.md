@@ -18,40 +18,58 @@ alerts to her only.
 ## Decision
 
 `gfl_feed_snapshot.py`, run monthly by `.github/workflows/gfl-feed-snapshot.yml` (2nd of
-each month, plus manual dispatch):
+each month at 14:17 UTC, off the hour when hourly rows land, plus manual dispatch):
 
 1. Pull every row of every layer and table of the FeatureServer with all fields
-   (OBJECTID keyset paging), plus service and layer metadata and the public dashboard's
-   config. Any layer whose row count differs from the server's own `returnCountOnly`
-   count fails the run (exit 1) and nothing is uploaded.
+   (OBJECTID keyset paging; CSV columns are the metadata fields plus any field actually
+   returned), plus service and layer metadata and the public dashboard's config. Each
+   layer's row count is checked against the server's own count of rows up to the last
+   OBJECTID fetched (so a row arriving mid-pull is not a mismatch); a mismatch fails the
+   run (exit 1) and nothing is uploaded.
 2. Write one zip, `gfl-feed-snapshot-<UTC stamp>.zip`: a CSV per layer, the metadata,
-   the dashboard config, and `manifest.json` (source URL, fetch time, row counts against
-   server counts, SHA-256 of every file). Upload it to the app-only GFL Air Exhibit Drive
-   folder (`GOAUTH_GFL_AIR_FOLDER_ID`, the same folder and OAuth identity as the daily
-   capture). Each snapshot is a new, immutable file.
-3. Download the previous snapshot from that folder and compare readings by OBJECTID on
-   the measurement fields (station, time, H2S, CH4, both labels, wind, temperature,
-   humidity, pressure). Readings that existed before but are gone now (deleted), or
-   whose measurement values changed (edited), are emailed to the owner list only, never
-   the public recipient lists. Bookkeeping fields such as `last_edited_date` are not
-   compared. New readings are expected and are only counted.
+   the dashboard config, and `manifest.json` (source URL, fetch time, readings layer,
+   row counts against server counts, SHA-256 of every file). Upload it to the app-only
+   GFL Air Exhibit Drive folder (`GOAUTH_GFL_AIR_FOLDER_ID`, the same folder and OAuth
+   identity as the daily capture). The data is saved before any comparison runs.
+3. Compare the readings with the baseline: the newest earlier snapshot that was itself
+   fully compared (it has a `<name>.compared` marker), or, if none was, the oldest
+   earlier snapshot. Rows match by OBJECTID; a row whose OBJECTID is gone is then matched
+   on station + time, so a source-side reinsert that renumbers OBJECTIDs reads as
+   "renumbered", not deleted (the source is known to do full reinserts; see ADR 014).
+   Measurement fields (station, time, H2S, CH4, both labels, wind, temperature,
+   humidity, pressure) present in both snapshots are compared; a change in the field set
+   is reported once, not as an edit on every row. Deleted readings, edited readings, or a
+   field-set change email the owner list only, never the public recipient lists.
+4. The new snapshot gets its `.compared` marker only after the comparison and any email
+   succeed. A failed comparison or email therefore exits 1 and is retried against the
+   same baseline next run, instead of the next run comparing against the unreported
+   snapshot and hiding the change.
 
 The first run with no earlier snapshot in the folder is a silent baseline.
 
 ## Failure handling
 
 Every failure exits 1 so the GitHub failure email surfaces it: an incomplete pull, a
-missing Drive folder or credentials, an unreadable previous snapshot, changes found but
-an empty owner list, or a change email that fails to send. A partial pull is never
-uploaded.
+missing Drive folder or credentials, an unreadable baseline snapshot, changes found but an
+empty owner list, or a change email that fails or raises. A partial pull is never
+uploaded. Network errors retry with backoff; an ArcGIS error body fails at once.
 
 ## Real-specimen check
 
-A live build on 2026-10-06 pulled every layer in 331 seconds: readings 225,699 of
-225,699, wind 36,314 of 36,314, stations 7 of 7, labels 8 of 8. The zip was 12.7 MB. Its
-readings, read back from the zip, compared clean against the same pull, and against
-the separate manual snapshot taken about an hour earlier (0 deleted, 0 edited). Nothing
-was uploaded from the local check.
+Two live builds on 2026-10-06. The final code pulled every layer in 352 seconds:
+
+| Layer | Rows fetched / server count |
+|---|---|
+| Readings | 225,704 / 225,704 |
+| Wind | 36,314 / 36,314 |
+| Stations | 7 / 7 |
+| Labels | 8 / 8 |
+
+The zip was 12.7 MB. Its readings, read back from the zip, compared clean against the
+same pull (0 deleted, 0 edited, 0 renumbered, no field change; 2.6 seconds). Against the
+separate manual snapshot taken a few hours earlier: 0 deleted, 0 edited, 0 renumbered,
+5 new readings (one hour from the five stations still reporting). Nothing was uploaded
+from the local check.
 
 ## Consequences
 
@@ -61,3 +79,5 @@ was uploaded from the local check.
   first baseline in Drive.
 - Residual: if GFL deletes or edits readings and then the feed disappears before the
   next monthly run, the change is not detected. The newest snapshot is still the record.
+- Residual: only the readings layer is compared. The wind, station and label layers are
+  saved in every snapshot but not diffed.
