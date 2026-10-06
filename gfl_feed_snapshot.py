@@ -67,8 +67,9 @@ class SnapshotError(RuntimeError):
 
 def _get_json(url: str, params: dict | None = None, *, tries: int = 5,
               timeout: int = 180, sleep=time.sleep) -> dict:
-    """GET JSON. Network/parse errors retry with backoff; an ArcGIS `error` body is
-    deterministic and raises at once."""
+    """GET JSON. Network/parse errors and ArcGIS server-side errors (code >= 500, which
+    the server returns under load) retry with backoff; any other ArcGIS `error` body
+    (e.g. 400 invalid query) is deterministic and raises at once."""
     if params is not None:
         url = url + "?" + urllib.parse.urlencode({**params, "f": "json"})
     last = None
@@ -83,7 +84,13 @@ def _get_json(url: str, params: dict | None = None, *, tries: int = 5,
                 sleep(10 * (i + 1))
             continue
         if isinstance(data, dict) and data.get("error"):
-            raise SnapshotError(f"ArcGIS error from {url}: {data['error']}")
+            err = data["error"]
+            code = err.get("code") if isinstance(err, dict) else None
+            if isinstance(code, int) and code >= 500 and i < tries - 1:
+                last = SnapshotError(f"ArcGIS {code}: {err}")    # server under load: retry
+                sleep(10 * (i + 1))
+                continue
+            raise SnapshotError(f"ArcGIS error from {url}: {err}")
         return data
     raise SnapshotError(f"GET {url} failed after {tries} tries: {last}")
 
@@ -172,57 +179,89 @@ def diff_readings(prev: list[dict], cur: list[dict], fields=MEASUREMENT_FIELDS) 
     compare = [f for f in fields if f in pf and f in cf]
     schema = {"dropped": sorted(pf - cf), "added": sorted(cf - pf)}
 
+    def key(r):
+        return (_norm(r.get("LocName")), _norm(r.get("Date")))
+
     cur_by_oid = {_norm(r.get("OBJECTID")): r for r in cur}
+    prev_key_by_oid = {_norm(r.get("OBJECTID")): key(r) for r in prev}
+    used: set = set()
+    matched: dict[int, dict] = {}        # index in prev -> matching current row
+    # Pass 1: same OBJECTID and same station + time (the normal case).
+    for i, p in enumerate(prev):
+        c = cur_by_oid.get(_norm(p.get("OBJECTID")))
+        if c is not None and key(c) == key(p):
+            matched[i] = c
+            used.add(id(c))
+    # Pass 2: a previous row not matched above takes an UNUSED current row with the
+    # same station + time whose OBJECTID is either new or was held by a different
+    # reading before (renumbered / reused), so one current row is never counted twice
+    # and a deletion among duplicate-time rows is still a deletion. Blank station/time
+    # never matches this way.
     cur_by_key: dict[tuple, list] = {}
     for r in cur:
-        cur_by_key.setdefault((_norm(r.get("LocName")), _norm(r.get("Date"))), []).append(r)
-
-    used: set = set()
-    deleted, edited, renumbered = [], [], 0
-    for p in prev:
-        oid = _norm(p.get("OBJECTID"))
-        c = cur_by_oid.get(oid)
-        if c is not None and (_norm(c.get("LocName")), _norm(c.get("Date"))) != \
-                (_norm(p.get("LocName")), _norm(p.get("Date"))) and \
-                (_norm(p.get("LocName")), _norm(p.get("Date"))) in cur_by_key:
-            c = None                       # OBJECTID reused for another reading
-        if c is None:
-            cands = [r for r in cur_by_key.get((_norm(p.get("LocName")), _norm(p.get("Date"))), [])
-                     if id(r) not in used]
-            if not cands:
-                deleted.append(p)
-                continue
-            c = cands[0]
+        oid = _norm(r.get("OBJECTID"))
+        if (id(r) not in used and all(key(r))
+                and (oid not in prev_key_by_oid or prev_key_by_oid[oid] != key(r))):
+            cur_by_key.setdefault(key(r), []).append(r)
+    renumbered = 0
+    for i, p in enumerate(prev):
+        if i in matched or not all(key(p)):
+            continue
+        cands = [r for r in cur_by_key.get(key(p), []) if id(r) not in used]
+        if cands:
+            matched[i] = cands[0]
+            used.add(id(cands[0]))
             renumbered += 1
-        used.add(id(c))
+    # Pass 3: same OBJECTID but a different station/time and no renumbered copy:
+    # the reading itself was edited (its station or time changed).
+    for i, p in enumerate(prev):
+        if i in matched:
+            continue
+        c = cur_by_oid.get(_norm(p.get("OBJECTID")))
+        if c is not None and id(c) not in used:
+            matched[i] = c
+            used.add(id(c))
+
+    deleted, edited = [], []
+    for i, p in enumerate(prev):
+        c = matched.get(i)
+        if c is None:
+            deleted.append(p)
+            continue
         changes = {f: (p.get(f), c.get(f)) for f in compare if _norm(p.get(f)) != _norm(c.get(f))}
         if changes:
-            edited.append((oid, changes))
+            edited.append((_norm(p.get("OBJECTID")), changes))
     added = sum(1 for r in cur if id(r) not in used)
     return {"deleted": deleted, "edited": edited, "renumbered": renumbered,
             "added": added, "schema": schema}
 
 
+RENUMBER_ALERT_MIN = 100   # a mass renumbering (source-side reinsert) is worth knowing
+
+
 def has_alertable_change(diff: dict) -> bool:
     return bool(diff["deleted"] or diff["edited"]
-                or diff["schema"]["dropped"] or diff["schema"]["added"])
+                or diff["schema"]["dropped"] or diff["schema"]["added"]
+                or diff["renumbered"] >= RENUMBER_ALERT_MIN)
 
 
 def snapshot_names(names) -> list[str]:
     return sorted(n for n in names if n.startswith(_PREFIX) and n.endswith(".zip"))
 
 
-def baseline_snapshot_name(names, current: str | None = None) -> str | None:
-    """The snapshot to compare against: the newest earlier snapshot that was itself
-    fully compared (has a `<name>.compared` marker). If none is marked but earlier
-    snapshots exist (every earlier comparison failed), the OLDEST one, so nothing
-    that changed since is missed. None only when there is no earlier snapshot."""
+def baseline_candidates(names, current: str | None = None) -> list[str]:
+    """Baselines to try, best first: the compared snapshots newest-first, or (if none
+    was ever compared) the oldest earlier snapshot."""
     names = set(names)
     snaps = [n for n in snapshot_names(names) if n != current]
-    marked = [n for n in snaps if n + _MARKER in names]
-    if marked:
-        return max(marked)
-    return min(snaps) if snaps else None
+    marked = sorted((n for n in snaps if n + _MARKER in names), reverse=True)
+    return marked or ([min(snaps)] if snaps else [])
+
+
+def baseline_snapshot_name(names, current: str | None = None) -> str | None:
+    """The preferred baseline (first of baseline_candidates), or None."""
+    cands = baseline_candidates(names, current)
+    return cands[0] if cands else None
 
 
 def format_change_email(diff: dict, base_name: str, cur_name: str, *,
@@ -236,6 +275,10 @@ def format_change_email(diff: dict, base_name: str, cur_name: str, *,
         parts.append(f"{ne} edited")
     if sch["dropped"] or sch["added"]:
         parts.append("field list changed")
+    if diff["renumbered"] >= RENUMBER_ALERT_MIN:
+        parts.append(f"{diff['renumbered']} renumbered (not deleted)")
+    if not parts:
+        parts.append("no reading changes, but a baseline snapshot was unreadable")
     subject = ("[Arbor Hills Monitor] GFL perimeter feed: " + ", ".join(parts)
                + " since the last snapshot")
     lines = [
@@ -252,6 +295,9 @@ def format_change_email(diff: dict, base_name: str, cur_name: str, *,
         "Both snapshots are in the GFL Air Exhibit Drive folder, unchanged.",
         "",
     ]
+    if diff.get("skipped_baselines"):
+        lines += ["NOTE: newer baseline snapshot(s) could not be read and were skipped: "
+                  + ", ".join(diff["skipped_baselines"]), ""]
     if sch["dropped"] or sch["added"]:
         lines += ["FIELD LIST CHANGED (these fields were not compared):",
                   f"  no longer in the feed: {', '.join(sch['dropped']) or 'none'}",
@@ -418,27 +464,36 @@ def run() -> int:
 
     # 1. Save the data first, whatever happens to the comparison.
     if cur_name in existing:
-        print(f"[gfl-snapshot] {cur_name} already exists — not re-uploaded.")
-    else:
-        _upload_bytes(drive, blob, cur_name, "application/zip", folder)
-        print(f"[gfl-snapshot] uploaded {cur_name} ({len(blob):,} bytes).")
+        print(f"[gfl-snapshot] {cur_name} already exists (a re-run in the same minute) — "
+              "not re-uploaded or re-compared.")
+        return 0
+    _upload_bytes(drive, blob, cur_name, "application/zip", folder)
+    print(f"[gfl-snapshot] uploaded {cur_name} ({len(blob):,} bytes).")
 
     # 2. Compare against the last fully compared snapshot; mark this one compared only
     #    once that succeeds, so a failure is retried next run rather than hidden.
-    base = baseline_snapshot_name(existing, current=cur_name)
+    cands = baseline_candidates(existing, current=cur_name)
+    base, prev_rows, skipped = None, None, []
+    for name in cands:
+        try:
+            prev_rows = readings_from_zip(_download(drive, existing[name]))
+            base = name
+            break
+        except Exception as e:  # noqa: BLE001 — try the next-older compared snapshot
+            skipped.append(name)
+            print(f"[gfl-snapshot] WARNING: could not read baseline {name}: {e}")
+    if cands and base is None:
+        print("[gfl-snapshot] no readable baseline snapshot — failing loudly.")
+        return 1
     if base is None:
         print("[gfl-snapshot] first snapshot in the folder — baseline, nothing to compare.")
     else:
-        try:
-            prev_rows = readings_from_zip(_download(drive, existing[base]))
-        except Exception as e:  # noqa: BLE001
-            print(f"[gfl-snapshot] could not read the baseline snapshot {base}: {e}")
-            return 1
         diff = diff_readings(prev_rows, readings)
+        diff["skipped_baselines"] = skipped
         print(f"[gfl-snapshot] vs {base}: {len(diff['deleted'])} deleted, "
               f"{len(diff['edited'])} edited, {diff['renumbered']} renumbered, "
               f"{diff['added']} new, field changes {diff['schema']}.")
-        if has_alertable_change(diff):
+        if has_alertable_change(diff) or skipped:
             owners = sorted(ea.load_owner_emails(cfg))
             if not owners:
                 print("[gfl-snapshot] CHANGES FOUND but the owner list is empty — failing loudly.")
