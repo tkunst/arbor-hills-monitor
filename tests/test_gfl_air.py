@@ -1473,6 +1473,7 @@ def test_capture_mode_normalizes_and_fails_safe_to_all():
     assert gw.capture_mode({"capture": {"mode": "sample"}}) == "sample"
     assert gw.capture_mode({"capture": {"mode": "full"}}) == "all"      # typo -> keep MORE
     assert gw.capture_mode({}) == "sample"                              # legacy default
+    assert gw.capture_mode({"capture": {"mode": None}}) == "all"        # empty -> keep MORE
 
 
 def test_capture_payload_with_raw_round_trips_as_json():
@@ -1544,8 +1545,27 @@ def test_run_passes_config_mode_and_captures_over_cap_batch(monkeypatch):
     over = [_reading(200 + i, "MS-2", 0.0, 2.0, DAY1 + i * 3_600_000) for i in range(5)]
     monkeypatch.setattr(gw.gc, "fetch_readings", lambda c, since, limit=None: list(over))
     monkeypatch.setattr(gw.gc, "fetch_baseline", lambda c, station_prefix="MS-": over[-1:])
-    assert gw.run() == 0
+    assert gw.main() == 1                                   # over-cap = flagged capture gap
     assert len(seen) == 2 and len(seen[1]) == 5             # over-cap batch captured first
+
+
+def test_main_exit_code_reflects_capture_gaps(monkeypatch):
+    monkeypatch.setattr(gw, "run", lambda: 0)
+    assert gw.main() == 0                                   # clean run
+
+    def failing_run():
+        gw._CAPTURE_FAILED = True
+        return 0
+    monkeypatch.setattr(gw, "run", failing_run)
+    assert gw.main() == 1                                   # capture gap -> exit 1
+
+    def fallback_run():
+        gw.gc.FIELDS_FALLBACK_USED = True
+        return 0
+    monkeypatch.setattr(gw, "run", fallback_run)
+    assert gw.main() == 1                                   # thinner capture -> exit 1
+    monkeypatch.setattr(gw, "run", lambda: 0)
+    assert gw.main() == 0                                   # flags reset per run
 
 
 def test_write_capture_is_a_safe_noop_when_disabled_or_unconfigured(monkeypatch):

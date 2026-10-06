@@ -1270,9 +1270,13 @@ _CAPTURE_FAILED = False
 def capture_mode(cfg_gfl: dict) -> str:
     """Normalized capture.mode. Anything other than "sample" captures everything:
     a typo must fail SAFE (keep more data), never quietly fall back to sampling."""
-    raw = str((cfg_gfl.get("capture") or {}).get("mode", "sample")).strip().lower()
+    cap = cfg_gfl.get("capture") or {}
+    if "mode" not in cap:
+        return "sample"                     # legacy configs keep their old behavior
+    raw = str(cap.get("mode") or "").strip().lower()
     if raw not in ("all", "sample"):
-        print(f"[gfl-air]   WARNING: unknown gfl_air.capture.mode {raw!r}; capturing ALL readings")
+        print(f"[gfl-air]   WARNING: gfl_air.capture.mode is {cap.get('mode')!r} "
+              "(expected 'all' or 'sample'); capturing ALL readings")
         return "all"
     return raw
 
@@ -1337,6 +1341,23 @@ def _write_capture(cfg_gfl: dict, rows: list[dict], when_utc: str) -> int:
         if tmp and os.path.exists(tmp):
             os.remove(tmp)
     return len(rows)
+
+
+def main() -> int:
+    """Process exit code: run()'s, or 1 when the durable capture had a gap this run
+    (failed/unconfigured upload, over-cap skip, or the core-field fallback)."""
+    global _CAPTURE_FAILED
+    _CAPTURE_FAILED = False
+    gc.FIELDS_FALLBACK_USED = False
+    rc = run()
+    if gc.FIELDS_FALLBACK_USED:
+        print("[gfl-air] the source rejected the extended field list; the capture "
+              "kept only the core fields this run.")
+        _CAPTURE_FAILED = True
+    if not rc and _CAPTURE_FAILED:
+        print("[gfl-air] exiting 1: the durable capture did not fully save this run's readings.")
+        rc = 1
+    return rc
 
 
 def run() -> int:
@@ -1417,10 +1438,17 @@ def run() -> int:
     if len(readings) > cap:
         # Over-cap: almost certainly a source-side full-table reinsert (every
         # OBJECTID bumped), not thousands of real new readings. Re-baseline instead
-        # of blasting the case file (WDS Rule B(ii)). The fetched batch is still
-        # durably captured first (ADR 026 addendum 2026-10-06): if these ARE real
-        # readings (e.g. a long Actions outage), re-baselining must not lose them.
+        # of blasting the case file (WDS Rule B(ii)). The fetched batch (the oldest
+        # cap+1 rows only) is durably captured first (ADR 026 addendum 2026-10-06),
+        # but any readings beyond it are skipped by the re-baseline, so with capture
+        # on this run is flagged as a capture gap (exit 1); the monthly full-feed
+        # snapshot is the backstop that recovers them.
         _capture_batch(cfg_gfl, readings, thresholds, sentinels, watch_thresholds, prefix)
+        if (cfg_gfl.get("capture") or {}).get("enabled"):
+            global _CAPTURE_FAILED
+            _CAPTURE_FAILED = True
+            print("[gfl-air]   over-cap re-baseline: readings past this batch were not "
+                  "captured (the monthly full snapshot recovers them)")
         try:
             _baseline(sheets, sheet_id, cfg_gfl, link, prefix, thresholds, sentinels,
                       f"OVER-CAP ({len(readings)} > {cap}) — suspected feed reinsert",
@@ -1648,8 +1676,4 @@ def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds
 
 
 if __name__ == "__main__":
-    rc = run()
-    if not rc and _CAPTURE_FAILED:
-        print("[gfl-air] exiting 1: the durable capture did not save this run's readings.")
-        rc = 1
-    sys.exit(rc)
+    sys.exit(main())
