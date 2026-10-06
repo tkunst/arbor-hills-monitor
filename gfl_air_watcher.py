@@ -1351,9 +1351,14 @@ def main() -> int:
     gc.FIELDS_FALLBACK_USED = False
     rc = run()
     if gc.FIELDS_FALLBACK_USED:
-        print("[gfl-air] the source rejected the extended field list; the capture "
-              "kept only the core fields this run.")
-        _CAPTURE_FAILED = True
+        print("[gfl-air] the source rejected the extended field list (its schema changed); "
+              "readings were fetched with the core fields only this run.")
+        try:
+            capture_on = bool(((load_config().get("gfl_air") or {}).get("capture") or {}).get("enabled"))
+        except Exception:  # noqa: BLE001 — unreadable config: stay loud
+            capture_on = True
+        if capture_on:
+            _CAPTURE_FAILED = True
     if not rc and _CAPTURE_FAILED:
         print("[gfl-air] exiting 1: the durable capture did not fully save this run's readings.")
         rc = 1
