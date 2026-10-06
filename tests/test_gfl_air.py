@@ -1435,6 +1435,38 @@ def test_select_capture_filters_non_perimeter_and_maps_fields():
     assert row["wind_speed"] == 2.5 and row["wind_direction"] == 310
 
 
+def test_select_capture_mode_all_keeps_every_perimeter_reading():
+    # Calm readings 1h apart that "sample" mode would downsample to one.
+    rows = [_reading(i, "MS-1", 0.0, 2.0, DAY0 + i * 3_600_000) for i in range(5)]
+    rows.append(_reading(9, "10-Meter MET Tower", 0.0, 2.0, DAY0))   # still dropped
+    kept = gw.select_capture_rows(rows, THRESH, SENT, WATCH, 8, "MS-", mode="all")
+    assert [k["oid"] for k in kept] == [0, 1, 2, 3, 4]
+    assert len(gw.select_capture_rows(rows, THRESH, SENT, WATCH, 8, "MS-")) == 1   # default
+
+
+def test_capture_row_keeps_labels_and_every_raw_field():
+    r = _reading(7, "MS-3", 3.1, 12.0, DAY0, h2s_text="BDL", ch4_text="12")
+    r.update(Relative_Humidity=81.0, Barometric_Pressure=29.1, Direction_Text="NW")
+    row = gw._capture_row(r)
+    assert row["h2s_ppb"] == 3.1 and row["h2s_text"] == "BDL"     # number AND label
+    assert row["ch4_ppm"] == 12.0 and row["ch4_text"] == "12"
+    assert row["raw"] == r and row["raw"] is not r                # verbatim copy
+    r["H2S"] = 99.0
+    assert row["raw"]["H2S"] == 3.1                               # not aliased
+
+
+def test_reading_fields_request_every_measurement_field():
+    for f in ("H2S", "CH4", "H2S_Text", "CH4_Text", "Speed", "Direction", "Temp",
+              "Relative_Humidity", "Barometric_Pressure", "Direction_Text"):
+        assert f in gc._READING_FIELDS.split(",")
+
+
+def test_live_config_captures_every_reading():
+    import config_loader
+    cap = config_loader.load_config()["gfl_air"]["capture"]
+    assert cap["enabled"] is True and cap["mode"] == "all"
+
+
 def test_write_capture_is_a_safe_noop_when_disabled_or_unconfigured(monkeypatch):
     # Disabled -> no-op regardless of creds (the shipped default).
     assert gw._write_capture({"capture": {"enabled": False}}, [{"oid": 1}], "2026-07-26T00:00:00Z") == 0

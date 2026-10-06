@@ -79,7 +79,11 @@ SELF_REPORTED = "GFL self-reported perimeter air monitoring"
 
 # The fields the readings table actually carries (spike-verified). Kept as one
 # constant so fetch_readings and fetch_baseline request an identical projection.
-_READING_FIELDS = "OBJECTID,LocName,Date,H2S,CH4,H2S_Text,CH4_Text,Speed,Direction,Temp"
+# Every measurement field the source publishes per reading (ADR 026 addendum
+# 2026-10-06: the durable capture keeps them all verbatim, so nothing depends on the
+# public dashboard, which shows only the _Text labels).
+_READING_FIELDS = ("OBJECTID,LocName,Date,H2S,CH4,H2S_Text,CH4_Text,Speed,Direction,Temp,"
+                   "Relative_Humidity,Barometric_Pressure,Direction_Text,Date_Text")
 
 # Pollutant spec: (result-key, ArcGIS field, unit, threshold/sentinel config key,
 # metric name). One place both the mapping and the classifier read from.
@@ -360,7 +364,7 @@ def fetch_station_window(cfg_gfl: dict, station: str, center_epoch_ms: int,
     st = str(station).replace("'", "")
     data = _query(c["service_url"], c["readings_layer"], {
         "where": f"LocName = '{st}' AND Date >= date '{start}' AND Date <= date '{end}'",
-        "outFields": _READING_FIELDS + ",Direction_Text",
+        "outFields": _READING_FIELDS,
         "orderByFields": "Date ASC",
         "returnGeometry": "false",
         "resultRecordCount": 2 * int(hours) + 6,

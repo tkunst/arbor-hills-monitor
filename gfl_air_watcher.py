@@ -1207,34 +1207,43 @@ def _capture_row(r: dict) -> dict:
     """One durable capture record from a raw reading (ADR 026): Monitor ID,
     Timestamp, H2S, CH4, Wind Direction, Wind Speed (Trisha's fields) plus Temp
     (Q3). Raw values kept verbatim (incl. any sentinel) — a faithful record;
-    interpretation stays downstream. OBJECTID rides along as an ordering key."""
+    interpretation stays downstream. OBJECTID rides along as an ordering key.
+    `h2s_text`/`ch4_text` keep the source's own labels ("BDL" below 7 ppb), and
+    `raw` keeps EVERY field the source returned, untouched (addendum 2026-10-06)."""
     return {
         "monitor_id": gc.station_of(r),
         "timestamp": gc.reading_iso(r),
         "h2s_ppb": r.get("H2S"),
         "ch4_ppm": r.get("CH4"),
+        "h2s_text": r.get("H2S_Text"),
+        "ch4_text": r.get("CH4_Text"),
         "wind_direction": r.get("Direction"),
         "wind_speed": r.get("Speed"),
         "temp": r.get("Temp"),
         "oid": gc.oid_of(r),
+        "raw": dict(r),
     }
 
 
 def select_capture_rows(readings: list[dict], thresholds: dict, sentinels: dict | None,
                         watch_thresholds: dict | None, baseline_hours: float,
-                        station_prefix: str) -> list[dict]:
-    """Pick the readings to durably capture this poll (Trisha's spec, ADR 026):
-    keep EVERY reading whose own classification is exceedance OR watch (Tier-1 CH4
-    >= 40) — the full hourly series through any elevated period — and, for
-    non-elevated readings, keep at least one per `baseline_hours` window per
-    station. `readings` are OBJECTID-ASC (oldest first), so the spacing walks
-    forward correctly. Pure/unit-tested."""
+                        station_prefix: str, mode: str = "sample") -> list[dict]:
+    """Pick the readings to durably capture this poll (Trisha's spec, ADR 026).
+    mode "all" (addendum 2026-10-06, the live setting): keep EVERY perimeter
+    reading. mode "sample" (the original spec): keep EVERY reading whose own
+    classification is exceedance OR watch (Tier-1 CH4 >= 40) — the full hourly
+    series through any elevated period — and, for non-elevated readings, keep at
+    least one per `baseline_hours` window per station. `readings` are OBJECTID-ASC
+    (oldest first), so the spacing walks forward correctly. Pure/unit-tested."""
     baseline_secs = float(baseline_hours) * 3600.0
     kept: list[dict] = []
     last_kept_s: dict[str, float] = {}
     for r in readings:
         st = gc.station_of(r)
         if not st or (station_prefix and not st.startswith(station_prefix)):
+            continue
+        if mode == "all":
+            kept.append(_capture_row(r))
             continue
         c = gc.classify_reading(r, thresholds, sentinels, watch_thresholds)
         elevated = (c["h2s"][1] in ("exceedance", "watch")
@@ -1403,14 +1412,16 @@ def run() -> int:
           f"{new_cursor}.")
 
     # Durable air-readings exhibit (ADR 026) — immutable Drive capture of the
-    # selected readings (every elevated hour + baseline downsample). Best-effort
+    # selected readings (capture.mode "all" = every reading; "sample" = every elevated
+    # hour + baseline downsample). Best-effort
     # and gated OFF until the folder/secret exist, so it can't affect the live
     # stream; it never touches measurements, the cursor, or the alert path.
     try:
         captured_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         cap_rows = select_capture_rows(
             readings, thresholds, sentinels, watch_thresholds,
-            float((cfg_gfl.get("capture") or {}).get("baseline_hours", 8)), prefix)
+            float((cfg_gfl.get("capture") or {}).get("baseline_hours", 8)), prefix,
+            mode=str((cfg_gfl.get("capture") or {}).get("mode", "sample")))
         n_cap = _write_capture(cfg_gfl, cap_rows, captured_at)
         if n_cap:
             print(f"[gfl-air]   durable capture: {n_cap} reading(s) -> Drive.")
