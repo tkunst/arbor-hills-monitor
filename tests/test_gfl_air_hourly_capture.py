@@ -80,7 +80,7 @@ def _wire(monkeypatch, cfg=CFG, names=(), readings=(), write=None, fetch_raises=
     monkeypatch.setattr(hc.gc, "fetch_baseline", lambda c, station_prefix="MS-": list(readings)[-1:])
     written = []
     monkeypatch.setattr(hc.gw, "_write_capture",
-                        write or (lambda c, rows, when: written.append(rows) or len(rows)))
+                        write or (lambda c, rows, when, suffix="": written.append((rows, suffix)) or len(rows)))
     return seen, written
 
 
@@ -89,20 +89,22 @@ def test_run_captures_everything_past_the_drive_cursor(monkeypatch):
                           readings=[_r(1), _r(2), _r(3), _r(4, st="MS-5")])
     assert hc.run(NOW) == 0
     assert seen["since"] == 2
-    assert [r["oid"] for r in written[0]] == [3, 4]          # every reading, no sampling
-    assert written[0][0]["raw"]["H2S_Text"] == "BDL"
+    rows, suffix = written[0]
+    assert [r["oid"] for r in rows] == [3, 4]                  # every reading, no sampling
+    assert rows[0]["raw"]["H2S_Text"] == "BDL" and suffix == "-h"
 
 
 def test_run_caps_a_large_backlog_and_catches_up_later(monkeypatch):
     seen, written = _wire(monkeypatch, names=["gfl-air-capture-2026-10-06-oid0.json"],
                           readings=[_r(i) for i in range(1, 10)])
     assert hc.run(NOW) == 0
-    assert [r["oid"] for r in written[0]] == [1, 2, 3]        # oldest first, per-run cap
+    assert [r["oid"] for r in written[0][0]] == [1, 2, 3]     # oldest first, per-run cap
 
 
-def test_run_with_no_captures_yet_starts_at_the_source_newest(monkeypatch):
+def test_run_with_no_captures_yet_saves_the_baseline_to_start_the_cursor(monkeypatch):
     seen, written = _wire(monkeypatch, names=[], readings=[_r(7), _r(8)])
-    assert hc.run(NOW) == 0 and seen["since"] == 8 and written == []
+    assert hc.run(NOW) == 0
+    assert [r["oid"] for r in written[0][0]] == [8]          # saved, so a cursor now exists
 
 
 def test_run_disabled_or_capture_off_is_a_noop(monkeypatch):
@@ -125,9 +127,55 @@ def test_run_unconfigured_fails_loudly(monkeypatch):
 def test_failed_hour_is_quiet_except_the_daily_report_hour(monkeypatch):
     _wire(monkeypatch, names=["gfl-air-capture-2026-10-06-oid1.json"],
           fetch_raises=hc.gc.GflAirFetchError("timed out"))
-    assert hc.run(NOW) == 0
-    loud = NOW.replace(hour=hc.LOUD_HOUR_UTC)
-    assert hc.run(loud) == 1
+    quiet = NOW.replace(hour=10)
+    assert quiet.hour not in hc.LOUD_HOURS_UTC and hc.run(quiet) == 0
+    for h in hc.LOUD_HOURS_UTC:
+        assert hc.run(NOW.replace(hour=h)) == 1
+    assert len(hc.LOUD_HOURS_UTC) >= 3                        # a late run can't hide a day
+
+
+def test_objectids_going_backwards_is_a_failure(monkeypatch):
+    _wire(monkeypatch, names=["gfl-air-capture-2026-10-06-oid500.json"],
+          readings=[_r(3), _r(4)])                            # source now tops out at 4
+    assert hc.run(NOW.replace(hour=hc.LOUD_HOURS_UTC[0])) == 1
+
+
+def test_batch_with_no_perimeter_rows_is_a_failure_not_success(monkeypatch):
+    _, written = _wire(monkeypatch, names=["gfl-air-capture-2026-10-06-oid1.json"],
+                       readings=[_r(2, st="10-Meter MET Tower")])
+    assert hc.run(NOW.replace(hour=hc.LOUD_HOURS_UTC[0])) == 1 and written == []
+
+
+def test_hourly_and_daily_names_never_collide_and_both_feed_the_cursor():
+    import gfl_air_watcher as gw
+    rows = [{"oid": 42}]
+    daily = gw._capture_filename(rows, "2026-10-07T13:00:00Z")
+    hourly = gw._capture_filename(rows, "2026-10-07T13:00:00Z", hc.HOURLY_SUFFIX)
+    assert daily != hourly and hourly.endswith("-h.json")
+    assert hc.max_captured_oid([daily]) == 42 and hc.max_captured_oid([hourly]) == 42
+
+
+def test_real_write_capture_uploads_hourly_named_file(monkeypatch):
+    import gfl_air_watcher as gw
+    uploads = []
+    monkeypatch.setattr(gw.ac, "is_configured", lambda *a, **k: True)
+    monkeypatch.setattr(gw.ac, "oauth_drive_service", lambda: object())
+    monkeypatch.setattr(gw.ac, "folder_id", lambda *a, **k: "F")
+    monkeypatch.setattr(gw.ac, "upload_file",
+                        lambda d, path, name, mt, fid: uploads.append((name, open(path).read())) or "l")
+    rows = gw.select_capture_rows([_r(5), _r(6)], {}, None, None, 1, "MS-", mode="all")
+    assert gw._write_capture({"capture": {"enabled": True}}, rows, "2026-10-07T09:23:00Z", "-h") == 2
+    name, body = uploads[0]
+    assert name == "gfl-air-capture-2026-10-07-oid6-h.json" and '"H2S_Text": "BDL"' in body
+
+
+def test_widened_lookback_cursor_end_to_end(monkeypatch):
+    class Bounded(FakeDrive):
+        def list(self, q=None, **k):
+            days_ok = "2026-09-07" in q or "2016" in q        # 30-day or 3650-day window
+            self.names = ["gfl-air-capture-2026-09-20-oid77.json"] if days_ok else []
+            return super().list(q=q, **k)
+    assert hc.find_cursor(Bounded([]), "F", NOW) == 77
 
 
 def test_live_config_enables_hourly_capture():

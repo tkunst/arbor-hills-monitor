@@ -1305,14 +1305,15 @@ def _capture_batch(cfg_gfl: dict, readings: list[dict], thresholds: dict,
         return 0
 
 
-def _capture_filename(rows: list[dict], when_utc: str) -> str:
+def _capture_filename(rows: list[dict], when_utc: str, suffix: str = "") -> str:
     """Immutable per-poll name: run date + max OBJECTID in the batch, so a re-run
-    of the same batch dedups (upload_file reuses by name) and files sort by date."""
+    of the same batch dedups (upload_file reuses by name) and files sort by date.
+    `suffix` keeps the hourly job's files distinct from the daily run's ("-h")."""
     max_oid = max((r.get("oid") or 0) for r in rows) if rows else 0
-    return f"gfl-air-capture-{when_utc[:10]}-oid{max_oid}.json"
+    return f"gfl-air-capture-{when_utc[:10]}-oid{max_oid}{suffix}.json"
 
 
-def _write_capture(cfg_gfl: dict, rows: list[dict], when_utc: str) -> int:
+def _write_capture(cfg_gfl: dict, rows: list[dict], when_utc: str, suffix: str = "") -> int:
     """Upload the selected rows as an immutable JSON to the app-only GFL air Drive
     folder (ADR 026). Returns rows written, or 0 for a no-op. GATED: silently does
     nothing unless capture.enabled AND the OAuth Drive creds + the folder secret
@@ -1335,7 +1336,7 @@ def _write_capture(cfg_gfl: dict, rows: list[dict], when_utc: str) -> int:
             fh.write(payload)
             tmp = fh.name
         drive = ac.oauth_drive_service()
-        ac.upload_file(drive, tmp, _capture_filename(rows, when_utc),
+        ac.upload_file(drive, tmp, _capture_filename(rows, when_utc, suffix),
                        "application/json", ac.folder_id(_CAPTURE_FOLDER_ENV))
     finally:
         if tmp and os.path.exists(tmp):
