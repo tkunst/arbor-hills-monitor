@@ -873,8 +873,7 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
     body.append("")
 
     # The all-six-monitors table.
-    body.append("ALL PERIMETER MONITORS (latest reading this run; a station with none "
-                "is listed, not dropped; ▲ = public "
+    body.append("ALL PERIMETER MONITORS (latest reading this run; ▲ = public "
                 "hourly value STRICTLY ABOVE the benchmark):")
     body.append("  Station  H2S (ppb)        CH4 (ppm)        Wind            As-Of (ET)")
     near = False
@@ -1532,6 +1531,7 @@ def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds
     registry_available = True
     try:
         coords = gc.fetch_station_coords(cfg_gfl, station_prefix=prefix)
+        registry_available = bool(coords)      # an empty station list is no list
     except Exception as e:  # noqa: BLE001
         registry_available = False
         print(f"[gfl-air]   station coords unavailable (using dashboard link): {e}")

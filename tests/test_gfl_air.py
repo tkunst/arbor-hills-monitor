@@ -1565,7 +1565,7 @@ def test_fetch_station_coords_retries_name_only_when_date_field_errors(monkeypat
     def fake_query(url, layer, params, **k):
         calls.append(params["outFields"])
         if "Current_ReadDate" in params["outFields"]:
-            raise gc.GflAirFetchError("Invalid field: Current_ReadDate")
+            raise gc.GflAirFetchError("ArcGIS error from U: Invalid field: Current_ReadDate")
         return {"features": [{"attributes": {"Name": "MS-1"},
                               "geometry": {"x": -83.5, "y": 42.4}}]}
     monkeypatch.setattr(gc, "_query", fake_query)
@@ -1627,3 +1627,28 @@ def test_fetch_station_coords_double_failure_raises(monkeypatch):
     monkeypatch.setattr(gc, "_query", down)
     with pytest.raises(gc.GflAirFetchError):
         gc.fetch_station_coords({"service_url": "U"})   # caller -> registry_available=False
+
+
+def test_fetch_station_coords_network_error_does_not_retry(monkeypatch):
+    calls = []
+
+    def down(url, layer, params, **k):
+        calls.append(params["outFields"])
+        raise gc.GflAirFetchError("GET U failed: timed out")
+    monkeypatch.setattr(gc, "_query", down)
+    with pytest.raises(gc.GflAirFetchError):
+        gc.fetch_station_coords({"service_url": "U"})
+    assert calls == ["Name,Current_ReadDate"]          # one timeout, not two
+
+
+def test_run_empty_station_list_counts_as_unavailable(monkeypatch):
+    fake, sent = _wire_with_recipients(monkeypatch, _watch_cfg())
+    _baseline_then(monkeypatch)
+    monkeypatch.setattr(gw.gc, "fetch_station_coords", lambda *a, **k: {})
+    new = [_elev(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS) if s != "MS-1"]
+    new[1] = _elev(108, "MS-3", 0.0, 45.0, DAY1)
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0
+    assert ("(1 station(s) not listed: the station list could not be retrieved this run.)"
+            in sent[0][1])

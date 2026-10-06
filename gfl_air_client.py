@@ -320,6 +320,8 @@ def fetch_station_coords(cfg_gfl: dict, *, station_prefix: str = DEFAULT_STATION
     try:
         data = _query(cfg_gfl.get("service_url", ""), layer, params)
     except GflAirFetchError as e:
+        if "ArcGIS error" not in str(e):
+            raise                      # network/HTTP/non-JSON: not a field problem
         # Current_ReadDate is a nicety on top of coordinates: if the source renames or
         # drops it, ArcGIS errors the whole query — retry Name-only so coordinates and
         # the station list survive (every last_read_iso is then ''). Logged, so a
