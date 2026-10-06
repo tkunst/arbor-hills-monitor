@@ -7,7 +7,7 @@ name: gfl-feed-snapshot
 # (GitHub failure email) if the pull is incomplete or the upload/compare fails.
 on:
   schedule:
-    - cron: "0 14 2 * *"    # 2nd of each month, ~10am ET.
+    - cron: "17 14 2 * *"   # 2nd of each month, ~10:17am ET (off the hour: rows land on the hour).
   workflow_dispatch: {}
 
 permissions:
