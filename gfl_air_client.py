@@ -149,6 +149,12 @@ def _query(service_url: str, layer, params: dict, *, timeout: int = 60) -> dict:
     return data
 
 
+# Set when _query_readings had to drop to the core field list. The watcher turns it
+# into a non-zero exit: live alerting keeps working, but the durable capture is
+# thinner than intended, and that must not be silent.
+FIELDS_FALLBACK_USED = False
+
+
 def _query_readings(service_url: str, layer, params: dict) -> dict:
     """_query for the readings table, requesting every measurement field. If the
     source rejects the extended field list (an ArcGIS error body, e.g. a renamed
@@ -159,6 +165,8 @@ def _query_readings(service_url: str, layer, params: dict) -> dict:
     except GflAirFetchError as e:
         if "ArcGIS error" not in str(e) or params.get("outFields") != _READING_FIELDS:
             raise
+        global FIELDS_FALLBACK_USED
+        FIELDS_FALLBACK_USED = True
         print(f"[gfl-air]   extended field list rejected ({e}); retrying with core fields")
         return _query(service_url, layer, {**params, "outFields": _CORE_READING_FIELDS})
 
