@@ -1,7 +1,7 @@
 # ADR 063: Monthly full snapshot of the GFL perimeter feed, with change detection
 
 Date: 2026-10-06
-Status: accepted (ships disabled; Trisha switches it on)
+Status: accepted; switched on 2026-10-06 (Trisha)
 Builds on: ADR 014 (Stream E), ADR 026 (durable capture) and its 2026-10-06 addendum.
 
 ## Context

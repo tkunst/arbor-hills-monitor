@@ -330,10 +330,11 @@ def test_run_short_pull_uploads_nothing(monkeypatch):
     assert gs.run() == 1 and drive.files_by_name == {} and sent == []
 
 
-def test_live_config_ships_disabled():
+def test_live_config_is_enabled():
+    # Switched on by Trisha 2026-10-06 after PRs #108/#109 merged (ADR 063).
     import config_loader
     c = config_loader.load_config()["gfl_feed_snapshot"]
-    assert c["enabled"] is False
+    assert c["enabled"] is True
 
 
 # ----- round-2 review cases --------------------------------------------------------
