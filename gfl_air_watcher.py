@@ -873,12 +873,14 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
     body.append("")
 
     # The all-six-monitors table.
-    body.append("ALL PERIMETER MONITORS (latest reading this run, or when a silent "
-                "station last reported; ▲ = public "
+    body.append("ALL PERIMETER MONITORS (latest reading this run; a station with none "
+                "is listed, not dropped; ▲ = public "
                 "hourly value STRICTLY ABOVE the benchmark):")
     body.append("  Station  H2S (ppb)        CH4 (ppm)        Wind            As-Of (ET)")
     near = False
-    # "no data since X" only when X predates every reading in this batch; otherwise
+    # "no data since X" only when X predates the earliest reporting station's latest
+    # reading in this batch (conservative: it can fall back to the plainer wording,
+    # never to a false "no data since"); otherwise
     # (historical backfill, or a reading that landed between the layer-4 and layer-0
     # fetches) the honest statement is just that this batch has no reading for it.
     batch_start = min((r["as_of"] for r in monitor_rows if r.get("as_of")), default="")
