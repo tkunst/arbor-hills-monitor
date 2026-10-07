@@ -387,7 +387,7 @@ def test_send_failure_is_redacted_and_never_names_an_address(monkeypatch, capsys
     e = ei.value
     assert "private.owner" not in str(e) and "proton" not in str(e)
     assert "SMTPRecipientsRefused" in str(e) and "1 recipient(s) refused" in str(e)
-    assert e.__cause__ is None and e.__suppress_context__ is True     # no chained original
+    assert e.__cause__ is None and e.__context__ is None             # original not kept at all
     print(f"caller logs: {e}")                                         # what streams do
     assert "proton" not in capsys.readouterr().out
 
@@ -414,10 +414,45 @@ def test_network_failure_is_redacted(monkeypatch):
     monkeypatch.setattr(smtplib, "SMTP", _down)
     with pytest.raises(ea.EmailSendError) as ei:
         ea.send_email("subj", "body", {}, recipients=["a@x.com"])
-    assert str(ei.value) == "send failed: OSError"
+    assert str(ei.value) == "send failed after 0 sent: OSError"
 
 
 def test_redact_smtp_error_is_pure():
     import smtplib
     assert ea.redact_smtp_error(smtplib.SMTPSenderRefused(501, b"bad <x@y.z>", "x@y.z")) \
         == "SMTPSenderRefused / SMTP 501"
+
+
+def test_partial_send_reports_count_and_stays_redacted(monkeypatch):
+    import smtplib
+    _smtp_env(monkeypatch)
+    calls = []
+
+    class _SecondFails(_RefusingServer):
+        def send_message(self, msg):
+            calls.append(msg["To"])
+            if len(calls) == 2:
+                raise smtplib.SMTPRecipientsRefused({msg["To"]: (550, b"no such user")})
+    monkeypatch.setattr(smtplib, "SMTP", lambda host, port, timeout=30: _SecondFails())
+    with pytest.raises(OSError) as ei:                                 # still an OSError too
+        ea.send_email("subj", "body", {"unsubscribe": {"owner_addresses": ["a@x.com", "b@y.com"]}},
+                      recipients=["a@x.com", "b@y.com"])
+    assert "after 1 sent" in str(ei.value) and "b@y.com" not in str(ei.value)
+
+
+def test_non_smtp_errors_pass_through_unwrapped(monkeypatch):
+    import smtplib
+    _smtp_env(monkeypatch)
+
+    class _Ok(_RefusingServer):
+        def send_message(self, msg):
+            pass
+    monkeypatch.setattr(smtplib, "SMTP", lambda host, port, timeout=30: _Ok())
+    with pytest.raises(ValueError):                                    # header injection guard
+        ea.send_email("subj", "body", {}, recipients=["a@x.com\r\nBcc: z@z.com"])
+
+
+def test_redact_refused_recipients_counts_only():
+    import smtplib
+    e = smtplib.SMTPRecipientsRefused({"p@q.com": (550, b"x"), "r@s.com": (550, b"y")})
+    assert ea.redact_smtp_error(e) == "SMTPRecipientsRefused / 2 recipient(s) refused"
