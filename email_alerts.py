@@ -331,8 +331,11 @@ class EmailSendError(smtplib.SMTPException):
     `SMTPRecipientsRefused` stringifies to a dict keyed by the refused address, so an
     unredacted error could print a private owner address (GitHub masks only the
     whole comma-separated MONITOR_OWNER_EMAILS secret, not one address inside it).
-    Subclasses SMTPException so any `except smtplib.SMTPException` still catches it.
-    Security review L1, 2026-10-06 (the SEC-001 count-only logging rule)."""
+    Subclasses SMTPException (itself an OSError) so existing handlers still catch it.
+    Trade-off: the server's response text (e.g. "Username and Password not
+    accepted", a rate-limit reply) is dropped with the addresses; the type name and
+    SMTP code are what remain for triage, plus how many messages had already gone
+    out. Security review L1, 2026-10-06 (the SEC-001 count-only logging rule)."""
 
 
 def redact_smtp_error(e: BaseException) -> str:
@@ -457,10 +460,15 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
                 msg.set_content(out_body)
                 server.send_message(msg)
                 sent += 1
-    except (smtplib.SMTPException, OSError) as e:
-        # Redact before anything can log it: no addresses, no server text.
-        # `from None` also drops the original from the chained traceback.
-        raise EmailSendError(f"send failed: {redact_smtp_error(e)}") from None
+    except OSError as e:   # SMTPException, socket, timeout and TLS errors are all OSError
+        # Redact before anything can log it: no addresses, no server text. Build the
+        # message here but raise OUTSIDE the except block, so the original (with its
+        # address-bearing text) is not even kept as __context__.
+        failure = f"send failed after {sent} sent: {redact_smtp_error(e)}"
+    else:
+        failure = None
+    if failure is not None:
+        raise EmailSendError(failure)
     if dropped:
         # SEC-001: log the COUNT only, never the addresses. Held recipients can
         # include intentionally-private third parties, and Actions logs are
