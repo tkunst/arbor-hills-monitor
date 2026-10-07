@@ -354,6 +354,8 @@ def test_route_hand_curated_preserves_existing_state_entries(monkeypatch):
 # the (world-readable) Actions log via a caller's `print(f"... {e}")`.
 
 def _smtp_env(monkeypatch):
+    for k in ("UNSUBSCRIBED_EMAILS", "MONITOR_OWNER_EMAILS", "MONITOR_OWNER_DOMAINS"):
+        monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
     monkeypatch.setenv("SMTP_USER", "user")
     monkeypatch.setenv("SMTP_PASSWORD", "pw")
