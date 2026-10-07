@@ -1,5 +1,7 @@
 """Urgency logic — especially the permitted-vs-measured temperature distinction,
 which is the credibility-critical case."""
+import pytest
+
 import email_alerts as ea
 from egle_doc_parser import ParsedDoc
 
@@ -345,3 +347,77 @@ def test_route_hand_curated_preserves_existing_state_entries(monkeypatch):
     state = {"pending_digest": [{"document_name": "Earlier Doc"}], "pending_urgent_recap": []}
     ea.route_hand_curated_urgent_or_digest(**_hc_kwargs(state=state))
     assert [r["document_name"] for r in state["pending_digest"]] == ["Earlier Doc", "Test Doc"]
+
+
+# --- send_email error redaction (security review L1, 2026-10-06) --------------
+# A send failure must never put a recipient address or server response text into
+# the (world-readable) Actions log via a caller's `print(f"... {e}")`.
+
+def _smtp_env(monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_USER", "user")
+    monkeypatch.setenv("SMTP_PASSWORD", "pw")
+
+
+class _RefusingServer:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def starttls(self):
+        pass
+
+    def login(self, user, password):
+        pass
+
+    def send_message(self, msg):
+        import smtplib
+        raise smtplib.SMTPRecipientsRefused(
+            {"private.owner@proton.me": (550, b"5.1.1 <private.owner@proton.me> no such user")})
+
+
+def test_send_failure_is_redacted_and_never_names_an_address(monkeypatch, capsys):
+    import smtplib
+    _smtp_env(monkeypatch)
+    monkeypatch.setattr(smtplib, "SMTP", lambda host, port, timeout=30: _RefusingServer())
+    with pytest.raises(ea.EmailSendError) as ei:
+        ea.send_email("subj", "body", {}, recipients=["private.owner@proton.me"])
+    e = ei.value
+    assert "private.owner" not in str(e) and "proton" not in str(e)
+    assert "SMTPRecipientsRefused" in str(e) and "1 recipient(s) refused" in str(e)
+    assert e.__cause__ is None and e.__suppress_context__ is True     # no chained original
+    print(f"caller logs: {e}")                                         # what streams do
+    assert "proton" not in capsys.readouterr().out
+
+
+def test_redacted_error_is_still_an_smtp_exception(monkeypatch):
+    import smtplib
+    _smtp_env(monkeypatch)
+
+    class _AuthFails(_RefusingServer):
+        def login(self, user, password):
+            raise smtplib.SMTPAuthenticationError(535, b"5.7.8 bad creds for user@x.com")
+    monkeypatch.setattr(smtplib, "SMTP", lambda host, port, timeout=30: _AuthFails())
+    with pytest.raises(smtplib.SMTPException) as ei:                   # old catches still work
+        ea.send_email("subj", "body", {}, recipients=["a@x.com"])
+    assert "SMTP 535" in str(ei.value) and "user@x.com" not in str(ei.value)
+
+
+def test_network_failure_is_redacted(monkeypatch):
+    import smtplib
+    _smtp_env(monkeypatch)
+
+    def _down(host, port, timeout=30):
+        raise OSError("connect to smtp.example.com:587 for owner@gmail.com failed")
+    monkeypatch.setattr(smtplib, "SMTP", _down)
+    with pytest.raises(ea.EmailSendError) as ei:
+        ea.send_email("subj", "body", {}, recipients=["a@x.com"])
+    assert str(ei.value) == "send failed: OSError"
+
+
+def test_redact_smtp_error_is_pure():
+    import smtplib
+    assert ea.redact_smtp_error(smtplib.SMTPSenderRefused(501, b"bad <x@y.z>", "x@y.z")) \
+        == "SMTPSenderRefused / SMTP 501"

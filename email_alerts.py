@@ -324,6 +324,29 @@ def unsubscribe_footer(cfg: dict, mailto: str, postal: str, recipient: str) -> s
     )
 
 
+class EmailSendError(smtplib.SMTPException):
+    """A send_email failure with a REDACTED message: exception type, SMTP code and
+    refused-recipient count only, never an address or server response text. Every
+    stream logs send failures with `{e}` into world-readable Actions logs, and an
+    `SMTPRecipientsRefused` stringifies to a dict keyed by the refused address, so an
+    unredacted error could print a private owner address (GitHub masks only the
+    whole comma-separated MONITOR_OWNER_EMAILS secret, not one address inside it).
+    Subclasses SMTPException so any `except smtplib.SMTPException` still catches it.
+    Security review L1, 2026-10-06 (the SEC-001 count-only logging rule)."""
+
+
+def redact_smtp_error(e: BaseException) -> str:
+    """Pure: a log-safe description of an SMTP or network failure."""
+    parts = [type(e).__name__]
+    code = getattr(e, "smtp_code", None)
+    if code is not None:
+        parts.append(f"SMTP {code}")
+    refused = getattr(e, "recipients", None)
+    if isinstance(refused, dict):
+        parts.append(f"{len(refused)} recipient(s) refused")
+    return " / ".join(parts)
+
+
 def send_email(subject: str, body: str, cfg: dict, recipients: list | None = None) -> bool:
     """Send to all configured recipients via SMTP (TLS). No-op with a warning if
     SMTP env vars are missing (so a dry/local run doesn't crash) — returns False
@@ -331,7 +354,8 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
     server, so a caller that needs to distinguish "sent" from "silently skipped"
     can (e.g. _route_urgent_or_digest in watcher.py, which must not record a
     same-day [URGENT] alert as sent — and recap it later — if it never actually
-    went out). A mid-send SMTP failure still raises (unchanged).
+    went out). A mid-send SMTP failure still raises, as an EmailSendError whose
+    message is redacted (no addresses, no server text; see EmailSendError).
 
     `recipients` overrides the audience: when a non-empty list is passed it is used
     VERBATIM (not merged with the shared `alert_recipients` list or the
@@ -398,40 +422,45 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
     sender = os.environ.get("SMTP_FROM") or user
     sent = 0
     dropped = []
-    with smtplib.SMTP(host, port, timeout=30) as server:
-        server.starttls()
-        server.login(user, password)
-        for recipient in recipients:
-            is_owner = (_norm_email(recipient) in owners
-                        or _email_domain(recipient) in owner_domains)
-            out_body = body
-            add_unsub_header = False
-            if not is_owner:
-                if armed:
-                    out_body = body + unsubscribe_footer(cfg, mailto, postal, recipient)
-                    add_unsub_header = True
-                elif owners:
-                    # We can positively tell this is a third party AND there is no
-                    # opt-out method configured (unarmed) → do NOT send mail with
-                    # no way to unsubscribe. Self-arms once unsubscribe.mailto is
-                    # set. Owners are never dropped, so a stream that always carries
-                    # an owner (e.g. URGENT) can never be emptied here (trap 4).
-                    dropped.append(recipient)
-                    continue
-                # else: owners empty → can't classify a third party → send as-is
-                # (never risk silencing Trisha); the WARNING above surfaced it.
-            msg = EmailMessage()
-            msg["Subject"] = subject
-            msg["From"] = sender
-            msg["To"] = recipient
-            if add_unsub_header:
-                # No List-Unsubscribe-Post header: RFC-8058 one-click needs an
-                # HTTPS POST endpoint, and this static-Pages project has no
-                # backend — mailto is the compliant mechanism.
-                msg["List-Unsubscribe"] = build_list_unsubscribe(mailto, recipient)
-            msg.set_content(out_body)
-            server.send_message(msg)
-            sent += 1
+    try:
+        with smtplib.SMTP(host, port, timeout=30) as server:
+            server.starttls()
+            server.login(user, password)
+            for recipient in recipients:
+                is_owner = (_norm_email(recipient) in owners
+                            or _email_domain(recipient) in owner_domains)
+                out_body = body
+                add_unsub_header = False
+                if not is_owner:
+                    if armed:
+                        out_body = body + unsubscribe_footer(cfg, mailto, postal, recipient)
+                        add_unsub_header = True
+                    elif owners:
+                        # We can positively tell this is a third party AND there is no
+                        # opt-out method configured (unarmed) → do NOT send mail with
+                        # no way to unsubscribe. Self-arms once unsubscribe.mailto is
+                        # set. Owners are never dropped, so a stream that always carries
+                        # an owner (e.g. URGENT) can never be emptied here (trap 4).
+                        dropped.append(recipient)
+                        continue
+                    # else: owners empty → can't classify a third party → send as-is
+                    # (never risk silencing Trisha); the WARNING above surfaced it.
+                msg = EmailMessage()
+                msg["Subject"] = subject
+                msg["From"] = sender
+                msg["To"] = recipient
+                if add_unsub_header:
+                    # No List-Unsubscribe-Post header: RFC-8058 one-click needs an
+                    # HTTPS POST endpoint, and this static-Pages project has no
+                    # backend — mailto is the compliant mechanism.
+                    msg["List-Unsubscribe"] = build_list_unsubscribe(mailto, recipient)
+                msg.set_content(out_body)
+                server.send_message(msg)
+                sent += 1
+    except (smtplib.SMTPException, OSError) as e:
+        # Redact before anything can log it: no addresses, no server text.
+        # `from None` also drops the original from the chained traceback.
+        raise EmailSendError(f"send failed: {redact_smtp_error(e)}") from None
     if dropped:
         # SEC-001: log the COUNT only, never the addresses. Held recipients can
         # include intentionally-private third parties, and Actions logs are
