@@ -97,7 +97,13 @@ def main() -> None:
     rows = findings_feed.merge_handcurated(rows, handcurated_rows)
 
     previous_total = _previous_total(OUT_DIR)
-    if findings_feed.is_suspicious_shrink(previous_total, len(rows)):
+    # A DELIBERATE shrink (e.g. ADR 064 moving neighbor-site rows off the feed)
+    # is let through only when the operator states the exact expected count —
+    # a bad Sheet read would have to land on that same number to slip past.
+    expected = os.environ.get("FINDINGS_EXPECTED_TOTAL", "").strip()
+    if expected == str(len(rows)):
+        print(f"Deliberate shrink acknowledged: {previous_total} -> {len(rows)}.")
+    elif findings_feed.is_suspicious_shrink(previous_total, len(rows)):
         raise SystemExit(
             f"Refusing to write: {len(rows)} document(s) read, down from "
             f"{previous_total} last run (more than a "

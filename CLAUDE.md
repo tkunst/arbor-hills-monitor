@@ -80,6 +80,14 @@ external users but no sensitive data). Public repo.
 - `backfill.py` — nightly batch of 50, self-terminating, resumable. Mirrors
   each doc to Drive inline (`archiver.mirror_one_now()`) before writing its
   Sheet row.
+- **Facility scope (ADR 064, 2026-10-07):** each `facilities:` entry is `core`
+  (default — Arbor Hills/GFL) or `scope: related` (a neighboring/watershed site,
+  e.g. the Johnson Creek drain restoration). Related docs go ONLY to the
+  "Related Documents" tab — never New/Historical, Evidence, Measurements,
+  Deadlines, the digest, urgent alerts or the website. The eight neighbor-
+  development sites (Coldwater Ridge, Toll, etc.) are not in `facilities:` at
+  all (profile watches only). `tests/test_facility_scope.py` pins the set —
+  classify any new facility on purpose; never add a non-GFL site as core.
 - `poison_stub.py` — shared terminal step for a poison doc: on its
   `MAX_ERRORS_PER_DOC`-th failure, write a stub feed row + mark it `skipped`.
   Called from BOTH watcher.py's and backfill.py's per-doc except handlers, so

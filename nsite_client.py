@@ -223,9 +223,15 @@ def fetch_site_documents(session: requests.Session, nsite_id: str) -> list[dict]
     return []
 
 
+# `facilities:` scopes (ADR 064). "related" = a neighboring / watershed site whose
+# documents go only to the Related Documents tab.
+FACILITY_SCOPES = ("core", "related")
+
+
 def fetch_all_documents(session: requests.Session, cfg: dict) -> list[dict]:
     """Fetch and concatenate the document lists for every facility in
-    cfg["facilities"], tagging each doc with facility_srn / facility_name.
+    cfg["facilities"], tagging each doc with facility_srn / facility_name /
+    facility_scope ("core" unless the entry says `scope: related` — ADR 064).
 
     nSITE doc_ids are globally unique across these facilities (verified 0 pairwise
     overlap), so the combined list safely shares one Sheet + one _state tab with
@@ -234,9 +240,15 @@ def fetch_all_documents(session: requests.Session, cfg: dict) -> list[dict]:
     """
     docs: list[dict] = []
     for f in cfg["facilities"]:
+        # A typo'd scope must not silently publish a neighbor site as core, nor
+        # hide a GFL site as related — refuse to run instead.
+        if f.get("scope", "core") not in FACILITY_SCOPES:
+            raise ValueError(f"facility {f['srn']}: unknown scope {f.get('scope')!r}")
+    for f in cfg["facilities"]:
         for d in fetch_site_documents(session, f["id"]):
             d["facility_srn"] = f["srn"]
             d["facility_name"] = f["name"]
+            d["facility_scope"] = f.get("scope", "core")
             docs.append(d)
     return docs
 
