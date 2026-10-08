@@ -16,7 +16,7 @@ Live fetch: Documents 8 (none previously held by the monitor), Submissions 1, Pe
 
 Site "WASHTENAW: 89-11-0108-FP", 8627 Napier Rd (parcel A-01-12-100-020, Section 12, next to the
 landfill). One WRD "Floodplain Elevation Calculation Request", Completed, no date recorded (the
-reference prefix "89" indicates 1989 — in every dated converted record seen (79-, 85-, 91-, 95-…-P) the prefix equals the effective year; the middle number is not a month). No documents on nSITE.
+reference prefix "89" indicates 1989 — in every dated converted record seen (79-, 85-, 91-, 95-, 98-, 01-…-P) the prefix equals the year the application was received; the middle number is not a month). No documents on nSITE.
 
 ## Decision
 
