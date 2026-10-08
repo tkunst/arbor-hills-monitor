@@ -83,3 +83,37 @@ def test_search_index_filename_matches_the_gate_script():
     # constants equal so that drift fails CI instead of silently degrading
     # the gate.
     assert gff.SEARCH_INDEX_FILENAME == cps.SEARCH_INDEX_FILENAME
+
+
+def _run_main(monkeypatch, tmp_path, n_rows, previous):
+    feed = [[f"2026-08-{i + 1:02d}", f"Doc {i}", "evidence", "R5", "notable",
+             "s", "", f"https://x/{i}", "Arbor Hills Landfill"] for i in range(n_rows)]
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.setattr(gff, "OUT_DIR", str(tmp_path))
+    monkeypatch.setattr(gff.drive_client, "sheets_service", lambda: None)
+    monkeypatch.setattr(gff, "_archive_links", lambda svc, sid: {})
+    monkeypatch.setattr(gff, "_previous_total", lambda out_dir: previous)
+    monkeypatch.setattr(gff, "_tab_values", lambda svc, sid, tab, a1="A2:I":
+                        feed if tab == gff.sheet_writer.TAB_NEW else [])
+    gff.main()
+
+
+def test_big_shrink_still_refused_without_expected_total(monkeypatch, tmp_path):
+    monkeypatch.delenv("FINDINGS_EXPECTED_TOTAL", raising=False)
+    import pytest
+    with pytest.raises(SystemExit):
+        _run_main(monkeypatch, tmp_path, 5, previous=100)
+    assert os.listdir(tmp_path) == []
+
+
+def test_shrink_refused_when_expected_total_does_not_match(monkeypatch, tmp_path):
+    monkeypatch.setenv("FINDINGS_EXPECTED_TOTAL", "6")
+    import pytest
+    with pytest.raises(SystemExit):
+        _run_main(monkeypatch, tmp_path, 5, previous=100)
+
+
+def test_deliberate_shrink_with_exact_expected_total_writes(monkeypatch, tmp_path):
+    monkeypatch.setenv("FINDINGS_EXPECTED_TOTAL", "5")
+    _run_main(monkeypatch, tmp_path, 5, previous=100)
+    assert "index.html" in os.listdir(tmp_path)

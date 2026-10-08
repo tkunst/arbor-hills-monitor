@@ -54,7 +54,8 @@ first writes a full JSON backup of every tab it touches, plus `_meta`, outside t
 Dry run on 2026-10-07: 14 + 311 feed rows, 9 evidence, 90 measurements, 16 deadlines, 4 pending
 digest entries; 128 rows copied. Archived PDFs (the Drive mirror index) is left alone, so nothing
 is re-uploaded. `_state` is left alone, so nothing is re-processed. The public-records pages drop
-the rows on the next `gen_findings_feed` run. Delete the script once it has been applied.
+the rows on the next `gen_findings_feed` run. That run's shrink guard (a >10% drop is refused as a
+bad Sheet read) is passed only by setting `FINDINGS_EXPECTED_TOTAL` to the exact new document count. Delete the script once it has been applied.
 
 ## Risks
 
