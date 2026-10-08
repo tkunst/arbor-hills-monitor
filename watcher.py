@@ -138,6 +138,22 @@ def _route_urgent_or_digest(parsed, d: dict, link: str, cfg: dict, state: dict,
         sw.write_meta(sheets, sheet_id, state)
 
 
+def _processed_payload(parsed, d: dict) -> dict:
+    return {
+        "document_name": d["document_name"],
+        "date_filed": d["date_filed"],
+        "doc_type": parsed.doc_type,
+        "severity": parsed.severity,
+        "risks": parsed.risks,
+        # ADR 025 (Gap G1-A-1): carry the extracted claim + summary in the
+        # append-only _state payload so it survives a Feed-tab clear — the
+        # key_data_point (incl. enforcement-deadline text) is no longer
+        # mutable-feed-only.
+        "key_data_point": parsed.key_data_point,
+        "summary": parsed.summary,
+    }
+
+
 def run() -> int:
     cfg = load_config()
     sheet_id = os.environ["GSHEET_ID"]
@@ -204,6 +220,18 @@ def run() -> int:
             link = av.mirror_one_now(
                 session, sheets, sheet_id, d, drive_state, local_path=local)
 
+            # A related-scope facility (a neighboring / watershed site, not a GFL
+            # filing — ADR 064) gets its Related Documents row and nothing else:
+            # no Evidence/Measurements/Deadlines, no WOI routing, no urgent alert,
+            # no digest entry. Same row-then-state order as below.
+            if sw.is_related(d):
+                sw.write_related_document(sheets, sheet_id, parsed, d, link)
+                payload = _processed_payload(parsed, d)
+                state["processed"][did] = payload
+                sw.mark_processed(sheets, sheet_id, did, payload, _now())
+                print(f"  ok  {d['date_filed']}  [related]  {d['document_name'][:50]}")
+                continue
+
             # WOI Status Reports (180-320pp gas-extraction tables) are keyword-
             # windowed by the generic parser (<5% of ~14k readings; a >=145F well
             # buried past the window emits no measurement, so is_urgent never
@@ -256,19 +284,7 @@ def run() -> int:
 
             _route_urgent_or_digest(parsed, d, link, cfg, state, sheets, sheet_id)
 
-            payload = {
-                "document_name": d["document_name"],
-                "date_filed": d["date_filed"],
-                "doc_type": parsed.doc_type,
-                "severity": parsed.severity,
-                "risks": parsed.risks,
-                # ADR 025 (Gap G1-A-1): carry the extracted claim + summary in the
-                # append-only _state payload so it survives a Feed-tab clear — the
-                # key_data_point (incl. enforcement-deadline text) is no longer
-                # mutable-feed-only.
-                "key_data_point": parsed.key_data_point,
-                "summary": parsed.summary,
-            }
+            payload = _processed_payload(parsed, d)
             state["processed"][did] = payload
             sw.mark_processed(sheets, sheet_id, did, payload, _now())
             print(f"  ok  {d['date_filed']}  [{parsed.doc_type}/{parsed.severity}]  "

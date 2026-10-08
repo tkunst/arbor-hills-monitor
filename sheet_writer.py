@@ -106,6 +106,11 @@ TAB_ARCHIVE = "Archived PDFs"
 TAB_COMPLIANCE_DEADLINES = "Compliance Deadlines"
 TAB_STATE = "_state"
 TAB_META = "_meta"
+# Documents from a `scope: related` facility (ADR 064) — a neighboring or
+# watershed site, not a GFL filing. Feed columns, and NOTHING else: no
+# Evidence/Measurements/Compliance Deadlines rows, no digest, no urgent alert,
+# not read by the public-records generator.
+TAB_RELATED = "Related Documents"
 # Hand-Curated Files (docs/hand-curated-intake-design.md) -- human-vouched
 # public records the nSITE/WDS pollers cannot reach on their own (e.g. a
 # letter EGLE never posted public on MiEnviro). Columns: curated_filename,
@@ -605,6 +610,7 @@ PERIMETER_EPISODE_HEADERS = [
 _TAB_HEADERS = {
     TAB_NEW: FEED_HEADERS,
     TAB_HISTORICAL: FEED_HEADERS,
+    TAB_RELATED: FEED_HEADERS,
     TAB_EVIDENCE: EVIDENCE_HEADERS,
     TAB_REGISTER: REGISTER_HEADERS,
     TAB_MEASUREMENTS: MEASUREMENTS_HEADERS,
@@ -648,6 +654,17 @@ _META_CELL_ROWS = 8
 # ---------------------------------------------------------------------------
 # Pure routing logic (unit-tested without the API)
 # ---------------------------------------------------------------------------
+
+
+def is_related(metadata: dict) -> bool:
+    """True for a document from a `scope: related` facility (ADR 064)."""
+    return metadata.get("facility_scope") == "related"
+
+
+def feed_tab_for(metadata: dict, default: str) -> str:
+    """The feed tab a document's row belongs on: Related Documents for a
+    related-scope facility, else `default` (New or Historical)."""
+    return TAB_RELATED if is_related(metadata) else default
 
 
 def feed_row(parsed, metadata: dict, link: str) -> list:
@@ -884,6 +901,14 @@ def write_document(
     append_rows(service, sheet_id, TAB_MEASUREMENTS, measurement_rows(parsed, metadata, link))
 
 
+def write_related_document(service, sheet_id: str, parsed, metadata: dict,
+                           link: str) -> None:
+    """Append a related-scope document (ADR 064) to Related Documents ONLY — its
+    readings and risk tags are about a neighboring site, so they stay out of
+    Evidence by Risk and Measurements."""
+    append_rows(service, sheet_id, TAB_RELATED, [feed_row(parsed, metadata, link)])
+
+
 def compliance_deadline_row(d: dict, source_stream: str, facility: str,
                             source_ref: str, extracted_at: str) -> list:
     """One Compliance Deadlines row (ADR 025) from a deadline dict — the six-field
@@ -1098,7 +1123,8 @@ def write_stub_row(service, sheet_id: str, metadata: dict, link: str, reason: st
         summary=reason,
         key_data_point="",
     )
-    append_rows(service, sheet_id, feed_tab, [feed_row(stub, metadata, link)])
+    append_rows(service, sheet_id, feed_tab_for(metadata, feed_tab),
+                [feed_row(stub, metadata, link)])
 
 
 def write_meta(service, sheet_id: str, state: dict) -> None:
@@ -2934,6 +2960,7 @@ def ensure_perimeter_episodes_tab(service, sheet_id: str) -> None:
 _PURGE_TABS = [
     (TAB_HISTORICAL, FEED_HEADERS.index("Link")),
     (TAB_NEW, FEED_HEADERS.index("Link")),
+    (TAB_RELATED, FEED_HEADERS.index("Link")),
     (TAB_EVIDENCE, EVIDENCE_HEADERS.index("Link")),
     (TAB_MEASUREMENTS, MEASUREMENTS_HEADERS.index("Link")),
     (TAB_WOI_SUMMARY, WOI_SUMMARY_HEADERS.index("Link")),

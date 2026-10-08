@@ -240,6 +240,10 @@ def run() -> int:
             link = av.mirror_one_now(
                 session, sheets, sheet_id, d, drive_state, local_path=local)
 
+            # Related-scope facility (ADR 064): Related Documents row only — no
+            # Evidence/Measurements, no WOI routing. Row first, then state.
+            related = sw.is_related(d)
+
             # Route WOI Status Reports to the exhaustive woi_table_parser and
             # REPLACE parsed.measurements before write_document (see woi_router /
             # ADR 005). Backfill deliberately never calls is_urgent, so re-
@@ -247,7 +251,7 @@ def run() -> int:
             # alerts. Best-effort: a routing failure degrades to the generic
             # parse (logged), never drops the filing.
             try:
-                routed = woi_router.route_measurements(parsed, local, d, cfg)
+                routed = None if related else woi_router.route_measurements(parsed, local, d, cfg)
             except Exception as we:  # noqa: BLE001 — degrade to the generic parse
                 print(f"  WOI routing failed, using generic parse: {we}")
                 routed = None
@@ -262,10 +266,13 @@ def run() -> int:
                       f"for {did} before re-extract")
 
             # Sheet row FIRST, then state — order matters for crash-safety.
-            sw.write_document(
-                sheets, sheet_id, parsed, d, link, RISK_NAMES,
-                feed_tab=sw.TAB_HISTORICAL,
-            )
+            if related:
+                sw.write_related_document(sheets, sheet_id, parsed, d, link)
+            else:
+                sw.write_document(
+                    sheets, sheet_id, parsed, d, link, RISK_NAMES,
+                    feed_tab=sw.TAB_HISTORICAL,
+                )
             if routed is not None:
                 try:
                     sw.ensure_woi_tabs(sheets, sheet_id)

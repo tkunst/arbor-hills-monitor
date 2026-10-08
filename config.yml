@@ -14,6 +14,17 @@
 # clears first; N2688's ~704 not-yet-processed docs are listed LAST so they don't
 # block it (its ~50 already-processed docs are skipped regardless). The watcher
 # and archiver are order-independent.
+#
+# SCOPE (ADR 064, 2026-10-07, Trisha-directed). An entry without `scope` is CORE:
+# an Arbor Hills / GFL filing that goes to New/Historical Documents, Evidence,
+# Measurements, Compliance Deadlines, the public-records pages, urgent alerts
+# and the Sunday digest. `scope: related` is a neighboring or watershed site
+# (not a GFL filing): its documents go ONLY to the "Related Documents" tab, and
+# never to the digest, urgent alerts, Evidence/Measurements/Deadlines or the
+# website. The eight neighbor-development sites added 2026-09-25 (COLDR, TOLL,
+# RIDGE, PTEX, LUMB, DTE5M, FMCOM, NTWP) are NOT here at all: they stay in
+# `nsite_sites` for the Trisha-only profile watches, but their documents are
+# not collected. Any new entry must be classified on purpose; tests pin the set.
 facilities:
   - {srn: "RA",    name: "Arbor Hills Remediation Area",  id: "-714792003991405124"}   # Water/RRD — R5/PFAS, process FIRST (740 docs)
   - {srn: "WRD",   name: "GFL-Arbor Hills Landfill-Washtenaw Co", id: "306291952280313698"}   # WRD Land & Water Interface (JPA/wetlands/floodplain/inland lakes) — R1/R5; found 2026-07-24 tracing a missed JPA (ADR 020); 69 never-seen docs, clears safely behind the anti-stampede guard (watcher.max_new_docs_per_run defers to backfill, which never alerts)
@@ -22,27 +33,19 @@ facilities:
   - {srn: "N2688", name: "Arbor Hills Landfill",         id: "8094300008956198244"}    # the landfill — backfill complete (all processed); new filings now handled by the daily watcher
   - {srn: "AHLI",  name: "Arbor Hills Landfill, Inc.",   id: "643581439310101662"}     # bare duplicate nSITE record surfaced 2026-07-24 resolving all 19 MiEnviro subscriptions (ADR 021); genuine Dec-2025 activity (4 docs) — deliberate, standalone addition, not a side effect of the submissions-cadence build below
   - {srn: "NAPR",  name: "GFL Napier Rd culvert (WRP034436)", id: "-4552820604746245548"}   # EGLE WRD Resources permit WRP034436 (issued 2022-08-01, expires 2027-08-01): GFL box culvert + fill in an unnamed Johnson Creek tributary, Napier Rd between 5 and 6 Mile, Northville Twp (Wayne Co). 12 docs (2022 JPA + permit packet). Found by Trisha 2026-09-25; ADR 044
-  - {srn: "WIP19", name: "Salem Springs wetland ID, 6255 Napier Rd (HNP-75WK-9JX94)", id: "6076539015117221381"}   # ADR 048: 2019 EGLE Level 3 WIP, ~91 ac, 25.51 ac regulated wetland, Salem Springs Owner LLC (Schostak), Sec. 25; 4 docs
+  - {srn: "WIP19", name: "Salem Springs wetland ID, 6255 Napier Rd (HNP-75WK-9JX94)", id: "6076539015117221381", scope: related}   # ADR 048: 2019 EGLE Level 3 WIP, ~91 ac, 25.51 ac regulated wetland, Salem Springs Owner LLC (Schostak), Sec. 25; 4 docs
   - {srn: "PTI87", name: "1987 Air PTI applications (C-7567, C-7568)", id: "-3813933512584804016"}   # ADR 048: historical, 0 docs on nSITE today; tracked so any later-posted document is archived
   - {srn: "BORE15", name: "Arbor Hills 2015 soil-boring JPA (WRP000808)", id: "-4454026774380249654"}   # ADR 049: Advanced Disposal/Golder, 11 hydrogeologic boreholes in Sec. 12 w/ temporary wetland crossings; GP Category Q, 2015-11-17..2020-11-17 (Expired); 8 docs incl. borehole+wetland map and adjacent-owner list
-  - {srn: "FP89",  name: "Floodplain elevation request, 8627 Napier Rd (89-11-0108-FP)", id: "7284130751247156626"}   # ADR 049: historical WRD floodplain elevation calculation request (1989 per ref format), parcel next to the landfill in Sec. 12; 0 docs today
+  - {srn: "FP89",  name: "Floodplain elevation request, 8627 Napier Rd (89-11-0108-FP)", id: "7284130751247156626", scope: related}   # ADR 049: historical WRD floodplain elevation calculation request (1989 per ref format), parcel next to the landfill in Sec. 12; 0 docs today
   - {srn: "MITIG", name: "Arbor Hills Mitigation Site", id: "6707784663696162097"}   # ADR 050: identified by Trisha 2026-09-25; empty on every nSITE profile at add time. Expected home of the wetland-mitigation filings tied to the 2026 Wetland 1 JPA (conceptual mitigation plan).
-  - {srn: "CHUBB18", name: "8110 Chubb Rd wetland-fill VN site (VN-008432)", id: "604563607848499529"}   # ADR 051: 2018 WRD complaint + Violation Notice (Request Information), unpermitted fill in regulated wetland + driveway to a stream, parcel A-01-12-300-012 (Sec. 12, not GFL-owned); closed 2018-06-05; 1 doc
-  - {srn: "CHUBBRD", name: "Chubb Rd + Five Mile Rd reconstruction (WRP013195)", id: "-5141175505123096250"}   # ADR 052: 2018 JPA + construction stormwater (MIR115382); 2 SESC violations 2020 still Active-Addressed not Resolved; 23 docs
-  - {srn: "WIP25", name: "7506 Chubb Rd wetland ID (HQ3-NSC0-TP7FT)", id: "-8179920515493197813"}   # ADR 052: 2025 Level 3 WIP, ~13 ac, parcel A-01-13-300-012, Sec. 13 (Anglin Civil / Dalice Co.); 2024 pre-app withdrawn; 22 docs
-  - {srn: "BDPH", name: "7374 Chubb Rd stormwater outfalls (WRP038206)", id: "-1974820987593684099"}   # ADR 052: Part 303 permit 2023-07-26..2028-07-26 to BD Property Holdings: 2 storm outfalls discharging to wetland, Sec. 13; 29 docs
-  - {srn: "ASB26", name: "Asbestos contractor registration (ASB-00009055)", id: "6658906756287014686"}   # ADR 052: AQD Asbestos New Contractor Registration, received 2026-01-21, In Process; 0 docs
-  - {srn: "CMP23", name: "WRD-NPDES complaint site (HPY-5JZ9-JFEQE)", id: "8106421448071964642"}   # ADR 052: one WRD-NPDES complaint, 2023-10-05; 0 docs
-  - {srn: "PTEX", name: "Plymouth Township Exchange, Five Mile Rd (WRP037948)", id: "-1034065027376918328"}   # ADR 053: JD 5 Mile LLC (Jones Development); Part 301/303 permit In Effect 2025-08-06..2028-06-26 w/ 2025 minor revisions; temp wetland impacts + Johnson Drain crossing; agent Barr Engineering; 2022 WIP + pre-app, 2023 JPA; 45 docs
-  - {srn: "H95", name: "1995 resources permit 95-13-0412-P", id: "-6102479567065163659"}   # ADR 053: historical Conversion Resources Application, General Permit 1995-09-28..1996-12-31 (Expired); 0 docs
-  - {srn: "LUMB", name: "7480 Napier Rd lumber facility, Five Mile & Napier (WRP039817)", id: "-138923829872982091"}   # ADR 054: new commercial lumber facility, Northville Twp (Wayne); Part 303 Individual Permit In Effect 2024-04-23..2029-04-23; 2023 after-the-fact VN-015316 (unauthorized activity still Active-Addressed not Resolved); 24 docs
-  - {srn: "DTE5M", name: "DTE work, N side of Five Mile Napier to Ridge (WRP039922)", id: "-3197747421558034961"}   # ADR 054: DTE Energy (One Energy Plaza); Individual Permit In Effect 2023-12-20..2028-12-20; 2021 pre-app + 2023 JPA; 37 docs
-  - {srn: "FMCOM", name: "Five Mile Rd E of Napier commercial pre-app (HQG-PB0D-FXQ6N)", id: "4473941391942993502"}   # ADR 054: 2025-11-03 pre-application meeting for a new commercial development, N side of Five Mile W of Ridge, Sec. 18 Northville Twp; permit application expected; 5 docs
-  - {srn: "NTWP", name: "Northville Twp site, NW corner Five Mile & Ridge (WRP037947)", id: "1136159897475661963"}   # ADR 054: Charter Township of Northville; Part 303 minor permit In Effect 2023-06-26..2028-06-26 (sibling number to PTEX WRP037948); construction stormwater MIR117693 (2023, expired) + new NOC 2026-05-08 On Hold; 25 docs
-  - {srn: "JCDR", name: "Johnson Creek Intercounty Drain Restoration (HPG-9289-R76GQ)", id: "-9161999632999417877"}   # ADR 055: 2022-05-18 JPA, On Hold; consultant ECT; >2,000 cy dredging, EGLE 2022 correction request on sediment (contaminant) testing + in-stream BMPs; downstream of the landfill discharge; 45 docs
-  - {srn: "TOLL", name: "Toll Brothers Coldwater Ridge aquatic herbicide COC (ANC9430361)", id: "-5940520217246576583"}   # ADR 056: WRD Aquatic Nuisance Control: Niswander Environmental COC under the Great Lakes Invasives general permit, In Effect 2025-09-02..2028-12-31, Johnson Drain stretch (Wayne); 11 docs incl. treatment map
-  - {srn: "COLDR", name: "Coldwater Ridge residential development, Ridge Rd (WRP041048)", id: "1591666718366793099"}   # ADR 057: Individual Permit In Effect 2024-05-01..2029-05-01: box culvert + fill in an unnamed Johnson Drain tributary, wetland boardwalk, force main + sanitary bores under wetland/stream, 0.68-ac storm basin outletting to wetland, 378 cy fill / 1,212 cy cut in Johnson Drain floodplain; N of Five Mile, W side of Ridge; 25 docs
-  - {srn: "RIDGE", name: "Ridge Rd structure replacement over Johnson Drain (WRP017601)", id: "-5712439741250995543"}   # ADR 057: public-transportation JPAs 2017-2019; permits WRP010908 (2018-23) + WRP017601 (2019-24), both Expired; 2024-04-10 Stream Relocation Plan approval letter; Sec. 18 Northville Twp; 15 docs
+  - {srn: "CHUBB18", name: "8110 Chubb Rd wetland-fill VN site (VN-008432)", id: "604563607848499529", scope: related}   # ADR 051: 2018 WRD complaint + Violation Notice (Request Information), unpermitted fill in regulated wetland + driveway to a stream, parcel A-01-12-300-012 (Sec. 12, not GFL-owned); closed 2018-06-05; 1 doc
+  - {srn: "CHUBBRD", name: "Chubb Rd + Five Mile Rd reconstruction (WRP013195)", id: "-5141175505123096250", scope: related}   # ADR 052: 2018 JPA + construction stormwater (MIR115382); 2 SESC violations 2020 still Active-Addressed not Resolved; 23 docs
+  - {srn: "WIP25", name: "7506 Chubb Rd wetland ID (HQ3-NSC0-TP7FT)", id: "-8179920515493197813", scope: related}   # ADR 052: 2025 Level 3 WIP, ~13 ac, parcel A-01-13-300-012, Sec. 13 (Anglin Civil / Dalice Co.); 2024 pre-app withdrawn; 22 docs
+  - {srn: "BDPH", name: "7374 Chubb Rd stormwater outfalls (WRP038206)", id: "-1974820987593684099", scope: related}   # ADR 052: Part 303 permit 2023-07-26..2028-07-26 to BD Property Holdings: 2 storm outfalls discharging to wetland, Sec. 13; 29 docs
+  - {srn: "ASB26", name: "Asbestos contractor registration (ASB-00009055)", id: "6658906756287014686", scope: related}   # ADR 052: AQD Asbestos New Contractor Registration, received 2026-01-21, In Process; 0 docs
+  - {srn: "CMP23", name: "WRD-NPDES complaint site (HPY-5JZ9-JFEQE)", id: "8106421448071964642", scope: related}   # ADR 052: one WRD-NPDES complaint, 2023-10-05; 0 docs
+  - {srn: "H95", name: "1995 resources permit 95-13-0412-P", id: "-6102479567065163659", scope: related}   # ADR 053: historical Conversion Resources Application, General Permit 1995-09-28..1996-12-31 (Expired); 0 docs
+  - {srn: "JCDR", name: "Johnson Creek Intercounty Drain Restoration (HPG-9289-R76GQ)", id: "-9161999632999417877", scope: related}   # ADR 055: 2022-05-18 JPA, On Hold; consultant ECT; >2,000 cy dredging, EGLE 2022 correction request on sediment (contaminant) testing + in-stream BMPs; downstream of the landfill discharge; 45 docs
   # NOT TRACKED (Documents pipeline) — the other 13 sites resolved in ADR 021
   # are polled for Submissions ONLY, at their tier's cadence — see
   # `nsite_sites` + `nsite_submissions.tiers` below (ADR 022). They are near-zero/zero-Documents-history
