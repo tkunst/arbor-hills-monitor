@@ -18,6 +18,16 @@
 #               can't be verified — run `ocrmypdf` on it first, which adds a text
 #               layer and then exposes any scanned-in names to check #2's grep);
 #               if it IS searchable, its extracted text is grepped for the terms.
+#   3. PATHS  — no scanned commit's tree may contain a BLOCKED PATH: private
+#               working files that sit in the repo folder but must never be
+#               published (e.g. an internal handoff note). The list is kept OUT
+#               of the repo too (publishing it would publish the file names), in
+#               ~/.config/privacy-gate/blocked-paths.txt, one entry per line,
+#               `#` comments ok; each entry is a repo-relative path or a bash glob
+#               (e.g. docs/private/*). Override: PRIVACY_BLOCKED_PATHS env var.
+#               Optional: if no list exists, this check is skipped (the terms
+#               list stays fail-closed). Pair each entry with a line in
+#               .git/info/exclude so `git add -A` never stages it.
 #
 # Modes:
 #   privacy_scan.sh                 -> scan the HEAD tree (single snapshot)
@@ -75,6 +85,21 @@ else
   commits=( "${1:-HEAD}" )
 fi
 
+# ---- blocked paths (optional; never from the repo tree) ----
+blocked_raw=""
+if [ -n "${PRIVACY_BLOCKED_PATHS:-}" ]; then
+  blocked_raw="$PRIVACY_BLOCKED_PATHS"
+elif [ -f "$HOME/.config/privacy-gate/blocked-paths.txt" ]; then
+  blocked_raw="$(cat "$HOME/.config/privacy-gate/blocked-paths.txt")"
+fi
+blocked=()
+while IFS= read -r line; do
+  line="${line%$'\r'}"
+  [ -z "${line// /}" ] && continue
+  case "$line" in \#*) continue ;; esac
+  blocked+=( "$line" )
+done <<< "$blocked_raw"
+
 # ---- check #1: text grep each commit's tree ----
 text_hits=""
 grep_err=0
@@ -116,6 +141,24 @@ for c in "${commits[@]}"; do
   done < <(git ls-tree -r "$c")
 done
 
+# ---- check #3: blocked paths in any scanned commit's tree ----
+path_hits=""
+if [ "${#blocked[@]}" -gt 0 ]; then
+  declare -A path_seen
+  for c in "${commits[@]}"; do
+    while IFS= read -r path; do
+      for pat in "${blocked[@]}"; do
+        # shellcheck disable=SC2053  # unquoted RHS on purpose: glob match
+        if [[ "$path" == $pat ]]; then
+          [ -n "${path_seen[$path]:-}" ] && continue
+          path_seen[$path]=1
+          path_hits+="  ${c:0:7}: $path"$'\n'
+        fi
+      done
+    done < <(git ls-tree -r --name-only "$c")
+  done
+fi
+
 # ---- verdict ----
 fail=0
 if printf '%s\n' "$text_hits" | grep -q .; then
@@ -130,11 +173,18 @@ if [ -n "$pdf_issues" ]; then
   echo "   vision-ocr for higher accuracy on hard scans) then re-check." >&2
   fail=1
 fi
+if [ -n "$path_hits" ]; then
+  echo "❌ PRIVACY GATE FAILED — BLOCKED PATH(S) in a pushed commit (commit: path):" >&2
+  printf '%s' "$path_hits" >&2
+  echo "   These files are listed in ~/.config/privacy-gate/blocked-paths.txt as never-public." >&2
+  echo "   Remove them from the commit(s) (git rm --cached <path>; amend or rebase), then push again." >&2
+  fail=1
+fi
 if [ "$fail" -ne 0 ]; then
   echo "" >&2
   echo "This repo is PUBLIC — a leak cannot be un-published. Remove/fix before pushing." >&2
   exit 1
 fi
 
-echo "✅ privacy gate passed (${#commits[@]} commit(s) scanned) — no terms in text or PDFs."
+echo "✅ privacy gate passed (${#commits[@]} commit(s) scanned) — no terms in text or PDFs${blocked:+, no blocked paths}."
 exit 0

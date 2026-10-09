@@ -654,6 +654,23 @@ mkdir -p ~/.config/privacy-gate
 
 Then push again.
 
+### Blocked paths (private files kept in the repo folder)
+
+Some working files live in this folder but must never be published (for example an
+internal handoff note). List them, one per line, in a second file that is also kept
+**outside** the repo:
+
+```text
+~/.config/privacy-gate/blocked-paths.txt
+```
+
+Each line is a repo-relative path or a bash glob (`docs/private/*`); blank lines and
+`#` comments are ignored. The hook then **blocks any push** containing a commit whose
+tree includes a listed path, including a file added and removed within the same push.
+This list is optional: if the file does not exist, the path check is skipped (the term
+list stays fail-closed). Also add each path to `.git/info/exclude` (local-only, never
+committed) so `git add -A` never stages it.
+
 ### Other behavior and troubleshooting
 
 - **Matching** is case-insensitive and fixed-string. Committed data files
