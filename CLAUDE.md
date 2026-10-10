@@ -44,10 +44,31 @@ external users but no sensitive data). Public repo.
 
 - `egle_doc_parser.py` — THE reusable module (the Decode parsing base). PDF →
   `ParsedDoc`. Domain-agnostic: the risk register is passed in, never hardcoded.
+  **ADR 065** added `document_date`/`document_date_method` (a deterministic
+  dateline/label regex pass over the doc's own raw first pages, LLM only as
+  fallback — same classification call, no extra LLM call) and
+  `display_title` (the model's raw proposal, only requested when the caller
+  passes `title_is_generic=True`; still domain-agnostic — this module has no
+  opinion on what makes a title generic).
 - `risk_register.py` — R1–R8 + R8 signal keywords (single source of truth).
+- `document_titles.py` — Arbor-Hills-specific half of ADR 065, kept OUT of
+  egle_doc_parser.py on purpose: `title_is_generic` (config-driven exact/
+  prefix match against nSITE's six generic placeholder titles),
+  `sanitize_display_title` (strips `name_check` denylist hits, longest match
+  first, falling back to `""` — never a retry call to the model), and
+  `resolve_display_name` (doc_id override > sanitized display_title > raw
+  nSITE title). `watcher.py`/`backfill.py` call all three in one chokepoint
+  right after `parse_document()`, mutating `d["document_name"]` (resolved),
+  `d["egle_title"]` (preserved raw), `d["document_date"]` in place so every
+  downstream write (Drive mirror, feed/evidence rows, digest/alert, `_state`
+  payload) inherits them for free. `poison_stub.py` (no parse exists for a
+  poison doc) applies only the override map.
 - `nsite_client.py` — EGLE nSITE API: session, list, download.
 - `drive_client.py` — Google Drive + Sheets API (service account, folder ID).
 - `sheet_writer.py` — the four+1 sheet tabs; routing/fan-out is pure & tested.
+  **ADR 065** appended `Document Date`/`EGLE Title` at the END of
+  `FEED_HEADERS`/`EVIDENCE_HEADERS`/`ARCHIVE_HEADERS`/`ALL_EVIDENCE_HEADERS`
+  (WDS rows in All Evidence get blanks — not a filed nSITE document).
 - `mmpc_client.py` — CivicClerk JSON API: enumerate + fetch MMPC event PDFs.
 - `mmpc_archiver.py` — Mirror D: auto-archive MMPC Agenda/Minutes PDFs (ADR 010).
   (The old in-watcher "go check the minutes" reminder was retired; see ADR 013.)
@@ -77,6 +98,12 @@ external users but no sensitive data). Public repo.
   (not configured, dead OAuth token, network, quota) falls back to the nSITE
   link; mirroring must never block classification or alerting.
 - `email_alerts.py` — SMTP urgent alerts + weekly digest; urgency is pure.
+  **ADR 065** added `is_correspondence_letter` (EGLE's own letterhead marker
+  + a substantive-signal phrase, both pure/unit-tested): a doc already
+  flagged `title_was_generic` that reads as a real EGLE approval/extension/
+  corrective-action/enforcement letter gets pinned to its own
+  "CORRESPONDENCE & ENFORCEMENT" digest section instead of the ordinary soft
+  line — absorbs the retired `schedule-title-overrides.md` handoff's Option A.
 - `backfill.py` — nightly batch of 50, self-terminating, resumable. Mirrors
   each doc to Drive inline (`archiver.mirror_one_now()`) before writing its
   Sheet row.

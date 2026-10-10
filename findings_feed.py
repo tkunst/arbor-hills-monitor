@@ -14,6 +14,7 @@ import html
 import json
 import os
 import re
+from datetime import date as _date
 
 from config_loader import load_config
 
@@ -23,10 +24,14 @@ from config_loader import load_config
 from sheet_writer import _link_doc_id
 
 # Same column order as sheet_writer.FEED_HEADERS — New Documents and Historical
-# Documents share this schema (sheet_writer.feed_row()).
+# Documents share this schema (sheet_writer.feed_row()). "document_date" (ADR
+# 065) is the date printed on the document itself, may be blank; "egle_title"
+# is the untouched raw nSITE title (document_name here already carries the
+# RESOLVED display name).
 FEED_FIELDS = [
     "date_filed", "document_name", "type", "risks", "severity",
     "summary", "key_data_point", "link", "facility",
+    "document_date", "egle_title",
 ]
 
 # 1,720 rows across both tabs as of 2026-08-21 (64 New + 1,656 Historical) —
@@ -263,6 +268,11 @@ def parse_handcurated_rows(raw_rows: list[list]) -> list[dict]:
             "link": hc["drive_link"],
             "facility": hc["facility"],
             "source": hc["source_public"],
+            # Hand-Curated rows carry no separate "document printed its own
+            # date" / "raw filing-system title" concept (doc_date/title above
+            # ARE the human-entered single date/title) -- blank, never a guess.
+            "document_date": "",
+            "egle_title": "",
         })
     return out
 
@@ -387,6 +397,35 @@ def _public_view(row: dict) -> dict:
     return pv
 
 
+_FILED_GAP_DAYS = 7
+
+
+def display_date(row: dict) -> str:
+    """ADR 065: the date shown in a finding's meta line. The document's own
+    `document_date` when known, falling back to `date_filed` when it isn't
+    (a Hand-Curated row, or any doc the deterministic/LLM pass found nothing
+    in) -- a bare, un-annotated date either way. When BOTH are known and
+    differ by more than _FILED_GAP_DAYS, appends "(filed <date_filed>)" so
+    the EGLE-filing lag is visible without making it the headline date; a gap
+    of 7 days or less is close enough that the plain document_date alone is
+    sufficient. Browse-list ORDER is deliberately untouched by this (still
+    date_filed via _sort_newest_first) — a doc with an old document_date must
+    still land on the newest-first page it was actually filed on."""
+    date_filed = row.get("date_filed") or ""
+    document_date = row.get("document_date") or ""
+    if not document_date:
+        return date_filed
+    if not date_filed or document_date == date_filed:
+        return document_date
+    try:
+        gap = abs((_date.fromisoformat(document_date[:10]) - _date.fromisoformat(date_filed[:10])).days)
+    except ValueError:
+        return document_date  # a malformed date on either side -- show document_date plain, don't crash
+    if gap > _FILED_GAP_DAYS:
+        return f"{document_date} (filed {date_filed})"
+    return document_date
+
+
 def render_entry(row: dict) -> str:
     """One finding as an HTML <article>. A blank optional field (summary, key
     data point) is left out of the markup entirely — never rendered as the
@@ -397,7 +436,7 @@ def render_entry(row: dict) -> str:
     rendered here -- they're this project's own internal case-file taxonomy,
     meaningless to a public reader with no legend to decode them against."""
     pv = _public_view(row)
-    date = _esc(row.get("date_filed"))
+    date = _esc(display_date(row))
     name = _esc(pv["title"])
     doc_type = _esc(row.get("type"))
     severity = _esc(row.get("severity"))
@@ -424,7 +463,22 @@ def render_entry(row: dict) -> str:
     else:
         source_bit = ""
 
-    meta = " &middot; ".join(b for b in (date, facility, doc_type, severity, source_bit) if b)
+    # ADR 065 accuracy note: the displayed title above may be a config
+    # override (Trisha-curated) or the classifier's display_title (machine-
+    # generated, see egle_doc_parser/document_titles) for a doc nSITE itself
+    # filed under a generic placeholder. Either way, show nSITE's own raw
+    # title whenever it differs from what's displayed, so a reader can always
+    # see the unaltered source label -- same redaction as the title itself
+    # (never strip_embedded_date: a real date IN the raw title is part of
+    # what's being disclosed, not a redundant restatement of Date Filed).
+    raw_egle_title = redact_names(row.get("egle_title") or "")
+    egle_title_bit = (
+        f"EGLE title: {_esc(raw_egle_title)}"
+        if raw_egle_title and raw_egle_title != pv["title"] else ""
+    )
+
+    meta = " &middot; ".join(
+        b for b in (date, facility, doc_type, severity, source_bit, egle_title_bit) if b)
 
     parts = ['<article class="finding">']
     if meta:
@@ -659,7 +713,11 @@ def _search_entry(row: dict) -> dict:
     pv = _public_view(row)
     entry = {}
 
-    date = row.get("date_filed") or ""
+    # ADR 065: the document's own date, falling back to Date Filed -- same
+    # precedence as display_date()'s PLAIN value (without the "(filed ...)"
+    # annotation, which belongs to the rendered article, not a machine-
+    # sortable search field).
+    date = row.get("document_date") or row.get("date_filed") or ""
     if date:
         entry["date"] = date
 

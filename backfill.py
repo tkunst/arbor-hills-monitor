@@ -36,6 +36,7 @@ import retry_policy as rp
 import woi_router
 import archiver as av
 import poison_stub
+import document_titles as dt
 from egle_doc_parser import parse_document
 from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
 from config_loader import load_config
@@ -166,6 +167,11 @@ def run() -> int:
     batch_size = cfg["backfill_batch_size"]
     page_threshold = cfg["large_doc_page_threshold"]
     max_kw_pages = cfg["large_doc_max_keyword_pages"]
+    # ADR 065: see watcher.py's identical block for the no-op-when-empty note.
+    title_cfg = cfg.get("document_titles") or {}
+    generic_exact = title_cfg.get("generic_exact") or []
+    generic_prefixes = title_cfg.get("generic_prefixes") or []
+    title_overrides = title_cfg.get("overrides") or {}
 
     sheets = dc.sheets_service()
     sw.ensure_tabs(sheets, sheet_id)
@@ -226,12 +232,24 @@ def run() -> int:
         try:
             nc.download_pdf(session, d, local)
 
+            is_generic = dt.title_is_generic(
+                d["document_name"], generic_exact, generic_prefixes)
             parsed = parse_document(
                 local, d, RISK_REGISTER,
                 model=model, signal_keywords=SIGNAL_KEYWORDS,
                 page_threshold=page_threshold, max_keyword_pages=max_kw_pages,
                 max_tokens=cfg["classification_max_tokens"],
+                title_is_generic=is_generic,
             )
+
+            # ADR 065 chokepoint — see watcher.py's identical block.
+            clean_display_title = (
+                dt.sanitize_display_title(parsed.display_title) if is_generic else "")
+            d["egle_title"] = d["document_name"]
+            d["document_name"] = dt.resolve_display_name(
+                did, d["egle_title"], clean_display_title, title_overrides)
+            d["document_date"] = parsed.document_date
+            d["title_was_generic"] = is_generic
 
             # Mirror to Drive inline (best-effort; falls back to the nSITE link
             # on any failure — see archiver.mirror_one_now()) so the Sheet row
@@ -287,6 +305,10 @@ def run() -> int:
                 "risks": parsed.risks,
                 "ocr_applied": parsed.ocr_applied,
                 "page_count": parsed.page_count,
+                # ADR 065 — see watcher.py's _processed_payload for why these
+                # are carried (archiver.py's nightly catch-up run needs them).
+                "document_date": d.get("document_date", ""),
+                "egle_title": d.get("egle_title") or d["document_name"],
             }
             state["processed"][did] = payload
             state["errors"].pop(did, None)
@@ -310,7 +332,8 @@ def run() -> int:
             # On the terminal failure, make the doc VISIBLE instead of silently
             # dropping it: stub feed row + 'skipped' (shared with watcher.py —
             # see poison_stub / issue #82).
-            poison_stub.stub_if_poisoned(sheets, sheet_id, state, d, cnt, e, _now())
+            poison_stub.stub_if_poisoned(sheets, sheet_id, state, d, cnt, e, _now(),
+                                         title_overrides=title_overrides)
         finally:
             if os.path.exists(local):
                 os.remove(local)

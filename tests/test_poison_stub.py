@@ -172,3 +172,42 @@ def test_helper_write_failure_is_swallowed_and_leaves_doc_unskipped(sheet, monke
 
 def test_max_errors_constant_is_shared():
     assert w.MAX_ERRORS_PER_DOC == bf.MAX_ERRORS_PER_DOC == poison_stub.MAX_ERRORS_PER_DOC
+
+
+# --- ADR 065: a poison doc never gets parsed, so only the doc_id override ---
+# --- map (never the generic-title/LLM path) can give it a better name. -----
+
+def test_stub_if_poisoned_applies_override_map(sheet):
+    overrides = {DID: "EGLE letter: curated name"}
+    assert poison_stub.stub_if_poisoned(
+        object(), "SID", {"skipped": {}, "errors": {}}, DOC, ME,
+        ValueError("x"), "t", title_overrides=overrides) is True
+    stub = sheet.stubs[0]
+    assert stub["doc_id"] == DID
+    # write_stub_row's own metadata dict isn't captured by the FakeSheet mock
+    # above (it only records doc_id/link/reason/tab) -- read it back from the
+    # state payload, which stub_if_poisoned builds from the SAME resolved name.
+    skipped_payload = sw.read_state(object(), "SID")["skipped"][DID]
+    assert skipped_payload["document_name"] == "EGLE letter: curated name"
+
+
+def test_stub_if_poisoned_no_override_keeps_raw_nsite_title(sheet):
+    assert poison_stub.stub_if_poisoned(
+        object(), "SID", {"skipped": {}, "errors": {}}, DOC, ME,
+        ValueError("x"), "t", title_overrides={}) is True
+    skipped_payload = sw.read_state(object(), "SID")["skipped"][DID]
+    assert skipped_payload["document_name"] == DOC["document_name"]
+
+
+def test_stub_if_poisoned_sets_egle_title_to_raw_nsite_title(monkeypatch, sheet):
+    captured = {}
+    monkeypatch.setattr(
+        sw, "write_stub_row",
+        lambda svc, sid, metadata, link, reason, feed_tab=sw.TAB_HISTORICAL:
+            captured.update(metadata))
+    poison_stub.stub_if_poisoned(
+        object(), "SID", {"skipped": {}, "errors": {}}, DOC, ME, ValueError("x"), "t",
+        title_overrides={DID: "Curated name"})
+    assert captured["egle_title"] == DOC["document_name"]
+    assert captured["document_name"] == "Curated name"
+    assert captured["document_date"] == ""

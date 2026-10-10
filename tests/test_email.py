@@ -202,6 +202,122 @@ def test_send_digest_passes_urgent_recap_through_and_resolves_recipients(monkeyp
     assert sent == [("Arbor Hills N2688 digest — 0 new document(s)", "body", ["base@x.com"])]
 
 
+# --- ADR 065: correspondence & enforcement digest section ------------------
+
+# Real text snippets captured from the live specimens during this build's
+# spike (not committed PDFs — just the opening lines) so is_correspondence_letter
+# is pinned against actual EGLE letter text, not an invented approximation.
+_EXTENSION_APPROVAL_TEXT = """
+GRETCHEN WHITMER
+GOVERNOR
+STATE OF MICHIGAN
+DEPARTMENT OF
+ENVIRONMENT, GREAT LAKES, AND ENERGY
+AIR QUALITY DIVISION
+DEBORAH A. STABENOW BUILDING • 525 WEST ALLEGAN STREET • P.O. BOX 30260 • LANSING, MICHIGAN 48909-7760
+Michigan.gov/EGLE • 800-662-9278
+August 27, 2026
+Dear David Seegert:
+SUBJECT: Green for Life Environmental - Arbor Hills Landfill, Inc. Request for
+Extension - Corrective Actions for Perimeter Monitor Action Level Exceedances
+The AQD approves of the specified corrective action items proposed for Cells 6A and
+6B. We approve the requested 120-day extension until December 19, 2026.
+"""
+
+_HOV_RENEWAL_TEXT = """
+STATE OF MICHIGAN
+DEPARTMENT OF
+ENVIRONMENT, GREAT LAKES, AND ENERGY
+Michigan.gov/EGLE • 800-662-9278
+April 7, 2026
+SUBJECT: Renewal of Higher Operating Value Temperature Waivers
+"""
+
+# GFL's OWN cover letter to EGLE (not an EGLE letter) -- mentions the
+# agency's full name in its own address block, but never the letterhead URL.
+_GFL_COVER_LETTER_TEXT = """
+July 30, 2026
+Scott Miller, District Supervisor
+Michigan Department of Environment, Great Lakes, and Energy
+Air Quality Division
+Re: 2026 Second Quarter Report - Consent Judgment No. 2020-0593-CE
+"""
+
+_DMR_STUB_TEXT = """
+DISCHARGE MONITORING REPORT (DMR) - DAILY
+Facility Name: Arbor Hills Remediation Area
+Permit Number: MI0045713 v5.0
+DMR Period: 3/1/2022 - 3/31/2022
+"""
+
+
+def test_is_correspondence_letter_true_for_extension_approval():
+    assert ea.is_correspondence_letter(_EXTENSION_APPROVAL_TEXT) is True
+
+
+def test_is_correspondence_letter_true_for_hov_renewal():
+    assert ea.is_correspondence_letter(_HOV_RENEWAL_TEXT) is True
+
+
+def test_is_correspondence_letter_false_for_gfl_cover_letter():
+    # Mentions the agency's full name, but never EGLE's own letterhead
+    # footer -- a letter ADDRESSED to EGLE is not a letter FROM EGLE.
+    assert ea.is_correspondence_letter(_GFL_COVER_LETTER_TEXT) is False
+
+
+def test_is_correspondence_letter_false_for_dmr_stub():
+    assert ea.is_correspondence_letter(_DMR_STUB_TEXT) is False
+
+
+def test_is_correspondence_letter_false_for_empty_text():
+    assert ea.is_correspondence_letter("") is False
+    assert ea.is_correspondence_letter(None) is False
+
+
+def _correspondence_item(document_name="EGLE letter: HOV renewal"):
+    doc = _doc(severity="notable")
+    doc.is_correspondence = True
+    return {
+        "parsed": doc,
+        "metadata": {"date_filed": "2026-04-07", "document_name": document_name},
+        "link": "http://x/hov-renewal",
+    }
+
+
+def test_format_digest_body_correspondence_pinned_section_renders():
+    body = ea.format_digest_body([_correspondence_item(), _item()])
+    assert "CORRESPONDENCE & ENFORCEMENT" in body
+    assert "EGLE letter: HOV renewal" in body
+
+
+def test_format_digest_body_correspondence_item_not_duplicated_in_other_section():
+    body = ea.format_digest_body([_correspondence_item()])
+    # Only the pinned section's line, not also under "OTHER NEW DOCUMENTS".
+    assert body.count("EGLE letter: HOV renewal") == 1
+    assert "OTHER NEW DOCUMENTS" not in body
+
+
+def test_format_digest_body_no_correspondence_items_omits_section():
+    body = ea.format_digest_body([_item()])
+    assert "CORRESPONDENCE & ENFORCEMENT" not in body
+
+
+def test_format_digest_body_correspondence_renders_after_urgent_recap():
+    body = ea.format_digest_body([_correspondence_item()], [_recap_item()])
+    recap_idx = body.index("URGENT ITEMS FROM EARLIER")
+    corr_idx = body.index("CORRESPONDENCE & ENFORCEMENT")
+    digest_idx = body.index("Arbor Hills (N2688) digest —")
+    assert recap_idx < corr_idx < digest_idx
+
+
+def test_format_digest_body_missing_is_correspondence_attr_is_false(monkeypatch):
+    # _record_to_item on an OLD _meta.pending_digest record (written before
+    # ADR 065) has no is_correspondence key -- getattr's default must keep
+    # that item in the ordinary flow, not raise.
+    body = ea.format_digest_body([_item()])
+    assert "CORRESPONDENCE & ENFORCEMENT" not in body
+
+
 def test_send_urgent_alert_never_sees_digest_recipients_extra(monkeypatch):
     # The whole point: adding someone via DIGEST_RECIPIENTS_EXTRA must NOT put
     # them on the same-day [URGENT] send.

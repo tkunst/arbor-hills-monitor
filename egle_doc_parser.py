@@ -26,9 +26,11 @@ fields. Two shapes, deliberately.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Literal, Optional, get_args
 
 import fitz  # pymupdf
@@ -168,6 +170,29 @@ class ParsedDoc:
     # readings make per-well time series derivable downstream (by aggregation)
     # WITHOUT reprocessing the source documents.
     measurements: list[dict] = field(default_factory=list)
+    # The date PRINTED on the document itself (a letter's dateline, a report/
+    # lab-report date, an inspection date) -- NOT nSITE's Date Filed, which is
+    # when EGLE attached the file to its record and routinely differs by weeks
+    # or months (ADR 065). "" when none was found/confident. Deterministic
+    # regex pass first (extract_document_date, below) over the raw first pages
+    # -- never the keyword-windowed classifier text, which carries page-marker
+    # banners -- then the model's own best guess ONLY as a fallback (so a doc
+    # with no real deterministic dateline still gets a date when the model can
+    # read one), validated as a plausible ISO date before being trusted.
+    document_date: str = ""
+    # Which pass produced document_date: "dateline" | "date_label" |
+    # "email_sent_header" | "llm" | "" (nothing found). Lets a reviewer tell a
+    # confident deterministic read from a model guess.
+    document_date_method: str = ""
+    # A proposed real display title for a document whose nSITE filing-system
+    # title is a generic placeholder ("nForm Document", "Site", ...) -- see
+    # the `title_is_generic` parameter on parse_document(). "" when the
+    # caller didn't ask for one (title_is_generic=False) OR the model
+    # returned nothing. RAW model output -- egle_doc_parser does not know
+    # about publish-safety redaction; the caller (document_titles.py) is
+    # responsible for running this through name_check.py and falling back to
+    # the nSITE title before it ever reaches a public Sheet.
+    display_title: str = ""
     # Structured compliance deadlines / dated obligations the document imposes or
     # reports (ADR 025). Each is a dict with keys:
     #   item_description               : what must be done (required — the anchor)
@@ -306,6 +331,131 @@ def extract_text_for_classification(
 
 
 # ---------------------------------------------------------------------------
+# Document date extraction (ADR 065) -- deterministic first pass, LLM fallback
+# ---------------------------------------------------------------------------
+# The date PRINTED on the document (a letter's dateline, a report's cover date)
+# routinely differs from nSITE's Date Filed by weeks or months. This is a plain
+# regex pass over the document's own RAW first pages -- never the keyword-
+# windowed classifier text (extract_text_for_classification, above), which
+# carries page-marker banners and may skip page 1 of a large doc entirely.
+#
+# Verified against real specimens (2026-10, see the handoff): deliberately
+# does NOT scan for a bare, unlabeled M/D/YYYY anywhere on the page -- that
+# pattern collides with NPDES/DMR lab-data tables, whose "Date" column is full
+# of bare slash-dates that are emphatically not the document's own date. A
+# slash-date is only trusted right after an explicit "DATE:"/"Sent:" label. A
+# month-NAME dateline (optionally weekday-prefixed) is the one unlabeled
+# pattern trusted on its own, since it practically never appears in a data
+# table cell.
+_MONTH_NAMES = (
+    "January", "February", "March", "April", "May", "June", "July",
+    "August", "September", "October", "November", "December",
+)
+_MONTH_NUM = {m: i + 1 for i, m in enumerate(_MONTH_NAMES)}
+_WEEKDAY_NAMES = "Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday"
+
+# A dateline's own "Month D, YYYY" (optionally "Weekday, Month D, YYYY").
+_DATELINE_RE = re.compile(
+    rf"\b(?:(?:{_WEEKDAY_NAMES}),\s+)?"
+    rf"({'|'.join(_MONTH_NAMES)})\s+(\d{{1,2}}),\s+(\d{{4}})\b"
+)
+# A "DATE:" or email "Sent:" label, value on the SAME line (a label/value split
+# across two lines -- seen in some lab-report forms, e.g. "Submittal Date:" --
+# is deliberately NOT matched; it is a different, specifically-named field, not
+# the document's own date).
+_LABEL_RE = re.compile(r"^[ \t]*(DATE|Sent)\s*:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+# Only used on an already-labeled value (see above) -- a bare slash-date is
+# never trusted unlabeled.
+_SLASH_DATE_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
+
+# Bounds the search to the top of each page. A letter/report's own dateline is
+# always near the top; this also keeps a huge OCR'd page cheap to scan.
+_DATE_SEARCH_WINDOW = 2000
+
+
+def _dateline_to_iso(m: "re.Match") -> str:
+    mon, day, year = m.group(1), m.group(2), m.group(3)
+    return f"{int(year):04d}-{_MONTH_NUM[mon]:02d}-{int(day):02d}"
+
+
+def _slash_to_iso(m: "re.Match") -> Optional[str]:
+    mo, day, year_s = int(m.group(1)), int(m.group(2)), m.group(3)
+    year = int(year_s) if len(year_s) == 4 else 2000 + int(year_s)
+    if not (1 <= mo <= 12 and 1 <= day <= 31):
+        return None
+    return f"{year:04d}-{mo:02d}-{day:02d}"
+
+
+def _label_value_to_iso(value: str) -> Optional[str]:
+    dm = _DATELINE_RE.search(value)
+    if dm:
+        return _dateline_to_iso(dm)
+    sm = _SLASH_DATE_RE.search(value)
+    if sm:
+        return _slash_to_iso(sm)
+    return None
+
+
+def _page_dateline_candidate(text: str) -> Optional[tuple[str, str]]:
+    """The best (iso_date, method) candidate within the top of ONE page's
+    text. A labeled "DATE:"/"Sent:" line beats a bare dateline; None if
+    neither is found. Pure -- unit-tested directly without a PDF."""
+    window = text[:_DATE_SEARCH_WINDOW]
+    lm = _LABEL_RE.search(window)
+    if lm:
+        iso = _label_value_to_iso(lm.group(2))
+        if iso:
+            method = "email_sent_header" if lm.group(1).lower() == "sent" else "date_label"
+            return (iso, method)
+    dm = _DATELINE_RE.search(window)
+    if dm:
+        return (_dateline_to_iso(dm), "dateline")
+    return None
+
+
+def extract_document_date_from_text(pages: list[str]) -> tuple[str, str]:
+    """Deterministic first pass: scan `pages` (normally the RAW first 1-2
+    pages of a document, in order) for the date printed on the document.
+    A LATER page's own match overrides an earlier page's -- confirmed on a
+    real EGLE letter whose page-1 cover date and page-2 running-header date
+    disagreed; the later page's date was the document's real, correct one.
+    A page with no recognizable date leaves the running candidate as-is, so a
+    plain continuation page never blanks out an earlier page's finding.
+    Returns ("", "") when nothing is found in any page -- never guesses."""
+    candidate: tuple[str, str] = ("", "")
+    for text in pages:
+        found = _page_dateline_candidate(text or "")
+        if found:
+            candidate = found
+    return candidate
+
+
+def extract_document_date(doc: "fitz.Document", max_pages: int = 2) -> tuple[str, str]:
+    """extract_document_date_from_text() over the first `max_pages` RAW pages
+    of an already-open fitz doc."""
+    n = min(len(doc), max_pages)
+    return extract_document_date_from_text([doc[i].get_text() for i in range(n)])
+
+
+_MIN_PLAUSIBLE_YEAR = 1990
+
+
+def _is_plausible_iso_date(s: Optional[str]) -> bool:
+    """A model-proposed document_date must parse as a real ISO date AND fall
+    in a plausible range -- guards against a hallucinated date ("2099-01-01",
+    a stray "0001-01-01") ever reaching the Sheet. Used only for the LLM
+    fallback; the deterministic regex pass above can't produce an invalid
+    date by construction."""
+    if not s:
+        return False
+    try:
+        d = date.fromisoformat(s)
+    except (ValueError, TypeError):
+        return False
+    return _MIN_PLAUSIBLE_YEAR <= d.year <= date.today().year + 1
+
+
+# ---------------------------------------------------------------------------
 # Step 4: classification with Claude (structured output, 5 fields)
 # ---------------------------------------------------------------------------
 
@@ -396,7 +546,24 @@ def _build_system_prompt(risk_register: list[dict]) -> str:
         "them, due_date, extension_due_date, actual_completion_date, compelled_by "
         "(the order/permit/notice imposing it), and compliance_doc_effective_date. "
         "Use ISO dates (YYYY-MM-DD). Return an empty list if the document imposes "
-        "no dated obligation. Do not invent dates that aren't stated.\n\n"
+        "no dated obligation. Do not invent dates that aren't stated.\n"
+        "- document_date: the date PRINTED ON the document itself — a letter's "
+        "dateline, a report or lab-report date, an inspection date — in ISO "
+        "YYYY-MM-DD. This is NOT the filing/received date; only state a date you "
+        "can actually find written in the document, null if none is stated or "
+        "you are not confident. If the document shows more than one candidate "
+        "date in different places (e.g. a cover-page date vs. the letter's own "
+        "later page repeating a different date), prefer the document's own "
+        "authored/signed date over a cover sheet's. Never pull a date out of a "
+        "data table (e.g. a lab-sample date column) and call it the document date.\n"
+        "- display_title: ONLY produce this when the metadata line for this "
+        "document says its title is generic. In that case, give a plain "
+        "descriptive title (<=120 characters) stating what the document is, "
+        "the organizations involved — sender/recipient, never a person's name — "
+        "the subject, and its document date, e.g. \"Fibertec lab report to ERG "
+        "for Advanced Disposal compost-pond samples, dated 12/23/2019\". "
+        "Otherwise (title not flagged generic) return null. Never include a "
+        "person's name in display_title.\n\n"
         "Be precise and conservative: only tag a risk the document actually "
         "addresses, and only mark urgent if an urgent trigger is genuinely "
         "present."
@@ -410,6 +577,7 @@ def _classify_with_claude(
     model: str,
     client=None,
     max_tokens: int = 8192,
+    title_is_generic: bool = False,
 ) -> dict:
     """Call Claude and return a dict with the 5 model-derived fields. Isolated
     so tests can monkeypatch it without an API key. Uses structured output so
@@ -444,6 +612,8 @@ def _classify_with_claude(
         severity: Literal["routine", "notable", "urgent"]
         measurements: list[Measurement] = []
         deadlines: list[Deadline] = []
+        document_date: Optional[str] = None
+        display_title: Optional[str] = None
 
     if client is None:
         client = anthropic.Anthropic()
@@ -452,6 +622,8 @@ def _classify_with_claude(
         f"Document name: {metadata.get('document_name', '(unknown)')}\n"
         f"Date filed: {metadata.get('date_filed', '(unknown)')}\n"
         f"nSITE type: {metadata.get('type_name', '(unknown)')}\n"
+        f"Title is generic (propose a display_title): "
+        f"{'yes' if title_is_generic else 'no'}\n"
     )
     response = client.messages.parse(
         model=model,
@@ -558,9 +730,22 @@ def parse_document(
     max_keyword_pages: int = 10,
     max_tokens: int = 8192,
     client=None,
+    title_is_generic: bool = False,
 ) -> ParsedDoc:
     """Parse one PDF end-to-end. OCRs in place if needed, extracts text
-    (windowing large docs), classifies with Claude, and returns a ParsedDoc."""
+    (windowing large docs), classifies with Claude, and returns a ParsedDoc.
+
+    `title_is_generic`: whether the CALLER has determined this document's
+    filing-system title (metadata["document_name"]) is a generic placeholder
+    ("nForm Document", "Site", ...) rather than a real title — a plain
+    boolean, domain-agnostic, same reuse pattern as risk_register: this
+    module has no opinion on WHAT makes a title generic (that's Arbor-Hills-
+    specific config, see document_titles.py), only on whether to ask the
+    model for a better one. When True, the model is asked to propose
+    `display_title`; the raw result is NOT sanitized here (no name_check
+    dependency in this module) — the caller is responsible for running it
+    through document_titles.sanitize_display_title() before it ever reaches
+    a public Sheet."""
     if signal_keywords is None:
         signal_keywords = []
 
@@ -575,15 +760,36 @@ def parse_document(
         text, _windowed = extract_text_for_classification(
             doc, signal_keywords, page_threshold, max_keyword_pages
         )
+        # Deterministic date pass over the RAW first pages (not the windowed
+        # classifier text above) — see extract_document_date's docstring.
+        det_date, det_method = extract_document_date(doc, max_pages=2)
     finally:
         doc.close()
 
     fields = _classify_with_claude(
-        text, metadata, risk_register, model, client=client, max_tokens=max_tokens
+        text, metadata, risk_register, model, client=client, max_tokens=max_tokens,
+        title_is_generic=title_is_generic,
     )
 
     valid_ids = {r["id"] for r in risk_register}
     risks = [r for r in fields.get("risks", []) if r in valid_ids]
+
+    # The deterministic regex pass always wins when it found something; the
+    # model's own read is only a fallback for the docs it finds nothing in,
+    # and is validated (ISO + plausible range) before being trusted — see
+    # _is_plausible_iso_date.
+    if det_date:
+        document_date, document_date_method = det_date, det_method
+    else:
+        llm_date = fields.get("document_date")
+        if _is_plausible_iso_date(llm_date):
+            document_date, document_date_method = llm_date or "", "llm"
+        else:
+            document_date, document_date_method = "", ""
+
+    display_title = ""
+    if title_is_generic:
+        display_title = (fields.get("display_title") or "").strip()
 
     return ParsedDoc(
         summary=fields["summary"],
@@ -596,4 +802,7 @@ def parse_document(
         page_count=page_count,
         measurements=fields.get("measurements", []) or [],
         deadlines=fields.get("deadlines", []) or [],
+        document_date=document_date,
+        document_date_method=document_date_method,
+        display_title=display_title,
     )

@@ -63,7 +63,8 @@ def _now() -> str:
 
 def _mirror_and_record(session, drive, sheets, sheet_id: str, doc: dict,
                         document_name: str, date_filed: str, risks, nsite_link: str,
-                        local_path: str | None = None) -> str:
+                        local_path: str | None = None,
+                        document_date: str = "", egle_title: str = "") -> str:
     """Upload doc to Drive and record the Archived PDFs index row, returning
     the Drive link. RAISES on any failure (download, upload, or Sheet write)
     — callers decide what "failure" means for them: run()'s batch loop logs
@@ -85,7 +86,8 @@ def _mirror_and_record(session, drive, sheets, sheet_id: str, doc: dict,
     if local_path:
         link = ac.upload_pdf(drive, local_path, f"{srn}_{did}.pdf", ac.folder_id())
         sw.append_archive_row(
-            sheets, sheet_id, did, document_name, date_filed, risks, nsite_link, link, _now())
+            sheets, sheet_id, did, document_name, date_filed, risks, nsite_link, link, _now(),
+            document_date=document_date, egle_title=egle_title or document_name)
         return link
 
     tmp = tempfile.gettempdir()
@@ -94,7 +96,8 @@ def _mirror_and_record(session, drive, sheets, sheet_id: str, doc: dict,
         nc.download_pdf(session, doc, local)
         link = ac.upload_pdf(drive, local, f"{srn}_{did}.pdf", ac.folder_id())
         sw.append_archive_row(
-            sheets, sheet_id, did, document_name, date_filed, risks, nsite_link, link, _now())
+            sheets, sheet_id, did, document_name, date_filed, risks, nsite_link, link, _now(),
+            document_date=document_date, egle_title=egle_title or document_name)
         return link
     finally:
         if os.path.exists(local):
@@ -190,6 +193,8 @@ def mirror_one_now(session, sheets, sheet_id: str, doc: dict, drive_state: dict,
             date_filed or doc.get("date_filed", ""),
             risks or [], nsite_link,
             local_path=local_path,
+            document_date=doc.get("document_date", ""),
+            egle_title=doc.get("egle_title", "") or doc.get("document_name", ""),
         )
         drive_state["links"][doc_id] = link
         return link
@@ -258,6 +263,9 @@ def run() -> int:
                 payload.get("date_filed") or meta.get("date_filed", ""),
                 payload.get("risks", []),
                 meta.get("doc_url", ""),
+                document_date=payload.get("document_date", ""),
+                egle_title=(payload.get("egle_title") or payload.get("document_name")
+                            or meta.get("document_name", "")),
             )
             mirrored += 1
             print(f"  ok  {meta.get('date_filed','')}  {meta.get('document_name','')[:50]}")

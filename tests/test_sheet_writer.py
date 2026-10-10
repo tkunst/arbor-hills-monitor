@@ -26,8 +26,21 @@ def test_feed_row_shape():
     assert row[0] == "2025-02-05"
     assert row[2] == "evidence"
     assert row[3] == "R4, R8"
-    assert row[-2] == LINK                       # Link is now second-to-last
-    assert row[-1] == "Arbor Hills Landfill"     # Facility is the trailing column
+    assert row[-4] == LINK                       # Link, before Facility/Document Date/EGLE Title
+    assert row[-3] == "Arbor Hills Landfill"     # Facility
+    assert row[-2] == ""                         # Document Date (ADR 065) -- META carries none
+    # EGLE Title (ADR 065) falls back to Document Name when META carries no egle_title
+    assert row[-1] == "WOI Status Report"
+
+
+def test_feed_row_carries_document_date_and_egle_title():
+    meta = dict(META, document_name="EGLE letter: HOV renewal",
+                egle_title="Schedule - Air General Compliance Report",
+                document_date="2026-08-27")
+    row = sw.feed_row(_doc(), meta, LINK)
+    assert row[1] == "EGLE letter: HOV renewal"           # resolved display name
+    assert row[-2] == "2026-08-27"                        # Document Date
+    assert row[-1] == "Schedule - Air General Compliance Report"  # raw EGLE Title
 
 
 def test_evidence_rows_fan_out_one_per_risk():
@@ -37,7 +50,9 @@ def test_evidence_rows_fan_out_one_per_risk():
     assert rows[0][0] == "R4"
     assert rows[1][0] == "R8"
     assert rows[1][1] == RISK_NAMES["R8"]
-    assert rows[0][-1] == "Arbor Hills Landfill"  # trailing Facility column
+    assert rows[0][-3] == "Arbor Hills Landfill"  # Facility
+    assert rows[0][-2] == ""                      # Document Date (ADR 065)
+    assert rows[0][-1] == "WOI Status Report"     # EGLE Title fallback
 
 
 def test_evidence_rows_empty_for_non_evidence():
@@ -137,6 +152,26 @@ def test_all_evidence_rows_preserves_order_nsite_then_wds():
 
 def test_all_evidence_rows_empty_when_both_empty():
     assert sw.all_evidence_rows([], []) == []
+
+
+def test_all_evidence_rows_carries_document_date_and_egle_title_for_nsite():
+    nsite_row = ["R4", "Groundwater", "2025-02-05", "WOI Status Report",
+                 "180F at AHW272.", "A summary.", LINK, "Arbor Hills Landfill",
+                 "2026-08-27", "Schedule - Air General Compliance Report"]
+    rows = sw.all_evidence_rows([nsite_row], [])
+    assert len(rows[0]) == len(sw.ALL_EVIDENCE_HEADERS)
+    assert rows[0][-2] == "2026-08-27"
+    assert rows[0][-1] == "Schedule - Air General Compliance Report"
+
+
+def test_all_evidence_rows_wds_row_has_blank_document_date_and_egle_title():
+    # A WDS record isn't a filed nSITE document -- no guess, blank.
+    wds_row = ["R5", "Groundwater", "2025-04-28", "new", "qmr", "notable",
+               "QMR groundwater report", "Statistical Exceedence: Yes.", "link"]
+    rows = sw.all_evidence_rows([], [wds_row])
+    assert len(rows[0]) == len(sw.ALL_EVIDENCE_HEADERS)
+    assert rows[0][-2] == ""
+    assert rows[0][-1] == ""
 
 
 # ---------------------------------------------------------------------------
