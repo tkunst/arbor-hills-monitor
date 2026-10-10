@@ -1,3 +1,5 @@
+> **SUPERSEDED 2026-10-09** by `document-dates-and-titles.md`, which absorbs this whole handoff (override map, classifier, digest tier) and adds Document Date + titles for all generic nSITE titles. Build that one, not this.
+
 # Overnight-coder handoff — Real display names + priority tier for substantive EGLE correspondence mislabeled "Schedule -…"
 
 *Opened 2026-09-01 (Trisha-directed, from the June-16 SEM session). Read `docs/overnight-coder.md`
