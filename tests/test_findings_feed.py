@@ -314,6 +314,29 @@ def test_render_entry_egle_title_note_is_redacted(monkeypatch):
     assert "an EGLE inspector" in out  # the neutral substitute role label
 
 
+def test_render_entry_suppresses_egle_title_note_on_denylist_hit():
+    # Security review (ADR 065): redact_names() alone only covers the
+    # operator-configured REDACT_NAMES list, which is narrower than
+    # name_check's own denylist (KNOWN_NAMES). The raw nSITE title column is
+    # never sanitized at write time the way display_title is, so if it itself
+    # trips the denylist, the note must be suppressed ENTIRELY -- never shown
+    # even partially stripped (that would misrepresent nSITE's own title).
+    row = ff.parse_feed_rows(
+        [_row(name="EGLE letter", egle_title="Letter to Anthony Testa")])[0]
+    out = ff.render_entry(row)
+    assert "EGLE title:" not in out
+    assert "Testa" not in out
+
+
+def test_render_entry_shows_egle_title_note_when_clean():
+    # Confirms the denylist gate doesn't block the ordinary, clean case.
+    row = ff.parse_feed_rows(
+        [_row(name="EGLE letter: HOV renewal",
+              egle_title="Schedule - Air General Compliance Report")])[0]
+    out = ff.render_entry(row)
+    assert "EGLE title: Schedule - Air General Compliance Report" in out
+
+
 def test_search_entry_date_prefers_document_date():
     row = ff.parse_feed_rows(
         [_row(date="2020-03-23", document_date="2019-12-23")])[0]

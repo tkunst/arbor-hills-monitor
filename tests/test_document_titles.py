@@ -61,6 +61,18 @@ def test_sanitize_display_title_blank_input_is_blank():
     assert dt.sanitize_display_title(None) == ""
 
 
+def test_sanitize_display_title_rejects_a_heuristic_name_shape(monkeypatch):
+    # Security review (ADR 065): a NOVEL third-party name the fixed
+    # KNOWN_NAMES denylist has never seen would otherwise sail through --
+    # the classifier reads arbitrary document text, not curated text. A
+    # heuristic hit (name-shaped pattern) must reject rather than publish.
+    monkeypatch.setattr(dt.name_check, "find_denylist_hits", lambda text: [])
+    monkeypatch.setattr(
+        dt.name_check, "find_heuristic_hits",
+        lambda text: [{"kind": "heuristic_name", "match": "J. Newcomer"}])
+    assert dt.sanitize_display_title("Letter signed J. Newcomer") == ""
+
+
 def test_sanitize_display_title_falls_back_empty_when_unstrippable(monkeypatch):
     # If stripping can't converge (every pass still finds a hit), return ""
     # so the caller falls back to the plain nSITE title rather than publish

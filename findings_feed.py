@@ -16,6 +16,7 @@ import os
 import re
 from datetime import date as _date
 
+import name_check
 from config_loader import load_config
 
 # Only this one pure helper is reused from sheet_writer -- a plain string
@@ -471,11 +472,25 @@ def render_entry(row: dict) -> str:
     # see the unaltered source label -- same redaction as the title itself
     # (never strip_embedded_date: a real date IN the raw title is part of
     # what's being disclosed, not a redundant restatement of Date Filed).
-    raw_egle_title = redact_names(row.get("egle_title") or "")
-    egle_title_bit = (
-        f"EGLE title: {_esc(raw_egle_title)}"
-        if raw_egle_title and raw_egle_title != pv["title"] else ""
+    #
+    # name_check.is_clean_for_publish gate (security review, ADR 065): this
+    # note is a SECOND, more prominent rendering of the raw nSITE title, which
+    # `redact_names()` alone only protects against the operator-configured
+    # REDACT_NAMES list -- a narrower list than name_check's own denylist
+    # (KNOWN_NAMES + internal markers). The nSITE title column is this
+    # project's own free text, never a human-curated/redacted field the way
+    # display_title is (sanitize_display_title already ran), so if raw_egle_
+    # title itself trips the denylist, suppress the note ENTIRELY rather than
+    # try to edit nSITE's own title text -- a partially-stripped "raw title"
+    # would misrepresent what nSITE actually filed.
+    raw_title_unredacted = row.get("egle_title") or ""
+    raw_egle_title = redact_names(raw_title_unredacted)
+    show_egle_title = (
+        bool(raw_egle_title)
+        and raw_egle_title != pv["title"]
+        and name_check.is_clean_for_publish(raw_title_unredacted)
     )
+    egle_title_bit = f"EGLE title: {_esc(raw_egle_title)}" if show_egle_title else ""
 
     meta = " &middot; ".join(
         b for b in (date, facility, doc_type, severity, source_bit, egle_title_bit) if b)
