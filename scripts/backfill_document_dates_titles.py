@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import re
 import sys
 import tempfile
 from datetime import date
@@ -65,6 +66,21 @@ CSV_FIELDS = [
     "nsite_title", "proposed_display_title", "name_check_result",
 ]
 
+# nsite_title/proposed_display_title are filer-entered/LLM-read free text --
+# untrusted relative to a spreadsheet opening this CSV. CSV formula injection
+# (security review round 2, CWE-1236): a cell starting with =, +, -, or @ can
+# be evaluated as a formula by Excel/Sheets/Numbers. Prefix with a single
+# quote (Excel/Sheets/Numbers all render a leading "'" as a plain-text marker,
+# not shown) so the cell displays as inert text instead of being evaluated.
+_CSV_FORMULA_TRIGGERS = ("=", "+", "-", "@")
+
+
+def _neutralize_csv_formulas(row: dict) -> dict:
+    return {
+        k: ("'" + v if isinstance(v, str) and v.startswith(_CSV_FORMULA_TRIGGERS) else v)
+        for k, v in row.items()
+    }
+
 # Historical reference point for the cost estimate (config.yml's own backfill
 # cost note): ~754 docs cost ~$2-4 total on Haiku ($1/$5 per 1M tok) -- about
 # $0.003-0.005/doc. Sonnet 5 (the currently-configured model) is 2x Haiku's
@@ -75,23 +91,55 @@ _EST_COST_PER_DOC_LOW = 0.006
 _EST_COST_PER_DOC_HIGH = 0.010
 
 
+# nSITE doc_ids are always a plain signed integer (see nsite_client._normalize)
+# and a facility srn is always a short alphanumeric code from this repo's own
+# config.yml. Security review (round 2): doc_id crosses a trust boundary (an
+# external API) before reaching a path join below, so reject anything outside
+# that expected shape rather than build a path from it — defense-in-depth
+# against a future malformed/adversarial API response, even though no real
+# doc_id observed to date could ever resolve outside pdf_dir/tmp_dir.
+_SAFE_DOC_ID_RE = re.compile(r"^-?\d+$")
+_SAFE_SRN_RE = re.compile(r"^[A-Za-z0-9]+$")
+
+
+def _safe_pdf_filename(srn: str, doc_id: str) -> str | None:
+    if not _SAFE_SRN_RE.match(srn or "") or not _SAFE_DOC_ID_RE.match(doc_id or ""):
+        return None
+    return f"{srn}_{doc_id}.pdf"
+
+
 def _local_pdf_path(pdf_dir: str | None, srn: str, doc_id: str) -> str | None:
     if not pdf_dir:
         return None
-    path = os.path.join(pdf_dir, f"{srn}_{doc_id}.pdf")
+    name = _safe_pdf_filename(srn, doc_id)
+    if name is None:
+        return None
+    path = os.path.join(pdf_dir, name)
     return path if os.path.exists(path) else None
 
 
-def _raw_text_phase1(session, doc: dict, pdf_dir: str | None, tmp_dir: str) -> str | None:
-    """Phase 1: RAW text of the first 2 pages, no OCR. Returns None if the PDF
-    can't be obtained at all (e.g. the doc is no longer on nSITE and no local
-    mirror copy exists)."""
+def _raw_text_phase1(session, doc: dict, pdf_dir: str | None, tmp_dir: str) -> list[str] | None:
+    """Phase 1: RAW text of the first 2 pages, no OCR, as a list with ONE
+    entry PER PAGE (code review finding) — extract_document_date_from_text's
+    "a later page's match overrides an earlier page's" rule (the exact real-
+    world trap this feature exists to handle, see its own docstring) needs
+    page boundaries preserved; joining the pages into one string before
+    calling it would silently defeat that rule (and, on a long page 1, could
+    drop page 2 from the scan window entirely) — exactly the "measures the
+    SAME behavior production will show" claim this script makes elsewhere.
+    Returns None if the PDF can't be obtained at all (e.g. the doc is no
+    longer on nSITE and no local mirror copy exists)."""
     srn = doc.get("facility_srn", "N2688")
     did = doc["doc_id"]
+    name = _safe_pdf_filename(srn, did)
+    if name is None:
+        print(f"  [{did}] unexpected doc_id/srn shape, skipping: "
+              f"srn={srn!r} doc_id={did!r}")
+        return None
     local = _local_pdf_path(pdf_dir, srn, did)
     downloaded = False
     if local is None:
-        local = os.path.join(tmp_dir, f"{srn}_{did}.pdf")
+        local = os.path.join(tmp_dir, name)
         try:
             nc.download_pdf(session, doc, local)
             downloaded = True
@@ -102,7 +150,7 @@ def _raw_text_phase1(session, doc: dict, pdf_dir: str | None, tmp_dir: str) -> s
         pdf = fitz.open(local)
         try:
             n = min(len(pdf), 2)
-            return "\n".join(pdf[i].get_text() for i in range(n))
+            return [pdf[i].get_text() for i in range(n)]
         finally:
             pdf.close()
     finally:
@@ -164,8 +212,8 @@ def run(out_dir: str, pdf_dir: str | None, limit: int | None,
             })
             continue
 
-        text = _raw_text_phase1(session, live, pdf_dir, tmp_dir)
-        if text is None:
+        pages = _raw_text_phase1(session, live, pdf_dir, tmp_dir)
+        if pages is None:
             rows.append({
                 "doc_id": did, "site": site, "date_filed": date_filed,
                 "document_date": "", "method": "PDF unavailable (fetch failed)",
@@ -174,7 +222,7 @@ def run(out_dir: str, pdf_dir: str | None, limit: int | None,
             })
             continue
 
-        det_date, det_method = extract_document_date_from_text([text])
+        det_date, det_method = extract_document_date_from_text(pages)
 
         needs_llm = is_generic or not det_date
         if needs_llm and run_llm:
@@ -214,10 +262,25 @@ def run(out_dir: str, pdf_dir: str | None, limit: int | None,
             srn = live.get("facility_srn", "N2688")
             nsite_title = payload.get("egle_title") or payload.get("document_name", "")
             date_filed = payload.get("date_filed", "")
+            # Phase 1 already filtered out an unsafe doc_id/srn shape before a
+            # doc could reach llm_candidates, but re-checking explicitly here
+            # (rather than relying on that as an implicit invariant) is the
+            # same cheap defense-in-depth as _raw_text_phase1's own guard.
+            name = _safe_pdf_filename(srn, did)
+            if name is None:
+                print(f"  [{did}] unexpected doc_id/srn shape, skipping LLM pass: "
+                      f"srn={srn!r} doc_id={did!r}")
+                rows.append({
+                    "doc_id": did, "site": srn, "date_filed": date_filed,
+                    "document_date": "", "method": "unexpected doc_id/srn shape",
+                    "nsite_title": nsite_title, "proposed_display_title": "",
+                    "name_check_result": "",
+                })
+                continue
             local = _local_pdf_path(pdf_dir, srn, did)
             downloaded = False
             if local is None:
-                local = os.path.join(tmp_dir, f"{srn}_{did}.pdf")
+                local = os.path.join(tmp_dir, name)
                 try:
                     nc.download_pdf(session, live, local)
                     downloaded = True
@@ -281,7 +344,7 @@ def run(out_dir: str, pdf_dir: str | None, limit: int | None,
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(_neutralize_csv_formulas(r) for r in rows)
 
     print(f"\n[backfill-review] wrote {len(rows)} row(s) to {out_path}")
     print("[backfill-review] NO Sheet writes were made. This is a dry run only "

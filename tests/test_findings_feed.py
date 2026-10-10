@@ -341,6 +341,19 @@ def test_render_entry_suppresses_egle_title_note_on_denylist_hit():
     assert "Testa" not in out
 
 
+def test_render_entry_suppresses_egle_title_note_on_heuristic_hit():
+    # Security review round 2 (ADR 065): nSITE's own filer-entered title is
+    # uncurated free text, same novel-name risk sanitize_display_title's
+    # heuristic gate exists for -- a parenthetical name shape the fixed
+    # KNOWN_NAMES denylist has never seen must also suppress this note.
+    row = ff.parse_feed_rows(
+        [_row(name="EGLE letter",
+              egle_title="Schedule - Air General Compliance Report (J. Newcomer)")])[0]
+    out = ff.render_entry(row)
+    assert "EGLE title:" not in out
+    assert "Newcomer" not in out
+
+
 def test_render_entry_shows_egle_title_note_when_clean():
     # Confirms the denylist gate doesn't block the ordinary, clean case.
     row = ff.parse_feed_rows(
