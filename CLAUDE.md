@@ -99,7 +99,7 @@ external users but no sensitive data). Public repo.
   link; mirroring must never block classification or alerting.
 - `email_alerts.py` — SMTP urgent alerts + weekly digest; urgency is pure.
   **ADR 065** added `is_correspondence_letter` (EGLE's own letterhead marker
-  + a substantive-signal phrase, both pure/unit-tested): a doc already
+  plus a substantive-signal phrase, both pure/unit-tested): a doc already
   flagged `title_was_generic` that reads as a real EGLE approval/extension/
   corrective-action/enforcement letter gets pinned to its own
   "CORRESPONDENCE & ENFORCEMENT" digest section instead of the ordinary soft
