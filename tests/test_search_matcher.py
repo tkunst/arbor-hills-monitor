@@ -22,15 +22,21 @@ Two kinds of coverage below:
      themselves (tokenization, AND/any-order semantics, the substring vs.
      stem-prefix conditions, the 6-char stem floor, which fields are
      searched).
-  2. Real-index tests against the live `site/public-records/search-index.json`
-     -- the handoff's Step 3 "verify against the real index" requirement,
-     kept in the suite (not just a one-off script) so it's re-checked on
-     every run. These intentionally assert PRESENCE/SUBSET/relative facts,
-     never hardcoded absolute counts: this is a live, append-only archive
-     that grows most nights, so a hardcoded "historic == 35" would start
-     failing on its own as soon as new hand-curated rows land. The actual
-     before/after counts observed at build time are reported in the PR
-     description instead.
+  2. Acceptance tests against FROZEN snapshots of real rows named in the
+     handoff's acceptance table (captured 2026-10-10 from the live
+     `site/public-records/search-index.json`), not a live read of that file.
+     This is deliberate, not an oversight: the archive is append-only and
+     grows most nights, and rows do get removed/retitled by unrelated later
+     work (the 2026-10-07 facility-scope migration alone removed 440 rows),
+     so a test that re-reads the live file and asserts a specific row set or
+     count would eventually go red from ordinary curation, not a real
+     regression here. The live file WAS read directly, once, for the actual
+     Step 3 real-specimen verification (both this reference port and the
+     real search.js executed under node) -- those before/after counts are
+     reported in the PR description, not re-asserted on every run. The only
+     test below that still reads the live file on every run
+     (test_real_search_index_file_is_present_and_well_formed) checks nothing
+     row-specific, by design.
 """
 import json
 import os
@@ -122,7 +128,14 @@ def test_substring_match_keeps_partial_word_behavior():
 
 
 def test_punctuation_in_query_does_not_block_a_match():
-    entries = [{"excerpt": "leachate spill PEAS #24917 reported"}]
+    # The text deliberately has NO "#" at all -- if query-side punctuation
+    # stripping weren't happening, the unstripped token "#24917" would not
+    # be a substring of this text and the match would fail. (A text fixture
+    # that itself contained "#24917" verbatim would pass even with a no-op
+    # tokenizer, since plain substring matching doesn't care about the
+    # text's own punctuation either way -- that would prove nothing about
+    # the query side specifically.)
+    entries = [{"excerpt": "leachate spill PEAS 24917 reported"}]
     assert search(entries, "PEAS #24917") == entries
     assert search(entries, "24917") == entries
 
@@ -327,6 +340,12 @@ def test_acceptance_partial_word_is_a_superset():
 
 
 def test_acceptance_punctuation_insensitive_id_number():
+    # These real rows' own text already contains "#24917" verbatim, so this
+    # test's real job is the handoff's actual acceptance claim -- that both
+    # queries return the identical, correct result set on real data -- not
+    # isolating the punctuation-stripping mechanism itself (that's
+    # test_punctuation_in_query_does_not_block_a_match, above, using text
+    # with no "#" at all).
     a = search(ACCEPTANCE_FIXTURE, "24917")
     b = search(ACCEPTANCE_FIXTURE, "PEAS #24917")
     assert a == b
