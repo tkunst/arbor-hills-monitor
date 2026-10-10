@@ -3,6 +3,7 @@ a plain static JS file with no runtime/browser under pytest, so these are
 text-level drift and discipline checks, not behavior tests. Manual
 in-browser verification of the actual filtering/facet/date-range behavior is
 described in the PR."""
+import ast
 import importlib.util
 import os
 import re
@@ -94,8 +95,14 @@ def test_search_js_loads_facets_on_opening_filters_not_only_on_typing():
 
 
 def test_search_js_tokenizes_the_query_instead_of_matching_it_whole():
+    # Checks the actual WIRING, not just that a function with this name
+    # exists somewhere in the file (a dead, unused tokenizeWords would pass a
+    # bare function-declaration check while currentFilters()/matchesText()
+    # quietly still did whole-query matching).
     js = _search_js_text()
     assert re.search(r"function tokenizeWords\(", js)
+    assert re.search(r"qTokens:\s*tokenizeWords\(", js)
+    assert re.search(r"matchesText\(entry,\s*f\.qTokens\)", js)
 
 
 def test_search_js_stem_floor_is_six_characters():
@@ -108,8 +115,32 @@ def test_search_js_stem_floor_is_six_characters():
 
 def test_search_js_searches_source_and_date_fields_too():
     # Was title/facility/excerpt only; the handoff's whole point #3/#4 was
-    # that the Source line and the date were never searched at all.
+    # that the Source line and the date were never searched at all. Checks
+    # the literal push calls inside searchableText specifically -- "entry.
+    # source"/"entry.date" alone already appear elsewhere in this file
+    # (renderCard, parseDateBounds) even on the OLD three-field matcher, so a
+    # bare substring check wouldn't actually prove these two fields feed the
+    # search text.
     js = _search_js_text()
-    assert re.search(r"searchableText", js)
-    assert "entry.source" in js
-    assert "entry.date" in js
+    assert re.search(r"function searchableText\(entry\)", js)
+    assert re.search(r"parts\.push\(entry\.source\)", js)
+    assert re.search(r"parts\.push\(entry\.date\)", js)
+
+
+def test_search_js_and_python_port_agree_on_edge_punctuation_set():
+    # tests/test_search_matcher.py hand-ports this exact character set (its
+    # own docstring says so) -- nothing else enforces the two stay in sync,
+    # so a future edit to one side alone would silently diverge.
+    js = _search_js_text()
+    js_match = re.search(r"WORD_EDGE_PUNCTUATION\s*=\s*/\^\[([^\]]+)\]", js)
+    assert js_match, "could not find the WORD_EDGE_PUNCTUATION regex literal in search.js"
+    js_chars = set(js_match.group(1))
+
+    matcher_path = os.path.join(REPO_ROOT, "tests", "test_search_matcher.py")
+    with open(matcher_path, encoding="utf-8") as f:
+        py_src = f.read()
+    py_match = re.search(r'_WORD_EDGE_PUNCTUATION\s*=\s*("(?:[^"\\]|\\.)*")', py_src)
+    assert py_match, "could not find the _WORD_EDGE_PUNCTUATION literal in test_search_matcher.py"
+    py_chars = set(ast.literal_eval(py_match.group(1)))
+
+    assert js_chars == py_chars

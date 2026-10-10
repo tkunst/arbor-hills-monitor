@@ -128,8 +128,16 @@
   }
 
   function currentFilters() {
+    var rawQuery = searchInput.value.trim();
     return {
-      qTokens: tokenizeWords(searchInput.value),
+      // Kept separately from qTokens: a query that's non-empty but made up
+      // entirely of punctuation (e.g. "###") tokenizes to zero tokens (see
+      // tokenizeWords below), but the visitor still typed something into the
+      // box -- isActive() below must stay true for that case (Clear button
+      // shown, search view rather than silently reverting to the full
+      // browse list as if the box were empty).
+      rawQuery: rawQuery,
+      qTokens: tokenizeWords(rawQuery),
       facility: filterFacility.value,
       type: filterType.value,
       severity: filterSeverity.value,
@@ -139,7 +147,7 @@
   }
 
   function isActive(f) {
-    return !!(f.qTokens.length || f.facility || f.type || f.severity || f.dateMin || f.dateMax);
+    return !!(f.rawQuery || f.facility || f.type || f.severity || f.dateMin || f.dateMax);
   }
 
   function matchesFacet(value, filterValue) {
@@ -178,10 +186,12 @@
   }
 
   // The full text a query is matched against: title + facility + excerpt +
-  // source (hand-curated rows only -- same "source" in entry key-presence
-  // check renderCard uses below) + date (so a bare year like "2023" matches).
-  // Same fields search-index.json already publishes (ADR 062 Phase 1); no
-  // new field is added to the index for this.
+  // source (hand-curated rows only -- unlike renderCard below, which uses
+  // `"source" in entry` to show "not stated" for a hand-curated row with a
+  // blank source, an entry with nothing to search contributes nothing here
+  // either way, so a plain truthiness check is enough) + date (so a bare
+  // year like "2023" matches). Same fields search-index.json already
+  // publishes (ADR 062 Phase 1); no new field is added to the index for this.
   function searchableText(entry) {
     var parts = [];
     if (entry.title) {
@@ -193,7 +203,7 @@
     if (entry.excerpt) {
       parts.push(entry.excerpt);
     }
-    if ("source" in entry && entry.source) {
+    if (entry.source) {
       parts.push(entry.source);
     }
     if (entry.date) {
