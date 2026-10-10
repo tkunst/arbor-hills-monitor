@@ -478,22 +478,27 @@ def render_entry(row: dict) -> str:
     # never happened, just because one side had the suffix stripped and the
     # other didn't.
     #
-    # name_check.is_clean_for_publish gate (security review, ADR 065): this
-    # note is a SECOND, more prominent rendering of the raw nSITE title, which
+    # name_check gate (security review, ADR 065, round 2): this note is a
+    # SECOND, more prominent rendering of the raw nSITE title, which
     # `redact_names()` alone only protects against the operator-configured
     # REDACT_NAMES list -- a narrower list than name_check's own denylist
     # (KNOWN_NAMES + internal markers). The nSITE title column is this
-    # project's own free text, never a human-curated/redacted field the way
-    # display_title is (sanitize_display_title already ran), so if raw_egle_
-    # title itself trips the denylist, suppress the note ENTIRELY rather than
-    # try to edit nSITE's own title text -- a partially-stripped "raw title"
-    # would misrepresent what nSITE actually filed.
+    # project's own free text (filer-entered, never curated/redacted the way
+    # display_title is), so it carries the SAME novel-name risk
+    # sanitize_display_title's own heuristic gate exists for (round-1 fix) --
+    # a real person's name in a parenthetical/"attn:"/possessive shape that
+    # the fixed KNOWN_NAMES denylist has never seen. Both
+    # is_clean_for_publish (denylist) AND find_heuristic_hits (structural
+    # name-shape patterns) gate this note; either one suppresses it
+    # ENTIRELY rather than try to edit nSITE's own title text -- a
+    # partially-stripped "raw title" would misrepresent what nSITE filed.
     raw_title_unredacted = strip_embedded_date(row.get("egle_title") or "")
     raw_egle_title = redact_names(raw_title_unredacted)
     show_egle_title = (
         bool(raw_egle_title)
         and raw_egle_title != pv["title"]
         and name_check.is_clean_for_publish(raw_title_unredacted)
+        and not name_check.find_heuristic_hits(raw_title_unredacted)
     )
     egle_title_bit = f"EGLE title: {_esc(raw_egle_title)}" if show_egle_title else ""
 
