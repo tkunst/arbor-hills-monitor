@@ -336,6 +336,28 @@ def test_rebuild_all_evidence_tab_merges_both_sources():
     assert {r[3] for r in body} == {"nSITE", "WDS"}
 
 
+def test_rebuild_all_evidence_tab_carries_document_date_and_egle_title():
+    # Code review finding (ADR 065): the source/dest ranges here used to be
+    # hardcoded at the OLD 8-column width -- a real 10-column Evidence row
+    # (with Document Date/EGLE Title) would get silently clipped back down
+    # to 8 columns on every rebuild.
+    tabs = {
+        sw.TAB_EVIDENCE: [sw.EVIDENCE_HEADERS, [
+            "R1", "Expansion eligibility", "2025-01-01", "doc", "kdp", "summary",
+            "link", "fac", "2026-08-27", "Schedule - Air General Compliance Report",
+        ]],
+        sw.TAB_WDS_EVIDENCE: [sw.WDS_EVIDENCE_HEADERS],
+        sw.TAB_ALL_EVIDENCE: [sw.ALL_EVIDENCE_HEADERS],
+    }
+    svc = FakeSheets(tabs)
+    sw.rebuild_all_evidence_tab(svc, "SID")
+    body = svc._values._tabs[sw.TAB_ALL_EVIDENCE][1:]
+    assert len(body) == 1
+    assert len(body[0]) == len(sw.ALL_EVIDENCE_HEADERS)
+    assert body[0][-2] == "2026-08-27"
+    assert body[0][-1] == "Schedule - Air General Compliance Report"
+
+
 def test_rebuild_all_evidence_tab_clears_stale_rows_on_shrink():
     # A prior, larger run's leftover row must not survive once the source
     # tabs no longer back it (e.g. after a manual re-dump shrinks WDS Evidence).

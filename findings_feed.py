@@ -469,9 +469,14 @@ def render_entry(row: dict) -> str:
     # generated, see egle_doc_parser/document_titles) for a doc nSITE itself
     # filed under a generic placeholder. Either way, show nSITE's own raw
     # title whenever it differs from what's displayed, so a reader can always
-    # see the unaltered source label -- same redaction as the title itself
-    # (never strip_embedded_date: a real date IN the raw title is part of
-    # what's being disclosed, not a redundant restatement of Date Filed).
+    # see the unaltered source label. strip_embedded_date IS applied here
+    # (code review finding, ADR 065) -- pv["title"] already has it applied,
+    # so comparing against an un-stripped raw_egle_title false-positived on
+    # ~195/1,720 real titles that end in a redundant "(MM/DD/YYYY)" suffix:
+    # an UNCHANGED title (never flagged generic, no override) would still
+    # show a spurious "EGLE title: ..." note implying a substitution that
+    # never happened, just because one side had the suffix stripped and the
+    # other didn't.
     #
     # name_check.is_clean_for_publish gate (security review, ADR 065): this
     # note is a SECOND, more prominent rendering of the raw nSITE title, which
@@ -483,7 +488,7 @@ def render_entry(row: dict) -> str:
     # title itself trips the denylist, suppress the note ENTIRELY rather than
     # try to edit nSITE's own title text -- a partially-stripped "raw title"
     # would misrepresent what nSITE actually filed.
-    raw_title_unredacted = row.get("egle_title") or ""
+    raw_title_unredacted = strip_embedded_date(row.get("egle_title") or "")
     raw_egle_title = redact_names(raw_title_unredacted)
     show_egle_title = (
         bool(raw_egle_title)

@@ -189,6 +189,7 @@ def run(out_dir: str, pdf_dir: str | None, limit: int | None,
         })
 
     n_llm = len(llm_candidates)
+    llm_declined = False
     if n_llm and run_llm:
         est_low = n_llm * _EST_COST_PER_DOC_LOW
         est_high = n_llm * _EST_COST_PER_DOC_HIGH
@@ -204,6 +205,7 @@ def run(out_dir: str, pdf_dir: str | None, limit: int | None,
                 print("[backfill-review] Skipping the LLM pass; "
                       "writing the deterministic-only results.")
                 run_llm = False
+                llm_declined = True
 
     if n_llm and run_llm:
         model = cfg["anthropic_model"]
@@ -258,13 +260,18 @@ def run(out_dir: str, pdf_dir: str | None, limit: int | None,
                 if downloaded and os.path.exists(local):
                     os.remove(local)
     elif n_llm:
-        # --run-llm not set at all (not just declined above) — note the gap.
+        # Either --run-llm was never set, or it was but the interactive cost
+        # confirmation was declined above — report accurately which (code
+        # review finding, ADR 065): "not set" would be false in the latter
+        # case, since the flag genuinely was passed.
+        method = ("LLM pass declined at the cost-confirmation prompt" if llm_declined
+                  else "LLM pass not run (--run-llm not set)")
         for live, payload, _ in llm_candidates:
             did = live["doc_id"]
             rows.append({
                 "doc_id": did, "site": live.get("facility_srn", "unknown"),
                 "date_filed": payload.get("date_filed", ""),
-                "document_date": "", "method": "LLM pass not run (--run-llm not set)",
+                "document_date": "", "method": method,
                 "nsite_title": payload.get("egle_title") or payload.get("document_name", ""),
                 "proposed_display_title": "", "name_check_result": "",
             })

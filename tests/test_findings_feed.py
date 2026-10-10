@@ -294,6 +294,19 @@ def test_render_entry_omits_egle_title_note_when_same_as_shown_title():
     assert "EGLE title:" not in out
 
 
+def test_render_entry_omits_egle_title_note_for_unchanged_dated_title():
+    # Code review finding (ADR 065): document_name == egle_title verbatim
+    # here (never flagged generic, no override) -- pv["title"] strips the
+    # trailing "(MM/DD/YYYY)" suffix, so comparing the unstripped egle_title
+    # against it used to false-positive on every one of the ~195 real
+    # titles that end in this redundant suffix, implying a substitution
+    # that never happened.
+    dated = "On-Site Inspection (06/01/2025)"
+    row = ff.parse_feed_rows([_row(name=dated, egle_title=dated)])[0]
+    out = ff.render_entry(row)
+    assert "EGLE title:" not in out
+
+
 def test_render_entry_omits_egle_title_note_when_blank():
     row = ff.parse_feed_rows([_row()])[0]  # egle_title="" by default
     out = ff.render_entry(row)

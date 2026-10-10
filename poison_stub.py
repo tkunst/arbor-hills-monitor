@@ -39,6 +39,20 @@ def stub_if_poisoned(sheets, sheet_id: str, state: dict, d: dict, cnt: int,
     raw nSITE title either way; `document_date` stays blank (no text was
     ever extracted to look for one).
 
+    `d["document_name"]` is NOT always still the raw title by the time this
+    runs (code review finding): the watcher.py/backfill.py except handler
+    this is called from also catches a non-transient failure AFTER the ADR
+    065 chokepoint already ran (e.g. a permanent error in sw.write_document
+    or mark_processed), at which point `d["document_name"]` already holds
+    the RESOLVED display name (possibly a classifier display_title, not
+    just an override) and `d["egle_title"]` already holds the true raw one.
+    The presence of the `egle_title` key is exactly the chokepoint-ran
+    signal: when absent, the doc was never parsed and `document_name` IS the
+    raw title; when present, `document_name` is already the best resolution
+    this run produced and must be preserved, not recomputed down to just
+    "override or raw" (which would silently discard a legitimate
+    display_title resolution that has no override).
+
     Returns True iff the doc was stubbed. Never raises: a write failure is
     logged and the doc stays at its strike count."""
     did = d["doc_id"]
@@ -46,10 +60,12 @@ def stub_if_poisoned(sheets, sheet_id: str, state: dict, d: dict, cnt: int,
         return False
     reason = f"Source not classifiable after {cnt} attempts: {str(exc)[:140]}"
     link = nc.native_download_url(did)
-    egle_title = d["document_name"]
+    chokepoint_ran = "egle_title" in d
+    egle_title = d["egle_title"] if chokepoint_ran else d["document_name"]
+    resolved_name = d["document_name"] if chokepoint_ran else egle_title
     stub_meta = dict(d)
     stub_meta["egle_title"] = egle_title
-    stub_meta["document_name"] = (title_overrides or {}).get(did) or egle_title
+    stub_meta["document_name"] = (title_overrides or {}).get(did) or resolved_name
     stub_meta["document_date"] = d.get("document_date", "")
     try:
         sw.write_stub_row(sheets, sheet_id, stub_meta, link, reason, feed_tab=feed_tab)

@@ -337,7 +337,9 @@ def extract_text_for_classification(
 # routinely differs from nSITE's Date Filed by weeks or months. This is a plain
 # regex pass over the document's own RAW first pages -- never the keyword-
 # windowed classifier text (extract_text_for_classification, above), which
-# carries page-marker banners and may skip page 1 of a large doc entirely.
+# always keeps page 1 but wraps it (and every selected page) in a
+# "[LARGE DOCUMENT...]"/"--- page N ---" banner for a large doc -- noise the
+# deterministic regex pass here doesn't need to deal with.
 #
 # Verified against real specimens (2026-10, see the handoff): deliberately
 # does NOT scan for a bare, unlabeled M/D/YYYY anywhere on the page -- that
@@ -373,23 +375,35 @@ _SLASH_DATE_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
 _DATE_SEARCH_WINDOW = 2000
 
 
-def _dateline_to_iso(m: "re.Match") -> str:
+def _make_iso(year: int, month: int, day: int) -> Optional[str]:
+    """Calendar-validated ISO date, or None for a day that doesn't exist in
+    that month (e.g. "September 31" — a real OCR misread this pipeline sees
+    on scanned filings, per code review, ADR 065). Never raises."""
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+def _dateline_to_iso(m: "re.Match") -> Optional[str]:
     mon, day, year = m.group(1), m.group(2), m.group(3)
-    return f"{int(year):04d}-{_MONTH_NUM[mon]:02d}-{int(day):02d}"
+    return _make_iso(int(year), _MONTH_NUM[mon], int(day))
 
 
 def _slash_to_iso(m: "re.Match") -> Optional[str]:
     mo, day, year_s = int(m.group(1)), int(m.group(2)), m.group(3)
     year = int(year_s) if len(year_s) == 4 else 2000 + int(year_s)
-    if not (1 <= mo <= 12 and 1 <= day <= 31):
+    if not (1 <= mo <= 12):
         return None
-    return f"{year:04d}-{mo:02d}-{day:02d}"
+    return _make_iso(year, mo, day)
 
 
 def _label_value_to_iso(value: str) -> Optional[str]:
     dm = _DATELINE_RE.search(value)
     if dm:
-        return _dateline_to_iso(dm)
+        iso = _dateline_to_iso(dm)
+        if iso:
+            return iso
     sm = _SLASH_DATE_RE.search(value)
     if sm:
         return _slash_to_iso(sm)
@@ -399,7 +413,9 @@ def _label_value_to_iso(value: str) -> Optional[str]:
 def _page_dateline_candidate(text: str) -> Optional[tuple[str, str]]:
     """The best (iso_date, method) candidate within the top of ONE page's
     text. A labeled "DATE:"/"Sent:" line beats a bare dateline; None if
-    neither is found. Pure -- unit-tested directly without a PDF."""
+    neither is found (including a match whose day/month combination isn't a
+    real calendar date — see _make_iso). Pure -- unit-tested directly
+    without a PDF."""
     window = text[:_DATE_SEARCH_WINDOW]
     lm = _LABEL_RE.search(window)
     if lm:
@@ -409,7 +425,9 @@ def _page_dateline_candidate(text: str) -> Optional[tuple[str, str]]:
             return (iso, method)
     dm = _DATELINE_RE.search(window)
     if dm:
-        return (_dateline_to_iso(dm), "dateline")
+        iso = _dateline_to_iso(dm)
+        if iso:
+            return (iso, "dateline")
     return None
 
 
