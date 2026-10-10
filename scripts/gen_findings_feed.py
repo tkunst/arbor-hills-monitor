@@ -85,10 +85,10 @@ def main() -> None:
 
     new_rows = _tab_values(service, sheet_id, sheet_writer.TAB_NEW)
     historical_rows = _tab_values(service, sheet_id, sheet_writer.TAB_HISTORICAL)
-    # Hand-Curated Files has 13 columns (A:M) -- wider than the default "A2:I"
-    # (New/Historical Documents' 9-column FEED_HEADERS width), so the range must
-    # be given explicitly or columns get silently truncated. Column M is
-    # `source_public` -- the redacted external source the feed publishes; the
+    # Hand-Curated Files has 13 columns (A:M) -- wider than the default "A2:K"
+    # (New/Historical Documents' 11-column FEED_HEADERS width, ADR 065), so the
+    # range must be given explicitly or columns get silently truncated. Column
+    # M is `source_public` -- the redacted external source the feed publishes; the
     # internal `source` (col C, may carry names) is never published.
     handcurated_rows = _tab_values(service, sheet_id, sheet_writer.TAB_HANDCURATED, "A2:M")
     rows = findings_feed.merge_and_sort(new_rows, historical_rows)
