@@ -84,6 +84,46 @@ classification_max_tokens: 16384
 large_doc_page_threshold: 30
 large_doc_max_keyword_pages: 10
 
+# --- Document Date + real titles for generic nSITE titles (ADR 065) ---
+# nSITE files a lot of documents under generic filing-system titles that tell a
+# reader nothing ("Site", "nForm Document", ...). `generic_exact` is matched
+# case-insensitively as a whole title; `generic_prefixes` as a case-insensitive
+# startswith (so every "Schedule - ..." title counts, not just one exact
+# string — a real scan of the live N2688 corpus found 8/8 "Schedule -" docs
+# were substantive EGLE letters, 0 genuine schedule stubs; other facilities'
+# own "Schedule - DMR"/"Schedule - Submit..." titles ALSO start with
+# "Schedule - " and are swept in too — confirmed via real specimens to be
+# genuine stubs, which is harmless: a genuine stub's classifier never finds a
+# usable display_title, so it just keeps its plain nSITE title). A doc whose
+# title matches is flagged `title_is_generic` for the classifier (asked to
+# propose a real display_title — see egle_doc_parser.py) and for the
+# "CORRESPONDENCE & ENFORCEMENT" digest-tier bump (see email_alerts.
+# is_correspondence_letter). `overrides` is a doc_id -> display name map for
+# docs Trisha has hand-verified (precedence: overrides > classifier
+# display_title > the raw nSITE title — see document_titles.resolve_display_name).
+# The 9 below are carried over from the retired schedule-title-overrides.md
+# handoff's hand-verified rename map (8 "Schedule -" N2688 docs + 1 "nForm
+# Document"); this block absorbs and supersedes that handoff.
+document_titles:
+  generic_exact:
+    - "nForm Document"
+    - "Site"
+    - "Submission PDF"
+    - "Submital Attachments"
+    - "Correspondence"
+  generic_prefixes:
+    - "Schedule - "
+  overrides:
+    "5234117446316116012": "EGLE letter: 120-day perimeter-monitor extension approval (Cells 6A/6B)"
+    "5149154739899361698": "EGLE cover email: perimeter-monitor extension approval (Cells 6A/6B)"
+    "5130343428992210792": "EGLE letter: 120-day extension approval, perimeter monitor (Cell 5C)"
+    "-2622199756316422732": "EGLE letter: 120-day extension approval, VGC corrective (2 wells)"
+    "3589987381183586634": "EGLE letter: extension approval, VGC corrective actions (29 wells)"
+    "-4679635065984934930": "EGLE cover email: Consent Judgement extension-request approval"
+    "8510351745791368151": "EGLE letter: 2-year HOV temperature-waiver renewal (16 WOI wells/sumps)"
+    "-2935564993291663255": "EGLE cover email: HOV temperature-waiver renewal approval letter"
+    "7045536706099143566": "GFL Consent Judgment report: 2026 Second Quarter (CJ No. 2020-0593-CE)"
+
 # --- WOI (Wells of Interest) auto-routing (ADR 005 integration, added 2026-07-13) ---
 # The semi-annual WOI Status Reports (the two are 181 and 323 pp of per-well
 # gas-extraction tables) are routed to the exhaustive woi_table_parser instead of

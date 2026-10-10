@@ -16,20 +16,22 @@ def test_doc_id_extraction_reuses_sheet_writer_not_a_copy():
 
 def _row(date="2026-08-01", name="Doc", risks="R5", link="https://x/1",
          facility="Arbor Hills Remediation Area", summary="A summary.",
-         kdp="180F at AHW272.", doc_type="evidence", severity="notable"):
+         kdp="180F at AHW272.", doc_type="evidence", severity="notable",
+         document_date="", egle_title=""):
     # Same column order as sheet_writer.FEED_HEADERS.
-    return [date, name, doc_type, risks, severity, summary, kdp, link, facility]
+    return [date, name, doc_type, risks, severity, summary, kdp, link, facility,
+            document_date, egle_title]
 
 
 # --- parse_feed_rows -----------------------------------------------------
 
 def test_parse_feed_rows_pads_short_rows():
-    short = ["2026-08-01", "Doc", "evidence"]  # only 3 of 9 columns
+    short = ["2026-08-01", "Doc", "evidence"]  # only 3 of 11 columns
     rows = ff.parse_feed_rows([short])
     assert rows == [{
         "date_filed": "2026-08-01", "document_name": "Doc", "type": "evidence",
         "risks": "", "severity": "", "summary": "", "key_data_point": "",
-        "link": "", "facility": "",
+        "link": "", "facility": "", "document_date": "", "egle_title": "",
     }]
 
 
@@ -241,6 +243,89 @@ def test_facility_display_resolves_hand_curated_srn_codes():
 
 
 # --- render_entry ---------------------------------------------------------
+
+# --- ADR 065: display_date + "EGLE title: ..." accuracy note --------------
+
+def test_display_date_falls_back_to_date_filed_when_no_document_date():
+    row = ff.parse_feed_rows([_row(date="2026-08-26")])[0]
+    assert ff.display_date(row) == "2026-08-26"
+
+
+def test_display_date_plain_document_date_within_gap():
+    # 1-day gap -- close enough not to need the "(filed ...)" annotation.
+    row = ff.parse_feed_rows([_row(date="2026-08-26", document_date="2026-08-27")])[0]
+    assert ff.display_date(row) == "2026-08-27"
+
+
+def test_display_date_annotates_filed_date_when_gap_exceeds_threshold():
+    row = ff.parse_feed_rows(
+        [_row(date="2020-03-23", document_date="2019-12-23")])[0]
+    assert ff.display_date(row) == "2019-12-23 (filed 2020-03-23)"
+
+
+def test_display_date_equal_dates_shows_plain_no_annotation():
+    row = ff.parse_feed_rows([_row(date="2026-08-27", document_date="2026-08-27")])[0]
+    assert ff.display_date(row) == "2026-08-27"
+
+
+def test_display_date_malformed_date_does_not_raise():
+    row = ff.parse_feed_rows([_row(date="not-a-date", document_date="2026-08-27")])[0]
+    assert ff.display_date(row) == "2026-08-27"  # shows document_date plain, no crash
+
+
+def test_render_entry_shows_filed_annotation_in_meta_line():
+    row = ff.parse_feed_rows(
+        [_row(date="2020-03-23", document_date="2019-12-23")])[0]
+    out = ff.render_entry(row)
+    assert "2019-12-23 (filed 2020-03-23)" in out
+
+
+def test_render_entry_shows_egle_title_note_when_title_differs():
+    row = ff.parse_feed_rows(
+        [_row(name="EGLE letter: HOV renewal",
+              egle_title="Schedule - Air General Compliance Report")])[0]
+    out = ff.render_entry(row)
+    assert "EGLE title: Schedule - Air General Compliance Report" in out
+
+
+def test_render_entry_omits_egle_title_note_when_same_as_shown_title():
+    row = ff.parse_feed_rows([_row(name="Violation Notice", egle_title="Violation Notice")])[0]
+    out = ff.render_entry(row)
+    assert "EGLE title:" not in out
+
+
+def test_render_entry_omits_egle_title_note_when_blank():
+    row = ff.parse_feed_rows([_row()])[0]  # egle_title="" by default
+    out = ff.render_entry(row)
+    assert "EGLE title:" not in out
+
+
+def test_render_entry_egle_title_note_is_redacted(monkeypatch):
+    # Same redact_names() mechanism title/summary/kdp already go through (see
+    # _public_view) -- REDACT_NAMES-configured env, matching this file's own
+    # established test pattern below (a synthetic name, never a real one).
+    monkeypatch.setenv("REDACT_NAMES", "Zzyzxqplonk Testtoken")
+    monkeypatch.setattr(ff, "_NAME_REDACTOR", ff._build_name_redactor())
+    row = ff.parse_feed_rows(
+        [_row(name="EGLE letter", egle_title="Letter to Zzyzxqplonk Testtoken")])[0]
+    out = ff.render_entry(row)
+    assert "Testtoken" not in out
+    assert "Zzyzxqplonk" not in out
+    assert "an EGLE inspector" in out  # the neutral substitute role label
+
+
+def test_search_entry_date_prefers_document_date():
+    row = ff.parse_feed_rows(
+        [_row(date="2020-03-23", document_date="2019-12-23")])[0]
+    idx = json.loads(ff.build_search_index([row]))
+    assert idx[0]["date"] == "2019-12-23"
+
+
+def test_search_entry_date_falls_back_to_date_filed():
+    row = ff.parse_feed_rows([_row(date="2026-08-26")])[0]
+    idx = json.loads(ff.build_search_index([row]))
+    assert idx[0]["date"] == "2026-08-26"
+
 
 def test_render_entry_omits_blank_optional_fields():
     row = ff.parse_feed_rows([_row(summary="", kdp="")])[0]
@@ -550,7 +635,7 @@ def test_parse_handcurated_rows_pads_short_rows():
     assert rows == [{
         "date_filed": "", "document_name": "Title", "type": "", "risks": "",
         "severity": "", "summary": "", "key_data_point": "", "link": "",
-        "facility": "", "source": "",
+        "facility": "", "source": "", "document_date": "", "egle_title": "",
     }]
 
 

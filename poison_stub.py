@@ -25,11 +25,19 @@ MAX_ERRORS_PER_DOC = 3  # give up on a poison doc after this many failures
 
 def stub_if_poisoned(sheets, sheet_id: str, state: dict, d: dict, cnt: int,
                      exc: BaseException, now: str,
-                     feed_tab: str = sw.TAB_HISTORICAL) -> bool:
+                     feed_tab: str = sw.TAB_HISTORICAL,
+                     title_overrides: dict | None = None) -> bool:
     """If `cnt` (the doc's running error count) has reached MAX_ERRORS_PER_DOC
     and the doc isn't already skipped, write its stub feed row to `feed_tab`,
     append a 'skipped' state event, and update the in-memory `state` (skipped
     set + error count cleared). Stub row first, then state (crash-safe).
+
+    ADR 065: a poison doc never gets parsed (download/classify failed), so
+    there's no display_title to generate — only the doc_id -> name override
+    map (never the generic-title/LLM path, which needs a successful parse)
+    can give it a better displayed name. `egle_title` always preserves the
+    raw nSITE title either way; `document_date` stays blank (no text was
+    ever extracted to look for one).
 
     Returns True iff the doc was stubbed. Never raises: a write failure is
     logged and the doc stays at its strike count."""
@@ -38,16 +46,21 @@ def stub_if_poisoned(sheets, sheet_id: str, state: dict, d: dict, cnt: int,
         return False
     reason = f"Source not classifiable after {cnt} attempts: {str(exc)[:140]}"
     link = nc.native_download_url(did)
+    egle_title = d["document_name"]
+    stub_meta = dict(d)
+    stub_meta["egle_title"] = egle_title
+    stub_meta["document_name"] = (title_overrides or {}).get(did) or egle_title
+    stub_meta["document_date"] = d.get("document_date", "")
     try:
-        sw.write_stub_row(sheets, sheet_id, d, link, reason, feed_tab=feed_tab)
+        sw.write_stub_row(sheets, sheet_id, stub_meta, link, reason, feed_tab=feed_tab)
         sw.mark_skipped(sheets, sheet_id, did,
-                        {"document_name": d["document_name"],
+                        {"document_name": stub_meta["document_name"],
                          "date_filed": d["date_filed"], "reason": reason},
                         now)
         state["skipped"][did] = {"reason": reason}
         state["errors"].pop(did, None)
         print(f"  ->  stubbed + skipped (now visible in feed): "
-              f"{d['document_name'][:50]}")
+              f"{stub_meta['document_name'][:50]}")
         return True
     except Exception as e2:  # noqa: BLE001
         print(f"  ->  stub/skip write failed: {e2}")

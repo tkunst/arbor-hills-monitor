@@ -50,13 +50,22 @@ from typing import Iterable
 # retried with backoff instead of aborting the run — see drive_client.
 from drive_client import GOOGLE_API_NUM_RETRIES
 
+# "Document Date" / "EGLE Title" appended at the END (ADR 065) so every
+# existing positional reader (parse_feed_rows, evidence_rows's own callers,
+# etc.) keeps working unchanged; "Document Name" already carries the
+# RESOLVED display name (override > classifier display_title > raw nSITE
+# title — see document_titles.py), "EGLE Title" is always the untouched raw
+# nSITE title, and "Document Date" is the date printed on the document
+# itself (may be blank), never nSITE's Date Filed.
 FEED_HEADERS = [
     "Date Filed", "Document Name", "Type", "Risks", "Severity",
     "Summary", "Key Data Point", "Link", "Facility",
+    "Document Date", "EGLE Title",
 ]
 EVIDENCE_HEADERS = [
     "Risk", "Risk Name", "Date Filed", "Document Name",
     "Key Data Point", "Full Summary", "Link", "Facility",
+    "Document Date", "EGLE Title",
 ]
 REGISTER_HEADERS = [
     "Risk", "Risk Name", "Description", "Evidence Count",
@@ -82,6 +91,7 @@ META_HEADERS = ["Key", "Value JSON"]
 ARCHIVE_HEADERS = [
     "Doc ID", "Document Name", "Date Filed", "Risks",
     "Source (nSITE) Link", "Archive Link", "Archived At",
+    "Document Date", "EGLE Title",  # ADR 065 — appended at the END, see FEED_HEADERS
 ]
 # Structured compliance deadlines (ADR 025). One append-only row per obligation
 # extracted from a document/record — the deadline text that used to live only in
@@ -367,6 +377,7 @@ WDS_EVIDENCE_HEADERS = [
 # tab actually has.
 ALL_EVIDENCE_HEADERS = [
     "Risk", "Risk Name", "Date", "Source", "Item", "Detail", "Facility / Collection", "Link",
+    "Document Date", "EGLE Title",  # ADR 065 — nSITE rows carry these; WDS rows are "" (no nSITE doc)
 ]
 # Raw-HTML page snapshots (wds_archiver.py) — portal-drift insurance for a
 # 2001-era ASP.NET app with no per-record PDFs to mirror. One row per
@@ -668,7 +679,11 @@ def feed_tab_for(metadata: dict, default: str) -> str:
 
 
 def feed_row(parsed, metadata: dict, link: str) -> list:
-    """One row for the New/Historical feed tab."""
+    """One row for the New/Historical feed tab. "Document Name" is whatever
+    the caller already resolved it to (override > display_title > raw nSITE
+    title — see document_titles.py); "EGLE Title" falls back to Document Name
+    itself for any caller that hasn't set it (e.g. a hand-built test dict),
+    so it's never blank when a real title exists."""
     return [
         metadata.get("date_filed", ""),
         metadata.get("document_name", ""),
@@ -679,6 +694,8 @@ def feed_row(parsed, metadata: dict, link: str) -> list:
         parsed.key_data_point,
         link,
         metadata.get("facility_name", ""),
+        metadata.get("document_date", ""),
+        metadata.get("egle_title") or metadata.get("document_name", ""),
     ]
 
 
@@ -773,6 +790,8 @@ def evidence_rows(parsed, metadata: dict, link: str, risk_names: dict) -> list[l
             parsed.summary,
             link,
             metadata.get("facility_name", ""),
+            metadata.get("document_date", ""),
+            metadata.get("egle_title") or metadata.get("document_name", ""),
         ])
     return rows
 
@@ -821,8 +840,11 @@ def all_evidence_rows(nsite_rows: list[list], wds_rows: list[list]) -> list[list
         summary = r[5] if len(r) > 5 else ""
         link = r[6] if len(r) > 6 else ""
         facility = r[7] if len(r) > 7 else ""
+        document_date = r[8] if len(r) > 8 else ""
+        egle_title = r[9] if len(r) > 9 else ""
         detail = f"{kdp} — {summary}".strip(" —")
-        out.append([risk, risk_name, date, "nSITE", item, detail, facility, link])
+        out.append([risk, risk_name, date, "nSITE", item, detail, facility, link,
+                    document_date, egle_title])
     for r in wds_rows:
         if not r:
             continue
@@ -833,7 +855,9 @@ def all_evidence_rows(nsite_rows: list[list], wds_rows: list[list]) -> list[list
         item = r[6] if len(r) > 6 else ""
         detail = r[7] if len(r) > 7 else ""
         link = r[8] if len(r) > 8 else ""
-        out.append([risk, risk_name, date, "WDS", item, detail, collection, link])
+        # A WDS record isn't a filed nSITE document -- no Document Date / EGLE
+        # Title concept applies; left blank, never a guess.
+        out.append([risk, risk_name, date, "WDS", item, detail, collection, link, "", ""])
     return out
 
 
@@ -1375,14 +1399,19 @@ def archived_doc_links(service, sheet_id: str) -> dict:
 def append_archive_row(
     service, sheet_id: str, doc_id: str, document_name: str, date_filed: str,
     risks, source_link: str, archive_link: str, archived_at: str,
+    document_date: str = "", egle_title: str = "",
 ) -> None:
     """Append one row to the Archived PDFs index AFTER the Drive upload succeeds
     (crash-safe: a kill before this re-uploads next run, and the find-in-folder
-    check makes that idempotent). risks may be a list or a pre-joined string."""
+    check makes that idempotent). risks may be a list or a pre-joined string.
+    document_date/egle_title default to "" for any pre-ADR-065 caller;
+    egle_title falls back to document_name so it's never blank when a real
+    title exists."""
     risks_str = ", ".join(risks) if isinstance(risks, (list, tuple)) else (risks or "")
     append_rows(service, sheet_id, TAB_ARCHIVE, [[
         doc_id, document_name, date_filed, risks_str,
         source_link, archive_link, archived_at,
+        document_date, egle_title or document_name,
     ]])
 
 

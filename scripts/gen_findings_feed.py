@@ -56,7 +56,11 @@ def _previous_total(out_dir: str) -> int | None:
     return int(m.group(1).replace(",", "")) if m else None
 
 
-def _tab_values(service, sheet_id: str, tab: str, a1: str = "A2:I") -> list:
+def _tab_values(service, sheet_id: str, tab: str, a1: str = "A2:K") -> list:
+    # Default width matches sheet_writer.FEED_HEADERS (11 columns, A-K, incl.
+    # ADR 065's trailing Document Date / EGLE Title) -- New/Historical
+    # Documents' shared schema. Callers reading a different tab/schema (the
+    # Archived PDFs / Hand-Curated Files calls below) pass their own `a1`.
     resp = (
         service.spreadsheets()
         .values()

@@ -288,6 +288,29 @@ def test_success_uploads_records_and_returns_drive_link(monkeypatch, tmp_path):
     assert row[5] == "https://drive/new-mirror"
 
 
+def test_success_carries_document_date_and_egle_title_from_doc_dict(monkeypatch, tmp_path):
+    # ADR 065: watcher.py/backfill.py's chokepoint sets doc["document_date"] /
+    # doc["egle_title"] on the dict passed in here, right after parse_document
+    # and before this call -- mirror_one_now must thread both into the
+    # Archived PDFs row.
+    monkeypatch.setattr(av.ac, "is_configured", lambda: True)
+    monkeypatch.setattr(av.ac, "oauth_drive_service", lambda: _FakeDrive())
+    monkeypatch.setattr(av.ac, "folder_id", lambda: "FID")
+    monkeypatch.setattr(av.ac, "upload_pdf", lambda *a, **kw: "https://drive/new-mirror")
+
+    doc = dict(_doc(), document_name="EGLE letter: HOV renewal",
+               egle_title="Schedule - Air General Compliance Report",
+               document_date="2026-08-27")
+    svc = FakeSheets()
+    local = str(tmp_path / "already-on-disk.pdf")
+    av.mirror_one_now(object(), svc, "SID", doc, {}, local_path=local)
+
+    row = svc._values._tabs[sw.TAB_ARCHIVE][1]
+    assert len(row) == len(sw.ARCHIVE_HEADERS)
+    assert row[7] == "2026-08-27"
+    assert row[8] == "Schedule - Air General Compliance Report"
+
+
 def test_downloads_when_no_local_path_given(monkeypatch, tmp_path):
     # run()'s own batch loop calls this path (no pre-existing local file);
     # mirror_one_now must still work without one, by downloading itself.

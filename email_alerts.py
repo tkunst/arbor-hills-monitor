@@ -84,6 +84,58 @@ def is_urgent(parsed, cfg: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Correspondence & enforcement detection (ADR 065, absorbing the retired
+# schedule-title-overrides.md handoff's section (b)/(c)) — a generic-titled
+# EGLE letter (filed as "Schedule - ...", "nForm Document", etc.) that's
+# actually a substantive approval/extension/corrective-action/enforcement
+# letter, buried under a bland title, gets bumped to its own pinned digest
+# section instead of the ordinary soft "OTHER NEW DOCUMENTS" line. Only ever
+# checked for a doc the caller has already determined has a generic nSITE
+# title (document_titles.title_is_generic) — a document with a real, specific
+# title (e.g. "Violation Notice") doesn't need this rescue.
+# ---------------------------------------------------------------------------
+
+# EGLE's own letter template footer -- distinctive enough NOT to match a
+# letter merely ADDRESSED to the agency (confirmed on a real GFL->EGLE cover
+# letter, which spells out "Department of Environment, Great Lakes, and
+# Energy" in its own address block but never this URL+phone footer line).
+_EGLE_LETTERHEAD_RE = re.compile(r"Michigan\.gov/EGLE", re.IGNORECASE)
+
+# The substantive-correspondence signals from the retired handoff's own
+# research (8-for-8 on the live N2688 Schedule- corpus): an extension
+# request, a corrective-action item, an approval, a Consent Judg(e)ment
+# reference, a perimeter-monitor action-level exceedance, or an HOV /
+# "Higher Operating Value" waiver.
+_CORRESPONDENCE_SIGNAL_RE = re.compile(
+    r"request for extension|corrective action|approv(?:e|es|ed|al)|"
+    r"consent judg(?:e)?ment|action level exceedance|"
+    r"higher operating value|\bHOV\b",
+    re.IGNORECASE,
+)
+
+# Letters run many pages once attachments are included; the letterhead/signal
+# itself is always on the letter's own first page(s), never buried in an
+# attachment -- bounding the scan avoids a false hit from an attachment deep
+# inside an otherwise-unrelated large filing (confirmed: a 949pp GFL quarterly
+# report reprints EGLE's agency name in its own address block on page 1, but
+# never the letterhead URL anywhere in its first pages).
+_CORRESPONDENCE_SCAN_CHARS = 6000
+
+
+def is_correspondence_letter(full_text: str) -> bool:
+    """True if `full_text` reads as an EGLE-originated approval/extension/
+    corrective-action/enforcement letter: EGLE's own letterhead marker AND at
+    least one substantive signal phrase, both within the document's own
+    opening pages. Pure, unit-tested — mirrors is_urgent's style. Fails safe
+    toward False: a miss just leaves the item on today's ordinary soft digest
+    line (no regression from before this feature existed); this is never
+    used to suppress or escalate an email on its own, only to choose which
+    digest section an already-queued item renders under."""
+    text = (full_text or "")[:_CORRESPONDENCE_SCAN_CHARS]
+    return bool(_EGLE_LETTERHEAD_RE.search(text)) and bool(_CORRESPONDENCE_SIGNAL_RE.search(text))
+
+
+# ---------------------------------------------------------------------------
 # Composition (pure-ish — no network)
 # ---------------------------------------------------------------------------
 
@@ -111,7 +163,14 @@ def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None
     recipients (e.g. DIGEST_RECIPIENTS_EXTRA — the commissioners) do NOT receive
     the same-day [URGENT] emails, so for them this recap is their FIRST sighting,
     not a repeat; claiming otherwise would be false. The 'Sent <date>' line still
-    records when the urgent email went to the urgent-tier list."""
+    records when the urgent email went to the urgent-tier list.
+
+    ADR 065: an item whose `parsed.is_correspondence` is True (a generic-titled
+    EGLE letter is_correspondence_letter() flagged as substantive — see that
+    function) gets pinned to its OWN "CORRESPONDENCE & ENFORCEMENT" section,
+    right after the urgent recap and before the ordinary procedural/other
+    split — the rescue this feature exists for: such an item no longer
+    renders in "OTHER NEW DOCUMENTS" at all (pulled out, not also-listed)."""
     if not items and not urgent_recap:
         return "No new Arbor Hills (N2688) documents this period."
     lines = []
@@ -124,8 +183,18 @@ def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None
             lines.append(f"      {p.key_data_point}")
             lines.append(f"      {it['link']}")
         lines.append("")
-    procedural = [it for it in items if it["parsed"].doc_type == "procedural"]
-    others = [it for it in items if it["parsed"].doc_type != "procedural"]
+    correspondence = [it for it in items if getattr(it["parsed"], "is_correspondence", False)]
+    remaining = [it for it in items if not getattr(it["parsed"], "is_correspondence", False)]
+    if correspondence:
+        lines.append("CORRESPONDENCE & ENFORCEMENT (EGLE letter under a generic filing title):")
+        for it in correspondence:
+            p, m = it["parsed"], it["metadata"]
+            lines.append(f"  - {m.get('date_filed','')}  {m.get('document_name','')}")
+            lines.append(f"      {p.key_data_point}")
+            lines.append(f"      {it['link']}")
+        lines.append("")
+    procedural = [it for it in remaining if it["parsed"].doc_type == "procedural"]
+    others = [it for it in remaining if it["parsed"].doc_type != "procedural"]
     lines += [f"Arbor Hills (N2688) digest — {len(items)} new document(s).", ""]
     if procedural:
         lines.append("ACTION ITEMS (deadlines / notices):")

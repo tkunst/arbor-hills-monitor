@@ -43,6 +43,7 @@ import woi_router
 import well_watch
 import archiver as av
 import poison_stub
+import document_titles as dt
 from egle_doc_parser import parse_document
 from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
 from config_loader import load_config
@@ -67,6 +68,11 @@ def _digest_record(parsed, d: dict, link: str) -> dict:
         "risks": parsed.risks,
         "key_data_point": parsed.key_data_point,
         "link": link,
+        # ADR 065: only ever True for a doc whose nSITE title was generic AND
+        # whose text reads as a substantive EGLE letter — see
+        # email_alerts.is_correspondence_letter + format_digest_body's pinned
+        # "CORRESPONDENCE & ENFORCEMENT" section.
+        "is_correspondence": bool(d.get("title_was_generic")) and ea.is_correspondence_letter(parsed.full_text),
     }
 
 
@@ -90,6 +96,7 @@ def _record_to_item(rec: dict) -> dict:
         risks=rec.get("risks", []),
         key_data_point=rec.get("key_data_point", ""),
         summary=rec.get("key_data_point", ""),
+        is_correspondence=rec.get("is_correspondence", False),
     )
     meta = {"date_filed": rec["date_filed"], "document_name": rec["document_name"]}
     if "urgent_sent_at" in rec:
@@ -151,6 +158,11 @@ def _processed_payload(parsed, d: dict) -> dict:
         # mutable-feed-only.
         "key_data_point": parsed.key_data_point,
         "summary": parsed.summary,
+        # ADR 065: carried so archiver.py's nightly catch-up run (which only
+        # has this payload + the live nSITE list, never a fresh parse) can
+        # still write the resolved name/date into a later Archived PDFs row.
+        "document_date": d.get("document_date", ""),
+        "egle_title": d.get("egle_title") or d["document_name"],
     }
 
 
@@ -159,6 +171,13 @@ def run() -> int:
     sheet_id = os.environ["GSHEET_ID"]
     model = cfg["anthropic_model"]
     today = _today()
+    # ADR 065: generic-title detection + the doc_id -> display-name override
+    # map. An empty/missing block is a safe no-op (every doc's title_is_generic
+    # is False, so the Document Name column renders exactly as before).
+    title_cfg = cfg.get("document_titles") or {}
+    generic_exact = title_cfg.get("generic_exact") or []
+    generic_prefixes = title_cfg.get("generic_prefixes") or []
+    title_overrides = title_cfg.get("overrides") or {}
 
     sheets = dc.sheets_service()
     sw.ensure_tabs(sheets, sheet_id)
@@ -205,13 +224,33 @@ def run() -> int:
         local = os.path.join(tmp, f"{d.get('facility_srn', 'N2688')}_{did}.pdf")
         try:
             nc.download_pdf(session, d, local)
+            is_generic = dt.title_is_generic(
+                d["document_name"], generic_exact, generic_prefixes)
             parsed = parse_document(
                 local, d, RISK_REGISTER, model=model,
                 signal_keywords=SIGNAL_KEYWORDS,
                 page_threshold=cfg["large_doc_page_threshold"],
                 max_keyword_pages=cfg["large_doc_max_keyword_pages"],
                 max_tokens=cfg["classification_max_tokens"],
+                title_is_generic=is_generic,
             )
+            # ADR 065 chokepoint: resolve the displayed name/date ONCE, right
+            # after parsing and before anything downstream reads `d` — the
+            # Drive mirror row, the Sheet row, the digest/urgent record, and
+            # the _state payload below all inherit it for free. `egle_title`
+            # preserves the raw nSITE title (for the EGLE Title column)
+            # BEFORE document_name is overwritten with the resolved name. A
+            # model-proposed display_title is sanitized against name_check
+            # before it can ever reach the public Sheet; if it can't be made
+            # clean, sanitize_display_title() returns "" and
+            # resolve_display_name() falls back to the plain nSITE title.
+            clean_display_title = (
+                dt.sanitize_display_title(parsed.display_title) if is_generic else "")
+            d["egle_title"] = d["document_name"]
+            d["document_name"] = dt.resolve_display_name(
+                did, d["egle_title"], clean_display_title, title_overrides)
+            d["document_date"] = parsed.document_date
+            d["title_was_generic"] = is_generic
             # Mirror to Drive inline (best-effort; falls back to the nSITE link
             # on any failure — see archiver.mirror_one_now()) so the Sheet row
             # and any alert below link somewhere that survives a Google-referer
@@ -306,7 +345,7 @@ def run() -> int:
             # Without this a doc whose 3rd strike came from the watcher was
             # silently parked by both jobs' poison gates (issue #82).
             poison_stub.stub_if_poisoned(sheets, sheet_id, state, d, cnt, e, _now(),
-                                         feed_tab=sw.TAB_NEW)
+                                         feed_tab=sw.TAB_NEW, title_overrides=title_overrides)
         finally:
             if os.path.exists(local):
                 os.remove(local)
