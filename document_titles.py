@@ -52,8 +52,19 @@ def sanitize_display_title(display_title: str) -> str:
     second pass still finds a denylist hit (e.g. two overlapping matches), OR
     the result is empty/still unclean after that, returns "" so the caller
     falls back to the plain nSITE title rather than publish anything
-    questionable. find_heuristic_hits (advisory, may false-positive) is
-    deliberately NOT used here — same reasoning as is_clean_for_publish."""
+    questionable.
+
+    find_heuristic_hits (advisory, may false-positive — name_check's
+    documented reason it's never is_clean_for_publish's own convergence
+    condition) IS used here as an extra, ADDITIONAL rejection gate, unlike
+    most is_clean_for_publish callers: display_title is drawn from the
+    classifier reading arbitrary document text, not human-curated/reviewed
+    text, so it can legitimately contain a genuinely NOVEL third-party name
+    the fixed KNOWN_NAMES denylist has never seen (security review finding,
+    ADR 065). A heuristic hit here only ever falls back to the plain nSITE
+    title — always a safe, harmless default — so trading a false-positive
+    fallback for ruling out a false-negative publish is the right side of
+    that tradeoff for this ONE new, unreviewed surface specifically."""
     text = (display_title or "").strip()
     if not text:
         return ""
@@ -72,6 +83,8 @@ def sanitize_display_title(display_title: str) -> str:
         text = re.sub(r"\s{2,}", " ", text).strip(" ,.-")
 
     if not text or not name_check.is_clean_for_publish(text):
+        return ""
+    if name_check.find_heuristic_hits(text):
         return ""
     return text
 
