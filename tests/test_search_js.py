@@ -83,3 +83,33 @@ def test_search_js_loads_facets_on_opening_filters_not_only_on_typing():
     # listeners, leaving them permanently empty on that path.
     js = _search_js_text()
     assert re.search(r'addEventListener\(\s*"toggle"', js)
+
+
+# --- coder:public-records-search-words: structural pins on the tokenized
+# multi-word matcher. These are drift guards (so a future edit can't quietly
+# revert to a whole-query, three-field, substring-only matcher without this
+# file noticing) -- the actual matching RULES are tested behaviorally via the
+# Python reference port in tests/test_search_matcher.py (no JS runtime under
+# pytest, per this file's own docstring).
+
+
+def test_search_js_tokenizes_the_query_instead_of_matching_it_whole():
+    js = _search_js_text()
+    assert re.search(r"function tokenizeWords\(", js)
+
+
+def test_search_js_stem_floor_is_six_characters():
+    # The 6-char floor on a text word before it can stem-match a longer query
+    # token (see search.js's own comment) is what stops a short word like
+    # "pfas" or "well" from matching every longer query that starts with it.
+    js = _search_js_text()
+    assert re.search(r"STEM_MIN_WORD_LENGTH\s*=\s*6", js)
+
+
+def test_search_js_searches_source_and_date_fields_too():
+    # Was title/facility/excerpt only; the handoff's whole point #3/#4 was
+    # that the Source line and the date were never searched at all.
+    js = _search_js_text()
+    assert re.search(r"searchableText", js)
+    assert "entry.source" in js
+    assert "entry.date" in js

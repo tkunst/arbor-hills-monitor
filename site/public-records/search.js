@@ -1,10 +1,11 @@
-/* Public Records client-side search (ADR 062 Phase 3). Filters
- * search-index.json entirely in the visitor's browser -- no server, no new
- * network call beyond the one same-origin fetch below. Progressive
- * enhancement: the markup this script controls ships `hidden`, so a visitor
- * with JavaScript disabled never sees an inert search box -- they get the
- * chronological list exactly as before. Vanilla JS, no dependency: at this
- * corpus size a hand-rolled substring filter needs no search library.
+/* Public Records client-side search (ADR 062 Phase 3; multi-word matching
+ * added by coder:public-records-search-words). Filters search-index.json
+ * entirely in the visitor's browser -- no server, no new network call beyond
+ * the one same-origin fetch below. Progressive enhancement: the markup this
+ * script controls ships `hidden`, so a visitor with JavaScript disabled never
+ * sees an inert search box -- they get the chronological list exactly as
+ * before. Vanilla JS, no dependency: at this corpus size a hand-rolled
+ * tokenized filter needs no search library.
  */
 (function () {
   "use strict";
@@ -128,7 +129,7 @@
 
   function currentFilters() {
     return {
-      q: searchInput.value.trim().toLowerCase(),
+      qTokens: tokenizeWords(searchInput.value),
       facility: filterFacility.value,
       type: filterType.value,
       severity: filterSeverity.value,
@@ -138,7 +139,7 @@
   }
 
   function isActive(f) {
-    return !!(f.q || f.facility || f.type || f.severity || f.dateMin || f.dateMax);
+    return !!(f.qTokens.length || f.facility || f.type || f.severity || f.dateMin || f.dateMax);
   }
 
   function matchesFacet(value, filterValue) {
@@ -151,18 +152,102 @@
     return value === filterValue;
   }
 
-  function matchesText(entry, q) {
-    if (!q) {
+  // Splits on whitespace and strips PUNCTUATION ONLY FROM EACH WORD'S EDGES
+  // (never the interior), lower-cased, empty pieces dropped. Used both to
+  // tokenize the query ("PEAS #24917" -> ["peas", "24917"]) and -- with the
+  // same function, so the two sides of a comparison are built the same way
+  // -- to split an entry's searchable text into words for the stemming rule
+  // below. Deliberately NOT `search-index.json`'s own tokenization (there is
+  // none; the index just carries plain strings) -- this is purely a
+  // search.js concept.
+  var WORD_EDGE_PUNCTUATION = /^[#,.;:()"']+|[#,.;:()"']+$/g;
+
+  function tokenizeWords(str) {
+    if (!str) {
+      return [];
+    }
+    var pieces = String(str).split(/\s+/);
+    var words = [];
+    for (var i = 0; i < pieces.length; i++) {
+      var w = pieces[i].replace(WORD_EDGE_PUNCTUATION, "").toLowerCase();
+      if (w) {
+        words.push(w);
+      }
+    }
+    return words;
+  }
+
+  // The full text a query is matched against: title + facility + excerpt +
+  // source (hand-curated rows only -- same "source" in entry key-presence
+  // check renderCard uses below) + date (so a bare year like "2023" matches).
+  // Same fields search-index.json already publishes (ADR 062 Phase 1); no
+  // new field is added to the index for this.
+  function searchableText(entry) {
+    var parts = [];
+    if (entry.title) {
+      parts.push(entry.title);
+    }
+    if (entry.facility) {
+      parts.push(entry.facility);
+    }
+    if (entry.excerpt) {
+      parts.push(entry.excerpt);
+    }
+    if ("source" in entry && entry.source) {
+      parts.push(entry.source);
+    }
+    if (entry.date) {
+      parts.push(entry.date);
+    }
+    return parts.join(" ");
+  }
+
+  // A text word counts as a stem match for a (necessarily longer, or
+  // equal-length) query token only once it's at least this many characters
+  // -- stops a short word like "pfas" or "well" from matching every longer
+  // query that happens to start with it.
+  var STEM_MIN_WORD_LENGTH = 6;
+
+  // One query token matches an entry's text if EITHER:
+  //  (a) it's a literal substring of the full concatenated text -- keeps
+  //      today's partial-word behavior ("hydrogeolog" inside "Hydrogeologic",
+  //      "24917" inside "...#24917..."), or
+  //  (b) a WORD actually in the entry's text is a prefix of the token (and
+  //      long enough per STEM_MIN_WORD_LENGTH) -- so a reader typing the
+  //      longer/more formal spelling ("hydrogeological") still finds text
+  //      that only uses the shorter one ("hydrogeologic"). This direction
+  //      only (text word -> prefix of query token): the reverse case, a
+  //      shorter query finding a longer text word that starts with it, is
+  //      already covered by (a), since the shorter string is then a literal
+  //      substring of the longer one.
+  function tokenMatches(token, textLower, textWords) {
+    if (textLower.indexOf(token) !== -1) {
       return true;
     }
-    var fields = [entry.title, entry.facility, entry.excerpt];
-    for (var i = 0; i < fields.length; i++) {
-      var v = fields[i];
-      if (v && v.toLowerCase().indexOf(q) !== -1) {
+    for (var i = 0; i < textWords.length; i++) {
+      var w = textWords[i];
+      if (w.length >= STEM_MIN_WORD_LENGTH && token.indexOf(w) === 0) {
         return true;
       }
     }
     return false;
+  }
+
+  // AND semantics, any order: an entry matches only once EVERY query token
+  // matches somewhere in its searchable text (tokenMatches above).
+  function matchesText(entry, queryTokens) {
+    if (!queryTokens.length) {
+      return true;
+    }
+    var text = searchableText(entry);
+    var textLower = text.toLowerCase();
+    var textWords = tokenizeWords(text);
+    for (var i = 0; i < queryTokens.length; i++) {
+      if (!tokenMatches(queryTokens[i], textLower, textWords)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   // A hand-curated `date` can be "YYYY", "YYYY-MM" or blank, not just a full
@@ -344,7 +429,7 @@
     }
     var results = indexData.filter(function (entry) {
       return (
-        matchesText(entry, f.q) &&
+        matchesText(entry, f.qTokens) &&
         matchesFacet(entry.facility, f.facility) &&
         matchesFacet(entry.type, f.type) &&
         matchesFacet(entry.severity, f.severity) &&
