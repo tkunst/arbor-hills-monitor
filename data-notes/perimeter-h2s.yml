@@ -23,7 +23,9 @@
 # The 2026-10-09 refresh re-queried the feed through 2026-10-09 12:00 ET (queried 13:33 ET) and
 # updated only the live-status sentences (MS-6 stopped reporting after 2026-10-06 17:00; MS-2 and
 # MS-5 read 0.0 in all but one hour since 2026-10-06 11:00; still no hourly H2S >= 30 ppb since
-# 2026-09-14). Two blind refuters checked the changed sentences.
+# 2026-09-14) and added the MS-2 constant-0.0 methane week (2026-09-16 21:00 to 09-24 19:00, the
+# only constant-CH4 run of 100+ readings at MS-2 in the full record). Two blind refuters checked
+# the final text (2026-10-09 evening); no factual errors, wording tightened.
 
 id: perimeter-h2s
 as_of: "October 9, 2026, 12:00 p.m. ET"
@@ -53,8 +55,8 @@ html: >-
   Since 11&nbsp;a.m. on October 6, MS-5 and MS-2 have each read
   0.0&nbsp;ppb in all but one hour. MS-6 read 3.0&ndash;3.2&nbsp;ppb from May 28, 2025
   (apart from two readings on June 11, 2026) until 11&nbsp;a.m. on September 29, 2026, when it
-  dropped to 0.0&nbsp;ppb; it then sent no data from 5&nbsp;p.m. that day until 11&nbsp;a.m.
-  on October 5, read 0.0&nbsp;ppb H2S and 0&ndash;2&nbsp;ppm methane every hour until
+  dropped to 0.0&nbsp;ppb; it then sent no data after 5&nbsp;p.m. that day until it resumed at 11&nbsp;a.m.
+  on October 5, read 0.0&nbsp;ppb H2S and 0&ndash;2&nbsp;ppm methane every hour through
   5&nbsp;p.m. on October 6, and has sent no data since. MS-1 has sent no data
   since noon on September 17, 2026, after reading exactly 0.0 for both gases from 9&nbsp;p.m.
   on September 16. <strong>Earlier:</strong> MS-1 read a constant 3.0 or 3.1&nbsp;ppb from
@@ -66,7 +68,7 @@ html: >-
   fence-line action level, which is defined on a 15-minute rolling average; an hourly value
   from the public feed is a screening signal, not a confirmed crossing), most recently on
   September 14, 2026, up to 153.4&nbsp;ppb at MS-1 (which has sent no data since
-  September 17). No station has recorded an hourly value at or above 30&nbsp;ppb since. These are observations from GFL's public perimeter
+  September 17). None of the stations reporting varying readings has recorded an hourly value at or above 30&nbsp;ppb since. These are observations from GFL's public perimeter
   feed, hosted by Barr Engineering; the cause has not been publicly confirmed by GFL, EGLE
   or Barr Engineering. Status as of October 9, 2026, 12:00&nbsp;p.m.&nbsp;ET.
 
@@ -91,7 +93,7 @@ release_md: |-
 
   Do not read the absence of high H2S readings at a station during its suspect period as verified clean air.
 
-  *Live feed after this bundle's cutoff (status as of 2026-10-09 12:00 ET; these readings are not in this bundle):* MS-5's last reading before a gap was 2026-09-16 21:00 ET and its next was 2026-09-26 19:00 ET (its only non-zero value in the flat period was 0.1 ppb on 2026-09-14 15:00 ET); since then it has reported varying values, up to 11.0 ppb (2026-09-29 04:00 ET). From 2026-09-16 21:00 ET, MS-1 read exactly `0.0` for both H2S and CH4; its last reading was 2026-09-17 12:00 ET. MS-2's methane (`ch4_ppm`) read a constant `0.0` from 2026-09-16 21:00 ET through 2026-09-24 19:00 ET (191 hourly readings, after an 11-hour gap from 2026-09-16 10:00 ET; its only stuck-methane stretch of a week or more in the record). That is the same hour MS-1 went to exactly `0.0` for both gases and MS-5 sent its last reading before a 10-day gap. MS-2 reported its first non-zero H2S value since June 2025 on 2026-09-24 (0.1 ppb at 23:00 ET) and has since reported small varying values, up to 2.3 ppb (2026-10-01 19:00 ET). From 2026-10-06 11:00 ET through 2026-10-09 12:00 ET, MS-5 and MS-2 each read `0.0` in all but one hour (MS-5 0.1 ppb at 2026-10-09 02:00 ET; MS-2 0.5 ppb at 2026-10-09 11:00 ET). MS-6 moved to a constant `3.1` on 2026-09-23, read `0.0` from 2026-09-29 11:00 ET, had no readings between 2026-09-29 17:00 ET and 2026-10-05 11:00 ET, read `0.0` ppb H2S and 0-2 ppm CH4 every hour from 2026-10-05 11:00 ET through 2026-10-06 17:00 ET, and has sent no data since. MS-3 and MS-4 are reporting varying readings; MS-5 and MS-2 have resumed only recently. On 2026-09-14 the stations then reporting varying readings recorded hourly H2S above 30 ppb (the 2022 Consent Judgment's fence-line action level, defined on a 15-minute rolling average; an hourly value is a screening signal, not a confirmed crossing): MS-1 153.4 ppb (13:00 ET), MS-3 65.4 ppb (14:00 ET), and MS-4 67.9 ppb (14:00 ET) and 46.8 ppb (15:00 ET). None of the stations reporting varying readings has recorded hourly H2S at or above 30 ppb since.
+  *Live feed after this bundle's cutoff (status as of 2026-10-09 12:00 ET; these readings are not in this bundle):* MS-5's last reading before a gap was 2026-09-16 21:00 ET and its next was 2026-09-26 19:00 ET (its only non-zero value in the flat period was 0.1 ppb on 2026-09-14 15:00 ET); since then it has reported varying values, up to 11.0 ppb (2026-09-29 04:00 ET). From 2026-09-16 21:00 ET, MS-1 read exactly `0.0` for both H2S and CH4; its last reading was 2026-09-17 12:00 ET. MS-2's methane (`ch4_ppm`) read a constant `0.0` from 2026-09-16 21:00 ET through 2026-09-24 19:00 ET (191 hourly readings, after no readings from 2026-09-16 11:00 to 20:00 ET; its only stuck-methane stretch of a week or more in the record). That is the same hour MS-1 went to exactly `0.0` for both gases and MS-5 sent its last reading before a 10-day gap. MS-2 reported its first non-zero H2S value since June 2025 on 2026-09-24 (0.1 ppb at 23:00 ET) and has since reported small varying values, up to 2.3 ppb (2026-10-01 19:00 ET). From 2026-10-06 11:00 ET through 2026-10-09 12:00 ET, MS-5 and MS-2 each read `0.0` in all but one hour (MS-5 0.1 ppb at 2026-10-09 02:00 ET; MS-2 0.5 ppb at 2026-10-09 11:00 ET). MS-6 moved to a constant `3.1` on 2026-09-23, read `0.0` from 2026-09-29 11:00 ET, had no readings between 2026-09-29 17:00 ET and 2026-10-05 11:00 ET, read `0.0` ppb H2S and 0-2 ppm CH4 every hour from 2026-10-05 11:00 ET through 2026-10-06 17:00 ET, and has sent no data since. MS-3 and MS-4 are reporting varying readings; MS-5 and MS-2 have resumed only recently. On 2026-09-14 the stations then reporting varying readings recorded hourly H2S above 30 ppb (the 2022 Consent Judgment's fence-line action level, defined on a 15-minute rolling average; an hourly value is a screening signal, not a confirmed crossing): MS-1 153.4 ppb (13:00 ET), MS-3 65.4 ppb (14:00 ET), and MS-4 67.9 ppb (14:00 ET) and 46.8 ppb (15:00 ET). None of the stations reporting varying readings has recorded hourly H2S at or above 30 ppb since.
 
   These are observations from GFL's public perimeter feed, hosted by Barr Engineering; the cause has not been publicly confirmed by GFL, EGLE or Barr Engineering.
 
