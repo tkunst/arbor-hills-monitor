@@ -211,3 +211,40 @@ def test_stub_if_poisoned_sets_egle_title_to_raw_nsite_title(monkeypatch, sheet)
     assert captured["egle_title"] == DOC["document_name"]
     assert captured["document_name"] == "Curated name"
     assert captured["document_date"] == ""
+
+
+def test_stub_if_poisoned_preserves_already_resolved_egle_title(monkeypatch, sheet):
+    # Code review finding (ADR 065): a non-transient failure can occur AFTER
+    # the chokepoint already ran (e.g. a permanent error in write_document),
+    # at which point d["document_name"] is already the RESOLVED display name
+    # and d["egle_title"] already holds the true raw one -- this must not
+    # clobber the real egle_title with the resolved name.
+    d = dict(DOC, document_name="EGLE letter: curated name",
+             egle_title="Schedule - Air General Compliance Report")
+    captured = {}
+    monkeypatch.setattr(
+        sw, "write_stub_row",
+        lambda svc, sid, metadata, link, reason, feed_tab=sw.TAB_HISTORICAL:
+            captured.update(metadata))
+    poison_stub.stub_if_poisoned(
+        object(), "SID", {"skipped": {}, "errors": {}}, d, ME, ValueError("x"), "t")
+    assert captured["egle_title"] == "Schedule - Air General Compliance Report"
+    assert captured["document_name"] == "EGLE letter: curated name"
+
+
+def test_stub_if_poisoned_override_still_wins_over_resolved_display_title(monkeypatch, sheet):
+    # Override precedence (resolve_display_name's own contract) must hold
+    # even post-chokepoint: an override for this doc_id beats whatever
+    # display_title the classifier already resolved.
+    d = dict(DOC, document_name="EGLE letter: curated name",
+             egle_title="Schedule - Air General Compliance Report")
+    captured = {}
+    monkeypatch.setattr(
+        sw, "write_stub_row",
+        lambda svc, sid, metadata, link, reason, feed_tab=sw.TAB_HISTORICAL:
+            captured.update(metadata))
+    poison_stub.stub_if_poisoned(
+        object(), "SID", {"skipped": {}, "errors": {}}, d, ME, ValueError("x"), "t",
+        title_overrides={DID: "Override name"})
+    assert captured["document_name"] == "Override name"
+    assert captured["egle_title"] == "Schedule - Air General Compliance Report"

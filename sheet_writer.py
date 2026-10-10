@@ -1031,17 +1031,23 @@ def rebuild_all_evidence_tab(service, sheet_id: str) -> None:
     evidence and only grows under normal operation — but isn't GUARANTEED to
     (e.g. a manual re-dump can shrink the source tabs), so the range is
     cleared before writing rather than assuming monotonic growth."""
+    # Ranges match EVIDENCE_HEADERS'/ALL_EVIDENCE_HEADERS' current width (10
+    # columns, A-J, since ADR 065 appended Document Date/EGLE Title) -- a
+    # stale narrower range here would silently clip those two columns right
+    # back off on every rebuild (code review finding, ADR 065).
     nsite_resp = (
         service.spreadsheets()
         .values()
-        .get(spreadsheetId=sheet_id, range=f"'{TAB_EVIDENCE}'!A2:H")
+        .get(spreadsheetId=sheet_id, range=f"'{TAB_EVIDENCE}'!A2:{chr(ord('A') + len(EVIDENCE_HEADERS) - 1)}")
         .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     wds_rows = _tab_rows(service, sheet_id, TAB_WDS_EVIDENCE, "A2:I")
     body_rows = all_evidence_rows(nsite_resp.get("values", []), wds_rows)
 
     service.spreadsheets().values().clear(
-        spreadsheetId=sheet_id, range=f"'{TAB_ALL_EVIDENCE}'!A2:H", body={}
+        spreadsheetId=sheet_id,
+        range=f"'{TAB_ALL_EVIDENCE}'!A2:{chr(ord('A') + len(ALL_EVIDENCE_HEADERS) - 1)}",
+        body={},
     ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
     if body_rows:
         service.spreadsheets().values().update(
