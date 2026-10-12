@@ -80,6 +80,8 @@ DOMAIN = {
     "egle_doc_parser": "processing", "risk_register": "processing",
     "retry_policy": "processing", "woi_table_parser": "processing",
     "woi_router": "processing",         # routes WOI Status Reports to woi_table_parser (ADR 005)
+    "well_aliases": "processing",       # curated well-ID alias map loader + exact-match rule (ADR 068)
+    "backfill_well_aliases": "ops",     # one-shot dry-run-default Measurements relabel (ADR 068)
     "poison_doc_extractor": "processing",  # .msg/.docx -> synthesized PDF (ADR 011)
     "backfill_metric_taxonomy": "processing",  # one-shot `other`-bucket reclassify — ADR 034
     # Persistence & notification
@@ -123,6 +125,7 @@ DATASTORES = [
     ("ds:smtp", "Email Recipients (SMTP)"),
     ("ds:anthropic", "Anthropic Claude API"),
     ("ds:config", "config.yml (risk register + settings)"),
+    ("ds:well-aliases", "data/well_aliases.json (generated well-ID alias map, ADR 068)"),
 ]
 # code<->store read/write edges, attributed to the module that issues the I/O
 # (the client that actually calls the API), verified by reading each module.
@@ -138,6 +141,7 @@ DATA_EDGES = [
     ("email_alerts", "ds:smtp", "write"),
     ("egle_doc_parser", "ds:anthropic", "read"),   # sends doc, reads classification
     ("config_loader", "ds:config", "read"),
+    ("well_aliases", "ds:well-aliases", "read"),   # loaded once per run; fails loudly (ADR 068)
     ("wds_archiver", "ds:wds", "read"),            # fetches the 5 collection pages
     ("wds_archiver", "ds:drive-archive", "write"), # uploads raw-HTML snapshots
     ("mmpc_archiver", "ds:drive-archive", "write"),# uploads MMPC PDFs (Mirror D, ADR 010)

@@ -78,6 +78,10 @@ REGISTER_HEADERS = [
 MEASUREMENTS_HEADERS = [
     "As-Of Date", "Well ID", "Metric", "Value", "Unit", "Basis",
     "Date Filed", "Document Name", "Note", "Link", "Facility",
+    # ADR 068 — appended at the END (positional readers unaffected): the id as
+    # printed in the source, filled ONLY when the curated alias map relabeled
+    # the Well ID column, so every relabel is auditable. Blank = as filed.
+    "Well ID As Filed",
 ]
 # Internal processing-state tabs. "_state" is an APPEND-ONLY event log — one row
 # per processing attempt — so there is never a read-modify-write race and the
@@ -738,6 +742,7 @@ def measurement_rows(parsed, metadata: dict, link: str) -> list[list]:
             m.get("note") or "",
             link,
             metadata.get("facility_name", ""),
+            m.get("raw_well_id") or "",
         ])
     return rows
 

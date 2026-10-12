@@ -27,6 +27,13 @@ jobs:
           blocked=""
           while IFS= read -r f; do
             [ -z "$f" ] && continue
+            # Full-path allowlist (exact paths only, never a pattern). ADR 068:
+            # the generated well-ID alias map is curated config, not data.
+            case "$f" in
+              data/well_aliases.json)
+                continue
+                ;;
+            esac
             bn=$(basename "$f")
             case "$bn" in
               *.csv|*.xml|*.json|*.pdf|.env|.env.*)
