@@ -21,7 +21,34 @@ import ridgewood_client as rc
 import ridgewood_reverify as rr
 import sheet_writer as sw
 
+import pytest
+
 THR = {"h2s_24h_ppb": 72, "h2s_15min_ppb": 750}
+
+
+@pytest.fixture(autouse=True)
+def _isolated_manifest(monkeypatch, tmp_path):
+    """Point every no-arg load_manifest()/save_manifest() call (run() makes both)
+    at a per-test temp file. Their `path=MANIFEST_PATH` defaults are bound at
+    import, so patching MANIFEST_PATH alone would not redirect them; and before
+    this fixture, tests that patched only save_manifest silently LOADED the real
+    committed data/provenance/ridgewood-manifest.json — they broke the moment the
+    workflow's first run populated it (5e0b5b4). MANIFEST_PATH itself is left
+    untouched: the gitignore test and the alert text need the real path. A test
+    that patches load/save itself still overrides this."""
+    path = str(tmp_path / "isolated-ridgewood-manifest.json")
+    real_load, real_save = rr.load_manifest, rr.save_manifest
+    monkeypatch.setattr(rr, "load_manifest", lambda path=path: real_load(path))
+    monkeypatch.setattr(rr, "save_manifest", lambda m, path=path: real_save(m, path))
+    return path
+
+
+def test_default_manifest_io_is_isolated_under_tmp(_isolated_manifest, tmp_path):
+    m = rr.load_manifest()
+    assert m["months"] == {}   # empty shape, never the committed manifest
+    rr.save_manifest({"months": {"2026-05": []}})
+    assert (tmp_path / "isolated-ridgewood-manifest.json").exists()
+    assert rr.load_manifest()["months"] == {"2026-05": []}
 
 _FOOTNOTES = (
     "1 Notifications to be sent to the Ridge Wood Elementary School if a 15-minute "
