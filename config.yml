@@ -1899,6 +1899,17 @@ urgent:
 temperature_thresholds:
   epa_gas_operating_f: 131       # EPA gas-well operating limit (watch)
   mact_f: 145                    # MACT limit (urgent)
+  # Well-specific Higher Operating Values EGLE has approved at Arbor Hills
+  # (2024-04-30 grant: 150/160/170; 2024-07-10 replacement wells; 2023 grants
+  # at 155; AHW272R4 at 180 on 2025-02-19, the only 180; AHW263R5 at 170 on
+  # 2025-07-23; 2026-04-07 renewal). Used ONLY by kdp_check.py (ADR 067) to
+  # recognize an HOV value named in classifier prose. Add a value here when a
+  # new HOV letter sets one.
+  hov_values_f: [150, 155, 160, 170, 180]
+  # Above this, a "°F" number in a sentence about wells is treated as a
+  # misread column (e.g. H2S ppm), never a wellhead temperature. Flare and
+  # combustion sentences are exempt (kdp_check.py).
+  max_plausible_wellhead_f: 250
 
 # --- CAN-SPAM unsubscribe for the multi-recipient alert emails (ADR 040) ---
 # Applied at the single send choke point (email_alerts.send_email), so ALL
