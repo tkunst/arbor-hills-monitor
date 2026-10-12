@@ -42,6 +42,7 @@
     /* Toggleable roster group colors (not spatial clusters). */
     --group-hov: #8b5cf6;
     --group-flagged: #0891b2;
+    --group-over145: #c026d3;
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) {
@@ -156,6 +157,7 @@
   .grp-dot.west { background: var(--cluster-west); }
   .grp-dot.hov { background: var(--group-hov); }
   .grp-dot.flagged { background: var(--group-flagged); }
+  .grp-dot.over145 { background: var(--group-over145); }
 
   .cluster-toggle { display: inline-flex; align-items: center; flex: none; }
   .switch {
@@ -172,6 +174,7 @@
   #group-west .switch[aria-checked="true"]    { background: var(--cluster-west); }
   #group-hottest .switch[aria-checked="true"] { background: var(--group-hov); }
   #group-flagged .switch[aria-checked="true"] { background: var(--group-flagged); }
+  #group-over145 .switch[aria-checked="true"] { background: var(--group-over145); }
 
   .well-row {
     display: flex; align-items: flex-start; gap: 7px; padding: 5px 4px 5px 20px;
@@ -295,6 +298,15 @@
       <div class="well-list" data-group="hottest"></div>
     </details>
 
+    <details class="group" id="group-over145" open>
+      <summary><span class="chevron">▶</span> <span class="grp-dot over145"></span> Wells Over 145°F <span class="count"></span>
+        <span class="cluster-toggle">
+          <button type="button" class="switch" role="switch" aria-checked="false" data-cluster="over145" aria-label="Toggle all wells over 145°F"><span class="switch-knob"></span></button>
+        </span>
+      </summary>
+      <div class="well-list" data-group="over145"></div>
+    </details>
+
     <details class="group" id="group-east" open>
       <summary><span class="chevron">▶</span> <span class="grp-dot east"></span> Eastern Hot Core <span class="count"></span>
         <span class="cluster-toggle">
@@ -415,6 +427,11 @@
   exact distance: re-run at 100, 200, and 400&nbsp;feet, using two independent well-coordinate
   sources, and separately for each year from 2021 to 2026, the same two-cluster result (an eastern
   hot core and a western warm field) held throughout.
+  <br><br>
+  <strong>Wells Over 145&deg;F.</strong> Every well location whose hottest as-found reading in this
+  dataset is above 145&deg;F, hottest first, computed from the data. Some of these wells held an
+  approved higher operating value at the time, so a reading above 145&deg;F is not by itself an
+  exceedance; each well's description gives its approved value where one applies.
   Well-picker descriptions are computed from this dataset.
 </footer>
 
@@ -426,12 +443,12 @@
 
   const MAX_SELECTED = 8;          // palette cap for INDIVIDUAL (own-color) picks only
   const PALETTE_SLOTS = 8;
-  const TOGGLE_GROUPS = ["east", "west", "hottest", "flagged"];  // groups with an On/Off toggle + one color
+  const TOGGLE_GROUPS = ["east", "west", "hottest", "flagged", "over145"];  // groups with an On/Off toggle + one color
   const GROUP_LABEL = {
     east: "Eastern Hot Core", west: "Western Warm Field",
-    hottest: "2026 HOV-approved Wells", flagged: "Flagged Wells",
+    hottest: "2026 HOV-approved Wells", flagged: "Flagged Wells", over145: "Wells Over 145°F",
   };
-  const GROUP_VAR = { east: "--cluster-east", west: "--cluster-west", hottest: "--group-hov", flagged: "--group-flagged" };
+  const GROUP_VAR = { east: "--cluster-east", west: "--cluster-west", hottest: "--group-hov", flagged: "--group-flagged", over145: "--group-over145" };
   function groupColor(gk) {
     return getComputedStyle(document.documentElement).getPropertyValue(GROUP_VAR[gk]).trim();
   }
@@ -550,6 +567,7 @@
     const tags = [];
     if (groups.hottest.wells.indexOf(id) !== -1) tags.push("HOV-approved");
     if (groups.flagged.wells.indexOf(id) !== -1) tags.push("Flagged");
+    if (groups.over145.wells.indexOf(id) !== -1) tags.push("Over 145°F");
     if (groups.east.wells.indexOf(id) !== -1) tags.push("Eastern Hot Core");
     if (groups.west.wells.indexOf(id) !== -1) tags.push("Western Warm Field");
     return tags;
@@ -594,12 +612,14 @@
     const filterText = document.getElementById("search").value.trim().toLowerCase();
 
     renderGroupList(document.querySelector('[data-group="hottest"]'), groups.hottest.wells, filterText);
+    renderGroupList(document.querySelector('[data-group="over145"]'), groups.over145.wells, filterText);
     renderGroupList(document.querySelector('[data-group="east"]'), groups.east.wells, filterText);
     renderGroupList(document.querySelector('[data-group="west"]'), groups.west.wells, filterText);
     renderGroupList(document.querySelector('[data-group="flagged"]'), groups.flagged.wells, filterText);
     renderGroupList(document.querySelector('[data-group="all"]'), allWellIds, filterText);
 
     document.querySelector("#group-hottest .count").textContent = `(${groups.hottest.wells.length})`;
+    document.querySelector("#group-over145 .count").textContent = `(${groups.over145.wells.length})`;
     document.querySelector("#group-east .count").textContent = `(${groups.east.wells.length})`;
     document.querySelector("#group-west .count").textContent = `(${groups.west.wells.length})`;
     document.querySelector("#group-flagged .count").textContent = `(${groups.flagged.wells.length})`;

@@ -23,7 +23,7 @@ tool makes no interpretive claims the data does not support.
 ## Controls
 
 Search (matches merged predecessor IDs); pick up to 8 individual wells (each its own color);
-On/Off slide toggles for the 2026 HOV-approved, Eastern Hot Core, Western Warm Field, and
+On/Off slide toggles for the 2026 HOV-approved, Wells Over 145F, Eastern Hot Core, Western Warm Field, and
 Flagged groups (plot a whole group in one color); a "Copy view link" permalink; light/dark
 theme; and a table-view accessibility fallback. Reference bands mark the SET thresholds on each
 chart.
