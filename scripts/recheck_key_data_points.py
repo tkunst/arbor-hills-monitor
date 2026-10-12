@@ -84,9 +84,16 @@ def _redact(text: str) -> str:
     return redact_names(text) or ""
 
 
+_ALLOWED_DOWNLOAD_PREFIX = "https://mienviro.michigan.gov/ncore/downloadpdf/"
+
+
 def _download(url: str, dest: str) -> None:
+    # Only the MiEnviro document endpoint the feed rows link to; never file:/ or
+    # another scheme/host taken from Sheet text.
+    if not url.startswith(_ALLOWED_DOWNLOAD_PREFIX):
+        raise RuntimeError(f"refusing to download non-MiEnviro link: {url[:80]}")
     req = urllib.request.Request(url, headers={"User-Agent": "arbor-hills-monitor"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
+    with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310  # nosec B310 — https MiEnviro prefix enforced above
         data = resp.read()
     if data[:2] == b"\x1f\x8b":
         data = gzip.decompress(data)
