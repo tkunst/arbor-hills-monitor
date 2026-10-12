@@ -9,32 +9,47 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+_MANIFEST_REL = os.path.join("data", "provenance", "ridgewood-manifest.json")
 _RIDGEWOOD_MANIFEST = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "data", "provenance", "ridgewood-manifest.json")
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), _MANIFEST_REL)
 
 
-def _file_digest(path):
+def _read_bytes(path):
     if not os.path.exists(path):
         return None
     with open(path, "rb") as fh:
-        return hashlib.sha256(fh.read()).hexdigest()
+        return fh.read()
+
+
+def _digest(data):
+    return None if data is None else hashlib.sha256(data).hexdigest()
 
 
 @pytest.fixture(scope="session", autouse=True)
 def _committed_ridgewood_manifest_untouched():
     """Guard: the test suite must never create, modify or delete the committed
     Ridge Wood provenance manifest (the monthly workflow owns it; its git history
-    is the tamper-evidence). Fails the session at teardown if it changed."""
-    before = _file_digest(_RIDGEWOOD_MANIFEST)
+    is the tamper-evidence). ridgewood_reverify.MANIFEST_PATH is cwd-relative, so
+    the cwd-relative copy is watched too when pytest runs from elsewhere. On a
+    leak the original bytes are restored (so a mutated manifest can't be
+    committed by accident) and the session fails at teardown."""
+    paths = {_RIDGEWOOD_MANIFEST, os.path.abspath(_MANIFEST_REL)}
+    watched = [p for path in sorted(paths) for p in (path, path + ".tmp")]
+    before = {p: _read_bytes(p) for p in watched}
     yield
-    after = _file_digest(_RIDGEWOOD_MANIFEST)
-    leftover_tmp = os.path.exists(_RIDGEWOOD_MANIFEST + ".tmp")
-    if after != before or leftover_tmp:
-        pytest.fail(
-            f"test suite modified the committed {_RIDGEWOOD_MANIFEST} "
-            f"(sha256 {before} -> {after}, leftover .tmp={leftover_tmp}); "
-            f"tests must use a tmp_path manifest", pytrace=False)
+    changed = [p for p in watched if _read_bytes(p) != before[p]]
+    if not changed:
+        return
+    for p in changed:
+        if before[p] is None:
+            os.remove(p)
+        else:
+            with open(p, "wb") as fh:
+                fh.write(before[p])
+    details = "; ".join(
+        f"{p} (sha256 {_digest(before[p])} -> changed, restored)" for p in changed)
+    pytest.fail(f"test suite modified the Ridge Wood manifest: {details}. "
+                f"Tests must use a tmp_path manifest.", pytrace=False)
 
 
 @pytest.fixture
