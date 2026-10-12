@@ -644,6 +644,24 @@ external users but no sensitive data). Public repo.
 - **Never conflate a measured reading with a permitted ceiling.** The
   `basis` field on every measurement (`measured` vs `permitted_limit`) is
   load-bearing for credibility. See `docs/decisions/004`.
+- **Never treat hardware/transport QA as data QA.** A source's own self-report
+  that a sensor was "powered, communicating, within specified ranges" (or a file
+  transfer completing, or a request returning HTTP 200) proves the pipe worked —
+  it proves nothing about whether the payload is correct. An electrochemical
+  sensor can degrade and report a stable, plausible, *wrong* value while every
+  device-level self-check still passes; this is exactly the GFL perimeter MS-2/
+  MS-5 failure mode (frozen for 14+ months, never flagged by any operational
+  self-report, only caught by examining the raw feed for zero variance) — see
+  `analysis/perimeter-h2s-sensor-anomaly-2026-09-05/` in Lotext. Trust an
+  affirmative self-disclosure of a real event (a source naming "the pump failed,"
+  "27 hours of data lost") — that channel is reliable. Never trust the *absence*
+  of one as evidence the payload itself was ever independently verified; that
+  requires a reference-level check (a calibration/audit against a known value,
+  or a content-level statistical check such as unexpected-zero-variance
+  detection), not a transport/operational-status flag. Ridge Wood's own monthly
+  reports illustrate the gap directly: "Audits" reads verbatim identically —
+  "No audits of the network were conducted" — across all 70 months on file,
+  zero exceptions, as of 2026-10-12.
 - **Don't inherit the old scraper's `doc_date == today` filter.** Backfill needs
   full history. (Already handled in `nsite_client`.)
 
