@@ -16,14 +16,20 @@ import json
 import re
 
 import fitz
+import pytest
 
 import ridgewood_client as rc
 import ridgewood_reverify as rr
 import sheet_writer as sw
 
-import pytest
-
 THR = {"h2s_24h_ppb": 72, "h2s_15min_ppb": 750}
+
+_FOOTNOTES = (
+    "1 Notifications to be sent to the Ridge Wood Elementary School if a 15-minute "
+    "average concentration exceeds 750 ppb (0.75 ppm, USEPA Acute Exposure Guideline "
+    "Value) or a 24-hour average concentration exceeds 72 ppb (0.072 ppm).\n"
+)
+_ALL_CLEAR = "a. No notifications required to be sent to Ridge Wood Elementary for elevated H2S.\n"
 
 
 @pytest.fixture(autouse=True)
@@ -49,13 +55,6 @@ def test_default_manifest_io_is_isolated_under_tmp(_isolated_manifest, tmp_path)
     rr.save_manifest({"months": {"2026-05": []}})
     assert (tmp_path / "isolated-ridgewood-manifest.json").exists()
     assert rr.load_manifest()["months"] == {"2026-05": []}
-
-_FOOTNOTES = (
-    "1 Notifications to be sent to the Ridge Wood Elementary School if a 15-minute "
-    "average concentration exceeds 750 ppb (0.75 ppm, USEPA Acute Exposure Guideline "
-    "Value) or a 24-hour average concentration exceeds 72 ppb (0.072 ppm).\n"
-)
-_ALL_CLEAR = "a. No notifications required to be sent to Ridge Wood Elementary for elevated H2S.\n"
 
 
 def _report_text(month, values, *, all_clear=True):
