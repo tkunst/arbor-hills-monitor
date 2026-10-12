@@ -894,6 +894,28 @@ def test_disallowed_host_link_is_skipped(monkeypatch, tmp_path):
     assert rr.run() == 1
 
 
+def test_manifest_path_is_not_gitignored():
+    """A terminal-round review found the repo's blanket `*.json` .gitignore rule
+    (data-guard's data-file hygiene) silently blocked `git add` on the manifest
+    path -- the workflow's commit step would fail every single run, forever,
+    with no code-level signal (the Python script itself always exits 0/1 cleanly;
+    only `git add` on the ignored path would fail). Reproduced directly against
+    the real repo before this test existed; pinned here so a future .gitignore
+    edit can't silently reintroduce it (same idiom this repo uses for
+    site/public-records/search-index.json, which hit the identical failure mode
+    per its own .gitignore comment -- no test pins that one either, but this one
+    should)."""
+    import pathlib
+    import subprocess
+    root = pathlib.Path(__file__).resolve().parent.parent
+    result = subprocess.run(
+        ["git", "check-ignore", "--no-index", "-q", rr.MANIFEST_PATH],
+        cwd=root, check=False)
+    assert result.returncode == 1, (
+        f"{rr.MANIFEST_PATH} is gitignored -- add a '!{rr.MANIFEST_PATH}' "
+        f"exception next to the other data-guard allowlist entries in .gitignore")
+
+
 def test_shipped_config_reverify_disabled_and_workflow_scheduled():
     """Shipped-config pin. Unlike test_nsite_violations.py's parked-workflow guard
     (which tolerates a workflow parked outside .github/workflows/ as a valid
