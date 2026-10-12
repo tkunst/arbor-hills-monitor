@@ -699,7 +699,7 @@ ridgewood:
   # (GOAUTH_RIDGEWOOD_FOLDER_ID) is shared with Stream G and already optional there;
   # unset here too, a revision is still logged + alerted, just without a mirrored
   # copy of the new bytes.
-  reverify_enabled: false
+  reverify_enabled: true            # activated 2026-10-12 (Trisha) — see ADR 066. GOAUTH_RIDGEWOOD_FOLDER_ID/MONITOR_OWNER_EMAILS already provisioned (shared with Stream G / GFL snapshot).
 
 # --- ROP (air Title V permit) watch (ADR 017, added 2026-07-15) ---
 # OFF BY DEFAULT. All three Arbor Hills air facilities have a ROP renewal IN

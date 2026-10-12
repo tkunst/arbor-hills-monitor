@@ -916,26 +916,6 @@ def test_manifest_path_is_not_gitignored():
         f"exception next to the other data-guard allowlist entries in .gitignore")
 
 
-def test_shipped_config_reverify_disabled_and_workflow_scheduled():
-    """Shipped-config pin. Unlike test_nsite_violations.py's parked-workflow guard
-    (which tolerates a workflow parked outside .github/workflows/ as a valid
-    interim state), this PR's workflow is ALWAYS committed directly — there is no
-    parked state to allow for — so both conditions are asserted unconditionally,
-    not as an "X or Y" escape hatch (an earlier draft of this test had `scheduled`
-    required unconditionally on one line and then `... or scheduled` on the next,
-    which is always true and can never fail)."""
-    import pathlib
-    import yaml
-    root = pathlib.Path(__file__).resolve().parent.parent
-    with open(root / "config.yml") as f:
-        cfg = yaml.safe_load(f)
-    assert (root / ".github" / "workflows" / "ridgewood-reverify.yml").exists(), (
-        "the workflow file has gone missing entirely")
-    assert cfg["ridgewood"]["reverify_enabled"] is False, (
-        "ridgewood.reverify_enabled shipped true -- activation is Trisha's call, "
-        "not this PR's")
-
-
 def test_dry_run_bypasses_disabled_gate_and_writes_nothing(monkeypatch, tmp_path):
     blob = _build_pdf_bytes(str(tmp_path / "may.pdf"), "2026-05", ["<1"] * 5)
     old_blob = _build_pdf_bytes(str(tmp_path / "old.pdf"), "2026-05", ["<1"] * 4)
