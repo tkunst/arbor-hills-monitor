@@ -685,6 +685,21 @@ ridgewood:
   # review-tier alerts to the full list too.
   review_recipients:
     - arbor-hills@trishakunst.com          # Trisha only (not the advocacy list)
+  # Monthly RE-VERIFICATION pass + committed provenance manifest (ADR 066, added
+  # 2026-10-12; ridgewood_reverify.py). OFF BY DEFAULT. Stream G above archives a
+  # month's report ONCE and never looks at it again; this re-downloads EVERY listed
+  # month monthly, detects a silently REVISED PDF (new version mirrored, old one
+  # never touched/deleted) and a report that disappears from Barr's page, and
+  # commits data/provenance/ridgewood-manifest.json (one entry per report version;
+  # the git commit history is the provenance "signature" — Trisha's 2026-10-08
+  # ruling, no cryptographic signing). Change/removal alerts are OWNER-ONLY
+  # (ea.load_owner_emails) — never the public or review_recipients/alert_recipients
+  # lists above. ACTIVATION (same pattern as Stream G itself): review + merge, then
+  # set reverify_enabled: true and commit. The Drive folder secret
+  # (GOAUTH_RIDGEWOOD_FOLDER_ID) is shared with Stream G and already optional there;
+  # unset here too, a revision is still logged + alerted, just without a mirrored
+  # copy of the new bytes.
+  reverify_enabled: false
 
 # --- ROP (air Title V permit) watch (ADR 017, added 2026-07-15) ---
 # OFF BY DEFAULT. All three Arbor Hills air facilities have a ROP renewal IN
