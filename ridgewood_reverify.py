@@ -48,17 +48,23 @@ of being silently absorbed as the "original". A Sheet row with a blank Content H
 (shouldn't happen, but Sheets are hand-editable) means "nothing to compare against
 yet", not "already changed" — it seeds from today's download instead.
 
-CRASH/RETRY SAFETY for a changed or removed month: the Drive upload (if any) and the
-Ridge Wood Revisions Sheet row are written FIRST (durable, human-visible) and the
-owner alert SECOND; the manifest's new version is only merged in and SAVED once the
-owner alert actually sends. A run that writes the Sheet row and then fails to email
-(SMTP down, empty owner list) exits 1 and leaves the manifest exactly as it was for
-that month — the next run re-detects the same change, recognizes its own Sheet row
-by (month, new content hash) via sheet_writer.ridgewood_revision_keys(), skips
-re-uploading a duplicate Drive copy, and just finishes advancing the manifest + the
-alert. Routine "unchanged, verified again" progress for OTHER months in the same run
-is still saved even when one changed/removed month's alert fails — losing a
-harmless last_verified bump to a retried alert would be a worse trade.
+CRASH/RETRY SAFETY for a changed/removed/reappeared month: the Drive upload (if
+any) and the Ridge Wood Revisions Sheet row are written FIRST (durable,
+human-visible) and the owner alert SECOND; the manifest's new version is only
+merged in and SAVED once the owner alert actually sends. A run that writes the
+Sheet row and then fails to email (SMTP down, empty owner list) exits 1 and
+leaves the manifest exactly as it was for that month — the next run re-detects
+the same event, recognizes its own already-logged Sheet row by
+(month, event, a content hash) via sheet_writer.ridgewood_event_keys(), skips
+re-uploading a duplicate Drive copy AND re-appending a duplicate Sheet row, and
+just finishes advancing the manifest + the alert. This idempotency check covers
+ALL THREE of "revised"/"removed-from-source"/"reappeared" — an earlier version
+of this module only had it for "revised", so a failed-alert retry on a removal
+or a reappearance would duplicate its Sheet row every retry (a review found
+this; see ridgewood_event_keys()'s docstring for the key choice per event type).
+Routine "unchanged, verified again" progress for OTHER months in the same run is
+still saved even when one event's alert fails — losing a harmless last_verified
+bump to a retried alert would be a worse trade.
 
 Gated on `ridgewood.reverify_enabled` (ships false — a new job whose Drive
 mirror/Sheet/email side effects reach a live stream is switched on by a human, per
@@ -447,7 +453,7 @@ def run(dry_run: bool = False) -> int:
         print("[ridgewood-reverify] Drive folder secret not set — revisions will be logged "
               "without a mirrored copy of the new bytes.")
 
-    revision_links = {} if dry_run else sw.ridgewood_revision_keys(sheets, sheet_id)
+    event_keys = {} if dry_run else sw.ridgewood_event_keys(sheets, sheet_id)
     multi_link_flagged = set() if dry_run else sw.ridgewood_multi_link_flagged_months(sheets, sheet_id)
     tmp = tempfile.gettempdir()
     had_errors = False
@@ -463,20 +469,24 @@ def run(dry_run: bool = False) -> int:
             print(f"  ERR {month}: scraped link host not allowed, skipping this month.")
             had_errors = True
             continue
-        if len(links) > 1 and month not in multi_link_flagged:
-            print(f"  NOTE {month}: {len(links)} distinct report links posted for this month — "
-                  f"checking the first; a second link for an already-posted month is itself "
-                  f"worth a human look.")
-            pending_multi_link.append((month, [lk["url"] for lk in links]))
-            if not dry_run:
-                sw.append_ridgewood_revision_row(
-                    sheets, sheet_id, month, "multi-link", now_iso, "", "", "", "",
-                    f"{len(links)} distinct report links posted; only the first is checked. "
-                    f"Flagged once — will not re-alert on this same condition.")
-                multi_link_flagged.add(month)
         link = links[0]
         local = os.path.join(tmp, f"ridgewood-reverify-{month}.pdf")
         try:
+            # The multi-link Sheet write lives INSIDE this try (not before it) so a
+            # Sheets API failure here is caught by the same per-month "one month's
+            # failure must not abort the batch" guard below, instead of propagating
+            # out of the loop and discarding every other month's progress this run.
+            if len(links) > 1 and month not in multi_link_flagged:
+                print(f"  NOTE {month}: {len(links)} distinct report links posted for this month — "
+                      f"checking the first; a second link for an already-posted month is itself "
+                      f"worth a human look.")
+                pending_multi_link.append((month, [lk["url"] for lk in links]))
+                if not dry_run:
+                    sw.append_ridgewood_revision_row(
+                        sheets, sheet_id, month, "multi-link", now_iso, "", "", "", "",
+                        f"{len(links)} distinct report links posted; only the first is checked. "
+                        f"Flagged once — will not re-alert on this same condition.")
+                    multi_link_flagged.add(month)
             _download_capped(link["url"], local)
             new_hash = rc.content_hash(local)
             title = rc.report_title(month)
@@ -497,16 +507,24 @@ def run(dry_run: bool = False) -> int:
                 print(f"  ok   {month}  unchanged")
                 continue
             if outcome == "reappeared":
-                reappeared_link = new_versions[-1]["archive_link"]
+                prior_hash = prior["content_hash"] if prior else ""
                 if dry_run:
                     print(f"  REAPPEARED {month}  (dry run — not recorded)")
                     staged_additions.setdefault(month, []).extend(new_versions)
                     continue
-                sw.append_ridgewood_revision_row(
-                    sheets, sheet_id, month, "reappeared", now_iso,
-                    prior["content_hash"] if prior else "", new_hash, reappeared_link, link["url"],
-                    "report reappeared with content identical to the last-known copy; the "
-                    "earlier removed-from-source flag is now corrected.")
+                already = event_keys.get((month, "reappeared", new_hash))
+                if already is not None:
+                    reappeared_link = already
+                    print(f"  retry {month}  (reappearance already logged; finishing the manifest advance)")
+                else:
+                    reappeared_link = new_versions[-1]["archive_link"]
+                    sw.append_ridgewood_revision_row(
+                        sheets, sheet_id, month, "reappeared", now_iso,
+                        prior_hash, new_hash, reappeared_link, link["url"],
+                        "report reappeared with content identical to the last-known copy; the "
+                        "earlier removed-from-source flag is now corrected.")
+                    event_keys[(month, "reappeared", new_hash)] = reappeared_link
+                new_versions[-1]["archive_link"] = reappeared_link
                 staged_additions.setdefault(month, []).extend(new_versions)
                 pending_reappeared.append((month, reappeared_link))
                 print(f"  REAPPEARED {month}  (status corrected)")
@@ -518,7 +536,7 @@ def run(dry_run: bool = False) -> int:
                 print(f"  CHANGED {month}  prev={prior_hash[:12]}  new={new_hash[:12]}  (dry run — not recorded)")
                 staged_additions.setdefault(month, []).extend(new_versions)
                 continue
-            already = revision_links.get((month, new_hash))
+            already = event_keys.get((month, "revised", new_hash))
             if already is not None:
                 archive_link, note = already, "(already mirrored + logged in an earlier run; finishing the manifest advance)"
                 print(f"  retry {month}  (already mirrored + logged; finishing the manifest advance)")
@@ -540,7 +558,7 @@ def run(dry_run: bool = False) -> int:
                 sw.append_ridgewood_revision_row(
                     sheets, sheet_id, month, "revised", now_iso,
                     prior_hash, new_hash, archive_link, link["url"], note)
-                revision_links[(month, new_hash)] = archive_link
+                event_keys[(month, "revised", new_hash)] = archive_link
             new_versions[-1]["archive_link"] = archive_link
             staged_additions.setdefault(month, []).extend(new_versions)
             pending_changed.append((month, prior_hash, new_hash, archive_link, note))
@@ -571,13 +589,19 @@ def run(dry_run: bool = False) -> int:
             if existing["status"].startswith("removed-from-source"):
                 continue   # already flagged a prior run — no re-alert on a month that stays missing
             staged_removed_months.append(month)
+            existing_hash = existing.get("content_hash", "")
             archive_link = existing.get("archive_link") or ""
             print(f"  REMOVED {month}  (confirmed absent on two fetches)")
             if not dry_run:
-                sw.append_ridgewood_revision_row(
-                    sheets, sheet_id, month, "removed-from-source", now_iso,
-                    existing.get("content_hash", ""), "", "", "",
-                    "no longer listed on Barr's page; our mirrored copy, if any, is unchanged.")
+                already = event_keys.get((month, "removed-from-source", existing_hash))
+                if already is None:
+                    sw.append_ridgewood_revision_row(
+                        sheets, sheet_id, month, "removed-from-source", now_iso,
+                        existing_hash, "", archive_link, existing.get("source_url", ""),
+                        "no longer listed on Barr's page; our mirrored copy, if any, is unchanged.")
+                    event_keys[(month, "removed-from-source", existing_hash)] = archive_link
+                else:
+                    print(f"  retry {month}  (removal already logged; finishing the manifest advance)")
             pending_removed.append((month, archive_link))
         except Exception as e:  # noqa: BLE001 — one month's failure must not abort the batch
             print(f"  ERR {month}: unexpected failure while processing a removal, skipping: {type(e).__name__}")

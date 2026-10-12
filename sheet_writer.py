@@ -1828,9 +1828,9 @@ def ridgewood_report_rows(service, sheet_id: str) -> dict:
 # Ridge Wood monthly re-verification log (ADR 066, ridgewood_reverify.py) — a
 # SEPARATE tab from Ridge Wood Reports (never a second row there for a month that
 # already has one). Append-only event log; not used for dedup by month (a month can
-# legitimately get more than one "revised" row over its lifetime) — idempotency
-# against a crashed/retried run is by (month, new content hash) instead, see
-# ridgewood_revision_keys().
+# legitimately get more than one "revised"/"removed-from-source"/"reappeared" row
+# over its lifetime) — idempotency against a crashed/retried run is by
+# (month, event, a content hash) instead, see ridgewood_event_keys().
 # ---------------------------------------------------------------------------
 
 
@@ -1848,18 +1848,34 @@ def ensure_ridgewood_revisions_tab(service, sheet_id: str) -> None:
     _set_header(service, sheet_id, TAB_RIDGEWOOD_REVISIONS, RIDGEWOOD_REVISIONS_HEADERS)
 
 
-def ridgewood_revision_keys(service, sheet_id: str) -> dict:
-    """{(month, new_content_hash): new_archive_link} already logged as a "revised"
-    event. Lets ridgewood_reverify.py tell "I already mirrored + logged this exact
-    revision, just finish advancing the manifest" (recovering the Drive link it
-    already uploaded under) from "this is a revision I haven't recorded yet" — the
-    idempotency check that keeps a retried run (e.g. one where the owner email
-    failed last time, so the manifest was never advanced) from re-uploading a second
-    Drive copy of the same new bytes. [] rows (fresh/missing tab) -> {}."""
+def ridgewood_event_keys(service, sheet_id: str) -> dict:
+    """{(month, event, key_hash): new_archive_link} for every already-logged
+    "revised" / "removed-from-source" / "reappeared" event. Lets
+    ridgewood_reverify.py tell "I already logged this exact event, just finish
+    advancing the manifest" (recovering the Drive link it already has, if any)
+    from "this is an event I haven't recorded yet" — the idempotency check that
+    keeps a retried run (e.g. one where the owner email failed last time, so the
+    manifest was never advanced) from re-uploading a duplicate Drive copy OR
+    appending a duplicate Sheet row for the SAME event.
+
+    key_hash is the "New Content Hash" column for "revised"/"reappeared" (the
+    content the event is ABOUT) and the "Previous Content Hash" column for
+    "removed-from-source" (a removal has no new content; the hash of what's
+    being removed is what makes a retry of THIS removal identifiable — a LATER
+    removal of the same month, after a reappearance, only collides with this key
+    if the content came back byte-identical and then vanished again, which is
+    exactly the same retryable case, not a materially different one).
+    [] rows (fresh/missing tab) -> {}."""
     out: dict = {}
     for r in _tab_rows(service, sheet_id, TAB_RIDGEWOOD_REVISIONS, "A2:F"):
-        if len(r) >= 5 and r[1] == "revised" and r[0] and r[4]:
-            out[(str(r[0]), str(r[4]))] = r[5] if len(r) >= 6 else ""
+        if len(r) < 2 or not r[0]:
+            continue
+        month, event = str(r[0]), r[1]
+        link = r[5] if len(r) >= 6 else ""
+        if event in ("revised", "reappeared") and len(r) >= 5 and r[4]:
+            out[(month, event, str(r[4]))] = link
+        elif event == "removed-from-source" and len(r) >= 4 and r[3]:
+            out[(month, event, str(r[3]))] = link
     return out
 
 
