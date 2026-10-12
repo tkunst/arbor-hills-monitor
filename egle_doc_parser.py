@@ -25,6 +25,7 @@ fields. Two shapes, deliberately.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -34,6 +35,9 @@ from datetime import date
 from typing import Literal, Optional, get_args
 
 import fitz  # pymupdf
+
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Measurement metric vocabulary (ADR 034) — the SINGLE SOURCE OF TRUTH
@@ -539,6 +543,27 @@ _MEASUREMENTS_HELP = (
 )
 
 
+# Temperature facts and unit rules for summary/key_data_point (ADR 067). The
+# same reference values are enforced after the call by kdp_check.py, so a
+# claim that drifts from them is retried once and otherwise withheld.
+_TEMPERATURE_RULES = (
+    "Temperature reference values for this site (use only these; never infer "
+    "or invent another): 131F = the NSPS / Emission Guidelines wellhead "
+    "operating temperature; 145F = the landfill NESHAP (MACT, 40 CFR 63 "
+    "Subpart AAAA) default wellhead operating temperature; an HOV (Higher "
+    "Operating Value) is a well-specific approved value and must be stated in "
+    "the document itself. If you say a reading is some number of degrees above "
+    "a limit, name that limit and make the arithmetic exact. Never present a "
+    "permitted ceiling or HOV as a measured reading, or a reading as a limit.\n"
+    "Units: take every number's unit from its own column header or label. Large "
+    "documents are excerpted, so a page may show table rows whose column header "
+    "is on a page you were not shown; if you cannot see what a number measures, "
+    "do not report it. Gas-well hydrogen sulfide (H2S), methane and carbon "
+    "monoxide readings are in ppm, not degrees; a wellhead temperature above "
+    "about 200F is almost certainly a misread column."
+)
+
+
 def _build_system_prompt(risk_register: list[dict]) -> str:
     risk_lines = "\n".join(
         f"- {r['id']} ({r['name']}): {r['description']}" for r in risk_register
@@ -549,7 +574,8 @@ def _build_system_prompt(risk_register: list[dict]) -> str:
         "For each document, return:\n"
         "- summary: 2-3 plain-English sentences.\n"
         "- key_data_point: one line extracting the single most citable specific "
-        "claim (e.g. \"180F - 35F above MACT limit, Well AHW272R4, Feb 2025\"). "
+        "claim, with its well/location and date (e.g. \"AHWW0279 measured "
+        "154.6F at the wellhead (as found), 4/8/2026\"). "
         "If the document has no specific factual reading, say so briefly.\n"
         f"- doc_type: one of evidence/procedural/opinion. {_DOC_TYPE_HELP}\n"
         "- risks: the risk IDs this document speaks to (may be several, may be "
@@ -582,6 +608,7 @@ def _build_system_prompt(risk_register: list[dict]) -> str:
         "for Advanced Disposal compost-pond samples, dated 12/23/2019\". "
         "Otherwise (title not flagged generic) return null. Never include a "
         "person's name in display_title.\n\n"
+        f"{_TEMPERATURE_RULES}\n\n"
         "Be precise and conservative: only tag a risk the document actually "
         "addresses, and only mark urgent if an urgent trigger is genuinely "
         "present."
@@ -596,6 +623,7 @@ def _classify_with_claude(
     client=None,
     max_tokens: int = 8192,
     title_is_generic: bool = False,
+    correction: Optional[str] = None,
 ) -> dict:
     """Call Claude and return a dict with the 5 model-derived fields. Isolated
     so tests can monkeypatch it without an API key. Uses structured output so
@@ -656,7 +684,8 @@ def _classify_with_claude(
         messages=[
             {
                 "role": "user",
-                "content": f"{meta_line}\n--- DOCUMENT TEXT ---\n{text}",
+                "content": f"{meta_line}\n--- DOCUMENT TEXT ---\n{text}"
+                + (f"\n\n--- CORRECTION ---\n{correction}" if correction else ""),
             }
         ],
         output_format=Classification,
@@ -737,6 +766,47 @@ def classify_note_metric(
 # ---------------------------------------------------------------------------
 
 
+def _enforce_temperature_consistency(fields, text, metadata, risk_register, model, *,
+                                     client=None, max_tokens=8192,
+                                     title_is_generic=False, ref=None) -> dict:
+    import kdp_check
+    if ref is None:
+        ref = kdp_check.default_reference()
+    problems = kdp_check.check_fields(fields, ref)
+    if not problems:
+        return fields
+    log.warning("classifier free text failed the temperature check (%s): %s",
+                metadata.get("document_name", "?"), problems)
+    correction = (
+        "Your previous answer failed an automated consistency check: "
+        + "; ".join(i for v in problems.values() for i in v)
+        + ". Re-read the document and answer again. Use only the temperature "
+        "reference values given, and omit any number whose unit or meaning you "
+        "cannot confirm from the text shown."
+    )
+    try:
+        retry = _classify_with_claude(
+            text, metadata, risk_register, model, client=client,
+            max_tokens=max_tokens, title_is_generic=title_is_generic,
+            correction=correction,
+        )
+    except Exception as e:  # never break ingest over the check
+        log.warning("temperature-check retry failed: %s", e)
+        retry = None
+    if retry is not None:
+        still = kdp_check.check_fields(retry, ref)
+        if not still:
+            return retry
+        fields, problems = retry, still
+    fields = dict(fields)
+    if "key_data_point" in problems:
+        fields["key_data_point"] = kdp_check.WITHHELD_KDP
+    if "summary" in problems:
+        fields["summary"] = kdp_check.WITHHELD_SUMMARY
+    log.warning("withheld after retry (%s): %s", metadata.get("document_name", "?"), problems)
+    return fields
+
+
 def parse_document(
     pdf_path: str,
     metadata: dict,
@@ -749,6 +819,7 @@ def parse_document(
     max_tokens: int = 8192,
     client=None,
     title_is_generic: bool = False,
+    temperature_reference=None,
 ) -> ParsedDoc:
     """Parse one PDF end-to-end. OCRs in place if needed, extracts text
     (windowing large docs), classifies with Claude, and returns a ParsedDoc.
@@ -787,6 +858,15 @@ def parse_document(
     fields = _classify_with_claude(
         text, metadata, risk_register, model, client=client, max_tokens=max_tokens,
         title_is_generic=title_is_generic,
+    )
+
+    # ADR 067: the public free-text fields must agree with the temperature
+    # reference values. One retry naming the problems; if it still fails,
+    # the failing field is withheld (fixed text) rather than published.
+    fields = _enforce_temperature_consistency(
+        fields, text, metadata, risk_register, model, client=client,
+        max_tokens=max_tokens, title_is_generic=title_is_generic,
+        ref=temperature_reference,
     )
 
     valid_ids = {r["id"] for r in risk_register}
