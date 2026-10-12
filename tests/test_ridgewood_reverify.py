@@ -570,6 +570,71 @@ def test_removed_month_that_stays_missing_is_not_re_alerted(monkeypatch, tmp_pat
     assert len(_rows(fake, sw.TAB_RIDGEWOOD_REVISIONS)) == 1
 
 
+def test_retry_after_failed_alert_on_removal_does_not_duplicate_sheet_row(monkeypatch, tmp_path):
+    """A review found the 'revised' path had a retry idempotency guard but
+    'removed-from-source' did not: a failed owner alert left the manifest
+    un-advanced (by design), and the NEXT run's removal loop re-logged a second,
+    duplicate Sheet row for the identical removal every time it retried."""
+    apr_blob = _build_pdf_bytes(str(tmp_path / "apr.pdf"), "2026-04", ["<1"] * 5)
+    may_blob = _build_pdf_bytes(str(tmp_path / "may.pdf"), "2026-05", ["<1"] * 5)
+    rows = [
+        ["2026-04", "T", "<1", 5, "ok", "u", _hash(apr_blob), "http://drive/apr.pdf", "2026-07-15T10:00:00"],
+        ["2026-05", "T", "<1", 5, "ok", "u", _hash(may_blob), "http://drive/may.pdf", "2026-07-15T10:00:00"],
+    ]
+    fake, sent, _ = _wire(
+        monkeypatch, _cfg(), page_months=["2026-04"], sheet_rows=rows,
+        pdf_bytes_by_month={"2026-04": apr_blob}, owners=())   # empty owners -> alert always fails
+    saved = {}
+    monkeypatch.setattr(rr, "save_manifest", lambda m, path=rr.MANIFEST_PATH: saved.update(m))
+    monkeypatch.setattr(rr, "load_manifest", lambda path=rr.MANIFEST_PATH: saved or
+                        {"schema_version": 1, "generated_at": "", "months": {}})
+
+    assert rr.run() == 1   # removal detected, but the empty owner list fails the alert
+    assert rr.run() == 1   # retry: same removal, same failure
+    assert rr.run() == 1
+    assert sent == []
+    removed_rows = [r for r in _rows(fake, sw.TAB_RIDGEWOOD_REVISIONS) if r[1] == "removed-from-source"]
+    assert len(removed_rows) == 1   # NOT one per retry
+    assert removed_rows[0][5] == "http://drive/may.pdf"   # New Archive Link carried forward (not blanked)
+    assert removed_rows[0][6] == "u"                      # Source URL carried forward too
+    # The manifest itself is also never advanced across all three failed attempts.
+    assert "2026-05" not in saved.get("months", {})
+
+
+def test_retry_after_failed_alert_on_reappearance_does_not_duplicate_sheet_row(monkeypatch, tmp_path):
+    blob = _build_pdf_bytes(str(tmp_path / "may.pdf"), "2026-05", ["<1"] * 5)
+    other_blob = _build_pdf_bytes(str(tmp_path / "apr.pdf"), "2026-04", ["<1"] * 3)
+    rows = [
+        ["2026-04", "T", "<1", 3, "ok", "u", _hash(other_blob), "http://drive/apr.pdf", "2026-07-15T10:00:00"],
+        ["2026-05", "T", "<1", 5, "ok", "u", _hash(blob), "http://drive/orig.pdf", "2026-07-15T10:00:00"],
+    ]
+    fake, sent, _ = _wire(
+        monkeypatch, _cfg(), page_months=["2026-04"], sheet_rows=rows,
+        pdf_bytes_by_month={"2026-04": other_blob})
+    saved = {}
+    monkeypatch.setattr(rr, "save_manifest", lambda m, path=rr.MANIFEST_PATH: saved.update(m))
+    monkeypatch.setattr(rr, "load_manifest", lambda path=rr.MANIFEST_PATH: saved or
+                        {"schema_version": 1, "generated_at": "", "months": {}})
+    assert rr.run() == 0   # run 1: 2026-05 flagged removed (owners present -> succeeds)
+    sent.clear()
+
+    # 2026-05 reappears unchanged; the owner alert now fails for every retry.
+    monkeypatch.setattr(rr.rc, "fetch_page", lambda url=None, timeout=60: page_html(["2026-04", "2026-05"]))
+
+    def fake_download2(url, dest, timeout=60):
+        month = rc.parse_month(url.split("/Files/", 1)[-1])
+        _write_bytes(dest, other_blob if month == "2026-04" else blob)
+    monkeypatch.setattr(rr, "_download_capped", fake_download2)
+    monkeypatch.setattr(rr.ea, "load_owner_emails", lambda c=None: set())   # now fails
+
+    assert rr.run() == 1
+    assert rr.run() == 1
+    assert sent == []
+    reappeared_rows = [r for r in _rows(fake, sw.TAB_RIDGEWOOD_REVISIONS) if r[1] == "reappeared"]
+    assert len(reappeared_rows) == 1   # NOT one per retry
+    assert len(saved["months"]["2026-05"]) == 2   # original + removed only -- reappearance never advanced
+
+
 def test_new_month_not_yet_archived_is_left_alone(monkeypatch, tmp_path):
     may_blob = _build_pdf_bytes(str(tmp_path / "may.pdf"), "2026-05", ["<1"] * 5)
     june_blob = _build_pdf_bytes(str(tmp_path / "june.pdf"), "2026-06", ["<1"] * 5)
@@ -692,6 +757,47 @@ def test_download_failure_is_skipped_not_changed_or_removed(monkeypatch, tmp_pat
     assert rr.run() == 1          # the run is marked red...
     assert sent == []             # ...but nothing is alerted as changed/removed
     assert "2026-05" not in saved.get("months", {})
+
+
+def test_multi_link_sheet_write_failure_does_not_abort_other_months(monkeypatch, tmp_path):
+    """A review found the multi-link Sheet write sat OUTSIDE the per-month
+    try/except, so a Sheets failure there would propagate out of the loop and
+    discard every other month's already-decided progress in the same run."""
+    multi_blob = _build_pdf_bytes(str(tmp_path / "may.pdf"), "2026-05", ["<1"] * 5)
+    other_blob = _build_pdf_bytes(str(tmp_path / "apr.pdf"), "2026-04", ["<1"] * 3)
+    rows = [
+        ["2026-04", "T", "<1", 3, "ok", "u", _hash(other_blob), "http://drive/apr.pdf", "2026-07-15T10:00:00"],
+        ["2026-05", "T", "<1", 5, "ok", "u", _hash(multi_blob), "http://drive/may.pdf", "2026-07-15T10:00:00"],
+    ]
+    fake = FakeSheets()
+    _seed_reports_tab(fake, rows)
+    cfg = _cfg()
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.setattr(rr, "load_config", lambda: copy.deepcopy(cfg))
+    monkeypatch.setattr(rr.dc, "sheets_service", lambda: fake)
+    html = page_html(["2026-04"], extra=[
+        '<a href="/Files/2026-05_Arbor Hills H2S Data_24-hour ave.pdf">a</a>',
+        '<a href="/Files/2026-05_Arbor Hills H2S Data_24-hour ave_7777.pdf">b</a>',
+    ])
+    monkeypatch.setattr(rr.rc, "fetch_page", lambda url=None, timeout=60: html)
+
+    def fake_download(url, dest, timeout=60):
+        month = rc.parse_month(url.split("/Files/", 1)[-1])
+        _write_bytes(dest, other_blob if month == "2026-04" else multi_blob)
+    monkeypatch.setattr(rr, "_download_capped", fake_download)
+
+    def boom_on_multi_link(service, sheet_id, month, event, *a, **k):
+        if event == "multi-link":
+            raise RuntimeError("transient Sheets 503")
+    monkeypatch.setattr(rr.sw, "append_ridgewood_revision_row", boom_on_multi_link)
+    monkeypatch.setattr(rr.ac, "is_configured", lambda env=rr.FOLDER_ENV: False)
+    saved = {}
+    monkeypatch.setattr(rr, "save_manifest", lambda m, path=rr.MANIFEST_PATH: saved.update(m))
+
+    assert rr.run() == 1   # 2026-05's multi-link write failure marks the run red...
+    # ...but 2026-04 (processed before the failure, in month-sorted order) still baselined.
+    assert saved["months"]["2026-04"][0]["status"] == "original"
+    assert "2026-05" not in saved.get("months", {})   # the failed month itself recorded nothing
 
 
 def test_disallowed_host_link_is_skipped(monkeypatch, tmp_path):

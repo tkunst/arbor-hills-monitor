@@ -135,27 +135,39 @@ consolidated email per run covering every finding.
 
 ### 6. Crash/retry safety
 
-Per changed/removed month: the Drive upload (if any) and the `Ridge Wood Revisions`
-Sheet row are written FIRST — durable and human-visible even if nothing else
-succeeds — then the owner alert. The manifest's new version is only merged into the
-in-memory manifest and SAVED TO DISK once the owner alert actually sends. A run that
-writes the Sheet row and then fails to email (SMTP down, empty owner list) exits 1
-and leaves the manifest exactly as it was for that month; the next run re-detects
-the same change, recognizes its own already-logged Sheet row by
-`(month, new content hash)` (`sheet_writer.ridgewood_revision_keys()`, which returns
-the already-uploaded Drive link too), skips re-uploading a duplicate copy, and just
-finishes advancing the manifest + retrying the alert. Routine "unchanged, verified
-again" progress for OTHER months in the SAME run is still saved even when one
-changed/removed month's alert fails — losing a harmless `last_verified` bump to a
-retried alert would be the worse trade. A failed PDF download for one month is
-neither "changed" nor "removed" — it's skipped, `last_verified` untouched, retried
-next run; the overall run still exits 1 so a human notices. Per-month processing
-(main loop AND the removal loop) catches any exception, not only the download
-error — mirrors `ridgewood_archiver.py`'s own "one month's failure must not abort
-the batch" `except Exception` around its whole per-month body, so an unexpected
+Per changed/removed/reappeared month: the Drive upload (if any) and the
+`Ridge Wood Revisions` Sheet row are written FIRST — durable and human-visible
+even if nothing else succeeds — then the owner alert. The manifest's new version
+is only merged into the in-memory manifest and SAVED TO DISK once the owner alert
+actually sends. A run that writes the Sheet row and then fails to email (SMTP
+down, empty owner list) exits 1 and leaves the manifest exactly as it was for
+that month; the next run re-detects the same event, recognizes its own
+already-logged Sheet row by `(month, event, a content hash)`
+(`sheet_writer.ridgewood_event_keys()`, which returns the already-uploaded Drive
+link too), skips re-uploading a duplicate copy AND re-appending a duplicate Sheet
+row, and just finishes advancing the manifest + retrying the alert. **This
+idempotency check covers all three of "revised"/"removed-from-source"/
+"reappeared"** — a round-1 fix only added it for "revised" (keyed by the new
+content hash); a round-2 review caught that "removed-from-source" and
+"reappeared" had no equivalent guard, so a failed-alert retry duplicated their
+Sheet row every retry (reproduced live: 2 retries → 2 identical rows). The key
+for a removal is the *previous* content hash (there's no new content on a
+removal); for a reappearance it's the hash of the content that came back — see
+`ridgewood_event_keys()`'s docstring. Routine "unchanged, verified again"
+progress for OTHER months in the SAME run is still saved even when one event's
+alert fails — losing a harmless `last_verified` bump to a retried alert would be
+the worse trade. A failed PDF download for one month is neither "changed" nor
+"removed" — it's skipped, `last_verified` untouched, retried next run; the
+overall run still exits 1 so a human notices. Per-month processing (main loop
+AND the removal loop) catches any exception, not only the download error —
+mirrors `ridgewood_archiver.py`'s own "one month's failure must not abort the
+batch" `except Exception` around its whole per-month body, so an unexpected
 failure (e.g. a transient Sheets write error) for one month doesn't discard
 already-decided baseline/unchanged progress for every other month processed
-earlier in the same run.
+earlier in the same run. (The multi-link Sheet write specifically has to live
+INSIDE that same per-month try block, not before it — a round-2 review caught an
+earlier draft where it sat just outside, so a Sheets failure there would have
+propagated out of the loop uncaught.)
 
 ### 7. Why no data-guard allowlist entry was needed
 
