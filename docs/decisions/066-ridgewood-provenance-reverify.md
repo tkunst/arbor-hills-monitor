@@ -82,21 +82,39 @@ instead of manufacturing a false revision.
   deleted. A new row goes to a SEPARATE append-only tab, `Ridge Wood Revisions`
   (never a second row in `Ridge Wood Reports` for a month that already has one —
   that tab is Stream G's one-row-per-month dedup marker).
-- **Removed from source:** flagged `removed-from-source <date>` on the manifest's
-  current version; the mirrored copy is never touched. Confirmed with a SECOND,
-  independent page fetch in the same run before declaring anything removed — a
-  transient render glitch on one fetch must never fire a false removal. If more
-  than half of the archived months are confirmed missing on both fetches, that
-  reads as a page restructure or a scrape-format break, not that many real
-  removals — the run aborts loudly instead of flagging a flood of false removals.
-  A month that stays missing run after run is flagged once, not re-alerted every
-  month.
+- **Removed from source:** a NEW version is APPENDED with status
+  `removed-from-source <date>` (copying the prior version's title/source_url/
+  content_hash/archive_link — the removal is a status event, not a new PDF, but it
+  still never mutates the version it supersedes, for the reason the next bullet
+  needs); the mirrored copy is never touched. Confirmed with a SECOND, independent
+  page fetch in the same run before declaring anything removed — a transient
+  render glitch on one fetch must never fire a false removal. If more than half of
+  the archived months are confirmed missing on both fetches, that reads as a page
+  restructure or a scrape-format break, not that many real removals — the run
+  aborts loudly instead of flagging a flood of false removals. A month that stays
+  missing run after run is flagged once, not re-alerted every month.
+- **Reappeared:** if a month previously flagged `removed-from-source` is later
+  found listed again with content hash IDENTICAL to what the manifest already
+  held, that's corrected by appending a fresh `"original"` version (carrying the
+  prior version's archive_link forward — nothing new to mirror) rather than
+  leaving the stale removed status to persist forever with only its
+  `last_verified` silently advancing. This is why removal appends instead of
+  mutating: the removed version's own content_hash has to survive for this
+  comparison. (A review found the pre-fix code bumped `last_verified` on the
+  "unchanged" path without ever checking whether the version it was bumping was
+  flagged removed — a self-contradictory manifest entry with no correction path.)
+  A reappearance with DIFFERENT content is just the ordinary "changed" path — a
+  `revised <date>` version, same as any other revision.
 - **Multiple links posted for one month:** `scrape_all_report_links()` (a NEW
   function in `ridgewood_client.py`, additive — `scrape_report_links()` itself,
   Stream G's live path, is untouched) returns every distinct link per month, not
   just the first. This job only ever checks the first (page order) for a content
   change, so a genuine second revision sitting beside it could be invisible to the
   hash check — flagged in the owner alert for a human look rather than guessed at.
+  Logged once to `Ridge Wood Revisions` (event `multi-link`) and never re-alerted
+  for the same month again — a persistent second link isn't a new condition every
+  run, and alerting on it monthly forever would be exactly the kind of noise the
+  rest of this design works to avoid.
 
 ### 4. Read-only exceedance callout on a revision — never a public alert
 
@@ -131,7 +149,13 @@ again" progress for OTHER months in the SAME run is still saved even when one
 changed/removed month's alert fails — losing a harmless `last_verified` bump to a
 retried alert would be the worse trade. A failed PDF download for one month is
 neither "changed" nor "removed" — it's skipped, `last_verified` untouched, retried
-next run; the overall run still exits 1 so a human notices.
+next run; the overall run still exits 1 so a human notices. Per-month processing
+(main loop AND the removal loop) catches any exception, not only the download
+error — mirrors `ridgewood_archiver.py`'s own "one month's failure must not abort
+the batch" `except Exception` around its whole per-month body, so an unexpected
+failure (e.g. a transient Sheets write error) for one month doesn't discard
+already-decided baseline/unchanged progress for every other month processed
+earlier in the same run.
 
 ### 7. Why no data-guard allowlist entry was needed
 

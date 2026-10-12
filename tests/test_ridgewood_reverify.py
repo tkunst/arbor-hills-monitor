@@ -308,10 +308,15 @@ def test_reverify_month_unchanged_vs_changed_with_existing_history():
 
 def test_apply_staged_merges_additions_before_removal_flags():
     manifest = {"months": {}}
-    seed = {"fetched_at": "t0", "content_hash": "h1", "status": "original", "last_verified": None}
-    rr._apply_staged(manifest, {"2026-05": [seed]}, ["2026-05"], "2026-10-12")
+    seed = {"fetched_at": "2026-07-15T00:00:00Z", "content_hash": "h1", "status": "original",
+            "last_verified": None, "report_title": "T", "source_url": "u", "archive_link": "orig"}
+    rr._apply_staged(manifest, {"2026-05": [seed]}, ["2026-05"], "2026-10-12", "2026-10-12T00:00:00Z")
+    versions = manifest["months"]["2026-05"]
+    assert len(versions) == 2   # the seed is NEVER mutated — removal appends a new version
+    assert versions[0] is seed and versions[0]["status"] == "original"
     v = rr.latest_version(manifest, "2026-05")
     assert v["status"] == "removed-from-source 2026-10-12" and v["last_verified"] == "2026-10-12"
+    assert v["content_hash"] == "h1" and v["archive_link"] == "orig"   # carried forward, not reset
 
 
 def test_format_owner_alert_sections_and_never_mentions_public_routing():
@@ -537,8 +542,10 @@ def test_removed_from_source_confirmed_on_two_fetches_alerts_and_flags(monkeypat
     assert len(sent) == 1 and "removed" in sent[0][0]
     revision_rows = _rows(fake, sw.TAB_RIDGEWOOD_REVISIONS)
     assert revision_rows[0][0] == "2026-05" and revision_rows[0][1] == "removed-from-source"
-    v = saved["months"]["2026-05"][0]
-    assert v["status"].startswith("removed-from-source")
+    versions = saved["months"]["2026-05"]
+    assert len(versions) == 2   # original preserved, removal APPENDED (never mutated in place)
+    assert versions[0]["status"] == "original"
+    assert versions[-1]["status"].startswith("removed-from-source")
     assert "2026-04" not in saved["months"] or saved["months"]["2026-04"][0]["status"] == "original"
 
 
@@ -623,6 +630,51 @@ def test_multi_link_month_is_flagged_in_owner_alert(monkeypatch, tmp_path):
     assert "multiple posted links" in sent[0][0]
     assert "MULTIPLE LINKS POSTED" in sent[0][1]
 
+    # Same two links still posted next run -> NOT re-alerted (the Sheet row is the
+    # idempotency key, same anti-noise philosophy as removed-from-source).
+    assert rr.run() == 0
+    assert len(sent) == 1
+    assert len([r for r in _rows(fake, sw.TAB_RIDGEWOOD_REVISIONS) if r[1] == "multi-link"]) == 1
+
+
+def test_reappeared_with_identical_content_corrects_stale_removed_status(monkeypatch, tmp_path):
+    """A month flagged removed-from-source, then later found listed again with
+    BYTE-IDENTICAL content, must not be left permanently marked removed (the bug
+    an independent review found) — a fresh 'original' version corrects it, without
+    mutating or losing the removed version's own history."""
+    blob = _build_pdf_bytes(str(tmp_path / "may.pdf"), "2026-05", ["<1"] * 5)
+    other_blob = _build_pdf_bytes(str(tmp_path / "apr.pdf"), "2026-04", ["<1"] * 3)
+    rows = [
+        ["2026-04", "T", "<1", 3, "ok", "u", _hash(other_blob), "http://drive/apr.pdf", "2026-07-15T10:00:00"],
+        ["2026-05", "T", "<1", 5, "ok", "u", _hash(blob), "http://drive/orig.pdf", "2026-07-15T10:00:00"],
+    ]
+    fake, sent, _ = _wire(
+        monkeypatch, _cfg(), page_months=["2026-04"], sheet_rows=rows,
+        pdf_bytes_by_month={"2026-04": other_blob})
+    saved = {}
+    monkeypatch.setattr(rr, "save_manifest", lambda m, path=rr.MANIFEST_PATH: saved.update(m))
+    monkeypatch.setattr(rr, "load_manifest", lambda path=rr.MANIFEST_PATH: saved or
+                        {"schema_version": 1, "generated_at": "", "months": {}})
+    assert rr.run() == 0   # run 1: 2026-05 flagged removed
+    assert saved["months"]["2026-05"][-1]["status"].startswith("removed-from-source")
+    sent.clear()
+
+    # Run 2: 2026-05 is back on the page with IDENTICAL bytes to what we had before removal.
+    monkeypatch.setattr(rr.rc, "fetch_page", lambda url=None, timeout=60: page_html(["2026-04", "2026-05"]))
+
+    def fake_download2(url, dest, timeout=60):
+        month = rc.parse_month(url.split("/Files/", 1)[-1])
+        _write_bytes(dest, other_blob if month == "2026-04" else blob)
+    monkeypatch.setattr(rr, "_download_capped", fake_download2)
+
+    assert rr.run() == 0
+    versions = saved["months"]["2026-05"]
+    assert len(versions) == 3   # original, removed-from-source, reappeared -- all preserved
+    assert versions[1]["status"].startswith("removed-from-source")   # untouched, not rewritten
+    assert versions[-1]["status"] == "original"
+    assert versions[-1]["content_hash"] == _hash(blob)
+    assert len(sent) == 1 and "reappeared" in sent[0][0]
+
 
 def test_download_failure_is_skipped_not_changed_or_removed(monkeypatch, tmp_path):
     blob = _build_pdf_bytes(str(tmp_path / "may.pdf"), "2026-05", ["<1"] * 5)
@@ -662,19 +714,23 @@ def test_disallowed_host_link_is_skipped(monkeypatch, tmp_path):
 
 
 def test_shipped_config_reverify_disabled_and_workflow_scheduled():
-    """Shipped-config pin (mirrors test_nsite_violations.py's parked-workflow
-    guard): ridgewood.reverify_enabled must be false on main, and if it is ever
-    flipped true, the workflow must actually be in .github/workflows/ (not parked)
-    or the flag would be live with the job never scheduled."""
+    """Shipped-config pin. Unlike test_nsite_violations.py's parked-workflow guard
+    (which tolerates a workflow parked outside .github/workflows/ as a valid
+    interim state), this PR's workflow is ALWAYS committed directly — there is no
+    parked state to allow for — so both conditions are asserted unconditionally,
+    not as an "X or Y" escape hatch (an earlier draft of this test had `scheduled`
+    required unconditionally on one line and then `... or scheduled` on the next,
+    which is always true and can never fail)."""
     import pathlib
     import yaml
     root = pathlib.Path(__file__).resolve().parent.parent
     with open(root / "config.yml") as f:
         cfg = yaml.safe_load(f)
-    scheduled = (root / ".github" / "workflows" / "ridgewood-reverify.yml").exists()
-    assert scheduled, "the workflow file has gone missing entirely"
-    assert cfg["ridgewood"]["reverify_enabled"] is False or scheduled, (
-        "ridgewood.reverify_enabled is true but the workflow isn't scheduled")
+    assert (root / ".github" / "workflows" / "ridgewood-reverify.yml").exists(), (
+        "the workflow file has gone missing entirely")
+    assert cfg["ridgewood"]["reverify_enabled"] is False, (
+        "ridgewood.reverify_enabled shipped true -- activation is Trisha's call, "
+        "not this PR's")
 
 
 def test_dry_run_bypasses_disabled_gate_and_writes_nothing(monkeypatch, tmp_path):

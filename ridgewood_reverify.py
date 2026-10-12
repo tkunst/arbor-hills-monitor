@@ -221,17 +221,37 @@ def _version_entry(title: str, source_url: str, content_hash: str, status: str,
     }
 
 
+def reappeared_entry(prior: dict, title: str, source_url: str, today: str, now_iso: str) -> dict:
+    """A NEW version appended when a month previously flagged removed-from-source
+    reappears with IDENTICAL content. APPENDS (never mutates `prior`) so the
+    removed entry's own history is preserved, and carries `prior`'s archive_link
+    forward — the bytes are already safely mirrored, nothing new to upload."""
+    return {
+        "report_title": title or prior["report_title"],
+        "source_url": source_url or prior["source_url"],
+        "fetched_at": now_iso,
+        "content_hash": prior["content_hash"],
+        "archive_link": prior.get("archive_link", ""),
+        "status": "original",
+        "last_verified": today,
+    }
+
+
 def reverify_month(manifest: dict, month: str, sheet_row: dict | None, title: str,
                     source_url: str, downloaded_hash: str, today: str,
                     now_iso: str) -> tuple[str, list[dict]]:
     """Pure. Decide what happened to one already-archived, STILL-LISTED month this
     run. Returns (outcome, new_versions): outcome is 'baseline' | 'unchanged' |
-    'changed'; new_versions is what the caller should APPEND to manifest['months']
-    for this month (0, 1, or 2 entries — a month never checked before that ALREADY
-    differs from Stream G's own recorded hash gets both the seeded 'original' AND a
-    'revised <today>' entry in the same run, so no history is lost). Never mutates
-    `manifest` — on 'unchanged' the caller bumps last_verified on the EXISTING
-    latest version itself."""
+    'changed' | 'reappeared'; new_versions is what the caller should APPEND to
+    manifest['months'] for this month (0, 1, or 2 entries — a month never checked
+    before that ALREADY differs from Stream G's own recorded hash gets both the
+    seeded 'original' AND a 'revised <today>' entry in the same run, so no history
+    is lost). NEVER mutates `manifest` or any existing version — on 'unchanged' the
+    caller bumps last_verified on the EXISTING latest version itself (the one
+    explicitly allowed in-place field); every other outcome, including a month
+    that was removed-from-source and has now reappeared with byte-identical
+    content ('reappeared' — the stale removed flag is corrected by a brand-new
+    version, not by rewriting the removed one), only ever appends."""
     existing = latest_version(manifest, month)
     if existing is None:
         seed = seed_version(sheet_row, title, source_url, downloaded_hash, now_iso)
@@ -242,6 +262,8 @@ def reverify_month(manifest: dict, month: str, sheet_row: dict | None, title: st
                                   f"revised {today}", today, now_iso)
         return "changed", [seed, revised]
     if existing["content_hash"] == downloaded_hash:
+        if existing["status"].startswith("removed-from-source"):
+            return "reappeared", [reappeared_entry(existing, title, source_url, today, now_iso)]
         return "unchanged", []
     revised = _version_entry(title, source_url, downloaded_hash,
                               f"revised {today}", today, now_iso)
@@ -263,20 +285,27 @@ def _revision_note(has_text: bool, verdict: dict, prior_sheet_row: dict | None) 
             f"Revised report reads: max {verdict.get('value_token') or 'n/a'} ppb ({now_desc}).")
 
 
-def format_owner_alert(changed: list, removed: list, multi_link: list | None = None) -> tuple[str, str]:
+def format_owner_alert(changed: list, removed: list, multi_link: list | None = None,
+                        reappeared: list | None = None) -> tuple[str, str]:
     """(subject, body) for ONE consolidated owner-only email covering every
-    revised/removed month found this run. `changed` items are
+    revised/removed/reappeared month found this run. `changed` items are
     (month, prior_hash, new_hash, archive_link, note); `removed` items are
-    (month, archive_link); `multi_link` items are (month, [urls]) — a month with
-    more than one distinct report link posted, which this job only ever checks the
-    first of (page order), so a genuine second revision sitting beside it could be
-    invisible to the hash check above. Flagged for a human look, not auto-resolved."""
+    (month, archive_link); `reappeared` items are (month, archive_link) — a month
+    previously flagged removed-from-source that has come back with content
+    identical to what we already held; `multi_link` items are (month, [urls]) — a
+    month with more than one distinct report link posted, which this job only ever
+    checks the first of (page order), so a genuine second revision sitting beside
+    it could be invisible to the hash check above. Flagged for a human look, not
+    auto-resolved."""
     multi_link = multi_link or []
+    reappeared = reappeared or []
     parts = []
     if changed:
         parts.append(f"{len(changed)} report(s) revised")
     if removed:
         parts.append(f"{len(removed)} report(s) removed from the source page")
+    if reappeared:
+        parts.append(f"{len(reappeared)} report(s) reappeared")
     if multi_link:
         parts.append(f"{len(multi_link)} month(s) with multiple posted links")
     subject = "[Arbor Hills Monitor] Ridge Wood H2S archive: " + ", ".join(parts)
@@ -301,6 +330,13 @@ def format_owner_alert(changed: list, removed: list, multi_link: list | None = N
             lines.append(f"  {month}: no longer listed on Barr's report page.")
             lines.append(f"    our mirrored copy remains at: {link or '(no Drive mirror on file)'}")
         lines.append("")
+    if reappeared:
+        lines.append("REAPPEARED (content identical to the last-known copy; the earlier "
+                      "removed-from-source flag is now corrected):")
+        for month, link in reappeared:
+            lines.append(f"  {month}: back on Barr's report page.")
+            lines.append(f"    mirrored copy: {link or '(no Drive mirror on file)'}")
+        lines.append("")
     if multi_link:
         lines.append("MULTIPLE LINKS POSTED (only the first was checked — review by hand):")
         for month, urls in multi_link:
@@ -313,18 +349,28 @@ def format_owner_alert(changed: list, removed: list, multi_link: list | None = N
 
 
 def _apply_staged(manifest: dict, staged_additions: dict, staged_removed_months: list,
-                   today: str) -> None:
-    """Merge this run's changed/removed decisions into `manifest` IN PLACE. Additions
-    are merged before removal flags so a removed month seeded for the first time
-    this same run (no prior manifest entry) gets its seed appended, then flagged, in
-    one pass."""
+                   today: str, now_iso: str) -> None:
+    """Merge this run's changed/removed/reappeared decisions into `manifest` IN
+    PLACE. Additions (new version entries) are merged before removal flags so a
+    removed month seeded for the first time this same run (no prior manifest
+    entry) gets its seed appended, then flagged, in one pass. The removal itself
+    APPENDS a new version (never mutates the entry it's superseding) — see
+    reverify_month()'s 'reappeared' handling, which depends on the removed
+    entry's own content_hash/status staying intact for a later comparison."""
     for month, versions in staged_additions.items():
         manifest["months"].setdefault(month, []).extend(versions)
     for month in staged_removed_months:
         entry = latest_version(manifest, month)
         if entry is not None and not entry["status"].startswith("removed-from-source"):
-            entry["status"] = f"removed-from-source {today}"
-            entry["last_verified"] = today
+            manifest["months"][month].append({
+                "report_title": entry["report_title"],
+                "source_url": entry["source_url"],
+                "fetched_at": now_iso,
+                "content_hash": entry["content_hash"],
+                "archive_link": entry.get("archive_link", ""),
+                "status": f"removed-from-source {today}",
+                "last_verified": today,
+            })
 
 
 # ---------------------------------------------------------------------------
@@ -402,11 +448,12 @@ def run(dry_run: bool = False) -> int:
               "without a mirrored copy of the new bytes.")
 
     revision_links = {} if dry_run else sw.ridgewood_revision_keys(sheets, sheet_id)
+    multi_link_flagged = set() if dry_run else sw.ridgewood_multi_link_flagged_months(sheets, sheet_id)
     tmp = tempfile.gettempdir()
     had_errors = False
     staged_additions: dict[str, list] = {}
     staged_removed_months: list[str] = []
-    pending_changed, pending_removed, pending_multi_link = [], [], []
+    pending_changed, pending_removed, pending_multi_link, pending_reappeared = [], [], [], []
     n_baseline = n_unchanged = 0
 
     for month in sorted(m for m in archived if m in by_month):
@@ -416,11 +463,17 @@ def run(dry_run: bool = False) -> int:
             print(f"  ERR {month}: scraped link host not allowed, skipping this month.")
             had_errors = True
             continue
-        if len(links) > 1:
+        if len(links) > 1 and month not in multi_link_flagged:
             print(f"  NOTE {month}: {len(links)} distinct report links posted for this month — "
                   f"checking the first; a second link for an already-posted month is itself "
                   f"worth a human look.")
             pending_multi_link.append((month, [lk["url"] for lk in links]))
+            if not dry_run:
+                sw.append_ridgewood_revision_row(
+                    sheets, sheet_id, month, "multi-link", now_iso, "", "", "", "",
+                    f"{len(links)} distinct report links posted; only the first is checked. "
+                    f"Flagged once — will not re-alert on this same condition.")
+                multi_link_flagged.add(month)
         link = links[0]
         local = os.path.join(tmp, f"ridgewood-reverify-{month}.pdf")
         try:
@@ -442,6 +495,21 @@ def run(dry_run: bool = False) -> int:
                     prior["last_verified"] = today   # returns "unchanged" when a prior version exists
                 n_unchanged += 1
                 print(f"  ok   {month}  unchanged")
+                continue
+            if outcome == "reappeared":
+                reappeared_link = new_versions[-1]["archive_link"]
+                if dry_run:
+                    print(f"  REAPPEARED {month}  (dry run — not recorded)")
+                    staged_additions.setdefault(month, []).extend(new_versions)
+                    continue
+                sw.append_ridgewood_revision_row(
+                    sheets, sheet_id, month, "reappeared", now_iso,
+                    prior["content_hash"] if prior else "", new_hash, reappeared_link, link["url"],
+                    "report reappeared with content identical to the last-known copy; the "
+                    "earlier removed-from-source flag is now corrected.")
+                staged_additions.setdefault(month, []).extend(new_versions)
+                pending_reappeared.append((month, reappeared_link))
+                print(f"  REAPPEARED {month}  (status corrected)")
                 continue
 
             # outcome == "changed"
@@ -480,49 +548,58 @@ def run(dry_run: bool = False) -> int:
         except ReverifyDownloadError as e:
             print(f"  ERR {month}: download failed, skipping this month this run: {type(e).__name__}: {e}")
             had_errors = True
+        except Exception as e:  # noqa: BLE001 — one month's failure must not abort the batch (mirrors ridgewood_archiver.py)
+            print(f"  ERR {month}: unexpected failure, skipping this month this run: {type(e).__name__}")
+            had_errors = True
         finally:
             if os.path.exists(local):
                 os.remove(local)
 
     for month in confirmed_missing:
-        existing = latest_version(manifest, month)
-        if existing is None:
-            sheet_row = sheet_rows.get(month)
-            if sheet_row is None:
-                print(f"  NOTE {month}: no manifest entry and no Sheet row — cannot flag a "
-                      f"removal without a baseline; skipping.")
-                continue
-            seed = seed_version(sheet_row, sheet_row.get("report_title") or rc.report_title(month),
-                                 sheet_row.get("source_url") or "", "", now_iso)
-            staged_additions.setdefault(month, []).append(seed)
-            existing = seed
-        if existing["status"].startswith("removed-from-source"):
-            continue   # already flagged a prior run — no re-alert on a month that stays missing
-        staged_removed_months.append(month)
-        archive_link = existing.get("archive_link") or ""
-        print(f"  REMOVED {month}  (confirmed absent on two fetches)")
-        if not dry_run:
-            sw.append_ridgewood_revision_row(
-                sheets, sheet_id, month, "removed-from-source", now_iso,
-                existing.get("content_hash", ""), "", "", "",
-                "no longer listed on Barr's page; our mirrored copy, if any, is unchanged.")
-        pending_removed.append((month, archive_link))
+        try:
+            existing = latest_version(manifest, month)
+            if existing is None:
+                sheet_row = sheet_rows.get(month)
+                if sheet_row is None:
+                    print(f"  NOTE {month}: no manifest entry and no Sheet row — cannot flag a "
+                          f"removal without a baseline; skipping.")
+                    continue
+                seed = seed_version(sheet_row, sheet_row.get("report_title") or rc.report_title(month),
+                                     sheet_row.get("source_url") or "", "", now_iso)
+                staged_additions.setdefault(month, []).append(seed)
+                existing = seed
+            if existing["status"].startswith("removed-from-source"):
+                continue   # already flagged a prior run — no re-alert on a month that stays missing
+            staged_removed_months.append(month)
+            archive_link = existing.get("archive_link") or ""
+            print(f"  REMOVED {month}  (confirmed absent on two fetches)")
+            if not dry_run:
+                sw.append_ridgewood_revision_row(
+                    sheets, sheet_id, month, "removed-from-source", now_iso,
+                    existing.get("content_hash", ""), "", "", "",
+                    "no longer listed on Barr's page; our mirrored copy, if any, is unchanged.")
+            pending_removed.append((month, archive_link))
+        except Exception as e:  # noqa: BLE001 — one month's failure must not abort the batch
+            print(f"  ERR {month}: unexpected failure while processing a removal, skipping: {type(e).__name__}")
+            had_errors = True
 
     if dry_run:
         print(f"[ridgewood-reverify] DRY RUN summary: {len(archived)} months archived, "
               f"{n_baseline} baselined, {n_unchanged} unchanged, {len(pending_changed)} changed, "
               f"{len(pending_removed)} confirmed removed-from-source, "
+              f"{len(pending_reappeared)} reappeared, "
               f"{len(pending_multi_link)} with multiple posted links (nothing written).")
         return 1 if had_errors else 0
 
-    if pending_changed or pending_removed or pending_multi_link:
+    if pending_changed or pending_removed or pending_multi_link or pending_reappeared:
         owners = sorted(ea.load_owner_emails(cfg))
         sent_ok = False
         if not owners:
             print("[ridgewood-reverify] changes found but the owner list is empty — failing "
                   "loudly rather than proceeding without notifying anyone.")
         else:
-            subject, body = format_owner_alert(pending_changed, pending_removed, pending_multi_link)
+            subject, body = format_owner_alert(
+                pending_changed, pending_removed, pending_multi_link, pending_reappeared)
             try:
                 sent_ok = ea.send_email(subject, body, cfg, recipients=owners)
             except Exception as e:  # noqa: BLE001
@@ -532,14 +609,15 @@ def run(dry_run: bool = False) -> int:
             save_manifest(manifest)   # keep this run's baseline/unchanged progress
             print("[ridgewood-reverify] owner alert did NOT go out — the Ridge Wood Revisions "
                   "row(s) above are already durable, but the manifest is not advanced for the "
-                  "changed/removed month(s); next run retries them idempotently.")
+                  "changed/removed/reappeared month(s); next run retries them idempotently.")
             return 1
         print(f"[ridgewood-reverify] owner alert sent to {len(owners)} recipient(s).")
-        _apply_staged(manifest, staged_additions, staged_removed_months, today)
+        _apply_staged(manifest, staged_additions, staged_removed_months, today, now_iso)
 
     save_manifest(manifest)
     print(f"[ridgewood-reverify] {n_baseline} baselined, {n_unchanged} unchanged, "
-          f"{len(pending_changed)} revised, {len(pending_removed)} removed-from-source.")
+          f"{len(pending_changed)} revised, {len(pending_removed)} removed-from-source, "
+          f"{len(pending_reappeared)} reappeared.")
     return 1 if had_errors else 0
 
 

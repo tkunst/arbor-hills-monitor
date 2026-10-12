@@ -218,11 +218,17 @@ external users but no sensitive data). Public repo.
   commit history is the signature — no cryptographic signing, Trisha's 2026-10-08
   ruling). Detects a silently REVISED PDF (new version mirrored to the same Drive
   folder under its own filename, old copy never touched) and a report confirmed
-  absent from Barr's page on two fetches in the same run. Bootstraps a month's first
-  manifest entry from Stream G's own Sheet row (`sheet_writer.ridgewood_report_rows`,
-  new/read-only) rather than today's date. Changed/removed events go to a SEPARATE
-  append-only `Ridge Wood Revisions` tab (never a second row in `Ridge Wood Reports`)
-  and an OWNER-ONLY alert (`ea.load_owner_emails`, never the public/review lists) —
+  absent from Barr's page on two fetches in the same run (removal APPENDS a new
+  version rather than mutating the superseded one, so a month that later reappears
+  with byte-identical content gets a fresh "original" version correcting the stale
+  removed flag, instead of silently staying marked removed forever). Bootstraps a
+  month's first manifest entry from Stream G's own Sheet row
+  (`sheet_writer.ridgewood_report_rows`, new/read-only) rather than today's date.
+  Changed/removed/reappeared/multi-link events go to a SEPARATE append-only
+  `Ridge Wood Revisions` tab (never a second row in `Ridge Wood Reports`; a month
+  with more than one posted report link is logged + alerted ONCE, never re-alerted
+  for the same persistent condition) and an OWNER-ONLY alert (`ea.load_owner_emails`,
+  never the public/review lists) —
   the manifest is only advanced + saved once that alert sends, so a failed send
   retries idempotently next run. `ridgewood_client.py` gained two additive-only
   helpers (`scrape_all_report_links`, `allowed_report_host`); Stream G's own
