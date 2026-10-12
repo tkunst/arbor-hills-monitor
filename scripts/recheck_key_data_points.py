@@ -19,12 +19,13 @@ Three steps, each opt-in:
 
 Usage:
   python3 scripts/recheck_key_data_points.py --out-dir DIR [--run-llm]
-  python3 scripts/recheck_key_data_points.py --apply DIR/kdp-recheck-proposals.json [--update-severity]
+  python3 scripts/recheck_key_data_points.py --apply DIR/kdp-recheck-proposals.json [--update-severity] [--write]
 """
 from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
 import os
 import sys
@@ -64,9 +65,23 @@ def scan(service, sheet_id: str, ref) -> list[dict]:
             if problems:
                 out.append({"tab": tab, "row": n, "document_name": _cell(r, 1),
                             "date_filed": _cell(r, 0), "link": _cell(r, F_LINK),
-                            "old": {"severity": _cell(r, F_SEV), **fields},
+                            "old_kdp_sha256": _sha(fields["key_data_point"]),
+                            "old": {"severity": _cell(r, F_SEV),
+                                    "summary": _redact(fields["summary"]),
+                                    "key_data_point": _redact(fields["key_data_point"])},
                             "problems": problems})
     return out
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+
+
+def _redact(text: str) -> str:
+    """Proposals can leave the machine (a public-repo Actions artifact), so all
+    free text in them goes through the same name redaction the public feed uses."""
+    from findings_feed import redact_names
+    return redact_names(text) or ""
 
 
 def _download(url: str, dest: str) -> None:
@@ -98,13 +113,15 @@ def run_llm(items: list[dict], cfg: dict) -> None:
                     max_tokens=cfg["classification_max_tokens"],
                     title_is_generic=False,
                 )
-                it["new"] = {"severity": parsed.severity, "summary": parsed.summary,
-                             "key_data_point": parsed.key_data_point}
+                it["new"] = {"severity": parsed.severity, "summary": _redact(parsed.summary),
+                             "key_data_point": _redact(parsed.key_data_point)}
             except Exception as e:  # noqa: BLE001 — report and keep going
                 it["error"] = str(e)
 
 
-def apply(service, sheet_id: str, items: list[dict], update_severity: bool) -> None:
+def apply(service, sheet_id: str, items: list[dict], update_severity: bool,
+          write: bool = False) -> None:
+    """Without write=True this only PRINTS the exact ranges it would write."""
     ev = service.spreadsheets().values().get(
         spreadsheetId=sheet_id, range=f"'{sw.TAB_EVIDENCE}'!A2:K").execute().get("values", [])
     data = []
@@ -116,7 +133,7 @@ def apply(service, sheet_id: str, items: list[dict], update_severity: bool) -> N
         cur = service.spreadsheets().values().get(
             spreadsheetId=sheet_id, range=f"'{it['tab']}'!A{it['row']}:K{it['row']}"
         ).execute().get("values", [[]])[0]
-        if _cell(cur, F_KDP) != it["old"]["key_data_point"] or _cell(cur, F_LINK) != it["link"]:
+        if _sha(_cell(cur, F_KDP)) != it["old_kdp_sha256"] or _cell(cur, F_LINK) != it["link"]:
             print(f"SKIP (row changed since review): {it['tab']} row {it['row']}")
             continue
         r = it["row"]
@@ -133,6 +150,11 @@ def apply(service, sheet_id: str, items: list[dict], update_severity: bool) -> N
     if not data:
         print("nothing to write")
         return
+    for d in data:
+        print(f"  {d['range']}: {d['values'][0][0][:110]}")
+    if not write:
+        print(f"DRY RUN: {len(data)} cell(s) would be written; re-run with --write")
+        return
     service.spreadsheets().values().batchUpdate(
         spreadsheetId=sheet_id, body={"valueInputOption": "RAW", "data": data}).execute()
     print(f"wrote {len(data)} cell(s)")
@@ -144,6 +166,9 @@ def main() -> int:
     ap.add_argument("--run-llm", action="store_true")
     ap.add_argument("--apply", metavar="PROPOSALS_JSON")
     ap.add_argument("--update-severity", action="store_true")
+    ap.add_argument("--write", action="store_true", help="with --apply: actually write")
+    ap.add_argument("--counts-only", action="store_true",
+                    help="log rows/links/problem counts only (for public CI logs)")
     a = ap.parse_args()
     cfg = load_config()
     ref = kdp_check.reference_from_config(cfg)
@@ -152,7 +177,7 @@ def main() -> int:
 
     if a.apply:
         items = json.load(open(a.apply))
-        apply(service, sheet_id, items, a.update_severity)
+        apply(service, sheet_id, items, a.update_severity, write=a.write)
         return 0
 
     items = scan(service, sheet_id, ref)
@@ -161,6 +186,10 @@ def main() -> int:
         run_llm(items, cfg)
     for it in items:
         print(f"\n{it['tab']} row {it['row']}  {it['date_filed']}  {it['link']}")
+        if a.counts_only:
+            print(f"  problems: {sum(len(v) for v in it['problems'].values())}"
+                  f"  proposal: {'yes' if 'new' in it else 'ERROR' if 'error' in it else 'n/a'}")
+            continue
         print(f"  problems: {it['problems']}")
         print(f"  OLD [{it['old']['severity']}] KDP: {it['old']['key_data_point']}")
         if "new" in it:

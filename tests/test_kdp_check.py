@@ -161,3 +161,13 @@ def test_withheld_urgent_kept_when_plausible_reading_backs_it(monkeypatch):
     monkeypatch.setattr(edp, "_classify_with_claude", lambda *a, **k: dict(bad))
     out = edp._enforce_temperature_consistency(dict(bad), "t", {}, [], "m", ref=REF)
     assert out["severity"] == "urgent"
+
+
+def test_sanitize_leaves_unattached_high_readings_alone():
+    # stack / thermal-oxidizer readings carry no well id: not wellhead, keep as measured
+    ms = [{"metric": "temperature", "value": 1700, "unit": "F", "basis": "measured",
+           "note": "EURNGTOX operating temperature"},
+          {"metric": "temperature", "value": 447, "unit": "F", "basis": "measured",
+           "note": "Flare thermocouple reading"}]
+    out, n = kc.sanitize_measurements(ms, REF)
+    assert n == 0 and all(m["basis"] == "measured" for m in out)
