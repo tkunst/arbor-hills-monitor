@@ -113,6 +113,9 @@ DOCS = [
 ]
 
 
+ALIAS_SENTINEL = {"AHWW0177": "AHWW177R"}
+
+
 def _wire(monkeypatch, mod, severity):
     """Fake every external call `mod.run()` makes; return the recorded writes."""
     rec = {"append": [], "urgent": [], "deadlines": [], "woi": [], "processed": []}
@@ -137,10 +140,17 @@ def _wire(monkeypatch, mod, severity):
     monkeypatch.setattr(mod.nc, "make_session", lambda: None)
     monkeypatch.setattr(mod.nc, "fetch_all_documents", lambda s, c: [dict(d) for d in DOCS])
     monkeypatch.setattr(mod.nc, "download_pdf", lambda *a: None)
-    monkeypatch.setattr(mod, "parse_document", lambda *a, **k: _parsed(severity))
+    rec["alias_kwargs"] = []
+    monkeypatch.setattr(mod.well_aliases, "load_alias_map", lambda *a, **k: ALIAS_SENTINEL)
+
+    def fake_parse(*a, **k):
+        rec["alias_kwargs"].append(("parse", k.get("well_alias_map")))
+        return _parsed(severity)
+    monkeypatch.setattr(mod, "parse_document", fake_parse)
     monkeypatch.setattr(mod.av, "mirror_one_now", lambda *a, **k: "LINK-" + a[3]["doc_id"])
     monkeypatch.setattr(mod.woi_router, "route_measurements",
-                        lambda parsed, local, d, cfg, **k: rec["woi"].append(d["doc_id"]))
+                        lambda parsed, local, d, cfg, **k: rec["woi"].append(d["doc_id"])
+                        or rec["alias_kwargs"].append(("route", k.get("alias_map"))))
     if mod is w:
         monkeypatch.setattr(w, "_today", lambda: __import__("datetime").date(2026, 10, 7))
         monkeypatch.setattr(w.ea, "is_urgent", lambda parsed, cfg: parsed.severity == "urgent")
@@ -165,6 +175,9 @@ def test_watcher_routes_related_doc_to_related_tab_only(monkeypatch, severity):
     links = [r["link"] for r in state["pending_digest"] + state["pending_urgent_recap"]]
     assert "LINK-rel1" not in links and "LINK-core1" in links
     assert sorted(rec["processed"]) == ["core1", "rel1"]
+    # ADR 068: the run-start alias map reaches BOTH the parser and the WOI router
+    assert ("route", ALIAS_SENTINEL) in rec["alias_kwargs"]
+    assert {v is ALIAS_SENTINEL for _, v in rec["alias_kwargs"]} == {True}
 
 
 def test_backfill_routes_related_doc_to_related_tab_only(monkeypatch):
@@ -177,4 +190,5 @@ def test_backfill_routes_related_doc_to_related_tab_only(monkeypatch):
     assert sw.TAB_HISTORICAL in _tabs_for(rec, "core1")
     assert rec["woi"] == ["core1"]
     assert sorted(rec["processed"]) == ["core1", "rel1"]
-
+    assert ("route", ALIAS_SENTINEL) in rec["alias_kwargs"]
+    assert {v is ALIAS_SENTINEL for _, v in rec["alias_kwargs"]} == {True}

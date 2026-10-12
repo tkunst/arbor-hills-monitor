@@ -23,8 +23,11 @@ itself). Nothing else. Safety:
   * TOCTOU-SAFE: --apply re-reads the tab and re-derives the plan against CURRENT
     row numbers immediately before one batchUpdate (a FORCE_REPROCESS purge can
     shift rows between the dry-run and the apply).
-  * REVERSIBLE: --apply writes a JSON manifest (row, old, new) BEFORE writing;
-    revert = set each row's Well ID back to `old` and clear Well ID As Filed.
+  * REVERSIBLE: --apply writes a JSON manifest (row, old, new, as_filed_written)
+    BEFORE writing; revert = set each row's Well ID back to `old`, and clear Well
+    ID As Filed ONLY where `as_filed_written` is true (never a pre-existing value).
+  * Run it while no watcher/backfill workflow is running: a row deletion between
+    the re-read and the write would shift row numbers.
 
 This mutates the PUBLIC case-file Sheet, so --apply is a human step — never run
 by the overnight loop. Credentials: GDRIVE_SA_KEY + GSHEET_ID (a `.env` in the
@@ -140,15 +143,16 @@ def apply_backfill(service, sheet_id: str, alias_map: dict, *, manifest_path: st
     if not plan:
         return plan
     with open(manifest_path, "w") as fh:
-        json.dump({**meta, "updates": [{k: u[k] for k in ("row", "old", "new")}
-                                       for u in plan]}, fh, indent=0)
+        json.dump({**meta, "updates": [
+            {"row": u["row"], "old": u["old"], "new": u["new"],
+             "as_filed_written": not u["as_filed_existing"]} for u in plan]}, fh, indent=0)
     wcol = _col_letter(header.index("Well ID"))
     fcol = _col_letter(header.index(AS_FILED))
     data = []
     for u in plan:
         data.append({"range": f"'{MEASUREMENTS_TAB}'!{wcol}{u['row']}", "values": [[u["new"]]]})
         if not u["as_filed_existing"]:
-            data.append({"range": f"'{MEASUREMENTS_TAB}'!{fcol}{u['row']}", "values": [[u["old"]]]})
+            data.append({"range": f"'{MEASUREMENTS_TAB}'!{fcol}{u['row']}", "values": [[u["old"].rstrip("*")]]})
     service.spreadsheets().values().batchUpdate(
         spreadsheetId=sheet_id, body={"valueInputOption": "RAW", "data": data},
     ).execute(num_retries=5)
