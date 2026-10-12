@@ -81,11 +81,23 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin main
+          # While ridgewood.reverify_enabled is false (ships this way) run() returns
+          # before ever calling save_manifest() -- the file doesn't exist yet. `git
+          # add` on a nonexistent explicit path is a fatal pathspec error under
+          # set -euo pipefail, so check for the file first rather than letting that
+          # abort the step on every scheduled no-op run.
+          if [ ! -f data/provenance/ridgewood-manifest.json ]; then
+            echo "No manifest written this run (disabled, or nothing archived yet) -- nothing to commit."
+            exit 0
+          fi
           git add data/provenance/ridgewood-manifest.json
           if git diff --cached --quiet; then
             echo "No change to the provenance manifest."
-          else
-            git commit -m "chore(ridgewood): monthly re-verification manifest update"
-            git push
+            exit 0
           fi
+          # Commit locally BEFORE pulling -- save_manifest() rewrites the file (at
+          # minimum its generated_at timestamp) on every real run, so the working
+          # tree is dirty at this point; `git pull --rebase` on a dirty tree fails.
+          git commit -m "chore(ridgewood): monthly re-verification manifest update"
+          git pull --rebase origin main
+          git push origin HEAD:main

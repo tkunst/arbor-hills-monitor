@@ -41,7 +41,8 @@ status, last_verified}`, `status` one of `"original"` / `"revised <date>"` /
 REMOVED month always gets a brand-new version appended — the prior version's hash/
 link/status is never overwritten, so the manifest is a full history, not just a
 current snapshot. The ONE mutation a routine "still matches, verified again" pass
-is allowed is bumping `last_verified` on the CURRENT (latest `fetched_at`) version —
+is allowed is bumping `last_verified` on the CURRENT (the LAST entry in the
+version list by append order, not a `fetched_at` comparison — see §6) version —
 "record 'verified `<date>`' only, nothing else" is the handoff's own phrasing for
 the unchanged case, and it is the common case every month for all ~66+ reports.
 
@@ -188,7 +189,7 @@ INSIDE that same per-month try block, not before it — a round-2 review caught 
 earlier draft where it sat just outside, so a Sheets failure there would have
 propagated out of the loop uncaught.)
 
-### 7. Why no data-guard allowlist entry was needed
+### 7. Two separate `*.json` gates — data-guard CI, and `.gitignore` itself
 
 `data/provenance/ridgewood-manifest.json` is written and committed by the
 **workflow's own direct push to `main`** (`contents: write`, same mechanism
@@ -197,6 +198,28 @@ through a pull request. `data-guard.yml`'s `block-data-files` job only runs
 `on: pull_request`, so it never sees this file. This PR itself adds no `*.json` file
 (the manifest doesn't exist until the flag is flipped and the workflow runs for
 real), so CI on THIS PR is unaffected.
+
+**That is NOT the same thing as `.gitignore`, and a terminal-round review caught
+that this ADR originally only addressed the first.** This repo's `.gitignore` has
+its own blanket `*.json` rule (the same data-file hygiene, enforced locally and in
+every `git` command, not just in a PR-triggered CI job) with explicit `!`
+exceptions for legitimate committed JSON — `package.json`, the markdownlint
+configs, and `site/public-records/search-index.json` (which hit this *exact*
+failure mode first, per its own comment in `.gitignore`: "the file would be
+written on every run but never actually committed"). `data/provenance/
+ridgewood-manifest.json` needed the identical exception and didn't have one —
+`git add` on an explicitly-ignored path fails outright (confirmed by direct
+reproduction: `git check-ignore -v` before the fix named this exact rule), which
+would have made the workflow's commit step fail on **every single run**,
+regardless of the `reverify_enabled` flag's state, with no Python-level signal at
+all (the script itself always exits cleanly; only the shell `git add` call fails).
+Added `!data/provenance/ridgewood-manifest.json` to `.gitignore`, pinned with a
+test (`test_manifest_path_is_not_gitignored`), and reordered the workflow's
+commit step to commit locally **before** pulling with `--rebase` (the previous
+order pulled first, which fails on a dirty working tree — and `save_manifest()`
+rewriting `generated_at` on every real run means the tree is *always* dirty by
+this point) and to exit 0 cleanly before ever calling `git add` on a path that
+doesn't exist yet (true on every run while the flag ships disabled).
 
 ### 8. Security
 
@@ -208,8 +231,15 @@ real), so CI on THIS PR is unaffected.
 - `rc.allowed_report_host()` (new, additive) pins every scraped link to an https URL
   on the configured `page_url`/`base_url` host before downloading — defensive, since
   this job re-scrapes a fresh page fetch every run and is new code.
-- Every caught exception is logged by class name only (`type(e).__name__`), never
-  the raw exception text — consistent with this repo's public-stdout discipline.
+- Most caught exceptions are logged by class name only (`type(e).__name__`); a
+  round-4 review noted three sites (the page fetch, the confirmation fetch, and a
+  failed download) also print the underlying exception text — this is Stream G's
+  OWN `RidgewoodFetchError`/network-error text (the public report-page URL plus a
+  generic HTTP/urllib message, same as `ridgewood_archiver.py`'s own existing
+  fetch-failure logging) or this module's own synthetic `ReverifyDownloadError`
+  message, never a secret or credential, so there is no actual leak — but the
+  blanket "class name only, never raw text" claim this bullet previously made was
+  not quite accurate for those three sites.
 
 ## Out of scope (per the handoff)
 
@@ -230,6 +260,43 @@ autonomous merge.** Activation (Trisha's call): review, merge, then set
 `ridgewood.reverify_enabled: true` and commit. `GOAUTH_RIDGEWOOD_FOLDER_ID` is
 already provisioned (shared with Stream G) and optional here exactly as it is there.
 
+## Review history
+
+Per `docs/overnight-coder.md`'s Step 7 convergence loop (cap: 3 resolve-and-
+re-review rounds), four independent, diff-only subagent reviews ran against this
+PR, each on the updated diff after the previous round's fixes:
+
+1. Found a month that reappears unchanged after being flagged removed stayed
+   stuck in that status forever (no correction path); per-month exception
+   handling too narrow; no debounce on a repeating "multiple links" condition.
+   Fixed.
+2. Found the retry-idempotency guard (round 1's "revised" fix) wasn't extended to
+   "removed-from-source"/"reappeared"; the multi-link Sheet write sat outside the
+   per-month exception guard. Fixed.
+3. Found round 2's OWN idempotency fix had a bug (keyed on "ever logged" instead
+   of "most recently logged", so a real third event could hash-collide with and
+   be swallowed as a retry of the first); while tracing it, also found
+   `latest_version()`'s `max(fetched_at)` could tie-break to a stale entry. Fixed.
+4. **This was the 3rd re-check — the cap.** Found a new-category, critical issue
+   outside the Python logic the first three rounds examined: the workflow's
+   commit step could not actually commit the manifest in ANY state (blocked by
+   `.gitignore`'s blanket `*.json` rule; `git add` on a nonexistent path before
+   the flag is ever enabled; a dirty tree blocking `git pull --rebase` on every
+   real run) — confirmed by direct reproduction, not just review. Also flagged
+   two lower-severity items (now listed as residual risks 5 and 6 below) and two
+   stale doc phrasings (now corrected).
+
+Per the procedure, round 4's findings were NOT resolved via a 5th independent
+review (the cap). The `.gitignore`/workflow-commit bug was fixed directly and
+verified **mechanically** (four hand-run scenarios against a scratch git repo
+with a bare "origin": no manifest file yet, a brand-new manifest, a modified
+tracked manifest, and a concurrent push from another workflow landing on `main`
+in between — all four behave correctly) rather than by a further subagent
+review, since it blocked the feature's core deliverable and had a narrow,
+mechanical, already-precedented fix (the exact pattern `search-index.json`
+already uses in this repo's `.gitignore`). Residual risks 5 and 6 below were
+left open rather than fixed, per the cap.
+
 ## Consequences / residual risks (accepted)
 
 1. A revision that happened to a month **before this job's very first run ever
@@ -245,3 +312,26 @@ already provisioned (shared with Stream G) and optional here exactly as it is th
 4. This re-verification pass runs monthly, not continuously — a revision live for
    less than a month between two runs is still caught on the next run (the manifest
    question is "did the bytes change since we last checked", not "when exactly").
+5. **Open, NOT fixed in this PR (terminal review round reached its cap — see
+   "Review history" below): the "multi-link" event type has no retry-idempotency
+   at all.** `revised`/`removed-from-source`/`reappeared` all defer their Sheet
+   row + manifest advance until the owner alert actually sends, and compare
+   against the month's most recent logged event on retry (§6). "multi-link"
+   instead logs its Sheet row unconditionally, before the alert is even attempted,
+   with no linkage to whether that alert succeeds — `sheet_writer
+   .ridgewood_multi_link_flagged_months()` dedupes purely on "was this ever
+   flagged", not "was it successfully communicated". If the owner alert fails on
+   the run that first finds a multi-link month (e.g. an empty owner list — an
+   already-tested failure mode for the other three events), that specific
+   notification is silently and permanently lost; the run still exits 1, so a
+   human would see SOMETHING failed, but not which finding was dropped without
+   checking the `Ridge Wood Revisions` tab by hand.
+6. **Open, NOT fixed in this PR: a narrow, low-likelihood gap in the retry design
+   itself** (found while tracing the fix for item 5's sibling bug in §6): if an
+   owner alert fails for event A on a month, and before the retry succeeds the
+   month's state changes AGAIN to a different event B, the retry only ever
+   compares against and resends for the month's CURRENT state (B) — event A's own
+   Sheet row and any Drive copy remain durable, but no email specifically about A
+   is ever sent. No data is lost; one notification is. Considered unlikely enough
+   (requires two real state changes to the same month within one unresolved
+   alert-failure window) not to warrant a design change here.

@@ -31,10 +31,12 @@ version; the old one stays exactly as it was). A version is:
     report_title, source_url, fetched_at, content_hash, archive_link,
     status ("original" | "revised <date>" | "removed-from-source <date>"),
     last_verified (date, or null if never separately confirmed)
-The ONE field a verification pass is allowed to mutate in place is last_verified on
-the CURRENT (latest by fetched_at) version — "record 'verified <date>', nothing
-else" per the handoff. A REVISED or REMOVED month always gets a brand-new version
-entry instead (append, never mutate the hash/link/status of a past version).
+The ONE field a verification pass is allowed to mutate in place is last_verified
+on the CURRENT (the LAST entry in the version list — see latest_version()'s
+docstring for why that's list order, not a fetched_at comparison) version —
+"record 'verified <date>', nothing else" per the handoff. A REVISED or REMOVED
+month always gets a brand-new version entry instead (append, never mutate the
+hash/link/status of a past version).
 
 BOOTSTRAP: Stream G has already been mirroring reports since 2026-07-15, long before
 this manifest existed. The FIRST time this job ever checks a month, there is no
