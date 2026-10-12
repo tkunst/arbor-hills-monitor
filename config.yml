@@ -1906,6 +1906,9 @@ temperature_thresholds:
   # recognize an HOV value named in classifier prose. Add a value here when a
   # new HOV letter sets one.
   hov_values_f: [150, 155, 160, 170, 180]
+  # The only well(s) holding the top HOV value above (180°F). kdp_check flags
+  # classifier text that gives that value to any other well (Trisha 2026-10-12).
+  top_hov_wells: [AHW272R4]
   # Above this, a "°F" number in a sentence about wells is treated as a
   # misread column (e.g. H2S ppm), never a wellhead temperature. Flare and
   # combustion sentences are exempt (kdp_check.py).
