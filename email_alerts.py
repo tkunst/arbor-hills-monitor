@@ -22,14 +22,18 @@ from typing import Optional
 _TEMP_RE = re.compile(r"(\d{2,4})\s*(?:°|deg(?:rees)?\.?\s*)?\s*f\b", re.IGNORECASE)
 
 
-def _max_temperature_f(text: str) -> Optional[int]:
-    """Return the highest plausible Fahrenheit reading found in text, or None."""
+def _max_temperature_f(text: str, max_f: int = 250) -> Optional[int]:
+    """Return the highest plausible WELLHEAD Fahrenheit reading found in text,
+    or None. Values above max_f (temperature_thresholds.max_plausible_wellhead_f,
+    ADR 067) are skipped: on this fallback path they are flare/combustion
+    temperatures or a misread non-temperature column (e.g. H2S ppm), never a
+    wellhead reading that should fire an urgent alert."""
     if not text:
         return None
     best = None
     for m in _TEMP_RE.finditer(text):
         val = int(m.group(1))
-        if 50 <= val <= 1000:  # ignore stray years / tiny numbers
+        if 50 <= val <= max_f:  # ignore stray years / tiny numbers / non-wellhead values
             best = val if best is None else max(best, val)
     return best
 
@@ -79,7 +83,8 @@ def is_urgent(parsed, cfg: dict) -> bool:
     # Last resort, ONLY when the parser produced no structured temperature at
     # all: scan free text. Less safe (can't tell measured from permitted).
     hay = f"{parsed.key_data_point}\n{parsed.summary}\n{parsed.full_text}"
-    temp = _max_temperature_f(hay)
+    max_f = int((cfg.get("temperature_thresholds") or {}).get("max_plausible_wellhead_f", 250))
+    temp = _max_temperature_f(hay, max_f)
     return temp is not None and temp >= threshold
 
 

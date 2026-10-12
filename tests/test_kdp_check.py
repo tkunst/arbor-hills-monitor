@@ -114,3 +114,50 @@ def test_prompt_states_reference_values_and_drops_old_example():
     p = edp._build_system_prompt([{"id": "R8", "name": "n", "description": "d"}])
     assert "131F" in p and "145F" in p and "ppm, not degrees" in p
     assert "35F above MACT" not in p
+
+
+# --- gaps 1-3 (ADR 067) -----------------------------------------------------
+import email_alerts as ea  # noqa: E402
+
+
+def test_sanitize_retags_implausible_measured_temperature():
+    ms = [{"metric": "temperature", "value": 553, "unit": "F", "basis": "measured",
+           "well_id": "AHWW414R", "note": "HCH Meter"},
+          {"metric": "temperature", "value": 154.6, "unit": "F", "basis": "measured"},
+          {"metric": "temperature", "value": 1612, "unit": "F", "basis": "measured",
+           "note": "enclosed flare combustion temperature"}]
+    out, n = kc.sanitize_measurements(ms, REF)
+    assert n == 1
+    assert out[0]["basis"] == "unknown" and out[1]["basis"] == "measured"
+    assert out[2]["basis"] == "measured"  # flare exempt
+    assert kc.max_plausible_measured_f(out, REF) == 154.6
+
+
+def test_text_fallback_ignores_non_wellhead_values():
+    assert ea._max_temperature_f("AHWW414R 553 F on 5/14/24") is None
+    assert ea._max_temperature_f("probe read 165 F at the wellhead") == 165
+
+
+def test_withheld_urgent_without_plausible_reading_drops_to_notable(monkeypatch):
+    bad = dict(_fields(BAD[1]), severity="urgent",
+               measurements=[{"metric": "temperature", "value": 553, "unit": "F",
+                              "basis": "measured", "well_id": "AHWW414R"}])
+    monkeypatch.setattr(edp, "_classify_with_claude", lambda *a, **k: dict(bad))
+    out = edp._enforce_temperature_consistency(dict(bad), "t", {}, [], "m", ref=REF)
+    assert out["key_data_point"] == kc.WITHHELD_KDP
+    assert out["severity"] == "notable"
+    assert out["measurements"][0]["basis"] == "unknown"
+    assert ea.is_urgent(type("P", (), {"severity": out["severity"],
+                                        "measurements": out["measurements"],
+                                        "key_data_point": out["key_data_point"],
+                                        "summary": "", "full_text": "553 F"})(),
+                        {"urgent": {"measured_temp_urgent_f": 145}}) is False
+
+
+def test_withheld_urgent_kept_when_plausible_reading_backs_it(monkeypatch):
+    bad = dict(_fields(BAD[2]), severity="urgent",
+               measurements=[{"metric": "temperature", "value": 170.2, "unit": "F",
+                              "basis": "measured"}])
+    monkeypatch.setattr(edp, "_classify_with_claude", lambda *a, **k: dict(bad))
+    out = edp._enforce_temperature_consistency(dict(bad), "t", {}, [], "m", ref=REF)
+    assert out["severity"] == "urgent"
