@@ -1,5 +1,6 @@
 """Shared fixtures. Synthetic PDFs are built in-process with PyMuPDF — no PDFs
 are ever committed (the data-guard CI check blocks *.pdf)."""
+import hashlib
 import os
 import sys
 
@@ -7,6 +8,33 @@ import fitz
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+_RIDGEWOOD_MANIFEST = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "provenance", "ridgewood-manifest.json")
+
+
+def _file_digest(path):
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _committed_ridgewood_manifest_untouched():
+    """Guard: the test suite must never create, modify or delete the committed
+    Ridge Wood provenance manifest (the monthly workflow owns it; its git history
+    is the tamper-evidence). Fails the session at teardown if it changed."""
+    before = _file_digest(_RIDGEWOOD_MANIFEST)
+    yield
+    after = _file_digest(_RIDGEWOOD_MANIFEST)
+    leftover_tmp = os.path.exists(_RIDGEWOOD_MANIFEST + ".tmp")
+    if after != before or leftover_tmp:
+        pytest.fail(
+            f"test suite modified the committed {_RIDGEWOOD_MANIFEST} "
+            f"(sha256 {before} -> {after}, leftover .tmp={leftover_tmp}); "
+            f"tests must use a tmp_path manifest", pytrace=False)
 
 
 @pytest.fixture
