@@ -211,10 +211,14 @@ def sanitize_measurements(measurements: list, ref: TempReference) -> tuple[list,
             continue
         unit = (m.get("unit") or "F").strip().lower()
         note = m.get("note") or ""
-        well_ctx = bool((m.get("well_id") or "").strip()) or bool(_WELL_CTX_RE.search(note))
+        wid = (m.get("well_id") or "").strip()
+        # a gas-well id is AH-form; flare/engine ids ("391", "Flare 392",
+        # "EUENCLOSEDFLARE2", "TE391") are not wells, so they never count
+        well_ctx = bool(_WELL_ID_RE.fullmatch(wid)) or bool(_WELL_CTX_RE.search(note))
         if (m.get("metric") == "temperature" and m.get("basis") == "measured"
                 and unit.startswith("f") and v > ref.max_plausible_wellhead_f
-                and well_ctx and not _FLARE_CTX_RE.search(note)):
+                and well_ctx and not _FLARE_CTX_RE.search(note)
+                and not _FLARE_CTX_RE.search(wid)):
             m["basis"] = "unknown"
             m["note"] = ("[implausible wellhead temperature, re-tagged by kdp_check] "
                          + (m.get("note") or "")).strip()

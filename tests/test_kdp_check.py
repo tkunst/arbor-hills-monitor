@@ -177,3 +177,15 @@ def test_sanitize_leaves_unattached_high_readings_alone():
            "note": "Flare thermocouple reading"}]
     out, n = kc.sanitize_measurements(ms, REF)
     assert n == 0 and all(m["basis"] == "measured" for m in out)
+
+
+def test_sanitize_leaves_flare_ids_alone():
+    # real Measurements rows: flare ids sit in the Well ID column
+    ms = [{"metric": "temperature", "value": 1701, "unit": "F", "basis": "measured",
+           "well_id": "EUENCLOSEDFLARE2", "note": "Control panel reading at 10:00 AM"},
+          {"metric": "temperature", "value": 1520, "unit": "F", "basis": "measured",
+           "well_id": "391", "note": "compliant temperature reading"},
+          {"metric": "temperature", "value": 1875.08, "unit": "F", "basis": "measured",
+           "well_id": "TE391", "note": "waste temperature at peak"}]
+    out, n = kc.sanitize_measurements(ms, REF)
+    assert n == 0 and all(m["basis"] == "measured" for m in out)
