@@ -211,6 +211,23 @@ external users but no sensitive data). Public repo.
   doesn't depend on it), write the month's max 24-hr average → Measurements
   (`basis=measured`, Barr/EPA-agreement monitor), same-day alert on a stated 72/750 ppb
   exceedance. Modeled on `mmpc_archiver`. Gated on `ridgewood.enabled`. See ADR 016.
+- `ridgewood_reverify.py` — Stream G add-on (ADR 066, added 2026-10-12; the Ridge
+  Wood slice of `coder:selfreport-provenance`): monthly re-download of EVERY month
+  Stream G has archived (not just new ones) + a committed, tamper-evident
+  `data/provenance/ridgewood-manifest.json` (one entry per report *version*; the git
+  commit history is the signature — no cryptographic signing, Trisha's 2026-10-08
+  ruling). Detects a silently REVISED PDF (new version mirrored to the same Drive
+  folder under its own filename, old copy never touched) and a report confirmed
+  absent from Barr's page on two fetches in the same run. Bootstraps a month's first
+  manifest entry from Stream G's own Sheet row (`sheet_writer.ridgewood_report_rows`,
+  new/read-only) rather than today's date. Changed/removed events go to a SEPARATE
+  append-only `Ridge Wood Revisions` tab (never a second row in `Ridge Wood Reports`)
+  and an OWNER-ONLY alert (`ea.load_owner_emails`, never the public/review lists) —
+  the manifest is only advanced + saved once that alert sends, so a failed send
+  retries idempotently next run. `ridgewood_client.py` gained two additive-only
+  helpers (`scrape_all_report_links`, `allowed_report_host`); Stream G's own
+  `scrape_report_links`/`download_report`/the archiver itself are untouched. Gated
+  on `ridgewood.reverify_enabled` (ships `false`).
 - `rop_client.py` — Stream H: fetch + parse for the ROP (air Title V permit)
   watch. EPA ROP Monthly Report CSV rows for N2688/N1504/P1488 (excludes the
   M3333 "Emerald" name-collision by exact SRN match, never by name), the N2688

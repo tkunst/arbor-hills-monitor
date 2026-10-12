@@ -198,6 +198,51 @@ def scrape_report_links(html_text: str, base_url: str = DEFAULT_BASE_URL) -> tup
     return reports, unparsed
 
 
+def scrape_all_report_links(html_text: str, base_url: str = DEFAULT_BASE_URL) -> dict:
+    """Like scrape_report_links(), but keeps EVERY distinct Files/*.pdf link for a
+    month instead of collapsing to the first one seen — so a second link posted
+    alongside the original (a silent revision posted under its own filename, not a
+    re-save under the SAME url) is visible to a caller that checks for it.
+    {month: [{month, url, filename}, ...]} in page order; a link whose month doesn't
+    parse is dropped (the one expected case is the old-format Dec-2020 duplicate that
+    scrape_report_links() reports via `unparsed` — this function has no live caller
+    that needs that count). Pure — no network. Added for ridgewood_reverify.py;
+    scrape_report_links() is the one the live archiver uses and is untouched."""
+    by_month: dict[str, list[dict]] = {}
+    seen_links: set[str] = set()
+    for raw in _PDF_LINK_RE.findall(html_text):
+        link = _html.unescape(raw)
+        if not re.search(r"/Files/.*\.pdf", link, re.I):
+            continue
+        if link in seen_links:
+            continue
+        seen_links.add(link)
+        filename = link.split("/Files/", 1)[-1]
+        month = parse_month(filename)
+        if month is None:
+            continue
+        url = _absolutize(link, base_url)
+        by_month.setdefault(month, []).append(
+            {"month": month, "url": url, "filename": urllib.parse.unquote(filename)})
+    return by_month
+
+
+def allowed_report_host(url: str, allowed_hosts) -> bool:
+    """True iff `url` is https and its host is one of `allowed_hosts` (case-
+    insensitive). A defensive guard for ridgewood_reverify.py before downloading or
+    recording a scraped link in the provenance manifest: that job re-fetches the page
+    fresh every run and is new code, so pin it to the expected host(s) rather than
+    following whatever an href happens to say. Not used by the live archiver (its
+    links already come from the same page fetch within one run)."""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError:
+        return False
+    if parsed.scheme != "https" or not parsed.hostname:
+        return False
+    return parsed.hostname.lower() in {h.lower() for h in allowed_hosts}
+
+
 def iter_new_reports(reports: list[dict], already_archived: set) -> list[dict]:
     """Reports whose month isn't in already_archived (str-compared — Sheets
     round-trips cells as strings, same idiom as mmpc iter_new_files). Newest first,

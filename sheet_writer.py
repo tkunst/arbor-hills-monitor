@@ -213,6 +213,15 @@ TAB_MEETING_WATCH = "Meeting Watch"
 # monitor's monthly QA'd reports). The month's 24-hr-average value rides the shared
 # Measurements tab; this tab is the archive index + provenance record.
 TAB_RIDGEWOOD = "Ridge Wood Reports"
+# Ridge Wood monthly re-verification log (ADR 066, ridgewood_reverify.py). A
+# SEPARATE append-only tab, never a second row in TAB_RIDGEWOOD for a month that
+# already has one there (that tab is Stream G's one-row-per-month dedup marker —
+# ensure_ridgewood_tabs() rewrites its header on every live run, so it stays
+# untouched). One row per detected event (a revised report's new version, or a
+# report that dropped off Barr's page); "unchanged, verified again" produces no
+# row at all — that fact lives only in the committed provenance manifest's
+# last_verified field, not here.
+TAB_RIDGEWOOD_REVISIONS = "Ridge Wood Revisions"
 # ROP (air Title V permit) watch (ADR 017) — same on-demand policy as the
 # WDS/MMPC/PFAS/WOI/GFL/Meeting/Ridgewood tabs: no tab appears until rop_watcher
 # actually runs. Append-only, keyed by Item (e.g. "csv:N2688") in col B for
@@ -454,6 +463,18 @@ MEETING_WATCH_HEADERS = [
 RIDGEWOOD_REPORT_HEADERS = [
     "Month", "Report Title", "Max 24-hr Avg (ppb)", "# Days", "Alert",
     "Source URL", "Content Hash", "Archive Link", "Fetched At",
+]
+
+# Ridge Wood monthly re-verification log (ADR 066). One row per detected EVENT —
+# "revised" (a month's PDF changed since it was last verified; the new version is
+# mirrored under its own Drive filename, the old copy is never touched) or
+# "removed-from-source" (the month is no longer listed on Barr's page; our mirrored
+# copy is untouched). A month that re-verifies unchanged gets NO row here — see
+# TAB_RIDGEWOOD_REVISIONS above. Previous/new content hash let a reader confirm the
+# detected change without opening either PDF.
+RIDGEWOOD_REVISIONS_HEADERS = [
+    "Month", "Event", "Detected At", "Previous Content Hash", "New Content Hash",
+    "New Archive Link", "Source URL", "Note",
 ]
 
 # ROP watch (ADR 017). One row per observed state of a watched item — "baseline"
@@ -1778,6 +1799,79 @@ def append_ridgewood_report_row(
     append_rows(service, sheet_id, TAB_RIDGEWOOD, [[
         month, title, max_24h, n_days, alert,
         source_url, content_hash, archive_link, fetched_at,
+    ]])
+
+
+def ridgewood_report_rows(service, sheet_id: str) -> dict:
+    """{month: {month, report_title, max_24h, n_days, alert, source_url,
+    content_hash, archive_link, fetched_at}} for every row Stream G has ever
+    written to Ridge Wood Reports. Used ONLY by ridgewood_reverify.py (ADR 066) to
+    seed its provenance manifest's very first entry for a month with Stream G's OWN
+    real original fetch (hash/link/date) instead of re-stamping it as fetched today.
+    The LAST row for a given month wins — a crash-recovery re-run of the archiver can
+    append a duplicate row for the same month (see ridgewood_archiver's crash-safe
+    ordering note), and the latest one is the freshest state. [] rows (a fresh Sheet,
+    or the tab doesn't exist yet) -> {}."""
+    keys = ["month", "report_title", "max_24h", "n_days", "alert",
+            "source_url", "content_hash", "archive_link", "fetched_at"]
+    out: dict = {}
+    for r in _tab_rows(service, sheet_id, TAB_RIDGEWOOD, "A2:I"):
+        row = dict(zip(keys, r))
+        month = row.get("month")
+        if month:
+            out[str(month)] = row
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Ridge Wood monthly re-verification log (ADR 066, ridgewood_reverify.py) — a
+# SEPARATE tab from Ridge Wood Reports (never a second row there for a month that
+# already has one). Append-only event log; not used for dedup by month (a month can
+# legitimately get more than one "revised" row over its lifetime) — idempotency
+# against a crashed/retried run is by (month, new content hash) instead, see
+# ridgewood_revision_keys().
+# ---------------------------------------------------------------------------
+
+
+def ensure_ridgewood_revisions_tab(service, sheet_id: str) -> None:
+    """Create the Ridge Wood Revisions tab if missing and reconcile its header row on
+    every run (same self-healing policy as ensure_ridgewood_tabs()). Called only from
+    ridgewood_reverify.py, so the tab doesn't appear until that job runs."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if TAB_RIDGEWOOD_REVISIONS not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": TAB_RIDGEWOOD_REVISIONS}}}]},
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    _set_header(service, sheet_id, TAB_RIDGEWOOD_REVISIONS, RIDGEWOOD_REVISIONS_HEADERS)
+
+
+def ridgewood_revision_keys(service, sheet_id: str) -> dict:
+    """{(month, new_content_hash): new_archive_link} already logged as a "revised"
+    event. Lets ridgewood_reverify.py tell "I already mirrored + logged this exact
+    revision, just finish advancing the manifest" (recovering the Drive link it
+    already uploaded under) from "this is a revision I haven't recorded yet" — the
+    idempotency check that keeps a retried run (e.g. one where the owner email
+    failed last time, so the manifest was never advanced) from re-uploading a second
+    Drive copy of the same new bytes. [] rows (fresh/missing tab) -> {}."""
+    out: dict = {}
+    for r in _tab_rows(service, sheet_id, TAB_RIDGEWOOD_REVISIONS, "A2:F"):
+        if len(r) >= 5 and r[1] == "revised" and r[0] and r[4]:
+            out[(str(r[0]), str(r[4]))] = r[5] if len(r) >= 6 else ""
+    return out
+
+
+def append_ridgewood_revision_row(
+    service, sheet_id: str, month: str, event: str, detected_at: str,
+    previous_hash: str, new_hash: str, new_link: str, source_url: str, note: str,
+) -> None:
+    """Append one Ridge Wood Revisions row — the durable, human-visible record of a
+    "revised" or "removed-from-source" event, written BEFORE the owner alert (and
+    before the manifest entry is allowed to advance; see ridgewood_reverify.py) so the
+    event is never silently lost even if the alert email fails."""
+    append_rows(service, sheet_id, TAB_RIDGEWOOD_REVISIONS, [[
+        month, event, detected_at, previous_hash, new_hash, new_link, source_url, note,
     ]])
 
 
