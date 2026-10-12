@@ -203,6 +203,10 @@
       <h3>Hottest in view</h3>
       <div id="top" style="font-size:13px"></div>
     </div>
+    <div class="stat">
+      <h3>Hot wells not on the map</h3>
+      <div id="unmapped" style="font-size:13px"></div>
+    </div>
     <div class="stat legend">
       <h3>Legend</h3>
       <div><span class="pill dot-east"></span>Eastern cluster (hot core)</div>
@@ -400,6 +404,14 @@ function build(){
   document.getElementById("top").innerHTML = pool.map(w=>
     `<div class="row"><span><span class="pill dot-${w.side==="E"?"east":"west"}"></span>${w.id}</span>`
     +`<span>${w.peak}°F</span></div>`).join("") || "<span style='color:var(--muted)'>none</span>";
+  // wells with no published coordinates (data: D.unplaceable) are listed here so
+  // their readings stay visible; the record high (AHWW16R6, 182.5°F) is one of them.
+  const unpl = (D.unplaceable||[]).slice().sort((a,b)=>b.peak-a.peak);
+  const recordPeak = Math.max(...D.runA.wells.map(w=>w.peak), ...D.runB.wells.map(w=>w.peak), ...unpl.map(u=>u.peak));
+  document.getElementById("unmapped").innerHTML = unpl.map(u=>
+    `<div class="row"><span>${u.id}</span><span>${u.peak}°F${u.peak_year?` (${u.peak_year})`:""}</span></div>`
+    +(u.peak===recordPeak?`<div style="color:var(--muted);font-size:12px;margin:-2px 0 4px">Highest wellhead reading in the 2021–2026 record</div>`:"")).join("")
+    +`<div style="color:var(--muted);font-size:12px;margin-top:4px">No published well coordinates, so these wells can't be placed on the map.</div>`;
   document.getElementById("foot").innerHTML =
     `${RUN.n_placed}/${RUN.n_hot} ever-hot wells placed · ${D.context.length} other located wells for context.`
     +` Clusters: single-linkage at 400 ft. Coordinates: operator tuning table ∪ Well Master List. Generated ${D.generated}.`;
