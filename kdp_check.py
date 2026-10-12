@@ -33,6 +33,7 @@ _HOV_LABEL = r"(?:HOV|higher operating value|waiver|ceiling|approved)"
 _LIMIT_WORD = r"(?:limit|threshold|standard|operating temperature|operating value)"
 _SENT_SPLIT_RE = re.compile(r"(?<=[.;])\s+")
 _WELL_CTX_RE = re.compile(r"\b(?:well|wellhead|WOI|gas[- ]extraction|HOV|AHW\w*|AH\w*R\d)\b", re.I)
+_WELL_ID_RE = re.compile(r"\bAH[A-Z0-9]*\d+[A-Z0-9]*\b")
 _FLARE_CTX_RE = re.compile(r"flare|combust|thermal oxidi|destruction|enclosed|stack|engine|RTO", re.I)
 
 
@@ -42,6 +43,8 @@ class TempReference:
     regulatory: set = field(default_factory=lambda: {131.0, 145.0})
     hov_values: set = field(default_factory=set)
     max_plausible_wellhead_f: float = 250.0
+    # wells allowed to carry the site's top HOV value (180°F: AHW272R4 only)
+    top_hov_wells: set = field(default_factory=set)
 
     @property
     def any_limit(self) -> set:
@@ -59,6 +62,7 @@ def reference_from_config(cfg: dict) -> TempReference:
         regulatory=reg,
         hov_values=hov,
         max_plausible_wellhead_f=float(tr.get("max_plausible_wellhead_f", 250)),
+        top_hov_wells={str(w).upper() for w in (tr.get("top_hov_wells") or [])},
     )
 
 
@@ -135,6 +139,18 @@ def check_temperature_claims(text: str, ref: TempReference) -> list[str]:
             if not any(_near(c - gap, pool) for c in cands):
                 issues.append(f"'{gap:g}°F above {tail.strip()[:30]}' implies a {cands[-1] - gap:g}°F limit, "
                               "which is not a reference value")
+
+        # 4) the site's top HOV value attributed to any other well
+        # (a value a well REQUESTED is not one it holds: skip request sentences)
+        if (ref.hov_values and ref.top_hov_wells and re.search(_HOV_LABEL, sent, re.I)
+                and not re.search(r"request|seek|sought|propos|appl(?:y|ied|ication)", sent, re.I)):
+            top = max(ref.hov_values)
+            if any(abs(_f(m) - top) <= 0.05 for m in nums):
+                wells = {w.upper() for w in _WELL_ID_RE.findall(sent)}
+                others = sorted(w for w in wells if w not in ref.top_hov_wells)
+                if others and not (wells & ref.top_hov_wells):
+                    issues.append(f"{top:g}°F HOV attributed to {', '.join(others)}; only "
+                                  + ", ".join(sorted(ref.top_hov_wells)) + f" holds a {top:g}°F HOV")
 
         # 3) implausible wellhead temperature
         if _WELL_CTX_RE.search(sent) and not _FLARE_CTX_RE.search(sent):

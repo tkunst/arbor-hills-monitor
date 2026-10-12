@@ -8,9 +8,13 @@ import kdp_check as kc
 
 REF = kc.TempReference(regulatory={131.0, 145.0},
                        hov_values={150.0, 155.0, 160.0, 170.0, 180.0},
-                       max_plausible_wellhead_f=250.0)
+                       max_plausible_wellhead_f=250.0, top_hov_wells={"AHW272R4"})
 
 BAD = [
+    # the 180°F HOV belongs to AHW272R4 only (the corrected parser's first
+    # re-run of this document still said it)
+    "AHWW312R measured a wellhead temperature of 170.4°F on 6/13/2022 (well "
+    "operating under an approved 180°F HOV waiver).",
     # H2S ppm misread as a temperature, with an invented limit
     "Highest measured temperature: AHWW414R at 553°F on 5/14/24 (349°F above MACT "
     "limit of 204°F). Multiple wells operating under Higher Operating Value (HOV) "
@@ -27,6 +31,8 @@ BAD = [
 ]
 
 GOOD = [
+    "Arbor Hills' March 28, 2019 HOV request table shows well AHWW0286R seeking 180°F "
+    "(35°F above the 145°F NESHAP MACT limit).",
     "180°F requested for well AHW272R4 — 35°F above MACT limit of 145°F; 16 WOI wells "
     "approved for HOV waiver extension through May 1, 2028.",
     "AHW272R4 measured temperature of 170.8°F on 2/10/2025, approaching the requested "
