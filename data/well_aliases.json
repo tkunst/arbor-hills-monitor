@@ -1,10 +1,12 @@
 {
   "_note": "GENERATED from merge_well_aliases.py (the source of truth for Arbor Hills well-ID spelling aliases). Do not hand-edit; edit ALIASES there and re-run it.",
-  "count": 38,
+  "count": 48,
   "aliases": {
     "AHEW0023R": "AHEW023R",
     "AHEWHW27": "AHWWHW27",
     "AHEWW0081": "AHEW0081",
+    "AHW290R": "AHWW290R",
+    "AHW302R": "AHWW302R",
     "AHWC4106": "AHC4W106",
     "AHWW0176": "AHWW176R",
     "AHWW0177": "AHWW177R",
@@ -21,6 +23,7 @@
     "AHWW0301": "AHWW301R",
     "AHWW0302": "AHWW302R",
     "AHWW0312": "AHWW312R",
+    "AHWW0312R": "AHWW312R",
     "AHWW0334": "AHWW334R",
     "AHWW0400": "AHWW400R",
     "AHWW0401": "AHWW401R",
@@ -37,7 +40,14 @@
     "AHWW0503": "AHWW503R",
     "AHWW0508": "AHWW508R",
     "AHWW0512": "AHWW512R",
+    "AHWW207R2": "AHW207R2",
+    "AHWW237R3": "AHW237R3",
+    "AHWW264R3": "AHW264R3",
+    "AHWW286R2": "AHW286R2",
     "AHWW301": "AHWW301R",
+    "AHWW310R2": "AHW310R2",
+    "AHWW311R2": "AHW311R2",
+    "AHWW312R2": "AHW312R2",
     "AHWW423R2": "AHW423R2",
     "AHWW523": "AHWW0523"
   }
