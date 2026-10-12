@@ -217,10 +217,11 @@ TAB_RIDGEWOOD = "Ridge Wood Reports"
 # SEPARATE append-only tab, never a second row in TAB_RIDGEWOOD for a month that
 # already has one there (that tab is Stream G's one-row-per-month dedup marker —
 # ensure_ridgewood_tabs() rewrites its header on every live run, so it stays
-# untouched). One row per detected event (a revised report's new version, or a
-# report that dropped off Barr's page); "unchanged, verified again" produces no
-# row at all — that fact lives only in the committed provenance manifest's
-# last_verified field, not here.
+# untouched). One row per detected event ("revised", "removed-from-source",
+# "reappeared" — a removed month returning with byte-identical content, correcting
+# the stale removed flag — or "multi-link" — a month with more than one posted
+# report link); "unchanged, verified again" produces no row at all — that fact
+# lives only in the committed provenance manifest's last_verified field, not here.
 TAB_RIDGEWOOD_REVISIONS = "Ridge Wood Revisions"
 # ROP (air Title V permit) watch (ADR 017) — same on-demand policy as the
 # WDS/MMPC/PFAS/WOI/GFL/Meeting/Ridgewood tabs: no tab appears until rop_watcher
@@ -1867,12 +1868,28 @@ def append_ridgewood_revision_row(
     previous_hash: str, new_hash: str, new_link: str, source_url: str, note: str,
 ) -> None:
     """Append one Ridge Wood Revisions row — the durable, human-visible record of a
-    "revised" or "removed-from-source" event, written BEFORE the owner alert (and
-    before the manifest entry is allowed to advance; see ridgewood_reverify.py) so the
-    event is never silently lost even if the alert email fails."""
+    "revised" / "removed-from-source" / "reappeared" / "multi-link" event, written
+    BEFORE the owner alert (and before the manifest entry is allowed to advance; see
+    ridgewood_reverify.py) so the event is never silently lost even if the alert
+    email fails."""
     append_rows(service, sheet_id, TAB_RIDGEWOOD_REVISIONS, [[
         month, event, detected_at, previous_hash, new_hash, new_link, source_url, note,
     ]])
+
+
+def ridgewood_multi_link_flagged_months(service, sheet_id: str) -> set:
+    """Months already logged with a "multi-link" event. Unlike a revision, a month
+    with a persistently-posted second report link isn't a new condition every run —
+    there's no new content to log, so the event itself is the dedup key: once
+    flagged, ridgewood_reverify.py never re-alerts about the SAME month's extra link
+    again (mirrors the "removed-from-source flagged once" idempotency, via the Sheet
+    rather than the manifest since this isn't a content-version concept). [] rows
+    (fresh/missing tab) -> empty set."""
+    out = set()
+    for r in _tab_rows(service, sheet_id, TAB_RIDGEWOOD_REVISIONS, "A2:B"):
+        if len(r) >= 2 and r[1] == "multi-link" and r[0]:
+            out.add(str(r[0]))
+    return out
 
 
 # ---------------------------------------------------------------------------
