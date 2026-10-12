@@ -180,7 +180,8 @@ def check_fields(fields: dict, ref: TempReference) -> dict:
 
 def sanitize_measurements(measurements: list, ref: TempReference) -> tuple[list, int]:
     """Gap 2 (ADR 067): a structured reading the classifier tagged as a MEASURED
-    temperature above max_plausible_wellhead_f (and not flare/combustion) is
+    temperature above max_plausible_wellhead_f, tied to a well (well_id or a
+    well word in the note) and not flare/combustion, is
     almost certainly another column (H2S ppm, flow). Re-tag it basis='unknown'
     so is_urgent's measured-temperature path ignores it; the value is kept,
     with a note, for review. Returns (new_list, n_retagged)."""
@@ -193,9 +194,11 @@ def sanitize_measurements(measurements: list, ref: TempReference) -> tuple[list,
             out.append(m)
             continue
         unit = (m.get("unit") or "F").strip().lower()
+        note = m.get("note") or ""
+        well_ctx = bool((m.get("well_id") or "").strip()) or bool(_WELL_CTX_RE.search(note))
         if (m.get("metric") == "temperature" and m.get("basis") == "measured"
                 and unit.startswith("f") and v > ref.max_plausible_wellhead_f
-                and not _FLARE_CTX_RE.search(m.get("note") or "")):
+                and well_ctx and not _FLARE_CTX_RE.search(note)):
             m["basis"] = "unknown"
             m["note"] = ("[implausible wellhead temperature, re-tagged by kdp_check] "
                          + (m.get("note") or "")).strip()

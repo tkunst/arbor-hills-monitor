@@ -40,9 +40,12 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
-        run: python scripts/recheck_key_data_points.py --run-llm --out-dir "$RUNNER_TEMP/kdp-recheck"
+          # public repo: the log carries counts/rows/links only, and every free-text
+          # field in the artifact is name-redacted (same secret as findings-feed.yml)
+          REDACT_NAMES: ${{ secrets.REDACT_NAMES }}
+        run: python scripts/recheck_key_data_points.py --run-llm --counts-only --out-dir "$RUNNER_TEMP/kdp-recheck"
       - uses: actions/upload-artifact@v4
         with:
           name: kdp-recheck-proposals
           path: ${{ runner.temp }}/kdp-recheck/kdp-recheck-proposals.json
-          retention-days: 14
+          retention-days: 3

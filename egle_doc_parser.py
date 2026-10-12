@@ -560,7 +560,7 @@ _TEMPERATURE_RULES = (
     "is on a page you were not shown; if you cannot see what a number measures, "
     "do not report it. Gas-well hydrogen sulfide (H2S), methane and carbon "
     "monoxide readings are in ppm, not degrees; a wellhead temperature above "
-    "about 200F is almost certainly a misread column."
+    "250F (config max_plausible_wellhead_f) is a misread column, not a wellhead reading."
 )
 
 
