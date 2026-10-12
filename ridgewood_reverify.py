@@ -54,17 +54,22 @@ human-visible) and the owner alert SECOND; the manifest's new version is only
 merged in and SAVED once the owner alert actually sends. A run that writes the
 Sheet row and then fails to email (SMTP down, empty owner list) exits 1 and
 leaves the manifest exactly as it was for that month — the next run re-detects
-the same event, recognizes its own already-logged Sheet row by
-(month, event, a content hash) via sheet_writer.ridgewood_event_keys(), skips
-re-uploading a duplicate Drive copy AND re-appending a duplicate Sheet row, and
-just finishes advancing the manifest + the alert. This idempotency check covers
-ALL THREE of "revised"/"removed-from-source"/"reappeared" — an earlier version
-of this module only had it for "revised", so a failed-alert retry on a removal
-or a reappearance would duplicate its Sheet row every retry (a review found
-this; see ridgewood_event_keys()'s docstring for the key choice per event type).
-Routine "unchanged, verified again" progress for OTHER months in the same run is
-still saved even when one event's alert fails — losing a harmless last_verified
-bump to a retried alert would be a worse trade.
+the same event and compares it against the month's MOST RECENT logged event
+(sheet_writer.ridgewood_last_event()). If that last event is this exact
+(event, hash), it's an unresolved retry — skip the re-upload and the duplicate
+Sheet row, just finish advancing the manifest + the alert. If it ISN'T (a
+removal, then a reappearance, then a second removal with byte-identical
+content — the second removal's hash matches the first's, but it is NOT the
+month's last logged event any more; the reappearance is), it's a genuinely new
+occurrence and gets logged fresh, even though its hash collides with an older
+event. (An earlier version of this check keyed purely on "was this
+(month, event, hash) EVER logged", with no notion of "most recent" — correct for
+retrying "revised" within one unresolved episode, but it silently swallowed a
+real second removal as a stale retry of the first one; two independent reviews
+caught successively narrower versions of this bug, which is why the fix reads
+"most recent", not "ever".) Routine "unchanged, verified again" progress for
+OTHER months in the same run is still saved even when one event's alert fails —
+losing a harmless last_verified bump to a retried alert would be a worse trade.
 
 Gated on `ridgewood.reverify_enabled` (ships false — a new job whose Drive
 mirror/Sheet/email side effects reach a live stream is switched on by a human, per
@@ -186,12 +191,17 @@ def save_manifest(manifest: dict, path: str = MANIFEST_PATH) -> None:
 # ---------------------------------------------------------------------------
 
 def latest_version(manifest: dict, month: str) -> dict | None:
-    """The CURRENT version of `month` (max by fetched_at), or None if the manifest
-    has never recorded this month."""
+    """The CURRENT version of `month` — the LAST entry in its version list, or
+    None if the manifest has never recorded this month. Every version is only
+    ever APPENDED (never inserted out of order — see reverify_month()/
+    _apply_staged()), so list position IS chronological order; this is
+    deliberately NOT `max(versions, key=lambda v: v['fetched_at'])` — a review
+    found that two versions appended within the same wall-clock SECOND (now_iso
+    is second-resolution) produce an identical fetched_at string, and max()'s
+    tie-break keeps the FIRST (oldest) one it sees, silently returning a stale
+    version as "current". List order has no such tie at all."""
     versions = (manifest.get("months") or {}).get(month) or []
-    if not versions:
-        return None
-    return max(versions, key=lambda v: v["fetched_at"])
+    return versions[-1] if versions else None
 
 
 def seed_version(sheet_row: dict | None, title: str, source_url: str,
@@ -379,6 +389,20 @@ def _apply_staged(manifest: dict, staged_additions: dict, staged_removed_months:
             })
 
 
+def _is_retry_event(last_event: dict, month: str, event: str, key_hash: str) -> str | None:
+    """The already-logged archive_link if `month`'s MOST RECENT logged Sheet event
+    is exactly (event, key_hash) — an unresolved retry (the owner alert failed on
+    the run that first logged it, so the manifest was never advanced past it) —
+    or None otherwise, meaning this is a genuinely new event even if this exact
+    (event, key_hash) pair appeared earlier in the month's history (see
+    sheet_writer.ridgewood_last_event()'s docstring for why "most recent", not
+    "ever", is the correct scope)."""
+    last = last_event.get(month)
+    if last is not None and last[0] == event and last[1] == key_hash:
+        return last[2]
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -453,7 +477,7 @@ def run(dry_run: bool = False) -> int:
         print("[ridgewood-reverify] Drive folder secret not set — revisions will be logged "
               "without a mirrored copy of the new bytes.")
 
-    event_keys = {} if dry_run else sw.ridgewood_event_keys(sheets, sheet_id)
+    last_event = {} if dry_run else sw.ridgewood_last_event(sheets, sheet_id)
     multi_link_flagged = set() if dry_run else sw.ridgewood_multi_link_flagged_months(sheets, sheet_id)
     tmp = tempfile.gettempdir()
     had_errors = False
@@ -512,7 +536,7 @@ def run(dry_run: bool = False) -> int:
                     print(f"  REAPPEARED {month}  (dry run — not recorded)")
                     staged_additions.setdefault(month, []).extend(new_versions)
                     continue
-                already = event_keys.get((month, "reappeared", new_hash))
+                already = _is_retry_event(last_event, month, "reappeared", new_hash)
                 if already is not None:
                     reappeared_link = already
                     print(f"  retry {month}  (reappearance already logged; finishing the manifest advance)")
@@ -523,7 +547,7 @@ def run(dry_run: bool = False) -> int:
                         prior_hash, new_hash, reappeared_link, link["url"],
                         "report reappeared with content identical to the last-known copy; the "
                         "earlier removed-from-source flag is now corrected.")
-                    event_keys[(month, "reappeared", new_hash)] = reappeared_link
+                    last_event[month] = ("reappeared", new_hash, reappeared_link)
                 new_versions[-1]["archive_link"] = reappeared_link
                 staged_additions.setdefault(month, []).extend(new_versions)
                 pending_reappeared.append((month, reappeared_link))
@@ -536,7 +560,7 @@ def run(dry_run: bool = False) -> int:
                 print(f"  CHANGED {month}  prev={prior_hash[:12]}  new={new_hash[:12]}  (dry run — not recorded)")
                 staged_additions.setdefault(month, []).extend(new_versions)
                 continue
-            already = event_keys.get((month, "revised", new_hash))
+            already = _is_retry_event(last_event, month, "revised", new_hash)
             if already is not None:
                 archive_link, note = already, "(already mirrored + logged in an earlier run; finishing the manifest advance)"
                 print(f"  retry {month}  (already mirrored + logged; finishing the manifest advance)")
@@ -558,7 +582,7 @@ def run(dry_run: bool = False) -> int:
                 sw.append_ridgewood_revision_row(
                     sheets, sheet_id, month, "revised", now_iso,
                     prior_hash, new_hash, archive_link, link["url"], note)
-                event_keys[(month, "revised", new_hash)] = archive_link
+                last_event[month] = ("revised", new_hash, archive_link)
             new_versions[-1]["archive_link"] = archive_link
             staged_additions.setdefault(month, []).extend(new_versions)
             pending_changed.append((month, prior_hash, new_hash, archive_link, note))
@@ -593,13 +617,13 @@ def run(dry_run: bool = False) -> int:
             archive_link = existing.get("archive_link") or ""
             print(f"  REMOVED {month}  (confirmed absent on two fetches)")
             if not dry_run:
-                already = event_keys.get((month, "removed-from-source", existing_hash))
+                already = _is_retry_event(last_event, month, "removed-from-source", existing_hash)
                 if already is None:
                     sw.append_ridgewood_revision_row(
                         sheets, sheet_id, month, "removed-from-source", now_iso,
                         existing_hash, "", archive_link, existing.get("source_url", ""),
                         "no longer listed on Barr's page; our mirrored copy, if any, is unchanged.")
-                    event_keys[(month, "removed-from-source", existing_hash)] = archive_link
+                    last_event[month] = ("removed-from-source", existing_hash, archive_link)
                 else:
                     print(f"  retry {month}  (removal already logged; finishing the manifest advance)")
             pending_removed.append((month, archive_link))

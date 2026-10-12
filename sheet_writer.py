@@ -1830,7 +1830,8 @@ def ridgewood_report_rows(service, sheet_id: str) -> dict:
 # already has one). Append-only event log; not used for dedup by month (a month can
 # legitimately get more than one "revised"/"removed-from-source"/"reappeared" row
 # over its lifetime) — idempotency against a crashed/retried run is by
-# (month, event, a content hash) instead, see ridgewood_event_keys().
+# (month, event, a content hash) against the month's LAST logged event instead,
+# see ridgewood_last_event().
 # ---------------------------------------------------------------------------
 
 
@@ -1848,34 +1849,41 @@ def ensure_ridgewood_revisions_tab(service, sheet_id: str) -> None:
     _set_header(service, sheet_id, TAB_RIDGEWOOD_REVISIONS, RIDGEWOOD_REVISIONS_HEADERS)
 
 
-def ridgewood_event_keys(service, sheet_id: str) -> dict:
-    """{(month, event, key_hash): new_archive_link} for every already-logged
-    "revised" / "removed-from-source" / "reappeared" event. Lets
-    ridgewood_reverify.py tell "I already logged this exact event, just finish
-    advancing the manifest" (recovering the Drive link it already has, if any)
-    from "this is an event I haven't recorded yet" — the idempotency check that
-    keeps a retried run (e.g. one where the owner email failed last time, so the
-    manifest was never advanced) from re-uploading a duplicate Drive copy OR
-    appending a duplicate Sheet row for the SAME event.
+def ridgewood_last_event(service, sheet_id: str) -> dict:
+    """{month: (event, key_hash, new_archive_link)} for the MOST RECENT logged
+    "revised" / "removed-from-source" / "reappeared" event per month in Ridge
+    Wood Revisions — the tab is strictly append-only in chronological order, so
+    the LAST row for a month is its most recent event. key_hash is the "New
+    Content Hash" column for "revised"/"reappeared" (the content the event is
+    ABOUT) and the "Previous Content Hash" column for "removed-from-source" (a
+    removal has no new content).
 
-    key_hash is the "New Content Hash" column for "revised"/"reappeared" (the
-    content the event is ABOUT) and the "Previous Content Hash" column for
-    "removed-from-source" (a removal has no new content; the hash of what's
-    being removed is what makes a retry of THIS removal identifiable — a LATER
-    removal of the same month, after a reappearance, only collides with this key
-    if the content came back byte-identical and then vanished again, which is
-    exactly the same retryable case, not a materially different one).
-    [] rows (fresh/missing tab) -> {}."""
+    This is the right unit for retry-idempotency, and NOT the same thing as "was
+    (month, event, hash) ever logged" (an earlier version of this function keyed
+    that way and a review caught the bug it causes): a RETRY of a still-unresolved
+    event — the owner alert failed last run, so the manifest was never advanced
+    past it — logs the identical (event, hash) as the month's CURRENT last row,
+    so it's recognized and skipped. A GENUINELY NEW occurrence of the same
+    (event, hash) pair — e.g. month M is removed, then reappears (a full
+    alert-sent-and-manifest-advanced cycle), then vanishes again with the exact
+    same byte-identical content — is NOT a retry of anything; the reappearance's
+    row is now the month's last row, so the second removal correctly reads as new
+    and gets logged, instead of being silently swallowed as a stale retry because
+    its hash happens to collide with the first removal's. [] rows (fresh/missing
+    tab) -> {}."""
     out: dict = {}
     for r in _tab_rows(service, sheet_id, TAB_RIDGEWOOD_REVISIONS, "A2:F"):
         if len(r) < 2 or not r[0]:
             continue
         month, event = str(r[0]), r[1]
         link = r[5] if len(r) >= 6 else ""
-        if event in ("revised", "reappeared") and len(r) >= 5 and r[4]:
-            out[(month, event, str(r[4]))] = link
-        elif event == "removed-from-source" and len(r) >= 4 and r[3]:
-            out[(month, event, str(r[3]))] = link
+        if event in ("revised", "reappeared") and len(r) >= 5:
+            key_hash = str(r[4]) if r[4] else None
+        elif event == "removed-from-source" and len(r) >= 4:
+            key_hash = str(r[3]) if r[3] else None
+        else:
+            continue   # "multi-link" (or a malformed row) — not part of this idempotency axis
+        out[month] = (event, key_hash, link)   # last row for this month wins
     return out
 
 
