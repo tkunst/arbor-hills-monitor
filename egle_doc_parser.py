@@ -774,7 +774,7 @@ def _enforce_temperature_consistency(fields, text, metadata, risk_register, mode
         ref = kdp_check.default_reference()
     problems = kdp_check.check_fields(fields, ref)
     if not problems:
-        return fields
+        return _sanitize(fields, ref, metadata)
     log.warning("classifier free text failed the temperature check (%s): %s",
                 metadata.get("document_name", "?"), problems)
     correction = (
@@ -796,14 +796,37 @@ def _enforce_temperature_consistency(fields, text, metadata, risk_register, mode
     if retry is not None:
         still = kdp_check.check_fields(retry, ref)
         if not still:
-            return retry
+            return _sanitize(retry, ref, metadata)
         fields, problems = retry, still
-    fields = dict(fields)
+    fields = _sanitize(dict(fields), ref, metadata)
     if "key_data_point" in problems:
         fields["key_data_point"] = kdp_check.WITHHELD_KDP
     if "summary" in problems:
         fields["summary"] = kdp_check.WITHHELD_SUMMARY
+    # Gap 3: the model's "urgent" on a document whose text failed the check
+    # stands only if a plausible measured temperature at/above the MACT
+    # limit backs it; otherwise it drops to "notable" (still in the digest,
+    # no same-day email). Non-temperature urgent triggers on such a document
+    # are re-judged by a human from the digest.
+    if fields.get("severity") == "urgent":
+        peak = kdp_check.max_plausible_measured_f(fields.get("measurements") or [], ref)
+        if peak is None or peak < max(ref.regulatory):
+            fields["severity"] = "notable"
+            log.warning("severity urgent -> notable (%s): text failed the check and no "
+                        "plausible measured temperature >= %g F", metadata.get("document_name", "?"),
+                        max(ref.regulatory))
     log.warning("withheld after retry (%s): %s", metadata.get("document_name", "?"), problems)
+    return fields
+
+
+def _sanitize(fields: dict, ref, metadata: dict) -> dict:
+    import kdp_check
+    ms, n = kdp_check.sanitize_measurements(fields.get("measurements") or [], ref)
+    if n:
+        log.warning("re-tagged %d implausible measured temperature(s) as unknown (%s)",
+                    n, metadata.get("document_name", "?"))
+        fields = dict(fields)
+        fields["measurements"] = ms
     return fields
 
 

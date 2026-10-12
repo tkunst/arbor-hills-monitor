@@ -176,3 +176,46 @@ def check_fields(fields: dict, ref: TempReference) -> dict:
         if iss:
             out[k] = iss
     return out
+
+
+def sanitize_measurements(measurements: list, ref: TempReference) -> tuple[list, int]:
+    """Gap 2 (ADR 067): a structured reading the classifier tagged as a MEASURED
+    temperature above max_plausible_wellhead_f (and not flare/combustion) is
+    almost certainly another column (H2S ppm, flow). Re-tag it basis='unknown'
+    so is_urgent's measured-temperature path ignores it; the value is kept,
+    with a note, for review. Returns (new_list, n_retagged)."""
+    out, n = [], 0
+    for m in measurements or []:
+        m = dict(m)
+        try:
+            v = float(m.get("value"))
+        except (TypeError, ValueError):
+            out.append(m)
+            continue
+        unit = (m.get("unit") or "F").strip().lower()
+        if (m.get("metric") == "temperature" and m.get("basis") == "measured"
+                and unit.startswith("f") and v > ref.max_plausible_wellhead_f
+                and not _FLARE_CTX_RE.search(m.get("note") or "")):
+            m["basis"] = "unknown"
+            m["note"] = ("[implausible wellhead temperature, re-tagged by kdp_check] "
+                         + (m.get("note") or "")).strip()
+            n += 1
+        out.append(m)
+    return out, n
+
+
+def max_plausible_measured_f(measurements: list, ref: TempReference):
+    """Highest measured °F temperature at or below the plausibility cap."""
+    best = None
+    for m in measurements or []:
+        if m.get("metric") != "temperature" or m.get("basis") != "measured":
+            continue
+        try:
+            v = float(m.get("value"))
+        except (TypeError, ValueError):
+            continue
+        if (m.get("unit") or "F").strip().lower().startswith("c"):
+            v = v * 9 / 5 + 32
+        if v <= ref.max_plausible_wellhead_f:
+            best = v if best is None else max(best, v)
+    return best

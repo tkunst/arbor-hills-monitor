@@ -1,0 +1,48 @@
+name: kdp-recheck
+
+# ADR 067: re-run the corrected classifier on case-file rows whose Summary /
+# Key Data Point fail kdp_check. READ-ONLY on the Sheet: it writes the
+# proposals to a run artifact for human review. Applying the reviewed
+# proposals is a separate, local step
+# (scripts/recheck_key_data_points.py --apply <json>), never automatic.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kdp-recheck
+  cancel-in-progress: false
+
+jobs:
+  recheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install system OCR tooling
+        run: sudo apt-get update && sudo apt-get install -y ocrmypdf
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Scan + propose (no Sheet writes)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+        run: python scripts/recheck_key_data_points.py --run-llm --out-dir "$RUNNER_TEMP/kdp-recheck"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kdp-recheck-proposals
+          path: ${{ runner.temp }}/kdp-recheck/kdp-recheck-proposals.json
+          retention-days: 14
