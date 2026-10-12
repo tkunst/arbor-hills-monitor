@@ -35,6 +35,7 @@ from typing import Optional
 
 import fitz  # pymupdf
 
+import well_aliases
 import woi_table_parser as wtp
 
 # Attachment-1 header ("Gas Extraction Report"); tolerate whitespace/case drift.
@@ -98,7 +99,8 @@ def is_woi_report(pdf_path: str, metadata: dict, page_threshold: int = 30) -> bo
         doc.close()
 
 
-def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict) -> Optional[dict]:
+def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
+                       alias_map: Optional[dict] = None) -> Optional[dict]:
     """If woi.auto_route is on and this is a WOI report, exhaustively parse it and
     REPLACE parsed.measurements with the non-ADJ, valid, >= watch-band readings —
     plus the single peak as-found reading, always — then return a summary payload
@@ -109,6 +111,12 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict) -> Opti
     Does NO Sheets I/O: the in-memory measurement replacement that feeds
     is_urgent must not be blockable by a Sheets failure. The caller writes the
     summary tab separately, best-effort.
+
+    `alias_map` (ADR 068): the curated well-ID alias map, loaded ONCE at run
+    start by the caller (well_aliases.load_alias_map) and threaded into every
+    woi_table_parser call here, so a pre-rename spelling (AHWW0290) lands under
+    its canonical id (AHWW290R) in the measurements, the WOI list, the per-well
+    summary, the CO series and well_watch. None = no aliasing.
 
     Two safety rules from the plan's adversarial review:
 
@@ -136,7 +144,7 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict) -> Opti
     if not is_woi_report(pdf_path, metadata, page_threshold):
         return None
 
-    readings = wtp.parse_gas_extraction(pdf_path)
+    readings = wtp.parse_gas_extraction(pdf_path, alias_map=alias_map)
     valid = [r for r in readings if r.valid]
     if len(valid) < _MIN_VALID_READINGS:
         print(f"[woi_router] WARNING: detected a WOI report but only {len(valid)} "
@@ -174,11 +182,16 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict) -> Opti
     # free-text fallback. (The old windowed path caught only a few CO readings by
     # luck; this captures the full series.) See ADR 005.
     co_measurements: list[dict] = []
-    for cr in wtp.parse_co_data(pdf_path):
+    for cr in wtp.parse_co_data(pdf_path, alias_map=alias_map):
         co_measurements.extend(wtp.co_to_measurements(cr))
     measurements.extend(co_measurements)
 
-    woi_set = wtp.extract_woi_well_list(pdf_path)
+    woi_set = wtp.extract_woi_well_list(pdf_path, alias_map=alias_map)
+    # Unmapped ids that look like an unresolved rename: logged for QA, never
+    # auto-mapped (ADR 068 _needs_canonical_review).
+    well_aliases.log_review_candidates(
+        [r.raw_well_id for r in readings], alias_map,
+        context=f"WOI report {metadata.get('doc_id', '?')}")
     summary = wtp.per_well_summary(valid, woi_set=woi_set)
     parsed.measurements = measurements
 

@@ -33,6 +33,7 @@ import drive_client as dc
 import sheet_writer as sw
 import nsite_client as nc
 import retry_policy as rp
+import well_aliases
 import woi_router
 import archiver as av
 import poison_stub
@@ -172,6 +173,10 @@ def run() -> int:
     generic_exact = title_cfg.get("generic_exact") or []
     generic_prefixes = title_cfg.get("generic_prefixes") or []
     title_overrides = title_cfg.get("overrides") or {}
+    # ADR 068: the curated well-ID alias map, loaded ONCE here — outside the
+    # per-doc try — so a missing/malformed map fails the run red instead of
+    # becoming per-doc poison strikes or a silent WOI-routing fallback.
+    well_alias_map = well_aliases.load_alias_map()
 
     sheets = dc.sheets_service()
     sw.ensure_tabs(sheets, sheet_id)
@@ -240,6 +245,7 @@ def run() -> int:
                 page_threshold=page_threshold, max_keyword_pages=max_kw_pages,
                 max_tokens=cfg["classification_max_tokens"],
                 title_is_generic=is_generic,
+                well_alias_map=well_alias_map,
             )
 
             # ADR 065 chokepoint — see watcher.py's identical block.
@@ -269,7 +275,8 @@ def run() -> int:
             # alerts. Best-effort: a routing failure degrades to the generic
             # parse (logged), never drops the filing.
             try:
-                routed = None if related else woi_router.route_measurements(parsed, local, d, cfg)
+                routed = None if related else woi_router.route_measurements(
+                    parsed, local, d, cfg, alias_map=well_alias_map)
             except Exception as we:  # noqa: BLE001 — degrade to the generic parse
                 print(f"  WOI routing failed, using generic parse: {we}")
                 routed = None

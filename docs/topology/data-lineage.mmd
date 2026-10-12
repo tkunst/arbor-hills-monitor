@@ -14,6 +14,7 @@ graph LR
   ds_smtp[("Email Recipients (SMTP)")]
   ds_anthropic[("Anthropic Claude API")]
   ds_config[("config.yml (risk register + settings)")]
+  ds_well_aliases[("data/well_aliases.json (generated well-ID alias map, ADR 068)")]
   sheet_writer["sheet_writer"]
   sheet_writer -. read .-> ds_case_file_sheet
   sheet_writer ==>|write| ds_case_file_sheet
@@ -35,6 +36,8 @@ graph LR
   egle_doc_parser -. read .-> ds_anthropic
   config_loader["config_loader"]
   config_loader -. read .-> ds_config
+  well_aliases["well_aliases"]
+  well_aliases -. read .-> ds_well_aliases
   wds_archiver["wds_archiver"]
   wds_archiver -. read .-> ds_wds
   wds_archiver ==>|write| ds_drive_archive
@@ -64,3 +67,4 @@ graph LR
   style ds_smtp fill:#f59e0b,color:#000,stroke:#b45309
   style ds_anthropic fill:#f59e0b,color:#000,stroke:#b45309
   style ds_config fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_well_aliases fill:#f59e0b,color:#000,stroke:#b45309

@@ -15,11 +15,12 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import well_aliases
 import woi_table_parser as w
 
 
 def build(pdf_path: str, label: str) -> str:
-    co = w.parse_co_data(pdf_path)
+    co = w.parse_co_data(pdf_path, alias_map=well_aliases.load_alias_map())
     summ = w.per_well_co_summary(co)
     # chronological list of months present
     months = sorted({r.month for r in co},

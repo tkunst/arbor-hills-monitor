@@ -11,6 +11,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import well_aliases
 import woi_table_parser as w
 
 EPA = 131   # EPA gas-well operating limit (deg F)
@@ -18,9 +19,9 @@ MACT = 145  # MACT limit (deg F)
 
 
 def build(pdf_path: str, label: str) -> str:
-    readings = w.parse_gas_extraction(pdf_path)
+    readings = w.parse_gas_extraction(pdf_path, alias_map=well_aliases.load_alias_map())
     valid = [r for r in readings if r.valid]
-    woi = w.extract_woi_well_list(pdf_path)
+    woi = w.extract_woi_well_list(pdf_path, alias_map=well_aliases.load_alias_map())
     summ = w.per_well_summary(valid, woi_set=woi)
 
     n_wells = len({r.well_id for r in valid})

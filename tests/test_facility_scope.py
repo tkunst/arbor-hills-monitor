@@ -140,7 +140,7 @@ def _wire(monkeypatch, mod, severity):
     monkeypatch.setattr(mod, "parse_document", lambda *a, **k: _parsed(severity))
     monkeypatch.setattr(mod.av, "mirror_one_now", lambda *a, **k: "LINK-" + a[3]["doc_id"])
     monkeypatch.setattr(mod.woi_router, "route_measurements",
-                        lambda parsed, local, d, cfg: rec["woi"].append(d["doc_id"]))
+                        lambda parsed, local, d, cfg, **k: rec["woi"].append(d["doc_id"]))
     if mod is w:
         monkeypatch.setattr(w, "_today", lambda: __import__("datetime").date(2026, 10, 7))
         monkeypatch.setattr(w.ea, "is_urgent", lambda parsed, cfg: parsed.severity == "urgent")

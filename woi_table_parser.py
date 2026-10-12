@@ -75,8 +75,8 @@ def canonicalize(well_id: str, alias_map: Optional[dict] = None) -> str:
     """Strip trailing asterisks and apply a cross-report alias map. Across
     reports a physical well is abandoned and replaced with a NEW id (and EGLE
     issued a formal WOI-id update on 6/22/2023); pass an alias_map to keep one
-    well's history under a single canonical id. Within a single report no map is
-    needed."""
+    well's history under a single canonical id. The live callers pass the curated
+    map from well_aliases.load_alias_map() (ADR 068); None = stars stripped only."""
     canon = well_id.rstrip("*")
     if alias_map and canon in alias_map:
         canon = alias_map[canon]
@@ -167,19 +167,31 @@ def to_measurements(reading: WOIReading, include_adj: bool = False) -> list[dict
     iso = _to_iso(reading.dt)
     out = []
     if reading.temp is not None:
-        out.append(_m("temperature", reading.temp, "F", reading.well_id, iso))
+        out.append(_m("temperature", reading.temp, "F", reading.well_id, iso, reading.raw_well_id))
     if reading.o2 is not None:
-        out.append(_m("oxygen", reading.o2, "percent", reading.well_id, iso))
+        out.append(_m("oxygen", reading.o2, "percent", reading.well_id, iso, reading.raw_well_id))
     if reading.ch4 is not None:
         # methane (CH4) is a first-class metric (ADR 004). Low CH4 alongside high
         # temp + some O2 at the same well is the subsurface-oxidation signature.
-        out.append(_m("methane", reading.ch4, "percent", reading.well_id, iso))
+        out.append(_m("methane", reading.ch4, "percent", reading.well_id, iso, reading.raw_well_id))
     return out
 
 
-def _m(metric, value, unit, well_id, iso):
-    return {"metric": metric, "value": value, "unit": unit, "basis": "measured",
-            "well_id": well_id, "as_of_date": iso, "note": None}
+def _m(metric, value, unit, well_id, iso, raw_well_id=None):
+    out = {"metric": metric, "value": value, "unit": unit, "basis": "measured",
+           "well_id": well_id, "as_of_date": iso, "note": None}
+    _keep_raw(out, raw_well_id)
+    return out
+
+
+def _keep_raw(m: dict, raw_well_id) -> None:
+    """ADR 068: when the alias map relabeled a reading, carry the as-printed id
+    (stars stripped) so the Measurements tab's "Well ID As Filed" column makes
+    the relabel auditable. Unchanged ids carry nothing."""
+    if raw_well_id is not None:
+        raw = raw_well_id.rstrip("*")
+        if raw != m["well_id"]:
+            m["raw_well_id"] = raw
 
 
 def _to_iso(dt: str) -> Optional[str]:
@@ -246,13 +258,21 @@ def _parse_co_page(page_lines: list[str], page: int, alias_map: Optional[dict] =
 
 def _dedupe_co(readings: list[COReading]) -> list[COReading]:
     """Keep the first reading per (well, month) — canonical pages come first."""
-    seen = set()
+    seen: dict = {}
     out = []
     for r in readings:
         key = (r.well_id, r.month)
         if key not in seen:
-            seen.add(key)
+            seen[key] = r
             out.append(r)
+        elif seen[key].raw_well_id.rstrip("*") != r.raw_well_id.rstrip("*"):
+            # Two different printed spellings collapsed onto one canonical id by
+            # the alias map (ADR 068) — the later one is dropped like any other
+            # duplicate, but never silently.
+            kept = seen[key]
+            print(f"[woi_table_parser] CO alias collision {r.well_id} {r.month}: kept "
+                  f"{kept.raw_well_id}={kept.ppm} (p{kept.page}), dropped "
+                  f"{r.raw_well_id}={r.ppm} (p{r.page})")
     return out
 
 
@@ -273,9 +293,11 @@ def parse_co_data(pdf_path: str, alias_map: Optional[dict] = None) -> list[CORea
 
 
 def co_to_measurements(reading: COReading) -> list[dict]:
-    return [{"metric": "carbon_monoxide", "value": reading.ppm, "unit": "ppm",
-             "basis": "measured", "well_id": reading.well_id,
-             "as_of_date": _to_iso(reading.date + " 00:00"), "note": f"CO, {reading.month}"}]
+    m = {"metric": "carbon_monoxide", "value": reading.ppm, "unit": "ppm",
+         "basis": "measured", "well_id": reading.well_id,
+         "as_of_date": _to_iso(reading.date + " 00:00"), "note": f"CO, {reading.month}"}
+    _keep_raw(m, reading.raw_well_id)
+    return [m]
 
 
 # Chronological month ordering for trend display.

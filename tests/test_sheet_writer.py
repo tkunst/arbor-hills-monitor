@@ -72,7 +72,8 @@ def test_measurement_rows_fallback_date_and_shape():
     assert rows[0][0] == "2025-02-05"     # as-of-date fell back to date_filed
     assert rows[0][1] == "AHW272"
     assert rows[0][5] == "measured"
-    assert rows[0][-1] == "Arbor Hills Landfill"  # trailing Facility column
+    assert rows[0][sw.MEASUREMENTS_HEADERS.index("Facility")] == "Arbor Hills Landfill"
+    assert rows[0][-1] == ""   # Well ID As Filed: blank unless the alias map relabeled (ADR 068)
 
 
 def test_measurement_rows_empty_when_none():

@@ -843,6 +843,7 @@ def parse_document(
     client=None,
     title_is_generic: bool = False,
     temperature_reference=None,
+    well_alias_map: Optional[dict] = None,
 ) -> ParsedDoc:
     """Parse one PDF end-to-end. OCRs in place if needed, extracts text
     (windowing large docs), classifies with Claude, and returns a ParsedDoc.
@@ -857,7 +858,14 @@ def parse_document(
     `display_title`; the raw result is NOT sanitized here (no name_check
     dependency in this module) — the caller is responsible for running it
     through document_titles.sanitize_display_title() before it ever reaches
-    a public Sheet."""
+    a public Sheet.
+
+    `well_alias_map` (ADR 068): an {alias: canonical} well-ID map passed in by
+    the caller (same reuse pattern as risk_register — this module holds no
+    well ids). When given, each measurement's `well_id` is relabeled by EXACT
+    key match (trailing `*` stripped) as the last step on the classifier's
+    output, after the temperature consistency check; the as-filed id is kept
+    in `raw_well_id`. None = measurements pass through unchanged."""
     if signal_keywords is None:
         signal_keywords = []
 
@@ -891,6 +899,18 @@ def parse_document(
         max_tokens=max_tokens, title_is_generic=title_is_generic,
         ref=temperature_reference,
     )
+
+    # ADR 068 Part B: well-ID standardization runs AFTER the ADR-067
+    # temperature check (which may retry the classification or re-tag a
+    # reading), so it acts on the finalized measurements only — exact alias-key
+    # match, nothing fuzzy. Never raises.
+    if well_alias_map:
+        import well_aliases
+        well_aliases.canonicalize_measurements(fields.get("measurements"), well_alias_map)
+        well_aliases.log_review_candidates(
+            [m.get("well_id") for m in fields.get("measurements") or []
+             if isinstance(m, dict)],
+            well_alias_map, context=f"doc {metadata.get('doc_id', '?')}")
 
     valid_ids = {r["id"] for r in risk_register}
     risks = [r for r in fields.get("risks", []) if r in valid_ids]
