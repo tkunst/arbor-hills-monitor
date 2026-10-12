@@ -141,19 +141,38 @@ even if nothing else succeeds — then the owner alert. The manifest's new versi
 is only merged into the in-memory manifest and SAVED TO DISK once the owner alert
 actually sends. A run that writes the Sheet row and then fails to email (SMTP
 down, empty owner list) exits 1 and leaves the manifest exactly as it was for
-that month; the next run re-detects the same event, recognizes its own
-already-logged Sheet row by `(month, event, a content hash)`
-(`sheet_writer.ridgewood_event_keys()`, which returns the already-uploaded Drive
-link too), skips re-uploading a duplicate copy AND re-appending a duplicate Sheet
-row, and just finishes advancing the manifest + retrying the alert. **This
+that month; the next run re-detects the same event and compares it against the
+month's MOST RECENT logged event (`sheet_writer.ridgewood_last_event()`, which
+also returns the already-uploaded Drive link). If that last event is this exact
+(event, hash), it's an unresolved retry — skip the re-upload and the duplicate
+Sheet row, just finish advancing the manifest + retrying the alert. **This
 idempotency check covers all three of "revised"/"removed-from-source"/
 "reappeared"** — a round-1 fix only added it for "revised" (keyed by the new
 content hash); a round-2 review caught that "removed-from-source" and
 "reappeared" had no equivalent guard, so a failed-alert retry duplicated their
-Sheet row every retry (reproduced live: 2 retries → 2 identical rows). The key
+Sheet row every retry (reproduced live: 2 retries → 2 identical rows). A
+round-3 review then caught that round-2's OWN fix — keyed on "was
+(month, event, hash) EVER logged", with no notion of recency — had its own bug:
+month M removed (hash H) → reappears (hash H, a full alert-sent cycle) → removed
+AGAIN (still hash H, nothing changed in between) is a genuinely new, third event,
+but it hash-collides with the FIRST removal and was silently swallowed as a
+stale retry of it (reproduced: 3 real removal occurrences across time, only 1
+Sheet row). The fix scopes the check to "is this the event the month's LAST row
+describes" rather than "was this ever logged" — a real second occurrence is
+never the month's current last row (the reappearance's row is), so it's
+correctly recognized as new even though its hash matches an older event. The key
 for a removal is the *previous* content hash (there's no new content on a
 removal); for a reappearance it's the hash of the content that came back — see
-`ridgewood_event_keys()`'s docstring. Routine "unchanged, verified again"
+`ridgewood_last_event()`'s docstring. This also surfaced a second, more
+fundamental bug while chasing the third: `latest_version()` picked the CURRENT
+version by `max(fetched_at)`, and two versions appended within the same
+wall-clock SECOND (`_now_iso()` is second-resolution) share an identical
+`fetched_at` string — `max()`'s tie-break keeps the FIRST (oldest) one, so the
+removal-then-reappearance sequence above could silently read the STALE removed
+entry as "current" even after the reappearance had already been logged. Fixed
+by making `latest_version()` return the LAST entry in the version list instead
+(append order is chronological by construction; there is no tie to break).
+Routine "unchanged, verified again"
 progress for OTHER months in the SAME run is still saved even when one event's
 alert fails — losing a harmless `last_verified` bump to a retried alert would be
 the worse trade. A failed PDF download for one month is neither "changed" nor

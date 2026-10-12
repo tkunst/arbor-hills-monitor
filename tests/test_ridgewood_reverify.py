@@ -246,13 +246,27 @@ def test_should_run_gate():
     assert rr._should_run({"ridgewood": {"reverify_enabled": True}})[0] is True
 
 
-def test_latest_version_picks_max_fetched_at():
+def test_latest_version_picks_last_by_list_order():
     manifest = {"months": {"2026-05": [
         {"fetched_at": "2026-05-01T00:00:00Z", "content_hash": "old"},
         {"fetched_at": "2026-06-10T00:00:00Z", "content_hash": "new"},
     ]}}
     assert rr.latest_version(manifest, "2026-05")["content_hash"] == "new"
     assert rr.latest_version(manifest, "2099-01") is None
+
+
+def test_latest_version_is_not_fooled_by_identical_fetched_at_timestamps():
+    """A round-3 review found: two versions appended within the same wall-clock
+    SECOND (now_iso is second-resolution) share an identical fetched_at string.
+    max(key=fetched_at) breaks that tie by keeping the FIRST (oldest) one it
+    sees, silently returning a stale version as "current". List order (append
+    order, which never ties) is the fix."""
+    same_ts = "2026-10-12T00:00:00Z"
+    manifest = {"months": {"2026-05": [
+        {"fetched_at": same_ts, "content_hash": "old", "status": "original"},
+        {"fetched_at": same_ts, "content_hash": "new", "status": "removed-from-source 2026-10-12"},
+    ]}}
+    assert rr.latest_version(manifest, "2026-05")["content_hash"] == "new"
 
 
 def test_seed_version_uses_sheet_hash_when_present():
@@ -304,6 +318,20 @@ def test_reverify_month_unchanged_vs_changed_with_existing_history():
     outcome2, versions2 = rr.reverify_month(manifest, "2026-05", None, "T", "u", "h2", "2026-10-12", "now")
     assert outcome2 == "changed" and len(versions2) == 1
     assert versions2[0]["content_hash"] == "h2" and versions2[0]["status"] == "revised 2026-10-12"
+
+
+def test_is_retry_event_scoped_to_most_recent_not_ever_logged():
+    """Pins the round-3 fix directly: a hash collision with an OLDER logged event
+    for the same month is NOT a retry if something newer has since been logged."""
+    last_event = {"2026-05": ("reappeared", "H1", "http://drive/x.pdf")}
+    # Retrying the exact most-recent event -> recognized.
+    assert rr._is_retry_event(last_event, "2026-05", "reappeared", "H1") == "http://drive/x.pdf"
+    # A DIFFERENT event type with the same hash is not a retry of THIS event.
+    assert rr._is_retry_event(last_event, "2026-05", "removed-from-source", "H1") is None
+    # A different hash is not a retry.
+    assert rr._is_retry_event(last_event, "2026-05", "reappeared", "H2") is None
+    # A month with no logged history at all is not a retry.
+    assert rr._is_retry_event(last_event, "2099-01", "reappeared", "H1") is None
 
 
 def test_apply_staged_merges_additions_before_removal_flags():
@@ -739,6 +767,53 @@ def test_reappeared_with_identical_content_corrects_stale_removed_status(monkeyp
     assert versions[-1]["status"] == "original"
     assert versions[-1]["content_hash"] == _hash(blob)
     assert len(sent) == 1 and "reappeared" in sent[0][0]
+
+
+def test_removed_again_with_same_hash_after_reappearing_is_a_new_event_not_a_stale_retry(
+        monkeypatch, tmp_path):
+    """A round-3 review found: removed (hash H) -> reappeared (hash H, same
+    content) -> removed AGAIN (still hash H, nothing ever changed) is a
+    genuinely new, third removal event -- not a retry of the FIRST removal, even
+    though both removals key on the identical content hash H. The naive "was
+    (month, event, hash) ever logged" idempotency check (an earlier version of
+    this fix) would wrongly treat the second removal as an unresolved retry of
+    the first and silently drop its Sheet row. The fix scopes idempotency to
+    "is this the month's MOST RECENT logged event" instead."""
+    blob = _build_pdf_bytes(str(tmp_path / "may.pdf"), "2026-05", ["<1"] * 5)
+    other_blob = _build_pdf_bytes(str(tmp_path / "apr.pdf"), "2026-04", ["<1"] * 3)
+    rows = [
+        ["2026-04", "T", "<1", 3, "ok", "u", _hash(other_blob), "http://drive/apr.pdf", "2026-07-15T10:00:00"],
+        ["2026-05", "T", "<1", 5, "ok", "u", _hash(blob), "http://drive/orig.pdf", "2026-07-15T10:00:00"],
+    ]
+    fake, sent, _ = _wire(
+        monkeypatch, _cfg(), page_months=["2026-04"], sheet_rows=rows,
+        pdf_bytes_by_month={"2026-04": other_blob})
+    saved = {}
+    monkeypatch.setattr(rr, "save_manifest", lambda m, path=rr.MANIFEST_PATH: saved.update(m))
+    monkeypatch.setattr(rr, "load_manifest", lambda path=rr.MANIFEST_PATH: saved or
+                        {"schema_version": 1, "generated_at": "", "months": {}})
+
+    assert rr.run() == 0   # run 1: removed (hash H)
+    sent.clear()
+
+    monkeypatch.setattr(rr.rc, "fetch_page", lambda url=None, timeout=60: page_html(["2026-04", "2026-05"]))
+
+    def fake_download2(url, dest, timeout=60):
+        month = rc.parse_month(url.split("/Files/", 1)[-1])
+        _write_bytes(dest, other_blob if month == "2026-04" else blob)
+    monkeypatch.setattr(rr, "_download_capped", fake_download2)
+    assert rr.run() == 0   # run 2: reappeared (same hash H)
+    sent.clear()
+
+    monkeypatch.setattr(rr.rc, "fetch_page", lambda url=None, timeout=60: page_html(["2026-04"]))
+    assert rr.run() == 0   # run 3: removed again (still hash H) -- a NEW event
+
+    versions = saved["months"]["2026-05"]
+    assert len(versions) == 4   # original, removed, reappeared(=original), removed again
+    assert versions[-1]["status"].startswith("removed-from-source")
+    assert len(sent) == 1 and "removed" in sent[0][0]   # alerted for the SECOND removal
+    removed_rows = [r for r in _rows(fake, sw.TAB_RIDGEWOOD_REVISIONS) if r[1] == "removed-from-source"]
+    assert len(removed_rows) == 2   # NOT collapsed into one -- two real removal events
 
 
 def test_download_failure_is_skipped_not_changed_or_removed(monkeypatch, tmp_path):
