@@ -51,9 +51,10 @@ Measurements row.
    into `parse_gas_extraction`, `parse_co_data` and `extract_woi_well_list`. The per-well
    summary, the WOI list, the CO series, the measurements and `well_watch` all see
    canonical ids. `scripts/woi_summary.py` and `scripts/co_summary.py` load the same map.
-   - Merging spellings can make two CO readings share a `(well, month)` key, and
-     `_dedupe_co` keeps the first. It now logs when the dropped reading had a different
-     printed spelling. No such collision occurs in the 10 local reports.
+   - Merging spellings can make two CO readings share a `(well, month)` key.
+     `_dedupe_co` then keeps the reading printed under the CANONICAL spelling (the
+     current-era table), not whichever page came first, and logs both values. No such
+     collision occurs in the 10 local reports.
    - Merging also shortens the WOI list when a report's historical letter tables list both
      spellings. 2026-1H goes from 27 to 23; that is de-duplication of the same wells.
 5. **Part B — Measurements path** (Trisha ruled YES on 2026-10-12).
@@ -65,9 +66,15 @@ Measurements row.
      stays domain-agnostic: the map is passed in, like `risk_register`.
    - WOI-routed measurements are already canonical, and running the rule again changes
      nothing (no chains).
+   - Accepted trade-off (Step 5 review): `parse_document` imports `well_aliases` lazily,
+     the same way it already imports `kdp_check`. The map itself stays caller-supplied,
+     but the exclusion list and the AH-form rule live in that module. Moving the relabel
+     out to watcher/backfill would decouple it fully, at the cost of running it after
+     ADR 067's check from two call sites instead of one.
 6. **Auditability.** The Measurements tab gains **`Well ID As Filed`**, appended at the
    END so positional readers are unaffected (Facility stays at index 10). It is filled
    only when the map relabeled the row, so a blank cell means the id is as filed.
+   Footnote `*` markers are stripped there on every path (WOI, Measurements, backfill).
    `ensure_tabs` adds the header on the next run.
 7. **`_needs_canonical_review`** logs possible unmapped renames for QA. It is logged once
    per id per process and never mapped automatically. Two signals:
@@ -81,6 +88,9 @@ Measurements row.
    - `--apply` refuses until the live header has `Well ID As Filed`. It then re-reads and
      re-plans against the current rows, writes a revert manifest first, and makes one
      `batchUpdate` of the Well ID and Well ID As Filed cells.
+   - The manifest records, per row, whether the As-Filed cell was written, so a revert
+     never clears a pre-existing value. Run it while no watcher/backfill workflow is
+     running, since a row deletion between the re-read and the write would shift rows.
    - Trisha runs `--apply` after review. The `WOI Summary` tab's `Well` column is not
      backfilled.
 
@@ -93,6 +103,9 @@ Measurements row.
     PR, so this one leaves them alone.
   - The other 18 keys match nothing yet. That is harmless; they are there for future
     filings.
+- A document's free-text `summary`/`key_data_point` is the model's paraphrase and still
+  names whatever spelling the filing used. Its Measurements rows show the canonical id,
+  with the as-filed spelling in `Well ID As Filed`.
 - Alert subjects, the digest and the WOI Summary now name the canonical id.
   `well_watch` patterns match on either the canonical or the raw id. The one configured
   pattern, `AHW263R5`, is not in the map.

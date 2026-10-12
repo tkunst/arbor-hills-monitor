@@ -128,13 +128,13 @@ def test_canonical_well_id(raw, want):
 
 
 def test_canonicalize_measurements_keeps_as_filed_and_never_raises():
-    ms = [{"well_id": "AHWW0290", "metric": "temperature"},
+    ms = [{"well_id": "AHWW0290**", "metric": "temperature"},
           {"well_id": "AHW272R4"},
           {"well_id": None},
           "not-a-dict",
           {"well_id": "AHWW0177", "raw_well_id": "AHWW0177*"}]
     changed = wa.canonicalize_measurements(ms, MAP)
-    assert changed == [("AHWW0290", "AHWW290R"), ("AHWW0177", "AHWW177R")]
+    assert changed == [("AHWW0290**", "AHWW290R"), ("AHWW0177", "AHWW177R")]
     assert ms[0] == {"well_id": "AHWW290R", "metric": "temperature", "raw_well_id": "AHWW0290"}
     assert "raw_well_id" not in ms[1]
     assert ms[4]["raw_well_id"] == "AHWW0177*"     # an upstream as-filed id is kept
@@ -165,8 +165,18 @@ def test_co_dedupe_logs_alias_collision(capsys):
     page = ["Attachment 2 - June 2022 CO Data", "ppm",
             "AHWW0290", "6/1/2022", "40", "AHWW290R", "6/2/2022", "55"]
     out = w._dedupe_co(w._parse_co_page(page, 9, MAP))
-    assert [(r.well_id, r.ppm) for r in out] == [("AHWW290R", 40.0)]
-    assert "CO alias collision AHWW290R" in capsys.readouterr().out
+    # the reading printed under the CANONICAL spelling wins, not page order
+    assert [(r.well_id, r.raw_well_id, r.ppm) for r in out] == [("AHWW290R", "AHWW290R", 55.0)]
+    log = capsys.readouterr().out
+    assert "kept AHWW290R=55.0" in log and "dropped AHWW0290=40.0" in log
+
+
+def test_co_dedupe_plain_duplicate_keeps_first_silently(capsys):
+    page = ["Attachment 2 - June 2022 CO Data", "ppm",
+            "AHW272R4", "6/1/2022", "40", "AHW272R4", "6/2/2022", "55"]
+    out = w._dedupe_co(w._parse_co_page(page, 9, MAP))
+    assert [r.ppm for r in out] == [40.0]
+    assert capsys.readouterr().out == ""
 
 
 def test_route_threads_alias_map_into_every_parse(tmp_path):
@@ -252,7 +262,7 @@ def test_review_flags_unmapped_rename_pair_and_short_forms_only():
            "AHWTS01R", "AHWWTS01",          # excluded sensor station -> ignored
            "AHWW0177", "AHWW177R",          # mapped pair -> resolved, not flagged
            "272R4", "WW 237R3", "Well 260R",  # short/spaced forms -> flag
-           "MS-2", "Flare 391", None, ""]
+           "MS-2", "Flare 391", "1", "001A", None, ""]
     assert wa.review_candidates(ids, MAP) == sorted(
         ["AHWW0999", "AHWW999R", "272R4", "WW 237R3", "Well 260R"])
 
@@ -304,7 +314,7 @@ class _FakeSvc:
 
 
 def test_backfill_apply_writes_well_id_and_as_filed(tmp_path):
-    svc = _FakeSvc([HDR, _row("AHW272R4"), _row("AHWW0177")])
+    svc = _FakeSvc([HDR, _row("AHW272R4"), _row("AHWW0177*")])
     man = tmp_path / "m.json"
     plan = bwa.apply_backfill(svc, "sid", MAP, manifest_path=str(man), meta={})
     assert len(plan) == 1
@@ -312,7 +322,16 @@ def test_backfill_apply_writes_well_id_and_as_filed(tmp_path):
     assert data == [{"range": "'Measurements'!B3", "values": [["AHWW177R"]]},
                     {"range": "'Measurements'!L3", "values": [["AHWW0177"]]}]
     assert json.loads(man.read_text())["updates"] == [
-        {"row": 3, "old": "AHWW0177", "new": "AHWW177R"}]
+        {"row": 3, "old": "AHWW0177*", "new": "AHWW177R", "as_filed_written": True}]
+
+
+def test_backfill_apply_keeps_existing_as_filed_and_records_it(tmp_path):
+    r = _row("AHWW0177")
+    r[HDR.index("Well ID As Filed")] = "AHWW0177"
+    svc = _FakeSvc([HDR, r])
+    bwa.apply_backfill(svc, "sid", MAP, manifest_path=str(tmp_path / "m.json"), meta={})
+    assert [d["range"] for d in svc.writes[0]["data"]] == ["'Measurements'!B2"]
+    assert json.loads((tmp_path / "m.json").read_text())["updates"][0]["as_filed_written"] is False
 
 
 def test_backfill_apply_refuses_without_as_filed_header(tmp_path):

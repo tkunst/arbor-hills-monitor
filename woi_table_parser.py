@@ -259,20 +259,25 @@ def _parse_co_page(page_lines: list[str], page: int, alias_map: Optional[dict] =
 def _dedupe_co(readings: list[COReading]) -> list[COReading]:
     """Keep the first reading per (well, month) — canonical pages come first."""
     seen: dict = {}
-    out = []
+    out: list = []
     for r in readings:
         key = (r.well_id, r.month)
         if key not in seen:
-            seen[key] = r
+            seen[key] = len(out)
             out.append(r)
-        elif seen[key].raw_well_id.rstrip("*") != r.raw_well_id.rstrip("*"):
-            # Two different printed spellings collapsed onto one canonical id by
-            # the alias map (ADR 068) — the later one is dropped like any other
-            # duplicate, but never silently.
-            kept = seen[key]
-            print(f"[woi_table_parser] CO alias collision {r.well_id} {r.month}: kept "
-                  f"{kept.raw_well_id}={kept.ppm} (p{kept.page}), dropped "
-                  f"{r.raw_well_id}={r.ppm} (p{r.page})")
+            continue
+        kept = out[seen[key]]
+        if kept.raw_well_id.rstrip("*") == r.raw_well_id.rstrip("*"):
+            continue  # an ordinary duplicate of the same printed id
+        # Two different printed spellings collapsed onto one canonical id by the
+        # alias map (ADR 068). Prefer the reading printed under the CANONICAL
+        # spelling (the current-era table), not whichever page came first, and
+        # never drop either silently.
+        if kept.raw_well_id.rstrip("*") != r.well_id and r.raw_well_id.rstrip("*") == r.well_id:
+            out[seen[key]], kept, r = r, r, kept
+        print(f"[woi_table_parser] CO alias collision {kept.well_id} {kept.month}: kept "
+              f"{kept.raw_well_id}={kept.ppm} (p{kept.page}), dropped "
+              f"{r.raw_well_id}={r.ppm} (p{r.page})")
     return out
 
 

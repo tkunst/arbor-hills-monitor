@@ -144,7 +144,7 @@ def canonical_well_id(well_id, alias_map: Optional[dict]):
 
 def canonicalize_measurements(measurements, alias_map: Optional[dict]) -> list[tuple]:
     """Relabel each measurement dict's `well_id` in place via canonical_well_id().
-    A relabeled reading keeps its as-filed id in `raw_well_id` (written to the
+    A relabeled reading keeps its as-filed id (footnote `*` stripped) in `raw_well_id` (written to the
     Measurements tab's "Well ID As Filed" column) so every change is auditable; an
     existing `raw_well_id` (set upstream by the WOI path) is never overwritten.
     Returns the (raw, canonical) pairs changed. Never raises."""
@@ -156,7 +156,9 @@ def canonicalize_measurements(measurements, alias_map: Optional[dict]) -> list[t
         canon = canonical_well_id(raw, alias_map)
         if canon != raw:
             m["well_id"] = canon
-            m.setdefault("raw_well_id", raw)
+            # Stars are footnote markers, stripped exactly as the WOI path does,
+            # so the As-Filed column holds one form per printed id.
+            m.setdefault("raw_well_id", raw.rstrip("*"))
             changed.append((raw, canon))
     return changed
 
@@ -175,7 +177,9 @@ def canonicalize_measurements(measurements, alias_map: Optional[dict]) -> list[t
 # ---------------------------------------------------------------------------
 
 _STEM_RE = re.compile(r"^AH([A-Z]*?)0*(\d+)(?:R(\d*))?$")
-_SHORT_FORM_RE = re.compile(r"^(?:WELL\s*|W{1,2}\s*-?\s*)?0*\d+(?:R\d*)?$", re.I)
+# Bare numbers need >= 2 digits (a lone "1" from a model-extracted id is noise).
+_SHORT_FORM_RE = re.compile(
+    r"^(?:(?:WELL\s*|W{1,2}\s*-?\s*)\d+(?:R\d*)?|\d+R\d*|\d{2,})$", re.I)
 
 
 def _rename_stem(well_id: str):
