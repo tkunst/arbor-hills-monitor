@@ -49,7 +49,16 @@ external users but no sensitive data). Public repo.
   fallback — same classification call, no extra LLM call) and
   `display_title` (the model's raw proposal, only requested when the caller
   passes `title_is_generic=True`; still domain-agnostic — this module has no
-  opinion on what makes a title generic).
+  opinion on what makes a title generic). `classify()`/`ocr_in_place()` moved
+  to `ocr_util.py` (ADR 069); both names stay importable here unchanged.
+- `ocr_util.py` — **ADR 069**: the shared OCR module. `classify()`/
+  `ocr_in_place()` (moved from `egle_doc_parser.py`, unchanged — the
+  classification pipeline's own OCR gate) plus the NEW `needs_ocr()`/
+  `ensure_searchable()` pair for the Drive-mirror upload path: a page-by-page
+  (not sampled) image-only check and a fail-open OCR-to-a-temp-copy helper.
+  Wired into `archive_client.upload_file()` so every PDF upload, across all
+  seven call sites, either already has a text layer or gets one before
+  landing in Drive. Never raises; SEC-001 count-only logging.
 - `risk_register.py` — R1–R8 + R8 signal keywords (single source of truth).
 - `document_titles.py` — Arbor-Hills-specific half of ADR 065, kept OUT of
   egle_doc_parser.py on purpose: `title_is_generic` (config-driven exact/
@@ -108,7 +117,11 @@ external users but no sensitive data). Public repo.
   Archived PDFs index (`sheet_writer.archived_doc_links()`) so they never
   double-upload. `mirror_one_now()` NEVER raises to its caller — any failure
   (not configured, dead OAuth token, network, quota) falls back to the nSITE
-  link; mirroring must never block classification or alerting.
+  link; mirroring must never block classification or alerting. The `run()`
+  catch-up branch re-downloads raw from nSITE and never went through
+  `parse_document()`'s own OCR step — **ADR 069** identifies this as the
+  likely primary source of the mirror's pre-fix scan-only PDFs; now covered
+  by `archive_client.upload_file()`'s own OCR wiring regardless.
 - `email_alerts.py` — SMTP urgent alerts + weekly digest; urgency is pure.
   **ADR 065** added `is_correspondence_letter` (EGLE's own letterhead marker
   plus a substantive-signal phrase, both pure/unit-tested): a doc already
@@ -222,7 +235,10 @@ external users but no sensitive data). Public repo.
   tab, mirror each new PDF to Drive (optional — the extract+alert safety function
   doesn't depend on it), write the month's max 24-hr average → Measurements
   (`basis=measured`, Barr/EPA-agreement monitor), same-day alert on a stated 72/750 ppb
-  exceedance. Modeled on `mmpc_archiver`. Gated on `ridgewood.enabled`. See ADR 016.
+  exceedance. Modeled on `mmpc_archiver`. Gated on `ridgewood.enabled`. See ADR 016 —
+  **ADR 069** resolved its deferred-OCR note: `ocr_util.ensure_searchable()` now runs
+  BEFORE text extraction, and any value extracted only via OCR is pinned to the
+  review tier (never a plain "ok"), never suppressing a real `exceed_24h` alert.
 - `ridgewood_reverify.py` — Stream G add-on (ADR 066, added 2026-10-12; the Ridge
   Wood slice of `coder:selfreport-provenance`): monthly re-download of EVERY month
   Stream G has archived (not just new ones) + a committed, tamper-evident

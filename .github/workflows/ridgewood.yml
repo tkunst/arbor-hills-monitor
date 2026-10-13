@@ -9,12 +9,16 @@ name: ridgewood
 # Safe to leave scheduled from day one: ridgewood.enabled is false by default, so
 # ridgewood_archiver._should_run() makes every run a quiet no-op (exit 0) until Trisha
 # reviews it and flips it on. Monthly source, so most daily runs find nothing new.
-# No Anthropic (a deterministic extractor, not the Claude classifier) and no OCR
-# binary (every report to date is text-layer; a future scanned report is mirrored +
-# alerted for manual review, not OCR'd here). 9am ET keeps it clear of the 3-8am
-# cluster; state is the "Ridge Wood Reports" tab (Month-keyed dedup), NOT _meta, so
-# it never races the other jobs. The Drive OAuth folder secret is OPTIONAL — without
-# it the stream still extracts + alerts, it just doesn't mirror.
+# No Anthropic (a deterministic extractor, not the Claude classifier). coder:mirror-ocr
+# (2026-10-13) updated ADR 016's deferred-OCR note: every report to date has been
+# text-layer, but a future scanned one is now OCR'd (ocrmypdf, fail-open) BEFORE
+# extraction, not just mirrored + flagged — the "likely scanned" review flag now
+# fires only if the text layer is still empty AFTER OCR, and any value extracted
+# via OCR is pinned to the review tier (never a plain "ok") since an OCR misread
+# could turn a real exceedance into a false all-clear. 9am ET keeps it clear of the
+# 3-8am cluster; state is the "Ridge Wood Reports" tab (Month-keyed dedup), NOT
+# _meta, so it never races the other jobs. The Drive OAuth folder secret is
+# OPTIONAL — without it the stream still extracts + alerts, it just doesn't mirror.
 on:
   schedule:
     - cron: "0 14 * * *"    # 9am ET (2pm UTC). DST drift of +/-1h is acceptable.
@@ -30,13 +34,15 @@ concurrency:
 jobs:
   ridgewood:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: "pip"
+      - name: Install system OCR tooling
+        run: sudo apt-get update && sudo apt-get install -y ocrmypdf
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip

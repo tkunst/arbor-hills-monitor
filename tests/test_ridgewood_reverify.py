@@ -506,6 +506,55 @@ def test_changed_report_mirrors_logs_and_alerts(monkeypatch, tmp_path):
     assert versions[1]["archive_link"] == uploads[0] or versions[1]["archive_link"].endswith(uploads[0])
 
 
+def _build_scan_only_pdf_bytes(path) -> bytes:
+    """A scan-only (no text layer) PDF -- a revised report that arrived as a
+    scan, standing in for ocr_util.needs_ocr()'s real-world trigger."""
+    doc = fitz.open()
+    page = doc.new_page()
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 100, 100))
+    pix.clear_with(150)
+    page.insert_image(fitz.Rect(10, 10, 90, 90), pixmap=pix)
+    doc.save(path)
+    doc.close()
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
+def test_changed_report_scanned_ocrd_before_classification_and_noted(monkeypatch, tmp_path):
+    # coder:mirror-ocr / ADR 069: ensure_searchable() runs BEFORE extract_text
+    # on the "changed" branch too -- a revised report that arrived as a scan
+    # now gets a real extraction attempt (via the OCR'd copy) instead of just
+    # "no extractable text layer", and the note carries the OCR provenance
+    # caveat since an OCR misread could read a real change wrong.
+    old_blob = _build_pdf_bytes(str(tmp_path / "old.pdf"), "2026-06", ["<1"] * 5)
+    new_blob = _build_scan_only_pdf_bytes(str(tmp_path / "new.pdf"))
+    sheet_row = ["2026-06", "T", "<1", 5, "ok", "u", _hash(old_blob), "http://drive/orig.pdf",
+                "2026-07-15T10:00:00"]
+    fake, sent, _ = _wire(
+        monkeypatch, _cfg(), page_months=["2026-06"], sheet_rows=[sheet_row],
+        pdf_bytes_by_month={"2026-06": new_blob})
+
+    ocrd_path = str(tmp_path / "ocrd.pdf")
+    _build_pdf_bytes(ocrd_path, "2026-06", ["<1"] * 30)   # simulates a successful OCR
+    monkeypatch.setattr(rr.ocr_util, "ensure_searchable", lambda path, **kw: ocrd_path)
+    upload_paths = []
+    def fake_upload(service, local, name, folder):
+        upload_paths.append(local)
+        return f"http://drive/{name}"
+    monkeypatch.setattr(rr.ac, "upload_pdf", fake_upload)
+
+    saved = {}
+    monkeypatch.setattr(rr, "save_manifest", lambda m, path=rr.MANIFEST_PATH: saved.update(m))
+    assert rr.run() == 0
+
+    rows = _rows(fake, sw.TAB_RIDGEWOOD_REVISIONS)
+    assert len(rows) == 1
+    note = rows[0][7]
+    assert "OCR" in note                         # provenance caveat present
+    assert upload_paths == [ocrd_path]           # uploaded the OCR'd copy, not the raw scan
+    assert len(sent) == 1
+
+
 def test_changed_report_drive_not_configured_still_logs_and_alerts(monkeypatch, tmp_path):
     old_blob = _build_pdf_bytes(str(tmp_path / "old.pdf"), "2026-06", ["<1"] * 5)
     new_blob = _build_pdf_bytes(str(tmp_path / "new.pdf"), "2026-06", ["<1"] * 6)

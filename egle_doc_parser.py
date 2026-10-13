@@ -7,10 +7,21 @@ different register (diagnostic criteria, eligibility standards) instead of
 R1-R8.
 
 Pipeline:
-  1. classify() — PyMuPDF text-layer detection (needs_ocr vs has_text).
-     Copied verbatim from zotero-tools/zotero-find-ocr-needed.py.
+  1. ocr_util.needs_ocr() — PyMuPDF text-layer detection, PAGE BY PAGE (every
+     page, not a sample). Decides whether step 2 runs. (`classify()` — the
+     original whole-document verdict over a 12-page sample — still lives in
+     ocr_util.py too and stays importable as `egle_doc_parser.classify` for
+     existing callers/tests, but parse_document() no longer uses it for this
+     gate: a large multi-hundred-page compilation whose first 12 pages are
+     real text but whose LATER pages are scanned read as "has_text" under
+     the old sampled verdict, so ocr_in_place() was never called on those
+     later pages at all — found 2026-10-13 against a real 1,006-page WOI/CJ
+     compilation with 316 image-only pages, all past page 12. needs_ocr()
+     checking every page closes that gap.)
   2. If needs_ocr -> ocrmypdf --skip-text, in place (searchable PDF).
-     Ported from zotero-tools/zotero-ocr-batch.py.
+     `ocr_in_place()` in ocr_util.py now (moved, unchanged — same 600s
+     timeout, still raises on failure, same import-and-re-expose treatment).
+     Originally ported from zotero-tools/zotero-ocr-batch.py.
   3. Extract text. Docs over the page threshold use targeted keyword-window
      extraction (only pages with signal keywords + the cover page) instead of
      full text — saves tokens, produces a better key_data_point. Robust for
@@ -26,15 +37,25 @@ fields. Two shapes, deliberately.
 from __future__ import annotations
 
 import logging
-import os
 import re
-import shutil
-import subprocess
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Literal, Optional, get_args
 
 import fitz  # pymupdf
+
+# classify()/ocr_in_place() moved to ocr_util.py (coder:mirror-ocr, 2026-10-13)
+# so the Drive-mirror upload path (archive_client.upload_file()) can share
+# them instead of duplicating the OCR subprocess code. Imported as bare names
+# (not `ocr_util.classify(...)`) so callers below reach them via THIS
+# module's own globals — which is what lets existing tests monkeypatch
+# `egle_doc_parser.classify` / `egle_doc_parser.ocr_in_place` (and
+# poison_doc_extractor's `from egle_doc_parser import ocr_in_place`) exactly
+# as before. `classify` itself is kept importable for those callers/tests
+# even though parse_document() below no longer calls it directly (see
+# needs_ocr's docstring and the comment at its call site). `needs_ocr` is the
+# NEW page-by-page check parse_document() uses instead, also from ocr_util.
+from ocr_util import classify, ocr_in_place, needs_ocr  # noqa: F401
 
 
 log = logging.getLogger(__name__)
@@ -213,82 +234,10 @@ class ParsedDoc:
 
 
 # ---------------------------------------------------------------------------
-# Step 1: text-layer detection (verbatim from zotero-find-ocr-needed.py)
+# Steps 1 & 2 (text-layer detection, OCR in place) now live in ocr_util.py —
+# imported above as `classify` / `ocr_in_place` so this module's own globals
+# still carry both names for parse_document() below and for existing callers.
 # ---------------------------------------------------------------------------
-
-
-def classify(path: str):
-    """Return (verdict, npages, chars_per_page). verdict in
-    needs_ocr/likely/has_text/empty/error."""
-    try:
-        doc = fitz.open(path)
-    except Exception:
-        return ("error", 0, 0)
-    n = len(doc)
-    if n == 0:
-        doc.close()
-        return ("empty", 0, 0)
-    check = min(n, 12)
-    total_chars = 0
-    text_pages = 0
-    imageonly_pages = 0
-    for i in range(check):
-        pg = doc[i]
-        t = len(pg.get_text().strip())
-        imgs = len(pg.get_images(full=False))
-        total_chars += t
-        if t >= 100:
-            text_pages += 1
-        if t < 20 and imgs >= 1:
-            imageonly_pages += 1
-    doc.close()
-    cpp = total_chars / check
-    if text_pages == 0 and imageonly_pages >= 1:
-        return ("needs_ocr", n, cpp)  # no text anywhere, pages are images
-    if cpp < 40 and imageonly_pages >= check * 0.5:
-        return ("likely", n, cpp)  # mostly image pages, scraps of text
-    if text_pages == 0 and total_chars < 30:
-        return ("empty", n, cpp)  # no text, no images -> blank/odd
-    return ("has_text", n, cpp)
-
-
-# ---------------------------------------------------------------------------
-# Step 2: OCR in place (ported from zotero-ocr-batch.py)
-# ---------------------------------------------------------------------------
-
-
-def _ocrmypdf_bin() -> str:
-    """Resolve the ocrmypdf binary. Override with OCRMYPDF_BIN."""
-    return (
-        os.environ.get("OCRMYPDF_BIN")
-        or shutil.which("ocrmypdf")
-        or "/opt/homebrew/bin/ocrmypdf"
-    )
-
-
-def ocr_in_place(pdf_path: str, timeout: int = 600) -> bool:
-    """Run `ocrmypdf --skip-text` and replace pdf_path with the searchable
-    version. Returns True on success. Raises on failure so the caller can
-    decide whether to proceed with the un-OCR'd text."""
-    binpath = _ocrmypdf_bin()
-    env = dict(os.environ, PATH="/opt/homebrew/bin:" + os.environ.get("PATH", ""))
-    tmp = pdf_path + ".ocr_tmp.pdf"
-    try:
-        r = subprocess.run(
-            [binpath, "--skip-text", "-l", "eng", "--output-type", "pdf", pdf_path, tmp],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=timeout,
-        )
-        if r.returncode != 0 or not os.path.exists(tmp):
-            last = (r.stderr or "").strip().split("\n")[-1][:200]
-            raise RuntimeError(f"ocrmypdf failed (rc={r.returncode}): {last}")
-        os.replace(tmp, pdf_path)
-        return True
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
 
 
 # ---------------------------------------------------------------------------
@@ -869,9 +818,23 @@ def parse_document(
     if signal_keywords is None:
         signal_keywords = []
 
-    verdict, _, _ = classify(pdf_path)
+    # coder:mirror-ocr (2026-10-13): the OCR-or-not decision uses ocr_util's
+    # PAGE-BY-PAGE needs_ocr() check, not classify()'s whole-document verdict
+    # over a 12-page sample. classify() reading a large compilation as
+    # "has_text" because its FIRST 12 pages are real text was found to let
+    # scanned pages much later in the same file through un-OCR'd (a real
+    # specimen: a 1,006-page WOI/CJ compilation with 316 image-only pages,
+    # all past page 12 — classify() verdict "has_text", ocr_applied stayed
+    # False, those 316 pages' content never reached the classifier at all).
+    # needs_ocr() checking every page catches this; --skip-text still leaves
+    # already-text pages alone, so a mixed document is safe either way.
+    # ocr_in_place()'s own contract is UNCHANGED: same 600s timeout, still
+    # raises on failure (a poison strike, same as before this change) — only
+    # the GATE deciding whether to call it moved. A very large (thousands of
+    # pages) scanned document can still hit that 600s ceiling; see the PR
+    # description for this residual risk.
     ocr_applied = False
-    if verdict in ("needs_ocr", "likely"):
+    if needs_ocr(pdf_path):
         ocr_applied = ocr_in_place(pdf_path)
 
     doc = fitz.open(pdf_path)

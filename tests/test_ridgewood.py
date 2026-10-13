@@ -330,6 +330,13 @@ def _wire(monkeypatch, cfg, *, months, specs, drive=True):
         return dest
     monkeypatch.setattr(ra.rc, "download_report", fake_download)
 
+    # coder:mirror-ocr (2026-10-13): default ensure_searchable() to a pure
+    # pass-through so these tests stay hermetic (no real ocrmypdf subprocess,
+    # matching this repo's established convention of never invoking the real
+    # binary in a test). Tests that specifically exercise the OCR-applied
+    # review-tier behavior override this themselves.
+    monkeypatch.setattr(ra.ocr_util, "ensure_searchable", lambda path, **kw: path)
+
     monkeypatch.setattr(ra.ac, "is_configured", lambda env=ra.FOLDER_ENV: drive)
     monkeypatch.setattr(ra.ac, "folder_id", lambda env=ra.FOLDER_ENV: "FID")
     if drive:
@@ -492,6 +499,66 @@ def test_no_text_layer_mirrors_and_alerts_without_measurement(monkeypatch):
     assert reports[0][7].startswith("http://drive/") # still mirrored
     assert _rows(fake, sw.TAB_MEASUREMENTS) == []     # no fabricated measurement
     assert len(sent) == 1 and sent[0][2] == ["trisha@example.test"]   # review-tier -> Trisha only
+
+
+# --- coder:mirror-ocr / ADR 069: OCR runs BEFORE extraction, and any value
+# extracted only because of OCR is pinned to the review tier -----------------
+
+def test_scan_only_report_ocrd_before_extraction_forced_to_review(monkeypatch, tmp_path):
+    # A scan-only month that CAN be OCR'd now gets a real extraction attempt,
+    # not just "mirror + flag for manual review" -- but a value born from OCR
+    # must never read as a plain "ok": an OCR misread of one digit could turn
+    # a real exceedance into a false all-clear (ADR 016's fail-safe).
+    cfg = _cfg()
+    fake, sent, _ = _wire(
+        monkeypatch, cfg, months=[("2026-08", None)],
+        specs={"2026-08": {"values": [], "text": False}})
+
+    ocrd_path = str(tmp_path / "ocrd-2026-08.pdf")
+    make_report_pdf(ocrd_path, "2026-08", ["<1"] * 30, all_clear=True, text=True)
+
+    def fake_ensure_searchable(path, **kw):
+        assert path.endswith("ridgewood-2026-08.pdf")   # the ORIGINAL scan-only download
+        return ocrd_path
+    monkeypatch.setattr(ra.ocr_util, "ensure_searchable", fake_ensure_searchable)
+
+    upload_paths = []
+    def fake_upload(service, local, name, folder):
+        upload_paths.append(local)
+        return f"http://drive/{name}"
+    monkeypatch.setattr(ra.ac, "upload_pdf", fake_upload)
+
+    assert ra.run() == 0
+    reports = _rows(fake, sw.TAB_RIDGEWOOD)
+    # Without the OCR-applied forcing, 30 days of "<1" with the all-clear
+    # phrase present reads as alert=False ("ok") -- this asserts the forcing
+    # actually changes the outcome, not just that review-tier happens to fire
+    # for some other reason.
+    assert reports[0][4] == "review"
+    measurements = _rows(fake, sw.TAB_MEASUREMENTS)
+    assert len(measurements) == 1              # a value WAS written (OCR worked this time)
+    assert "OCR" in measurements[0][8]          # Note carries the provenance caveat
+    assert upload_paths == [ocrd_path]          # uploaded the OCR'd copy, never the raw scan
+    assert len(sent) == 1 and sent[0][2] == ["trisha@example.test"]  # review tier -> Trisha only
+
+
+def test_scan_only_report_with_exceedance_via_ocr_still_alerts_full_list(monkeypatch, tmp_path):
+    # A real exceedance extracted via OCR must still reach the FULL
+    # alert_recipients list -- the review-tier forcing only raises the FLOOR
+    # for an otherwise-clean read, it never suppresses a genuine exceedance.
+    cfg = _cfg()
+    fake, sent, _ = _wire(
+        monkeypatch, cfg, months=[("2026-09", None)],
+        specs={"2026-09": {"values": [], "text": False}})
+
+    ocrd_path = str(tmp_path / "ocrd-2026-09.pdf")
+    make_report_pdf(ocrd_path, "2026-09", ["<1", "85", "3"], all_clear=True, text=True)
+    monkeypatch.setattr(ra.ocr_util, "ensure_searchable", lambda path, **kw: ocrd_path)
+
+    assert ra.run() == 0
+    reports = _rows(fake, sw.TAB_RIDGEWOOD)
+    assert reports[0][4] == "EXCEEDANCE"
+    assert len(sent) == 1 and sent[0][2] is None   # None -> send_email uses the full alert_recipients
 
 
 def test_review_recipients_unset_falls_back_to_full_list(monkeypatch):

@@ -204,11 +204,17 @@ recorded regardless. Steady-state runs (one new month) alert normally.
    all-clear, this would miss it. Accepted (fail-safe direction); re-examine the
    moment a real exceedance report is published (it becomes the missing specimen).
 3. **A future report could be a scanned image.** Verified text-layer across 66
-   months, but v1 does **not** auto-OCR: a no-text PDF is **mirrored + flagged for
-   manual/OCR review** (fail-safe — the month is archived, never dropped), not run
-   through `ocrmypdf` in this workflow. Wiring the repo's existing OCR path
-   (`egle_doc_parser.ocr_in_place`) is a deferred enhancement; the alert-for-review
-   path is the safe minimum and keeps the workflow lean (no OCR binary to install).
+   months. **RESOLVED by ADR 069 (2026-10-13, coder:mirror-ocr):** this deferred
+   enhancement is no longer deferred. `archive_client.upload_pdf()` now OCRs any
+   image-only page on upload regardless of caller (`ocr_util.ensure_searchable()`,
+   fail-open), so `ridgewood_archiver.py`/`ridgewood_reverify.py` call it explicitly
+   BEFORE text extraction too — a scanned month gets a real attempt at a value, not
+   just a mirror-and-flag. The "mirrored + flagged for manual review" fail-safe still
+   exists, but now fires only if the text layer is **still empty after OCR**, and —
+   new safety rule ADR 069 added, not in the original design — any value that WAS
+   extracted only because of OCR is pinned to the review tier (never a plain "ok"):
+   an OCR misread of one digit could turn a real 72 ppb exceedance into a false
+   all-clear, which is exactly the silent miss this fail-safe exists to prevent.
 4. **`<1` is below reporting resolution.** The report labels a calculated average of
    0.0–0.9 ppb as `"<1 ppb"`. We store that token verbatim rather than inventing a
    float; it is far below 72 ppb and never enters the numeric exceedance check.

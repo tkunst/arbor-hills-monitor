@@ -108,8 +108,25 @@ def upload_file(service, local_path: str, name: str, mimetype: str, folder_id: s
     the durable, shareable URL recorded in the Archived PDFs / WDS Page Snapshots
     / MMPC Archived Files tabs. Idempotent per find_in_folder()'s caveat above.
     Shared by archiver.py (nSITE PDFs), wds_archiver.py (HTML page snapshots),
-    and mmpc_archiver.py (MMPC PDFs) — same drive.file scope, different folder
-    IDs and mimetypes."""
+    mmpc_archiver.py (MMPC PDFs), civicclerk_archiver.py, ridgewood_archiver.py/
+    ridgewood_reverify.py, and govqa_watcher.py/ride_docs_watcher.py's own
+    direct upload_file() calls — same drive.file scope, different folder IDs
+    and mimetypes.
+
+    coder:mirror-ocr (2026-10-13): every PDF upload (mimetype ==
+    "application/pdf") goes through ocr_util.ensure_searchable() first, so
+    EVERY upload path funnels through this one choke point — not just the
+    nSITE/MMPC/CivicClerk/Ridge Wood archivers that call the upload_pdf()
+    wrapper below, but also the two watchers above that call upload_file()
+    directly with a conditional PDF mimetype. ensure_searchable() is a no-op
+    (returns local_path unchanged, no subprocess) for a file that already has
+    a full text layer — which is the common case here, since the watcher/
+    backfill pipeline already OCR'd via egle_doc_parser.parse_document()
+    before ever reaching this upload. It's fail-open: any OCR failure just
+    uploads the original file, never raises, never drops the document.
+    `ocr_util` is imported lazily (not at module top) so this module stays
+    import-light for callers that never touch a PDF (wds_archiver.py's HTML
+    snapshots, the two watchers' non-PDF uploads)."""
     from googleapiclient.http import MediaFileUpload
 
     existing = find_in_folder(service, name, folder_id)
@@ -117,16 +134,92 @@ def upload_file(service, local_path: str, name: str, mimetype: str, folder_id: s
         got = service.files().get(fileId=existing, fields="webViewLink").execute(num_retries=GOOGLE_API_NUM_RETRIES)
         return got["webViewLink"]
 
-    media = MediaFileUpload(local_path, mimetype=mimetype, resumable=True)
-    meta = {"name": name, "parents": [folder_id]}
-    f = (
-        service.files()
-        .create(body=meta, media_body=media, fields="id, webViewLink")
-        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    )
-    return f["webViewLink"]
+    upload_path = local_path
+    if mimetype == "application/pdf":
+        import ocr_util
+
+        upload_path = ocr_util.ensure_searchable(local_path)
+
+    try:
+        media = MediaFileUpload(upload_path, mimetype=mimetype, resumable=True)
+        meta = {"name": name, "parents": [folder_id]}
+        f = (
+            service.files()
+            .create(body=meta, media_body=media, fields="id, webViewLink")
+            .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+        )
+        return f["webViewLink"]
+    finally:
+        if upload_path != local_path:
+            try:
+                os.remove(upload_path)
+            except OSError:
+                pass
 
 
 def upload_pdf(service, local_path: str, name: str, folder_id: str) -> str:
     """Thin wrapper over upload_file() for a PDF mirror (archiver.py, mmpc_archiver.py)."""
     return upload_file(service, local_path, name, "application/pdf", folder_id)
+
+
+# ---------------------------------------------------------------------------
+# coder:mirror-ocr (2026-10-13), for scripts/backfill_mirror_ocr.py — re-reading
+# and in-place-overwriting a file THIS APP already mirrored. Separate from
+# drive_client.download_file()/upload_file(): those use the SERVICE ACCOUNT,
+# which has no access to this OAuth-as-user-owned mirror (same dual-credential
+# split documented throughout this repo — Sheets via service account, Drive via
+# OAuth). Kept here rather than in the backfill script so the Drive-I/O surface
+# for app-created files stays in one module.
+# ---------------------------------------------------------------------------
+
+
+def download_file(service, file_id: str, dest_path: str) -> str:
+    """Download one file this app has access to (drive.file scope: only files
+    it created) to dest_path. Used by the OCR backfill to re-read an
+    already-mirrored PDF for inspection/repair."""
+    from googleapiclient.http import MediaIoBaseDownload
+
+    request = service.files().get_media(fileId=file_id)
+    with open(dest_path, "wb") as fh:
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            _status, done = downloader.next_chunk(num_retries=GOOGLE_API_NUM_RETRIES)
+    return dest_path
+
+
+def pin_head_revision(service, file_id: str) -> str:
+    """Pin the file's CURRENT head revision with keepForever=True, before its
+    content is overwritten. The Drive API purges non-head revisions of a
+    binary file ~30 days after new content lands unless pinned — without this,
+    overwriting a scan-only mirror with its OCR'd replacement would silently
+    lose the original scan-only bytes from revision history a month later,
+    with no error at the time it happens. Returns the pinned revision id."""
+    meta = (
+        service.files()
+        .get(fileId=file_id, fields="headRevisionId")
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    )
+    rev_id = meta["headRevisionId"]
+    service.revisions().update(
+        fileId=file_id, revisionId=rev_id, body={"keepForever": True},
+    ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    return rev_id
+
+
+def update_file_content(service, file_id: str, local_path: str,
+                        mimetype: str = "application/pdf") -> str:
+    """Overwrite a file's content IN PLACE (files().update with a new
+    media_body) — SAME file id, so every Sheet link / public-records page
+    link / emailed link that points at it keeps working; no files().create,
+    ever. Returns the file id (re-confirmed from the response, not just
+    echoed back) so the caller can assert it didn't change."""
+    from googleapiclient.http import MediaFileUpload
+
+    media = MediaFileUpload(local_path, mimetype=mimetype, resumable=True)
+    f = (
+        service.files()
+        .update(fileId=file_id, media_body=media, fields="id")
+        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    )
+    return f["id"]
