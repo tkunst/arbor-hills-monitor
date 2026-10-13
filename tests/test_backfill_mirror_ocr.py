@@ -152,6 +152,29 @@ def test_dry_run_report_signature_has_no_drive_parameter():
     assert "drive" not in params
 
 
+def test_main_dry_run_never_touches_drive_end_to_end(monkeypatch, tmp_path, capsys):
+    # End-to-end proof (not just a signature check): running main() with no
+    # --apply flag must never call ANY Drive function, even indirectly.
+    tabs = {sw.TAB_ARCHIVE: [sw.ARCHIVE_HEADERS]}
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.chdir(tmp_path)   # so a stray local-state/ write (bug) can't land in the repo
+
+    import drive_client
+    monkeypatch.setattr(drive_client, "sheets_service", lambda: FakeSheets(tabs))
+
+    def boom(*a, **k):
+        raise AssertionError("dry-run must never call a Drive function")
+    monkeypatch.setattr(ac, "oauth_drive_service", boom)
+    monkeypatch.setattr(ac, "download_file", boom)
+    monkeypatch.setattr(ac, "update_file_content", boom)
+    monkeypatch.setattr(ac, "pin_head_revision", boom)
+
+    rc = bm.main([])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "ZERO Drive API calls" in out
+
+
 def test_dry_run_report_counts_candidates_and_resolved():
     tabs = {
         sw.TAB_ARCHIVE: [
@@ -274,18 +297,51 @@ def test_process_candidate_done_pins_revision_before_update_never_creates(monkey
     assert call_order == [("download", "FID42"), ("pin", "FID42"), ("update", "FID42"), ("download", "FID42")]
 
 
-def test_process_candidate_still_scanned_after_ocr_is_incomplete_not_done(monkeypatch, tmp_path):
+def test_process_candidate_still_scanned_after_ocr_never_touches_drive(monkeypatch, tmp_path):
+    # M2 fix (found by independent review): a page with genuinely no
+    # recoverable text (always-flagged, even after a real OCR pass) must
+    # never be pinned/overwritten in Drive for zero gain -- the check runs
+    # LOCALLY, before any Drive write.
     def fake_download(drive, fid, dest):
         open(dest, "wb").write(b"x")
         return dest
     monkeypatch.setattr(ac, "download_file", fake_download)
-    monkeypatch.setattr(ocr_util, "needs_ocr", lambda path: True)   # always still flagged, even post-update
+    monkeypatch.setattr(ocr_util, "needs_ocr", lambda path: True)   # always still flagged
+    monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: path + ".searchable")
+    pin_calls, update_calls = [], []
+    monkeypatch.setattr(ac, "pin_head_revision", lambda *a, **k: pin_calls.append(1))
+    monkeypatch.setattr(ac, "update_file_content", lambda *a, **k: update_calls.append(1))
+    cand = {"link": "https://drive.google.com/file/d/FID/view"}
+    result = bm.process_candidate(_fake_drive(), cand, str(tmp_path))
+    assert result["status"] == "ocr_incomplete"   # never silently "done"
+    assert pin_calls == [] and update_calls == []  # no Drive write for zero benefit
+
+
+def test_process_candidate_verify_failure_after_successful_update_is_done_unverified(
+        monkeypatch, tmp_path):
+    # M3 fix (found by independent review): if the UPDATE succeeds but the
+    # post-update verify step fails (a transient re-download blip), the
+    # result must NOT be `error_upload` -- that would make a later run
+    # re-OCR and re-upload a file that's probably already fixed.
+    download_calls = {"n": 0}
+    def fake_download(drive, fid, dest):
+        download_calls["n"] += 1
+        if download_calls["n"] == 1:
+            open(dest, "wb").write(b"x")
+            return dest
+        raise RuntimeError("transient re-download blip")   # the VERIFY download
+    monkeypatch.setattr(ac, "download_file", fake_download)
+    needs = {"n": 0}
+    def fake_needs_ocr(path):
+        needs["n"] += 1
+        return needs["n"] == 1   # raw: True; post-OCR local check: False
+    monkeypatch.setattr(ocr_util, "needs_ocr", fake_needs_ocr)
     monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: path + ".searchable")
     monkeypatch.setattr(ac, "pin_head_revision", lambda *a, **k: None)
     monkeypatch.setattr(ac, "update_file_content", lambda drive, fid, path, **kw: fid)
     cand = {"link": "https://drive.google.com/file/d/FID/view"}
     result = bm.process_candidate(_fake_drive(), cand, str(tmp_path))
-    assert result["status"] == "ocr_incomplete"   # never silently "done"
+    assert result["status"] == "done_unverified"
 
 
 def test_process_candidate_id_changed_is_a_defensive_error_not_done(monkeypatch, tmp_path):
@@ -293,7 +349,11 @@ def test_process_candidate_id_changed_is_a_defensive_error_not_done(monkeypatch,
         open(dest, "wb").write(b"x")
         return dest
     monkeypatch.setattr(ac, "download_file", fake_download)
-    monkeypatch.setattr(ocr_util, "needs_ocr", lambda path: True)
+    needs = {"n": 0}
+    def fake_needs_ocr(path):
+        needs["n"] += 1
+        return needs["n"] == 1   # first check (raw): True; second (post-OCR, local): False
+    monkeypatch.setattr(ocr_util, "needs_ocr", fake_needs_ocr)
     monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: path + ".searchable")
     monkeypatch.setattr(ac, "pin_head_revision", lambda *a, **k: None)
     monkeypatch.setattr(ac, "update_file_content", lambda drive, fid, path, **kw: "SOMETHING_ELSE")
@@ -307,7 +367,7 @@ def test_process_candidate_id_changed_is_a_defensive_error_not_done(monkeypatch,
 # ---------------------------------------------------------------------------
 
 
-def test_run_apply_resume_skips_already_resolved(monkeypatch):
+def test_run_apply_resume_skips_already_resolved(monkeypatch, tmp_path):
     tabs = {
         sw.TAB_ARCHIVE: [
             sw.ARCHIVE_HEADERS,
@@ -317,12 +377,13 @@ def test_run_apply_resume_skips_already_resolved(monkeypatch):
     state = {f"{sw.TAB_ARCHIVE}:doc-1": {"status": "done"}}
     calls = []
     monkeypatch.setattr(bm, "process_candidate", lambda *a, **k: calls.append(1) or {"status": "done"})
-    result = bm.run_apply(FakeSheets(tabs), "SID", _fake_drive(), state, limit=100)
+    result = bm.run_apply(FakeSheets(tabs), "SID", _fake_drive(), state, limit=100,
+                          state_path=str(tmp_path / "state.json"))
     assert calls == []           # never re-processed -- "done" is terminal
     assert result["scanned"] == 0
 
 
-def test_run_apply_limit_caps_actual_ocr_attempts_not_skips(monkeypatch):
+def test_run_apply_limit_caps_actual_ocr_attempts_not_skips(monkeypatch, tmp_path):
     tabs = {
         sw.TAB_ARCHIVE: [
             sw.ARCHIVE_HEADERS,
@@ -334,9 +395,71 @@ def test_run_apply_limit_caps_actual_ocr_attempts_not_skips(monkeypatch):
     state = {}
     outcomes = iter([{"status": "skip_has_text"}, {"status": "done"}, {"status": "done"}])
     monkeypatch.setattr(bm, "process_candidate", lambda *a, **k: next(outcomes))
-    result = bm.run_apply(FakeSheets(tabs), "SID", _fake_drive(), state, limit=1)
+    result = bm.run_apply(FakeSheets(tabs), "SID", _fake_drive(), state, limit=1,
+                          state_path=str(tmp_path / "state.json"))
     # doc-1 is a free skip (doesn't count); doc-2 is the 1 actual OCR attempt
     # allowed by limit=1; doc-3 is never even scanned.
     assert result["fixed"] == 1
     assert result["scanned"] == 2
     assert f"{sw.TAB_ARCHIVE}:doc-3" not in state
+
+
+def test_run_apply_retryable_status_is_reattempted_not_skipped(monkeypatch, tmp_path):
+    tabs = {
+        sw.TAB_ARCHIVE: [
+            sw.ARCHIVE_HEADERS,
+            ["doc-1", "n", "d", "", "s", "https://drive.google.com/file/d/F1/view", "ts"],
+        ],
+    }
+    state = {f"{sw.TAB_ARCHIVE}:doc-1": {"status": "error_download"}}   # retryable
+    calls = []
+    monkeypatch.setattr(bm, "process_candidate", lambda *a, **k: calls.append(1) or {"status": "done"})
+    result = bm.run_apply(FakeSheets(tabs), "SID", _fake_drive(), state, limit=100,
+                          state_path=str(tmp_path / "state.json"))
+    assert calls == [1]          # retryable statuses ARE re-attempted
+    assert state[f"{sw.TAB_ARCHIVE}:doc-1"]["status"] == "done"
+
+
+def test_run_apply_aborts_rest_of_run_on_systemic_failure(monkeypatch, tmp_path):
+    tabs = {
+        sw.TAB_ARCHIVE: [
+            sw.ARCHIVE_HEADERS,
+            ["doc-1", "n", "d", "", "s", "https://drive.google.com/file/d/F1/view", "ts"],
+            ["doc-2", "n", "d", "", "s", "https://drive.google.com/file/d/F2/view", "ts"],
+        ],
+        sw.TAB_MMPC_ARCHIVE: [
+            sw.MMPC_ARCHIVE_HEADERS,
+            [9000, "d", "Agenda", "n", 1, "https://drive.google.com/file/d/F3/view", "ts"],
+        ],
+    }
+    state = {}
+    monkeypatch.setattr(bm, "process_candidate",
+                        lambda *a, **k: {"status": "error_upload", "note": "PermissionDenied"})
+    result = bm.run_apply(FakeSheets(tabs), "SID", _fake_drive(), state, limit=100,
+                          state_path=str(tmp_path / "state.json"))
+    assert result["aborted"] is True
+    assert result["scanned"] == 1    # doc-2 and the MMPC tab were never reached
+    assert f"{sw.TAB_ARCHIVE}:doc-2" not in state
+    assert f"{sw.TAB_MMPC_ARCHIVE}:9000" not in state
+
+
+def test_run_apply_saves_state_incrementally_not_only_at_the_end(monkeypatch, tmp_path):
+    tabs = {
+        sw.TAB_ARCHIVE: [
+            sw.ARCHIVE_HEADERS,
+            ["doc-1", "n", "d", "", "s", "https://drive.google.com/file/d/F1/view", "ts"],
+        ],
+    }
+    state = {}
+    state_path = str(tmp_path / "state.json")
+    assert not os.path.exists(state_path)   # nothing on disk before the run
+
+    monkeypatch.setattr(bm, "process_candidate", lambda *a, **k: {"status": "done"})
+    bm.run_apply(FakeSheets(tabs), "SID", _fake_drive(), state, limit=100, state_path=state_path)
+
+    # Read the file INDEPENDENTLY of the in-memory `state` dict run_apply
+    # mutated, to prove the save genuinely happened (not just an in-memory
+    # update) -- a crash right after the candidate's status was recorded
+    # must not lose it.
+    on_disk = bm.load_state(state_path)
+    assert on_disk[f"{sw.TAB_ARCHIVE}:doc-1"]["status"] == "done"

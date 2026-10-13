@@ -48,9 +48,21 @@ backfill) went through the never-OCR'd catch-up path. That window, plus the stru
 never-OCR'd MMPC/CivicClerk/Ridge Wood/GovQA/RRD paths, plausibly accounts for most of
 the 392. A secondary, smaller contributor: `classify()`'s own aggregate, 12-page-sampled
 verdict can read a mixed document (mostly real text, a few image-only cover or signature
-pages) as `has_text` overall and never OCR those pages — see Decision 2 below. This is a
+pages) as `has_text` overall and never OCR those pages — see Decision 3 below. This is a
 documented hypothesis from `git log`, not a live-credentialed confirmation (no Drive/
 Sheet reads were done to check actual `Archived At` timestamps against this build).
+
+**Mid-build correction (2026-10-13, same day): the classification pipeline's gate DOES
+change, not just the Drive-copy path.** The paragraph above ("the classifier was never
+blind") is only TRUE for the common case. A fresh check against a real specimen found a
+1,006-page WOI/CJ compilation with 316 image-only pages, ALL past `classify()`'s 12-page
+sample window — `parse_document()` never called `ocr_in_place()` on it at all, and those
+316 pages' content never reached the classifier. `parse_document()`'s OCR gate is
+corrected in this same PR (Decision 2) to close that gap too, with a fail-open split
+that keeps `main`'s exact behavior for every case `classify()` already caught. **This
+changes watcher.py's and backfill.py's live classification behavior**, not only the
+archive/upload path the original handoff scoped this task to — stated plainly here and
+in the PR, since it's a materially larger blast radius than the handoff described.
 
 ## Decision
 
@@ -58,24 +70,50 @@ Sheet reads were done to check actual `Archived At` timestamps against this buil
    verbatim (unchanged behavior) from `egle_doc_parser.py` to the new `ocr_util.py`.
    `egle_doc_parser.py` imports both names so `egle_doc_parser.classify` /
    `egle_doc_parser.ocr_in_place` keep working for every existing caller
-   (`parse_document()`'s own pre-classification OCR gate, `poison_doc_extractor.py`'s
-   proactive OCR for synthesized PDFs, and both modules' tests, which monkeypatch
-   these names directly) — **the classification pipeline's behavior is explicitly
-   unchanged by this ADR.**
-2. **New, page-by-page check for the Drive-copy gap:** `ocr_util.needs_ocr(path)`
-   returns True if ANY page — every page, not a 12-page sample — is image-only (its own
-   text is under 20 characters AND it carries at least one image; the same pairing
-   `classify()` already uses per page internally, just applied everywhere instead of
-   rolled into one whole-document verdict). This is what the mixed-document gap needs:
-   a 300-page WOI report that's almost entirely real text still gets its handful of
-   image-only pages caught.
-   - **Refinement from the handoff's literal wording** ("any page under ~5 words needs
-     OCR"): the image requirement was added so a genuinely blank separator page (no
-     text, no image — nothing for ocrmypdf to add) isn't flagged. Without it, any
-     document with a blank page would re-shell to ocrmypdf on every single upload,
-     breaking the "already-searchable files pass straight through" requirement this
-     ADR depends on for workflow timeout headroom (Decision 5).
-3. **`ocr_util.ensure_searchable(local_path)`** is the fail-open layer: returns
+   (`poison_doc_extractor.py`'s proactive OCR for synthesized PDFs, and both modules'
+   tests, which monkeypatch these names directly). `classify()` the FUNCTION is
+   unchanged; `ocr_in_place()` the function is unchanged — **but see 1a: what
+   `parse_document()` does with them changed mid-build.**
+2. **`parse_document()`'s OCR gate (corrected 2026-10-13, same day, after the
+   1,006-page specimen above): checks BOTH verdicts, with different failure handling —
+   this split is load-bearing, not cosmetic.**
+   - `classify()` says `needs_ocr`/`likely` → call `ocr_in_place()` with NO try/except,
+     exactly `main`'s behavior: a failure RAISES (a poison strike upstream in
+     watcher.py/backfill.py), unchanged for every document that already triggered OCR
+     there before this PR.
+   - `classify()` says `has_text`/`empty` but `ocr_util.needs_ocr()` (1b) still finds an
+     image-only page → a document `main` NEVER attempted OCR on (it classified,
+     alerted, and shipped fine without it). This is a NEW capability, not a tightened
+     requirement, so it's **FAIL-OPEN**: an OCR failure here is logged (class only,
+     SEC-001 posture) and the parse proceeds with native text — exactly as if
+     `needs_ocr()` had said False. A document that classifies fine on `main` cannot
+     become a poison strike / `MAX_ERRORS` stub on this branch.
+   - `ocr_in_place()`'s own contract (600s timeout, raise-on-failure) is otherwise
+     untouched. A document `classify()` ALSO flags can still hit that 600s ceiling and
+     poison-strike — not a new risk, same as `main` today.
+3. **New, page-by-page check for the Drive-copy gap (and now also 1a's gap):**
+   `ocr_util.needs_ocr(path)` returns True if ANY page — every page, not a 12-page
+   sample — is image-only (LITERALLY NO extractable text AND at least one image). This
+   is what the mixed-document gap needs: a 300-page WOI report that's almost entirely
+   real text still gets its handful of image-only pages caught.
+   - **Threshold corrected 2026-10-13 (same day) after a spike against the REAL
+     `ocrmypdf` binary.** The first version used "under 20 characters" (a refinement of
+     the handoff's literal "~5 words"), reasoning that a stray caption wouldn't matter.
+     It does: `ocrmypdf --skip-text` skips a page the instant it has ANY text at all —
+     confirmed empirically ("1 skipping all processing on this page" for a page
+     captioned only "Photo 1", and even for a single stray character). A <20-char
+     threshold flags such a page, ocrmypdf then skips it anyway, and the page reads
+     `needs_ocr()==True` again on the very next check — the file never converges, every
+     future upload re-invokes ocrmypdf for zero gain (breaking the "pass straight
+     through" promise from the OTHER direction than the blank-page case below), and the
+     backfill script (Decision 9) would mislabel a genuinely successful OCR run as
+     `ocr_incomplete` forever. The threshold is now EXACTLY ZERO characters, matching
+     what `--skip-text` itself treats as "already has text."
+   - The image requirement (not just a text-length check) is still there so a
+     genuinely blank separator page (no text, no image — nothing for ocrmypdf to add)
+     isn't flagged either. Without it, any document with a blank page would re-shell to
+     ocrmypdf on every single upload.
+4. **`ocr_util.ensure_searchable(local_path)`** is the fail-open layer: returns
    `local_path` unchanged (no copy, no subprocess) when `needs_ocr()` is False — the
    common case, since the watcher/backfill pipeline already OCR'd via
    `parse_document()` before ever reaching an upload. When a page is image-only, it
@@ -86,7 +124,7 @@ Sheet reads were done to check actual `Archived At` timestamps against this buil
    upload the document as-is rather than drop it. **SEC-001:** the log line never
    carries a filename, title, or exception text (this repo's Actions logs are public);
    only a class name and exit code.
-4. **Wired once, in `archive_client.upload_file()`**, gated on
+5. **Wired once, in `archive_client.upload_file()`**, gated on
    `mimetype == "application/pdf"` — not `upload_pdf()` specifically, so the two direct
    `upload_file(..., "application/pdf", ...)` callers found during this build
    (`govqa_watcher.py`, `ride_docs_watcher.py`) are covered too, with no changes to
@@ -96,7 +134,7 @@ Sheet reads were done to check actual `Archived At` timestamps against this buil
    lazily inside the function so `archive_client` stays import-light for callers that
    never touch a PDF (`wds_archiver.py`'s HTML snapshots, the two watchers' non-PDF
    uploads).
-5. **Ridge Wood (ADR 016's deferred note, now resolved):** `ridgewood_archiver.py` and
+6. **Ridge Wood (ADR 016's deferred note, now resolved):** `ridgewood_archiver.py` and
    `ridgewood_reverify.py` both call `ensure_searchable()` BEFORE text extraction (not
    after upload) — `content_hash()` still runs on the ORIGINAL bytes, then
    `ensure_searchable()`, then `extract_text()` on the result, then upload of that same
@@ -114,14 +152,22 @@ Sheet reads were done to check actual `Archived At` timestamps against this buil
      whose "ok"/"all_clear" came from OCR'd text, and routes `ridgewood_reverify.py`'s
      owner-only note the same way (that path already goes to Trisha alone, never the
      public list).
-6. **Workflows.** `ocrmypdf` install step added to every workflow whose script reaches
+   - **Precision fix 2026-10-13 (found by independent review):** `ocr_applied` must
+     mean "this month's VALUE came from OCR'd text," not just "`ensure_searchable()`
+     changed the file for some unrelated reason" — e.g. an incidental image-only
+     logo/stamp page elsewhere in an otherwise born-digital report. Both files now try
+     the NATIVE extraction first and only fall back to the OCR'd copy (setting
+     `ocr_applied` only then) when the native pass finds nothing — so a normal,
+     natively-readable report with one unrelated image page is never forced to the
+     review tier on a false pretext.
+7. **Workflows.** `ocrmypdf` install step added to every workflow whose script reaches
    a PDF `upload_file()` call and lacked it: `archive.yml`, `mmpc-archive.yml`,
    `civicclerk-archive.yml`, `ridgewood.yml`, `ridgewood-reverify.yml`,
    `govqa-watch.yml`, `ride-docs-watch.yml` (the last two found during this build, not
    in the original handoff's list). `daily.yml`/`backfill.yml`/`kdp-recheck.yml`
    already had it. If the binary is missing at runtime, `ensure_searchable()` fails
    open: one count-only warning, original file uploaded.
-7. **Live-path timeout budget.** `ensure_searchable()` defaults to a 300s per-document
+8. **Live-path timeout budget.** `ensure_searchable()` defaults to a 300s per-document
    ocrmypdf timeout (half of `ocr_in_place()`'s 600s) — this runs inline on every
    upload, not as a dedicated backfill batch, so a shorter ceiling bounds how long one
    slow scan can hold up a workflow run; still generous for a typical EGLE filing (the
@@ -129,7 +175,7 @@ Sheet reads were done to check actual `Archived At` timestamps against this buil
    also bumped modestly on the five archiver-family workflows (archive.yml 30→45;
    mmpc-archive/civicclerk-archive/ridgewood.yml 20→30; ridgewood-reverify.yml 30→40)
    as headroom.
-8. **Backfill (`scripts/backfill_mirror_ocr.py`)** for the 392 PDFs already in the
+9. **Backfill (`scripts/backfill_mirror_ocr.py`)** for the 392 PDFs already in the
    mirror. See its own module docstring for the full contract; summary:
    - **Source of truth: the Sheet's archive tabs** (Archived PDFs, MMPC Archived
      Files, CivicClerk Archived Files, Ridge Wood Reports) — so it only ever touches
@@ -143,14 +189,24 @@ Sheet reads were done to check actual `Archived At` timestamps against this buil
      cannot report how many files actually need OCR, only how many candidate rows
      exist per tab.
    - **`--apply`** does the real work, capped at `--limit` (default 100) ACTUAL
-     OCR+reupload operations per run (a file found already-searchable doesn't count
-     against the limit — it's a free skip). Group priority (N2688 first, then other
-     nSITE SRN groups, then MMPC/CivicClerk/Ridge Wood) is resolved from each
-     candidate's Drive filename, not a full page-count sort — page count isn't
-     knowable without a download, and dry-run must make none, so a true "multi-page
-     N2688 first" global sort isn't achievable without the one-time audit's own
-     download pass (which this script doesn't have access to). This is a documented
-     approximation of the handoff's priority ask, not the literal ordering.
+     OCR+reupload attempts per run (a file found already-searchable doesn't count
+     against the limit — it's a free skip). Priority is TAB-LEVEL, not a page-count
+     sort: candidates are processed in a FIXED tab order (Archived PDFs — the nSITE
+     mirror, dominated by N2688 — first, entirely, then MMPC, CivicClerk, Ridge Wood
+     Reports, Ridge Wood Revisions last). A true "multi-page N2688 first, then
+     multi-page other groups, then 1-page" sort would need per-candidate Drive
+     metadata (the SRN lives in the Drive filename, e.g. `N2688_<doc_id>.pdf`, not in
+     any Sheet column) or a download — and dry-run must make zero Drive calls — so this
+     is a documented, simpler approximation of the handoff's priority ask, not the
+     literal ordering. An earlier draft of this ADR described filename-based SRN
+     sub-grouping; that was cut for the simpler tab-order approximation before any
+     `--apply` run, and this is the corrected description.
+   - **Checks locally BEFORE touching Drive at all** (added 2026-10-13, found by
+     independent review): after OCR runs, `needs_ocr()` is re-checked on the OCR'd
+     copy — a page with a genuinely unreadable image (no recoverable text no matter
+     how many times OCR runs) still fails that check after a real, successful
+     `ocrmypdf` pass. If it's still flagged, the file is recorded `ocr_incomplete`
+     WITHOUT ever pinning a revision or overwriting Drive — no churn for zero benefit.
    - **Overwrites IN PLACE** with `files().update(fileId=..., media_body=...)` — same
      file id, so every Sheet link, public-records page link, and emailed link keeps
      working. Before overwriting, the current head revision is pinned
@@ -162,9 +218,25 @@ Sheet reads were done to check actual `Archived At` timestamps against this buil
      `revisions().update()` against live credentials (no Drive access from inside this
      build) — **flagged as a residual risk for Trisha to verify on the first real
      `--apply` run**, not assumed.
+   - **Failure handling, refined 2026-10-13 (found by independent review):** the
+     pin+update step and the post-update verify step are now two SEPARATE try/except
+     blocks. If the update itself fails, that's `error_upload` (retryable — see below
+     — and treated as a SYSTEMIC signal: `run_apply()` aborts the rest of that run
+     immediately rather than repeating the same failure up to `--limit` or
+     `_MAX_SCAN_PER_RUN` times). If the update SUCCEEDS but the post-update
+     re-download/verify step fails, that's `done_unverified` — never `error_upload` —
+     so a later run doesn't re-OCR and re-upload a file that's probably already fixed.
+     A whole-run precheck confirms the `ocrmypdf` binary actually resolves to an
+     executable before `--apply` does anything, so a missing binary on the machine
+     (a config problem, not a per-file one) can't get every candidate permanently
+     recorded `ocr_failed`.
    - **Resumable:** state file at `local-state/backfill-mirror-ocr-state.json`
-     (gitignored), keyed per candidate; a file already recorded `done` or
-     `skip_has_text` is never re-downloaded on a later run.
+     (gitignored), keyed per candidate, saved INCREMENTALLY after every candidate (not
+     only at the end — a crash mid-run must never lose the record of a file already
+     overwritten in Drive). Every status is terminal (never auto-retried) EXCEPT
+     `error_download` and `error_upload`, which are transient-shaped and get
+     re-attempted on the next run; a human can force a retry of any other status by
+     deleting its entry from the state file.
    - **Never run with `--apply` by the coder** — this PR's own backfill runs, if any,
      are dry-run only.
 
@@ -176,19 +248,31 @@ Sheet reads were done to check actual `Archived At` timestamps against this buil
 - The mirror becomes a **searchable derivative**, not byte-identical to the source PDF,
   for any document that needed OCR. The original scan-only bytes survive only in Drive
   revision history (pinned via `keepForever`, pending the live-credential confirmation
-  noted in Decision 8) — this is a provenance trade-off Trisha is accepting by queuing
+  noted in Decision 9) — this is a provenance trade-off Trisha is accepting by queuing
   this build, not a silent one.
 - Ridge Wood's safety posture tightens: a value extracted via OCR can no longer read as
   a plain "ok" anywhere (archiver, reverify, or the Measurements Note), closing the one
   failure mode this ADR's build found that the original handoff didn't flag.
+- **This PR changes LIVE CLASSIFICATION behavior, not only the upload/archive path the
+  handoff scoped it to.** `parse_document()`'s OCR gate (Decision 2) now also fires for
+  a needs_ocr()-only page `classify()` misses — new coverage for `watcher.py` and
+  `backfill.py`, both of which call `parse_document()` on every document, every run.
+  The fail-open split means this cannot turn a document that classifies fine on `main`
+  into a poison strike, but it CAN make a previously-instant classification take up to
+  an extra ~600s on a large or pathological file (a digitally-signed or encrypted PDF,
+  a very large scanned compilation). `daily.yml`'s `timeout-minutes` was bumped 45→60
+  for headroom; `backfill.yml` (already 60 with ~20 min baseline for a 50-doc batch)
+  was left as-is. Not a correctness risk (fail-open), but a real wall-clock one if many
+  documents in one run newly trigger this path — flagged, not fully mitigated.
 - **Not done / residual risk, explicit:** no per-run cross-document OCR time budget
   (the pattern `ride_docs_watcher.py`'s `_MIRROR_BUDGET_S` already establishes) was
-  added to the five archiver-family workflows. Decision 7's per-document 300s cap plus
-  the `timeout-minutes` bumps are a mitigation, not a guarantee, against a pathological
-  run where many documents in one batch all need OCR at once. If a workflow starts
-  timing out in practice, that budget pattern is the recommended fix — threading it
-  through `archive_client.upload_file()` across all seven call sites was judged too
-  large an expansion for this draft PR.
+  added to the five archiver-family workflows or to `watcher.py`/`backfill.py`.
+  Decision 8's per-document 300s cap (upload path) / `ocr_in_place()`'s existing 600s
+  cap (classification path) plus the `timeout-minutes` bumps are a mitigation, not a
+  guarantee, against a pathological run where many documents in one batch all need OCR
+  at once. If a workflow starts timing out in practice, that budget pattern is the
+  recommended fix — threading it through every call site was judged too large an
+  expansion for this draft PR.
 - **Not done:** the backfill script's `--apply` path has not been run against live
   credentials by this build (no Drive/Sheet access from inside this session) — the
   revision-pinning step, the in-place `files().update()`, and the re-download

@@ -116,6 +116,45 @@ def test_parse_document_does_not_ocr_a_genuine_text_pdf(monkeypatch, text_pdf):
     assert parsed.ocr_applied is False
 
 
+def test_parse_document_needs_ocr_only_case_fails_open_not_raise(
+        monkeypatch, large_mixed_pdf_scan_after_page_12):
+    # THE critical safety property: this fixture classifies as "has_text" on
+    # `main` today (ocr_in_place() is never even called there), so an OCR
+    # failure on the NEW needs_ocr()-only path must NOT turn it into a poison
+    # strike -- that would regress a document that classifies fine on `main`
+    # into one that silently stops being alerted after MAX_ERRORS. A document
+    # classify() ALREADY flagged (needs_ocr/likely) keeps the OLD raise
+    # behavior -- see the next test.
+    path = large_mixed_pdf_scan_after_page_12
+    assert p.classify(path)[0] == "has_text"
+
+    def boom(pdf_path, **kw):
+        raise RuntimeError("ocrmypdf timed out")
+    monkeypatch.setattr(p, "ocr_in_place", boom)
+    monkeypatch.setattr(p, "_classify_with_claude", lambda *a, **k: _fake_classification())
+
+    parsed = p.parse_document(path, {}, RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
+    assert parsed.ocr_applied is False     # the failed attempt never counted as success
+    assert parsed.doc_type == "evidence"   # classification still completed normally
+
+
+def test_parse_document_classify_triggered_ocr_failure_still_raises(monkeypatch, image_pdf):
+    # The OTHER half of the split: for a document classify() ITSELF already
+    # flags (needs_ocr/likely -- image_pdf is exactly this), an OCR failure
+    # must still RAISE, unchanged from `main`'s behavior (a poison strike
+    # upstream in watcher.py/backfill.py). This proves the fail-open fix
+    # didn't accidentally swallow failures everywhere.
+    assert p.classify(image_pdf)[0] == "needs_ocr"
+
+    def boom(pdf_path, **kw):
+        raise RuntimeError("ocrmypdf timed out")
+    monkeypatch.setattr(p, "ocr_in_place", boom)
+    monkeypatch.setattr(p, "_classify_with_claude", lambda *a, **k: _fake_classification())
+
+    with pytest.raises(RuntimeError):
+        p.parse_document(image_pdf, {}, RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
+
+
 def test_parse_document_filters_unknown_risks(monkeypatch, text_pdf):
     monkeypatch.setattr(
         p, "_classify_with_claude",

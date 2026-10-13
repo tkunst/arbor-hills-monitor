@@ -589,7 +589,6 @@ def run(dry_run: bool = False) -> int:
                     searchable_local = ocr_util.ensure_searchable(local)
                 except Exception:  # noqa: BLE001 — ensure_searchable is fail-open already;
                     searchable_local = local  # this is just extra defense-in-depth here
-                ocr_applied = searchable_local != local
 
                 archive_link = ""
                 if drive is not None:
@@ -598,8 +597,18 @@ def run(dry_run: bool = False) -> int:
                         archive_link = ac.upload_pdf(drive, searchable_local, name, ac.folder_id(FOLDER_ENV))
                     except Exception as e:  # noqa: BLE001 — mirror best-effort, never blocks the record
                         print(f"      Drive mirror FAILED for revised {month}: {type(e).__name__}")
+                # `ocr_applied` must mean "this reading came from OCR'd text",
+                # not just "ensure_searchable() changed the file" — an
+                # otherwise born-digital revision with one unrelated
+                # image-only page is still natively readable. Try the NATIVE
+                # extraction first; only fall back to the OCR'd copy when
+                # that finds nothing (same fix as ridgewood_archiver.py).
+                ocr_applied = False
                 try:
-                    text, _, has_text = rc.extract_text(searchable_local)
+                    text, _, has_text = rc.extract_text(local)
+                    if not has_text and searchable_local != local:
+                        text, _, has_text = rc.extract_text(searchable_local)
+                        ocr_applied = has_text
                     verdict = rc.classify_report(text, thresholds) if has_text else {}
                 except Exception as e:  # noqa: BLE001 — the callout is context, never blocking
                     has_text, verdict = False, {}

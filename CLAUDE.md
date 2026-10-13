@@ -51,12 +51,20 @@ external users but no sensitive data). Public repo.
   passes `title_is_generic=True`; still domain-agnostic — this module has no
   opinion on what makes a title generic). `classify()`/`ocr_in_place()` moved
   to `ocr_util.py` (ADR 069); both names stay importable here unchanged.
+  `parse_document()`'s OCR gate now checks BOTH `classify()` (unchanged
+  verdict) and the new `needs_ocr()`: a `classify()`-triggered case keeps the
+  exact old raise-on-failure behavior, while a case ONLY `needs_ocr()` catches
+  (a page `classify()`'s 12-page sample misses) is fail-open — a document that
+  classifies fine on `main` can never become a poison strike over this.
 - `ocr_util.py` — **ADR 069**: the shared OCR module. `classify()`/
-  `ocr_in_place()` (moved from `egle_doc_parser.py`, unchanged — the
-  classification pipeline's own OCR gate) plus the NEW `needs_ocr()`/
-  `ensure_searchable()` pair for the Drive-mirror upload path: a page-by-page
-  (not sampled) image-only check and a fail-open OCR-to-a-temp-copy helper.
-  Wired into `archive_client.upload_file()` so every PDF upload, across all
+  `ocr_in_place()` (moved from `egle_doc_parser.py`, unchanged) plus the NEW
+  `needs_ocr()`/`ensure_searchable()` pair, used by both the Drive-mirror
+  upload path AND `parse_document()`'s gate above: a page-by-page (not
+  sampled) check for a page with LITERALLY NO text and an image — exactly
+  matching `ocrmypdf --skip-text`'s own behavior (confirmed empirically: it
+  skips a page the instant it has ANY text, even one stray character) — and a
+  fail-open OCR-to-a-temp-copy helper. Wired into `archive_client.upload_file()`
+  so every PDF upload, across all
   seven call sites, either already has a text layer or gets one before
   landing in Drive. Never raises; SEC-001 count-only logging.
 - `risk_register.py` — R1–R8 + R8 signal keywords (single source of truth).

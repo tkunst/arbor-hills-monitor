@@ -26,7 +26,11 @@ concurrency:
 jobs:
   watch:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # coder:mirror-ocr (2026-10-13): bumped 45->60 for headroom. parse_document()'s
+    # OCR gate now also fires on a needs_ocr()-only page (one classify() misses) —
+    # fail-open on failure (ADR 069), but a real OCR attempt can still take up to
+    # 600s per doc within max_new_docs_per_run's cap. See ADR 069's residual risks.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6

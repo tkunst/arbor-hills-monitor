@@ -550,7 +550,12 @@ def test_changed_report_scanned_ocrd_before_classification_and_noted(monkeypatch
     rows = _rows(fake, sw.TAB_RIDGEWOOD_REVISIONS)
     assert len(rows) == 1
     note = rows[0][7]
-    assert "OCR" in note                         # provenance caveat present
+    # Specific enough to fail if extraction had used the raw (un-OCR'd) scan
+    # instead of the OCR'd copy -- the no-text-layer message ALSO contains the
+    # substring "OCR" ("...even after OCR..."), so a bare "OCR" in note check
+    # would pass either way (found in independent review).
+    assert "Revised report reads" in note        # the has_text branch ran, not the no-text one
+    assert "extracted via OCR" in note            # provenance caveat present
     assert upload_paths == [ocrd_path]           # uploaded the OCR'd copy, not the raw scan
     assert len(sent) == 1
 

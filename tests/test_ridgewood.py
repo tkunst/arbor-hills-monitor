@@ -542,6 +542,30 @@ def test_scan_only_report_ocrd_before_extraction_forced_to_review(monkeypatch, t
     assert len(sent) == 1 and sent[0][2] == ["trisha@example.test"]  # review tier -> Trisha only
 
 
+def test_incidental_ocr_touch_does_not_force_review_when_native_text_present(monkeypatch, tmp_path):
+    # M1 fix (found by independent review): ocr_applied must mean "this
+    # month's VALUE came from OCR'd text", not just "ensure_searchable()
+    # changed the file for some unrelated reason" -- e.g. an incidental
+    # image-only logo/stamp page elsewhere in an otherwise born-digital
+    # report. The report's own data table was natively readable, so forcing
+    # review-tier here would be a false alarm.
+    cfg = _cfg()
+    fake, sent, _ = _wire(
+        monkeypatch, cfg, months=[("2026-10", None)],
+        specs={"2026-10": {"values": ["<1"] * 30, "all_clear": True, "text": True}})
+
+    touched = str(tmp_path / "touched.pdf")
+    make_report_pdf(touched, "2026-10", ["<1"] * 30, all_clear=True, text=True)
+    monkeypatch.setattr(ra.ocr_util, "ensure_searchable", lambda path, **kw: touched)
+
+    assert ra.run() == 0
+    reports = _rows(fake, sw.TAB_RIDGEWOOD)
+    assert reports[0][4] == "ok"                     # NOT forced to review
+    measurements = _rows(fake, sw.TAB_MEASUREMENTS)
+    assert len(measurements) == 1
+    assert "OCR" not in measurements[0][8]            # no OCR caveat in the Note
+
+
 def test_scan_only_report_with_exceedance_via_ocr_still_alerts_full_list(monkeypatch, tmp_path):
     # A real exceedance extracted via OCR must still reach the FULL
     # alert_recipients list -- the review-tier forcing only raises the FLOOR
