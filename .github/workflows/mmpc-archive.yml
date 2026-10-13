@@ -34,6 +34,12 @@ jobs:
           python-version: "3.12"
           cache: "pip"
       - name: Install system OCR tooling
+        # continue-on-error (found by the advisor, 2026-10-13): a flaky apt
+        # mirror must never fail this whole job -- ensure_searchable()/
+        # ocr_in_place() already fail open when ocrmypdf is missing, and
+        # ridgewood.yml's H2S safety-alert logic specifically must not
+        # depend on this step succeeding (ADR 016).
+        continue-on-error: true
         run: sudo apt-get update && sudo apt-get install -y ocrmypdf
       - name: Install Python deps
         run: |
