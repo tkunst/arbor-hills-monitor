@@ -396,3 +396,132 @@ def test_drive_state_reused_across_calls_within_one_run(monkeypatch, tmp_path):
     av.mirror_one_now(object(), svc, "SID", _doc("doc-2", "https://nsite/doc-2"), drive_state, local_path=local2)
 
     assert len(oauth_calls) == 1  # OAuth handshake happened once, not per document
+
+
+# --- coder:mirror-ocr (2026-10-13): upload_file()'s OCR wiring --------------
+# upload_file() is the actual choke point (not just upload_pdf()) so the two
+# direct upload_file(..., "application/pdf", ...) callers found during this
+# build (govqa_watcher.py, ride_docs_watcher.py) are covered too, with no
+# changes to either watcher — these tests exercise upload_file() directly.
+
+import ocr_util  # noqa: E402
+
+
+class _FilesExec:
+    def __init__(self, result):
+        self._result = result
+
+    def execute(self, num_retries=0):
+        return self._result
+
+
+class _FakeFiles:
+    """Stands in for service.files() — only the surface upload_file()/
+    find_in_folder() actually call."""
+    def __init__(self, existing=None, create_result=None):
+        self._existing = existing          # None, or {"id", "webViewLink"}
+        self._create_result = create_result
+        self.create_calls = []
+
+    def list(self, q, fields, pageSize):
+        files = [{"id": self._existing["id"], "name": "x"}] if self._existing else []
+        return _FilesExec({"files": files})
+
+    def get(self, fileId, fields):
+        return _FilesExec({"webViewLink": self._existing["webViewLink"]})
+
+    def create(self, body, media_body, fields):
+        self.create_calls.append({"body": body, "media_body": media_body})
+        return _FilesExec(self._create_result)
+
+
+class FakeDriveService:
+    def __init__(self, existing=None, create_result=None):
+        self._files = _FakeFiles(existing=existing, create_result=create_result)
+
+    def files(self):
+        return self._files
+
+
+def test_upload_file_pdf_runs_ensure_searchable_and_cleans_up(monkeypatch, tmp_path):
+    local = str(tmp_path / "scan.pdf")
+    open(local, "wb").write(b"%PDF-fake-scan")
+    searchable = str(tmp_path / "searchable.pdf")
+    open(searchable, "wb").write(b"%PDF-fake-searchable")
+
+    calls = []
+    monkeypatch.setattr(ocr_util, "ensure_searchable",
+                        lambda path, **kw: calls.append(path) or searchable)
+
+    service = FakeDriveService(create_result={"id": "fid1", "webViewLink": "http://drive/x"})
+    link = ac.upload_file(service, local, "name.pdf", "application/pdf", "FOLDER")
+
+    assert link == "http://drive/x"
+    assert calls == [local]                  # ensure_searchable() called with the ORIGINAL path
+    assert not os.path.exists(searchable)     # temp searchable copy cleaned up after upload
+    assert os.path.exists(local)              # the caller's own file is never touched
+
+
+def test_upload_file_non_pdf_never_calls_ensure_searchable(monkeypatch, tmp_path):
+    local = str(tmp_path / "snapshot.html")
+    open(local, "wb").write(b"<html></html>")
+
+    calls = []
+    monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: calls.append(path) or path)
+
+    service = FakeDriveService(create_result={"id": "fid2", "webViewLink": "http://drive/y"})
+    link = ac.upload_file(service, local, "snap.html", "text/html", "FOLDER")
+
+    assert link == "http://drive/y"
+    assert calls == []                        # never even checked -- not a PDF
+
+
+def test_upload_file_already_mirrored_skips_ocr_entirely(monkeypatch, tmp_path):
+    # find_in_folder()'s idempotency check runs FIRST — a file already
+    # mirrored under this name is never re-OCR'd on a re-run.
+    local = str(tmp_path / "scan.pdf")
+    open(local, "wb").write(b"%PDF-fake-scan")
+
+    calls = []
+    monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: calls.append(path) or path)
+
+    service = FakeDriveService(existing={"id": "existing-id", "webViewLink": "http://drive/existing"})
+    link = ac.upload_file(service, local, "name.pdf", "application/pdf", "FOLDER")
+
+    assert link == "http://drive/existing"
+    assert calls == []
+    assert service._files.create_calls == []  # never re-uploaded
+
+
+def test_upload_pdf_uses_searchable_path_and_deletes_it_afterward(monkeypatch, tmp_path):
+    local = str(tmp_path / "scan.pdf")
+    open(local, "wb").write(b"%PDF-fake-scan")
+    searchable = str(tmp_path / "ocrd-temp.pdf")
+    open(searchable, "wb").write(b"%PDF-ocrd")
+
+    monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: searchable)
+    service = FakeDriveService(create_result={"id": "fid3", "webViewLink": "http://drive/z"})
+
+    link = ac.upload_pdf(service, local, "n.pdf", "FOLDER")
+
+    assert link == "http://drive/z"
+    assert not os.path.exists(searchable)     # deleted after upload
+    assert os.path.exists(local)              # original left alone
+
+
+def test_upload_file_already_searchable_passes_straight_through(monkeypatch, tmp_path):
+    # The common case: needs_ocr() is False, so the REAL ensure_searchable()
+    # (not mocked here) returns local_path unchanged and no temp file is
+    # ever created at all.
+    local = str(tmp_path / "text.pdf")
+    import fitz
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 72), "Real text content, nothing to OCR here.")
+    doc.save(local)
+    doc.close()
+
+    service = FakeDriveService(create_result={"id": "fid4", "webViewLink": "http://drive/w"})
+    link = ac.upload_file(service, local, "text.pdf", "application/pdf", "FOLDER")
+
+    assert link == "http://drive/w"
+    assert os.path.exists(local)  # nothing removed -- upload_path == local_path throughout

@@ -90,6 +90,7 @@ from datetime import datetime, timezone
 import archive_client as ac
 import drive_client as dc
 import email_alerts as ea
+import ocr_util
 import ridgewood_client as rc
 import sheet_writer as sw
 from config_loader import load_config
@@ -288,19 +289,29 @@ def reverify_month(manifest: dict, month: str, sheet_row: dict | None, title: st
     return "changed", [revised]
 
 
-def _revision_note(has_text: bool, verdict: dict, prior_sheet_row: dict | None) -> str:
+def _revision_note(has_text: bool, verdict: dict, prior_sheet_row: dict | None,
+                    ocr_applied: bool = False) -> str:
     """Read-only context for the owner alert/Sheet row: does the REVISED report's
     content newly read as an exceedance? Never written to Measurements, never
     routed to the public/full alert list — Stream G owns that decision for NEW
-    months; a revision to an already-archived month is for Trisha to review."""
+    months; a revision to an already-archived month is for Trisha to review.
+
+    `ocr_applied` (coder:mirror-ocr, 2026-10-13): True when the revised PDF had
+    no native text layer and ensure_searchable() OCR'd it to produce `verdict`
+    at all — surfaced here since an OCR misread could turn a real exceedance
+    into a false "ok" read, and this note is the only place a human sees it."""
     if not has_text:
-        return "revised report has no extractable text layer (scanned?) — review manually."
+        return "revised report has no extractable text layer (scanned, even after OCR) — review manually."
     prior_max = (prior_sheet_row or {}).get("max_24h") or "n/a"
     prior_alert = (prior_sheet_row or {}).get("alert") or "n/a"
     now_desc = ("EXCEEDANCE" if verdict.get("exceed_24h")
                 else "review" if verdict.get("alert") else "ok")
-    return (f"Originally recorded: max {prior_max} ppb ({prior_alert}). "
+    note = (f"Originally recorded: max {prior_max} ppb ({prior_alert}). "
             f"Revised report reads: max {verdict.get('value_token') or 'n/a'} ppb ({now_desc}).")
+    if ocr_applied:
+        note += (" Revised report had no native text layer; this reading was extracted "
+                  "via OCR — verify against the original scan before relying on it.")
+    return note
 
 
 def format_owner_alert(changed: list, removed: list, multi_link: list | None = None,
@@ -497,6 +508,7 @@ def run(dry_run: bool = False) -> int:
             continue
         link = links[0]
         local = os.path.join(tmp, f"ridgewood-reverify-{month}.pdf")
+        searchable_local = local  # overwritten in the "changed" branch; safe default for cleanup
         try:
             # The multi-link Sheet write lives INSIDE this try (not before it) so a
             # Sheets API failure here is caught by the same per-month "one month's
@@ -567,20 +579,32 @@ def run(dry_run: bool = False) -> int:
                 archive_link, note = already, "(already mirrored + logged in an earlier run; finishing the manifest advance)"
                 print(f"  retry {month}  (already mirrored + logged; finishing the manifest advance)")
             else:
+                # coder:mirror-ocr (2026-10-13): OCR BEFORE extracting text (ADR 016
+                # deferred this for Ridge Wood; archive_client.upload_pdf() now OCRs
+                # on upload anyway, so this does it first and reuses the result for
+                # extraction too, same ordering fix as ridgewood_archiver.py). Never
+                # touches `local` itself — new_hash above is computed on the original
+                # bytes, and must stay that way.
+                try:
+                    searchable_local = ocr_util.ensure_searchable(local)
+                except Exception:  # noqa: BLE001 — ensure_searchable is fail-open already;
+                    searchable_local = local  # this is just extra defense-in-depth here
+                ocr_applied = searchable_local != local
+
                 archive_link = ""
                 if drive is not None:
                     try:
                         name = f"ridgewood-h2s-{month}-revised-{today.replace('-', '')}-{new_hash[:8]}.pdf"
-                        archive_link = ac.upload_pdf(drive, local, name, ac.folder_id(FOLDER_ENV))
+                        archive_link = ac.upload_pdf(drive, searchable_local, name, ac.folder_id(FOLDER_ENV))
                     except Exception as e:  # noqa: BLE001 — mirror best-effort, never blocks the record
                         print(f"      Drive mirror FAILED for revised {month}: {type(e).__name__}")
                 try:
-                    text, _, has_text = rc.extract_text(local)
+                    text, _, has_text = rc.extract_text(searchable_local)
                     verdict = rc.classify_report(text, thresholds) if has_text else {}
                 except Exception as e:  # noqa: BLE001 — the callout is context, never blocking
                     has_text, verdict = False, {}
                     print(f"      could not classify the revised report: {type(e).__name__}")
-                note = _revision_note(has_text, verdict, sheet_row)
+                note = _revision_note(has_text, verdict, sheet_row, ocr_applied=ocr_applied)
                 sw.append_ridgewood_revision_row(
                     sheets, sheet_id, month, "revised", now_iso,
                     prior_hash, new_hash, archive_link, link["url"], note)
@@ -596,6 +620,8 @@ def run(dry_run: bool = False) -> int:
             print(f"  ERR {month}: unexpected failure, skipping this month this run: {type(e).__name__}")
             had_errors = True
         finally:
+            if searchable_local != local and os.path.exists(searchable_local):
+                os.remove(searchable_local)
             if os.path.exists(local):
                 os.remove(local)
 

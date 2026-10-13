@@ -84,6 +84,73 @@ def image_pdf(tmp_path):
 
 
 @pytest.fixture
+def mixed_pdf(tmp_path):
+    """A 2-page document: page 0 is real text, page 1 is image-only (no text
+    layer at all). coder:mirror-ocr (2026-10-13) regression fixture: a
+    whole-document, sampled verdict (classify()) reads this as "has_text"
+    overall (page 0 clears the threshold), so the OLD gate never OCR'd page
+    1 — ocr_util.needs_ocr() checks every page and catches it."""
+    path = str(tmp_path / "mixed.pdf")
+    doc = fitz.open()
+    page0 = doc.new_page()
+    page0.insert_text((72, 72), "Arbor Hills Landfill compliance report. " * 12)
+    page1 = doc.new_page()
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 120, 120))
+    pix.clear_with(140)
+    page1.insert_image(fitz.Rect(10, 10, 110, 110), pixmap=pix)
+    doc.save(path)
+    doc.close()
+    return path
+
+
+@pytest.fixture
+def blank_page_pdf(tmp_path):
+    """A 2-page document: page 0 is real text, page 1 is a GENUINE blank
+    separator page -- no text, no image, nothing on it. needs_ocr() must NOT
+    flag this page (there's nothing for ocrmypdf to add), or every upload of
+    a document with a blank page would re-trigger an OCR subprocess call,
+    breaking the "already-searchable files pass straight through" promise."""
+    path = str(tmp_path / "blank_page.pdf")
+    doc = fitz.open()
+    page0 = doc.new_page()
+    page0.insert_text((72, 72), "Arbor Hills Landfill compliance report. " * 12)
+    doc.new_page()  # page 1: truly blank
+    doc.save(path)
+    doc.close()
+    return path
+
+
+@pytest.fixture
+def large_mixed_pdf_scan_after_page_12(tmp_path):
+    """A 20-page document: pages 0-11 are real text (enough that
+    classify()'s FIRST-12-PAGES sample reads "has_text" overall), and page
+    15 -- past that 12-page sample window -- is image-only with NO text
+    layer. Regression fixture for the 2026-10-13 finding: a real 1,006-page
+    WOI/CJ compilation had 316 image-only pages, ALL past page 12, that
+    classify()'s whole-document verdict missed entirely (ocr_applied stayed
+    False, those 316 pages' content never reached the classifier).
+    ocr_util.needs_ocr() checks every page and catches it; parse_document()
+    now gates on needs_ocr(), not classify()."""
+    path = str(tmp_path / "large_mixed_scan_after_12.pdf")
+    doc = fitz.open()
+    for i in range(20):
+        page = doc.new_page()
+        if i == 15:
+            pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 100, 100))
+            pix.clear_with(150)
+            page.insert_image(fitz.Rect(10, 10, 90, 90), pixmap=pix)
+            # deliberately NO insert_text call -- this page has no text layer
+        else:
+            page.insert_text(
+                (72, 72),
+                f"Page {i} of a WOI/CJ compilation. " * 10 + "Routine narrative text here.",
+            )
+    doc.save(path)
+    doc.close()
+    return path
+
+
+@pytest.fixture
 def large_pdf(tmp_path):
     """A 50-page text PDF. The cover page (0) plus a handful of interior pages
     contain the 'temperature' signal keyword; the rest are filler. Used to test

@@ -84,6 +84,38 @@ def test_parse_document_assembles_full_dataclass(monkeypatch, text_pdf):
     assert parsed.measurements[0]["basis"] == "permitted_limit"
 
 
+def test_parse_document_gates_ocr_on_needs_ocr_not_classify(
+        monkeypatch, large_mixed_pdf_scan_after_page_12):
+    # coder:mirror-ocr (2026-10-13): classify()'s 12-page sample reads this
+    # fixture as "has_text" overall (the scanned page is past page 12) — the
+    # OLD gate would never have called ocr_in_place() on it at all. A real
+    # 1,006-page WOI/CJ compilation with 316 image-only pages, all past page
+    # 12, hit exactly this: ocr_applied stayed False, those 316 pages' content
+    # never reached the classifier. parse_document() now gates on
+    # ocr_util.needs_ocr(), which checks every page.
+    path = large_mixed_pdf_scan_after_page_12
+    assert p.classify(path)[0] == "has_text"   # documents the blind spot classify() still has
+
+    calls = []
+    monkeypatch.setattr(p, "ocr_in_place", lambda pdf_path, **kw: calls.append(pdf_path) or True)
+    monkeypatch.setattr(p, "_classify_with_claude", lambda *a, **k: _fake_classification())
+
+    parsed = p.parse_document(path, {}, RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
+    assert calls == [path]              # ocr_in_place WAS called, unlike the old gate
+    assert parsed.ocr_applied is True
+
+
+def test_parse_document_does_not_ocr_a_genuine_text_pdf(monkeypatch, text_pdf):
+    # Sanity check for the gate switch: a real text PDF still never triggers
+    # OCR — classify() and needs_ocr() agree on this common case.
+    calls = []
+    monkeypatch.setattr(p, "ocr_in_place", lambda pdf_path, **kw: calls.append(pdf_path) or True)
+    monkeypatch.setattr(p, "_classify_with_claude", lambda *a, **k: _fake_classification())
+    parsed = p.parse_document(text_pdf, {}, RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
+    assert calls == []
+    assert parsed.ocr_applied is False
+
+
 def test_parse_document_filters_unknown_risks(monkeypatch, text_pdf):
     monkeypatch.setattr(
         p, "_classify_with_claude",
