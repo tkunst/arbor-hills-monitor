@@ -79,6 +79,38 @@ def test_needs_ocr_raises_on_corrupt_pdf(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# image_only_pages(): the richer set form — tells PARTIAL improvement from
+# none, which needs_ocr()'s plain bool can't (found by independent review,
+# 2026-10-13 — see scripts/backfill_mirror_ocr.py's process_candidate()).
+# ---------------------------------------------------------------------------
+
+
+def test_image_only_pages_is_the_set_needs_ocr_is_bool_of(mixed_pdf):
+    pages = ocr_util.image_only_pages(mixed_pdf)
+    assert pages == {1}   # page 0 is real text, page 1 is image-only
+    assert ocr_util.needs_ocr(mixed_pdf) == bool(pages)
+
+
+def test_image_only_pages_empty_for_text_pdf(text_pdf):
+    assert ocr_util.image_only_pages(text_pdf) == set()
+
+
+def test_image_only_pages_multiple_pages_flagged(tmp_path):
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 72), "real text page 0")
+    for i in (1, 2):
+        page = doc.new_page()
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 50, 50))
+        pix.clear_with(100 + i)
+        page.insert_image(fitz.Rect(5, 5, 45, 45), pixmap=pix)
+    doc.new_page().insert_text((72, 72), "real text page 3")
+    path = str(tmp_path / "multi.pdf")
+    doc.save(path)
+    doc.close()
+    assert ocr_util.image_only_pages(path) == {1, 2}
+
+
+# ---------------------------------------------------------------------------
 # ensure_searchable(): fail-open, never raises
 # ---------------------------------------------------------------------------
 
@@ -149,6 +181,84 @@ def test_ensure_searchable_mixed_fixture_calls_skip_text(mixed_pdf, monkeypatch)
     finally:
         if os.path.exists(out):
             os.remove(out)
+
+
+def test_ensure_searchable_passes_a_minimal_env_not_the_full_environment(image_pdf, monkeypatch):
+    # Security finding (round-2 review, Low): the full os.environ would hand
+    # every workflow secret (GOAUTH_*, GDRIVE_SA_KEY) to ocrmypdf and its
+    # child processes, which parse untrusted PDFs. Only PATH (plus a small
+    # allowlist) should reach the subprocess call.
+    monkeypatch.setenv("GOAUTH_CLIENT_SECRET", "super-secret-value")
+    seen_envs = []
+
+    def _run(cmd, **kwargs):
+        seen_envs.append(kwargs.get("env"))
+        return _fake_ocrmypdf_writes_text("text")(cmd, **kwargs)
+    monkeypatch.setattr(ocr_util.subprocess, "run", _run)
+
+    out = ocr_util.ensure_searchable(image_pdf)
+    try:
+        assert len(seen_envs) == 1
+        assert "GOAUTH_CLIENT_SECRET" not in seen_envs[0]
+        assert "PATH" in seen_envs[0]
+    finally:
+        if os.path.exists(out):
+            os.remove(out)
+
+
+def test_ensure_searchable_skips_rerun_when_already_ocrmypdf_stamped(tmp_path, monkeypatch):
+    # Found by independent review + the advisor (2026-10-13): a document
+    # already run through ocrmypdf upstream (e.g. parse_document()'s
+    # classify()-triggered pass) that STILL has an image-only page (a photo
+    # with nothing recoverable in it) must not be re-OCR'd — the remaining
+    # page is unrecoverable no matter how many times OCR runs, and a second
+    # attempt just spends up to `timeout` seconds for zero gain.
+    doc = fitz.open()
+    page = doc.new_page()
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 100, 100))
+    pix.clear_with(150)
+    page.insert_image(fitz.Rect(10, 10, 90, 90), pixmap=pix)
+    doc.set_metadata({"creator": "OCRmyPDF 17.13.0 / OCRmyPDF fpdf2 + Tesseract OCR 5.5.3"})
+    path = str(tmp_path / "already_ocrd.pdf")
+    doc.save(path)
+    doc.close()
+    assert ocr_util.needs_ocr(path) is True   # still genuinely flagged
+
+    calls = []
+    monkeypatch.setattr(ocr_util.subprocess, "run", lambda *a, **k: calls.append(1))
+    out = ocr_util.ensure_searchable(path)
+    assert out == path
+    assert calls == []   # never even tried -- the subprocess call was skipped
+
+
+def test_ensure_searchable_rejects_empty_output(image_pdf, monkeypatch):
+    def _run(cmd, **kwargs):
+        open(cmd[-1], "wb").close()   # ocrmypdf claims success but writes nothing
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+    monkeypatch.setattr(ocr_util.subprocess, "run", _run)
+    assert ocr_util.ensure_searchable(image_pdf) == image_pdf
+
+
+def test_ensure_searchable_rejects_unreadable_output(image_pdf, monkeypatch):
+    def _run(cmd, **kwargs):
+        with open(cmd[-1], "wb") as fh:
+            fh.write(b"not a real pdf, but not empty either")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+    monkeypatch.setattr(ocr_util.subprocess, "run", _run)
+    assert ocr_util.ensure_searchable(image_pdf) == image_pdf
+
+
+def test_ensure_searchable_rejects_page_count_mismatch(mixed_pdf, monkeypatch):
+    # mixed_pdf has 2 pages; a fake "successful" ocrmypdf run that drops a
+    # page must be rejected, not trusted over the original.
+    def _run(cmd, **kwargs):
+        doc = fitz.open()
+        doc.new_page().insert_text((72, 72), "only one page now")
+        doc.save(cmd[-1])
+        doc.close()
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+    monkeypatch.setattr(ocr_util.subprocess, "run", _run)
+    assert ocr_util.ensure_searchable(mixed_pdf) == mixed_pdf
 
 
 def test_ensure_searchable_fails_open_on_corrupt_pdf(tmp_path, caplog):

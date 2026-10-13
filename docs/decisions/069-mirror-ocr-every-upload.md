@@ -91,11 +91,14 @@ in the PR, since it's a materially larger blast radius than the handoff describe
    - `ocr_in_place()`'s own contract (600s timeout, raise-on-failure) is otherwise
      untouched. A document `classify()` ALSO flags can still hit that 600s ceiling and
      poison-strike — not a new risk, same as `main` today.
-3. **New, page-by-page check for the Drive-copy gap (and now also 1a's gap):**
-   `ocr_util.needs_ocr(path)` returns True if ANY page — every page, not a 12-page
-   sample — is image-only (LITERALLY NO extractable text AND at least one image). This
-   is what the mixed-document gap needs: a 300-page WOI report that's almost entirely
-   real text still gets its handful of image-only pages caught.
+3. **New, page-by-page check for the Drive-copy gap (and now also Decision 2's gap):**
+   `ocr_util.image_only_pages(path)` returns the SET of pages — every page, not a
+   12-page sample — that are image-only (LITERALLY NO extractable text AND at least
+   one image); `needs_ocr(path)` is just `bool()` of that set. This is what the
+   mixed-document gap needs: a 300-page WOI report that's almost entirely real text
+   still gets its handful of image-only pages caught. The SET form (not just the
+   bool) is what Decision 9's backfill script needs to tell a partial improvement
+   from none — see Decision 9.
    - **Threshold corrected 2026-10-13 (same day) after a spike against the REAL
      `ocrmypdf` binary.** The first version used "under 20 characters" (a refinement of
      the handoff's literal "~5 words"), reasoning that a stray caption wouldn't matter.
@@ -119,11 +122,33 @@ in the PR, since it's a materially larger blast radius than the handoff describe
    `parse_document()` before ever reaching an upload. When a page is image-only, it
    OCRs a **temp copy** (never `local_path` itself — Ridge Wood's content hash and the
    ADR 066 provenance manifest both need the original bytes untouched) and returns
-   that path. **Never raises.** Any failure (corrupt PDF, missing `ocrmypdf` binary,
-   non-zero exit, timeout) logs one count-only warning and returns the original path —
-   upload the document as-is rather than drop it. **SEC-001:** the log line never
-   carries a filename, title, or exception text (this repo's Actions logs are public);
-   only a class name and exit code.
+   that path.
+   - **Skips the subprocess call entirely** (added 2026-10-13, the advisor) if the
+     document's own `/Creator` metadata already starts with `OCRmyPDF` — confirmed
+     empirically that ocrmypdf stamps this on every output file it produces, whether a
+     given page was actually OCR'd or skipped for already having text. A document
+     already run through ocrmypdf (e.g. by `parse_document()`) that STILL has an
+     image-only page has nothing more to recover; re-running ocrmypdf would just repeat
+     the same failed recognition attempt for up to `timeout` seconds. This only skips
+     the SUBPROCESS call — `needs_ocr()`'s own verdict is unaffected, so a caller that
+     checks it afterward (the backfill script) still correctly sees the page as
+     unrecoverable.
+   - **Validates ocrmypdf's output before trusting it** (added 2026-10-13, the
+     advisor): rc=0 alone isn't proof of a usable result. The output must be non-empty,
+     openable by `fitz`, have the SAME page count as the input, and introduce no NEW
+     image-only page (a page that had text must never lose it — `--skip-text` should
+     make this structurally impossible, but it's cheap to re-check on the live upload
+     path rather than trust that invariant blindly). Any validation failure is treated
+     the same as any other OCR failure: fail open, return the original path.
+   - **Never raises** — the entire function body, including temp-file creation and
+     binary resolution (previously outside any try/except, contradicting this
+     guarantee — found by independent review), now runs inside one try/except. Any
+     failure (corrupt PDF, missing `ocrmypdf` binary, non-zero exit, timeout, or a
+     failed output validation) logs one count-only warning and returns the original
+     path — upload the document as-is rather than drop it, or upload something
+     ocrmypdf silently corrupted. **SEC-001:** the log line never carries a filename,
+     title, or exception text (this repo's Actions logs are public); only a class name
+     and exit code.
 5. **Wired once, in `archive_client.upload_file()`**, gated on
    `mimetype == "application/pdf"` — not `upload_pdf()` specifically, so the two direct
    `upload_file(..., "application/pdf", ...)` callers found during this build
@@ -160,6 +185,15 @@ in the PR, since it's a materially larger blast radius than the handoff describe
      `ocr_applied` only then) when the native pass finds nothing — so a normal,
      natively-readable report with one unrelated image page is never forced to the
      review tier on a false pretext.
+   - **Fail-safe regression fixed 2026-10-13 (found by round-2 independent review):**
+     `ridgewood_archiver.py`'s fallback extraction (on the OCR'd copy, when native
+     extraction found nothing) was unguarded — if it raised, the per-month exception
+     handler swallowed the WHOLE month (no row, no measurement, no alert at all),
+     which is a real regression from `main`'s "the month is archived, never dropped"
+     fail-safe. Now wrapped: a failure there falls back to `has_text=False`, so the
+     existing "no text layer, review manually" branch still writes a row instead of
+     silently skipping the month. (`ridgewood_reverify.py`'s equivalent fallback was
+     already guarded this way from the first draft.)
 7. **Workflows.** `ocrmypdf` install step added to every workflow whose script reaches
    a PDF `upload_file()` call and lacked it: `archive.yml`, `mmpc-archive.yml`,
    `civicclerk-archive.yml`, `ridgewood.yml`, `ridgewood-reverify.yml`,
@@ -167,6 +201,15 @@ in the PR, since it's a materially larger blast radius than the handoff describe
    in the original handoff's list). `daily.yml`/`backfill.yml`/`kdp-recheck.yml`
    already had it. If the binary is missing at runtime, `ensure_searchable()` fails
    open: one count-only warning, original file uploaded.
+   - **`continue-on-error: true` added to the install step in ALL TEN workflows**
+     (the 7 above plus the 3 that already had the step), found by the advisor
+     2026-10-13: without it, a flaky apt mirror fails the WHOLE job before any of
+     this repo's own logic runs — and `ridgewood.yml` specifically carries the H2S
+     safety-alert pipeline (`ridgewood.enabled: true`, live since 2026-07-15), where
+     ADR 016 already rules the safety function must never depend on the mirror
+     succeeding. `ensure_searchable()`/`ocr_in_place()` already fail open per-document
+     when the binary is missing, so this just extends that same posture to the
+     install step itself.
 8. **Live-path timeout budget.** `ensure_searchable()` defaults to a 300s per-document
    ocrmypdf timeout (half of `ocr_in_place()`'s 600s) — this runs inline on every
    upload, not as a dedicated backfill batch, so a shorter ceiling bounds how long one
@@ -178,10 +221,17 @@ in the PR, since it's a materially larger blast radius than the handoff describe
 9. **Backfill (`scripts/backfill_mirror_ocr.py`)** for the 392 PDFs already in the
    mirror. See its own module docstring for the full contract; summary:
    - **Source of truth: the Sheet's archive tabs** (Archived PDFs, MMPC Archived
-     Files, CivicClerk Archived Files, Ridge Wood Reports) — so it only ever touches
-     files this app created (`drive.file` scope can't see anything else, and
-     Hand-Curated Files / WDS Page Snapshots are deliberately excluded: the former
-     isn't app-created, the latter is HTML not PDF).
+     Files, CivicClerk Archived Files) — so it only ever touches files this app
+     created (`drive.file` scope can't see anything else, and Hand-Curated Files /
+     WDS Page Snapshots are deliberately excluded: the former isn't app-created, the
+     latter is HTML not PDF). **Ridge Wood Reports / Ridge Wood Revisions are ALSO
+     excluded (decided 2026-10-13, cutting an earlier draft of this script that
+     included them):** every one of the 66 Ridge Wood reports is verified text-layer
+     per ADR 016's own doc, so there's nothing to fix there, and overwriting one would
+     break the Content Hash <-> Archive Link pairing ADR 066's provenance manifest
+     relies on (the hash is of the ORIGINAL bytes; an OCR'd derivative wouldn't match
+     it). This also removes the row-number-keying fragility a round-1 review flagged
+     for the Revisions tab, since that tab is no longer touched at all.
    - **Dry-run makes ZERO Drive API calls** — it can only enumerate Sheet rows and
      report counts, since any OCR-needs check requires downloading the file. This is a
      deliberate, narrower reading than the original README's "counts only" framing
@@ -192,21 +242,31 @@ in the PR, since it's a materially larger blast radius than the handoff describe
      OCR+reupload attempts per run (a file found already-searchable doesn't count
      against the limit — it's a free skip). Priority is TAB-LEVEL, not a page-count
      sort: candidates are processed in a FIXED tab order (Archived PDFs — the nSITE
-     mirror, dominated by N2688 — first, entirely, then MMPC, CivicClerk, Ridge Wood
-     Reports, Ridge Wood Revisions last). A true "multi-page N2688 first, then
-     multi-page other groups, then 1-page" sort would need per-candidate Drive
-     metadata (the SRN lives in the Drive filename, e.g. `N2688_<doc_id>.pdf`, not in
-     any Sheet column) or a download — and dry-run must make zero Drive calls — so this
+     mirror, dominated by N2688 — first, entirely, then MMPC, then CivicClerk). A true
+     "multi-page N2688 first, then multi-page other groups, then 1-page" sort would
+     need per-candidate Drive metadata (the SRN lives in the Drive filename, e.g.
+     `N2688_<doc_id>.pdf`, not in any Sheet column) or a download — and dry-run must
+     make zero Drive calls — so this
      is a documented, simpler approximation of the handoff's priority ask, not the
      literal ordering. An earlier draft of this ADR described filename-based SRN
      sub-grouping; that was cut for the simpler tab-order approximation before any
      `--apply` run, and this is the corrected description.
-   - **Checks locally BEFORE touching Drive at all** (added 2026-10-13, found by
-     independent review): after OCR runs, `needs_ocr()` is re-checked on the OCR'd
-     copy — a page with a genuinely unreadable image (no recoverable text no matter
-     how many times OCR runs) still fails that check after a real, successful
-     `ocrmypdf` pass. If it's still flagged, the file is recorded `ocr_incomplete`
-     WITHOUT ever pinning a revision or overwriting Drive — no churn for zero benefit.
+   - **Checks locally BEFORE touching Drive at all, and tracks the SET of image-only
+     pages, not just a bool** (added 2026-10-13, found by independent review, then
+     corrected again the same day by a SECOND round of independent review +
+     the advisor — this was the single highest-severity finding across both rounds):
+     `ocr_util.image_only_pages()` (not `needs_ocr()`) is re-checked on the OCR'd
+     copy. A page with a genuinely unreadable image (a photo with nothing printed on
+     it) stays in that set no matter how many times OCR runs — confirmed
+     empirically — and WOI/inspection filings routinely carry such pages ALONGSIDE
+     real tables. The FIRST version of this check treated "still flagged anywhere"
+     as "OCR failed, don't write Drive," which would have thrown away a real
+     improvement on every OTHER page of a mixed scan — plausibly leaving a large
+     share of the 392-file backlog unfixed while still spending `--limit` on each
+     one. The corrected rule: write to Drive if the image-only-page set strictly
+     SHRANK (`done` if it's now empty, `done_partial` if some genuinely unreadable
+     pages remain); skip the Drive write only when OCR helped NOTHING at all
+     (`ocr_incomplete`).
    - **Overwrites IN PLACE** with `files().update(fileId=..., media_body=...)` — same
      file id, so every Sheet link, public-records page link, and emailed link keeps
      working. Before overwriting, the current head revision is pinned
@@ -218,25 +278,34 @@ in the PR, since it's a materially larger blast radius than the handoff describe
      `revisions().update()` against live credentials (no Drive access from inside this
      build) — **flagged as a residual risk for Trisha to verify on the first real
      `--apply` run**, not assumed.
-   - **Failure handling, refined 2026-10-13 (found by independent review):** the
-     pin+update step and the post-update verify step are now two SEPARATE try/except
-     blocks. If the update itself fails, that's `error_upload` (retryable — see below
-     — and treated as a SYSTEMIC signal: `run_apply()` aborts the rest of that run
-     immediately rather than repeating the same failure up to `--limit` or
-     `_MAX_SCAN_PER_RUN` times). If the update SUCCEEDS but the post-update
-     re-download/verify step fails, that's `done_unverified` — never `error_upload` —
-     so a later run doesn't re-OCR and re-upload a file that's probably already fixed.
-     A whole-run precheck confirms the `ocrmypdf` binary actually resolves to an
-     executable before `--apply` does anything, so a missing binary on the machine
-     (a config problem, not a per-file one) can't get every candidate permanently
-     recorded `ocr_failed`.
+   - **Failure handling, refined 2026-10-13 across two rounds of independent review:**
+     the pin+update step and the post-update verify step are two SEPARATE try/except
+     blocks. If the update itself fails, that's `error_upload` — retryable on the next
+     run (see below), AND treated as a SYSTEMIC signal the FIRST time it happens for a
+     given file: `run_apply()` aborts the rest of that run immediately rather than
+     repeating the same failure up to `--limit` or `_MAX_SCAN_PER_RUN` times. If the
+     SAME file then fails the SAME way AGAIN on its retry, that's reclassified
+     file-specific, not systemic (round 2 fix: a single bad file would otherwise abort
+     every future run forever, since it's always the first thing re-attempted) —
+     recorded `"<status>_persistent"` (now terminal) and the run continues past it. If
+     the update SUCCEEDS but the post-update re-download/verify step fails, that's
+     `done_unverified` — never `error_upload` — so a later run doesn't re-OCR and
+     re-upload a file that's probably already fixed. Before `--apply` does anything, a
+     whole-run precheck runs a REAL smoke test (OCRs a tiny synthetic image-only PDF
+     and confirms the output is genuinely different) rather than just checking that a
+     file exists at the resolved binary path — `isfile()`+executable passes even when
+     ocrmypdf is installed but its own Tesseract dependency is missing, which would
+     otherwise get every real candidate permanently recorded `ocr_failed` for a
+     machine-config reason, not a per-file one.
    - **Resumable:** state file at `local-state/backfill-mirror-ocr-state.json`
-     (gitignored), keyed per candidate, saved INCREMENTALLY after every candidate (not
+     (gitignored, and anchored to the repo root rather than the invoking shell's cwd —
+     a bare relative path would silently lose resume if the script were ever run from
+     elsewhere), keyed per candidate, saved INCREMENTALLY after every candidate (not
      only at the end — a crash mid-run must never lose the record of a file already
-     overwritten in Drive). Every status is terminal (never auto-retried) EXCEPT
-     `error_download` and `error_upload`, which are transient-shaped and get
-     re-attempted on the next run; a human can force a retry of any other status by
-     deleting its entry from the state file.
+     overwritten in Drive). Most statuses are terminal (never auto-retried);
+     `error_download` and `error_upload` are the exception (transient-shaped, retried
+     on the next run) unless they recur on the same file (see above); a human can force
+     a retry of any terminal status by deleting its entry from the state file.
    - **Never run with `--apply` by the coder** — this PR's own backfill runs, if any,
      are dry-run only.
 
@@ -281,8 +350,12 @@ in the PR, since it's a materially larger blast radius than the handoff describe
 
 ## Not done (out of scope)
 
-- No change to `classify()`'s verdict or the classification pipeline's own OCR gate —
-  this ADR is about the Drive copies, per the handoff.
+- No change to `classify()`'s OWN verdict logic (the function itself, moved verbatim).
+  **This is narrower than the handoff's original framing** — the handoff scoped this
+  ADR to the Drive copies only, but Decision 2 (added mid-build, 2026-10-13) DOES
+  change what `parse_document()` does with that verdict: `classify()` is no longer the
+  sole input to whether `ocr_in_place()` runs. See Decision 2 and the Context section's
+  mid-build-correction note for the full reasoning and the real specimen that forced it.
 - No retroactive re-check of already-mirrored, already-searchable files.
 - No multilingual OCR (`eng` only, per the handoff's decision 4 — no known non-English
   content in the mirror).

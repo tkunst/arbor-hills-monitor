@@ -84,15 +84,17 @@ def test_parse_document_assembles_full_dataclass(monkeypatch, text_pdf):
     assert parsed.measurements[0]["basis"] == "permitted_limit"
 
 
-def test_parse_document_gates_ocr_on_needs_ocr_not_classify(
+def test_parse_document_needs_ocr_also_gates_what_classify_alone_misses(
         monkeypatch, large_mixed_pdf_scan_after_page_12):
     # coder:mirror-ocr (2026-10-13): classify()'s 12-page sample reads this
     # fixture as "has_text" overall (the scanned page is past page 12) — the
     # OLD gate would never have called ocr_in_place() on it at all. A real
     # 1,006-page WOI/CJ compilation with 316 image-only pages, all past page
     # 12, hit exactly this: ocr_applied stayed False, those 316 pages' content
-    # never reached the classifier. parse_document() now gates on
-    # ocr_util.needs_ocr(), which checks every page.
+    # never reached the classifier. parse_document() now ALSO checks
+    # ocr_util.needs_ocr(), which checks every page -- classify() is still
+    # called too (see the fail-open-vs-raise split at parse_document()'s own
+    # OCR-gate comment).
     path = large_mixed_pdf_scan_after_page_12
     assert p.classify(path)[0] == "has_text"   # documents the blind spot classify() still has
 

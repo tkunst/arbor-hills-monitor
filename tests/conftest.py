@@ -156,7 +156,8 @@ def large_mixed_pdf_scan_after_page_12(tmp_path):
     classify()'s whole-document verdict missed entirely (ocr_applied stayed
     False, those 316 pages' content never reached the classifier).
     ocr_util.needs_ocr() checks every page and catches it; parse_document()
-    now gates on needs_ocr(), not classify()."""
+    now ALSO checks needs_ocr() (fail-open for this needs_ocr()-only case),
+    not just classify()."""
     path = str(tmp_path / "large_mixed_scan_after_12.pdf")
     doc = fitz.open()
     for i in range(20):

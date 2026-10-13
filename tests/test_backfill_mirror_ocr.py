@@ -218,7 +218,7 @@ def test_process_candidate_download_failure_is_recorded(monkeypatch, tmp_path):
 
 def test_process_candidate_skip_has_text_no_ocr_no_upload(monkeypatch, tmp_path):
     monkeypatch.setattr(ac, "download_file", lambda drive, fid, dest: open(dest, "wb").write(b"x") and dest)
-    monkeypatch.setattr(ocr_util, "needs_ocr", lambda path: False)
+    monkeypatch.setattr(ocr_util, "image_only_pages", lambda path: set())
     pin_calls, update_calls = [], []
     monkeypatch.setattr(ac, "pin_head_revision", lambda *a, **k: pin_calls.append(1))
     monkeypatch.setattr(ac, "update_file_content", lambda *a, **k: update_calls.append(1))
@@ -233,7 +233,7 @@ def test_process_candidate_malformed_pdf_recorded_not_retried_logic(monkeypatch,
 
     def boom(path):
         raise RuntimeError("fitz: cannot open broken document")
-    monkeypatch.setattr(ocr_util, "needs_ocr", boom)
+    monkeypatch.setattr(ocr_util, "image_only_pages", boom)
     cand = {"link": "https://drive.google.com/file/d/FID/view"}
     result = bm.process_candidate(_fake_drive(), cand, str(tmp_path))
     assert result["status"] == "error_malformed"
@@ -247,7 +247,7 @@ def test_process_candidate_ocr_failed_fail_open_never_uploads(monkeypatch, tmp_p
         local_holder["path"] = dest
         return dest
     monkeypatch.setattr(ac, "download_file", fake_download)
-    monkeypatch.setattr(ocr_util, "needs_ocr", lambda path: True)
+    monkeypatch.setattr(ocr_util, "image_only_pages", lambda path: {0})
     # ensure_searchable is fail-open: returns the SAME path on OCR failure.
     monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: local_holder["path"])
     update_calls = []
@@ -276,11 +276,11 @@ def test_process_candidate_done_pins_revision_before_update_never_creates(monkey
         return dest
     monkeypatch.setattr(ac, "download_file", fake_download)
 
-    needs = {"n": 0}
-    def fake_needs_ocr(path):
-        needs["n"] += 1
-        return needs["n"] == 1   # first check (raw scan): True; second (post-OCR verify): False
-    monkeypatch.setattr(ocr_util, "needs_ocr", fake_needs_ocr)
+    pages = {"n": 0}
+    def fake_image_only_pages(path):
+        pages["n"] += 1
+        return {0} if pages["n"] == 1 else set()   # raw scan: page 0 flagged; after OCR+verify: fixed
+    monkeypatch.setattr(ocr_util, "image_only_pages", fake_image_only_pages)
     monkeypatch.setattr(ocr_util, "ensure_searchable",
                         lambda path, **kw: path + ".searchable")
     # ensure_searchable's fake above returns a path that doesn't exist on disk;
@@ -297,7 +297,7 @@ def test_process_candidate_done_pins_revision_before_update_never_creates(monkey
     assert call_order == [("download", "FID42"), ("pin", "FID42"), ("update", "FID42"), ("download", "FID42")]
 
 
-def test_process_candidate_still_scanned_after_ocr_never_touches_drive(monkeypatch, tmp_path):
+def test_process_candidate_no_improvement_never_touches_drive(monkeypatch, tmp_path):
     # M2 fix (found by independent review): a page with genuinely no
     # recoverable text (always-flagged, even after a real OCR pass) must
     # never be pinned/overwritten in Drive for zero gain -- the check runs
@@ -306,7 +306,7 @@ def test_process_candidate_still_scanned_after_ocr_never_touches_drive(monkeypat
         open(dest, "wb").write(b"x")
         return dest
     monkeypatch.setattr(ac, "download_file", fake_download)
-    monkeypatch.setattr(ocr_util, "needs_ocr", lambda path: True)   # always still flagged
+    monkeypatch.setattr(ocr_util, "image_only_pages", lambda path: {0})   # always still flagged, same set
     monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: path + ".searchable")
     pin_calls, update_calls = [], []
     monkeypatch.setattr(ac, "pin_head_revision", lambda *a, **k: pin_calls.append(1))
@@ -315,6 +315,34 @@ def test_process_candidate_still_scanned_after_ocr_never_touches_drive(monkeypat
     result = bm.process_candidate(_fake_drive(), cand, str(tmp_path))
     assert result["status"] == "ocr_incomplete"   # never silently "done"
     assert pin_calls == [] and update_calls == []  # no Drive write for zero benefit
+
+
+def test_process_candidate_partial_improvement_writes_done_partial(monkeypatch, tmp_path):
+    # HIGH finding fixed 2026-10-13 (independent review + the advisor): a
+    # 50-page scan where OCR fixes 49 pages but one photo-log page stays
+    # unreadable must NOT be thrown away -- it's a real improvement and
+    # belongs in Drive, recorded `done_partial` (not `done`, not
+    # `ocr_incomplete`).
+    def fake_download(drive, fid, dest):
+        open(dest, "wb").write(b"x")
+        return dest
+    monkeypatch.setattr(ac, "download_file", fake_download)
+    pages = {"n": 0}
+    def fake_image_only_pages(path):
+        pages["n"] += 1
+        # raw scan: pages 3 and 7 flagged; after OCR: only page 7 remains
+        # (a genuinely unreadable photo); verify re-download: same.
+        return {3, 7} if pages["n"] == 1 else {7}
+    monkeypatch.setattr(ocr_util, "image_only_pages", fake_image_only_pages)
+    monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: path + ".searchable")
+    update_calls = []
+    monkeypatch.setattr(ac, "pin_head_revision", lambda *a, **k: None)
+    monkeypatch.setattr(ac, "update_file_content",
+                        lambda drive, fid, path, **kw: update_calls.append(1) or fid)
+    cand = {"link": "https://drive.google.com/file/d/FID/view"}
+    result = bm.process_candidate(_fake_drive(), cand, str(tmp_path))
+    assert result["status"] == "done_partial"
+    assert update_calls == [1]   # DOES write to Drive -- the partial win is real
 
 
 def test_process_candidate_verify_failure_after_successful_update_is_done_unverified(
@@ -331,11 +359,11 @@ def test_process_candidate_verify_failure_after_successful_update_is_done_unveri
             return dest
         raise RuntimeError("transient re-download blip")   # the VERIFY download
     monkeypatch.setattr(ac, "download_file", fake_download)
-    needs = {"n": 0}
-    def fake_needs_ocr(path):
-        needs["n"] += 1
-        return needs["n"] == 1   # raw: True; post-OCR local check: False
-    monkeypatch.setattr(ocr_util, "needs_ocr", fake_needs_ocr)
+    pages = {"n": 0}
+    def fake_image_only_pages(path):
+        pages["n"] += 1
+        return {0} if pages["n"] == 1 else set()   # raw: flagged; post-OCR local check: fixed
+    monkeypatch.setattr(ocr_util, "image_only_pages", fake_image_only_pages)
     monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: path + ".searchable")
     monkeypatch.setattr(ac, "pin_head_revision", lambda *a, **k: None)
     monkeypatch.setattr(ac, "update_file_content", lambda drive, fid, path, **kw: fid)
@@ -349,11 +377,11 @@ def test_process_candidate_id_changed_is_a_defensive_error_not_done(monkeypatch,
         open(dest, "wb").write(b"x")
         return dest
     monkeypatch.setattr(ac, "download_file", fake_download)
-    needs = {"n": 0}
-    def fake_needs_ocr(path):
-        needs["n"] += 1
-        return needs["n"] == 1   # first check (raw): True; second (post-OCR, local): False
-    monkeypatch.setattr(ocr_util, "needs_ocr", fake_needs_ocr)
+    pages = {"n": 0}
+    def fake_image_only_pages(path):
+        pages["n"] += 1
+        return {0} if pages["n"] == 1 else set()   # raw: flagged; post-OCR local check: fixed
+    monkeypatch.setattr(ocr_util, "image_only_pages", fake_image_only_pages)
     monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: path + ".searchable")
     monkeypatch.setattr(ac, "pin_head_revision", lambda *a, **k: None)
     monkeypatch.setattr(ac, "update_file_content", lambda drive, fid, path, **kw: "SOMETHING_ELSE")
@@ -418,6 +446,37 @@ def test_run_apply_retryable_status_is_reattempted_not_skipped(monkeypatch, tmp_
                           state_path=str(tmp_path / "state.json"))
     assert calls == [1]          # retryable statuses ARE re-attempted
     assert state[f"{sw.TAB_ARCHIVE}:doc-1"]["status"] == "done"
+
+
+def test_run_apply_same_file_failing_twice_is_persistent_not_a_second_abort(monkeypatch, tmp_path):
+    # MEDIUM fix (round-2 independent review): a file that fails error_upload
+    # on retry, the SAME way, is file-specific, not systemic -- the run must
+    # NOT abort a second time over it (which would make the backfill stall
+    # forever, since the same file is always the first thing re-attempted).
+    # It's recorded terminal (error_upload_persistent) and the run continues
+    # to doc-2.
+    tabs = {
+        sw.TAB_ARCHIVE: [
+            sw.ARCHIVE_HEADERS,
+            ["doc-1", "n", "d", "", "s", "https://drive.google.com/file/d/F1/view", "ts"],
+            ["doc-2", "n", "d", "", "s", "https://drive.google.com/file/d/F2/view", "ts"],
+        ],
+    }
+    state = {f"{sw.TAB_ARCHIVE}:doc-1": {"status": "error_upload"}}   # already failed once
+
+    def fake_process(drive, cand, tmp_dir):
+        if cand["id"] == "doc-1":
+            return {"status": "error_upload", "note": "PermissionDenied"}
+        return {"status": "done"}   # doc-2 succeeds -- isolates doc-1's persistent failure
+    monkeypatch.setattr(bm, "process_candidate", fake_process)
+    result = bm.run_apply(FakeSheets(tabs), "SID", _fake_drive(), state, limit=100,
+                          state_path=str(tmp_path / "state.json"))
+    assert result["aborted"] is False
+    assert result["scanned"] == 2   # doc-2 WAS reached, unlike the systemic-abort case
+    assert state[f"{sw.TAB_ARCHIVE}:doc-1"]["status"] == "error_upload_persistent"
+    # And the persistent status is now terminal -- a THIRD run must not
+    # retry it again.
+    assert "error_upload_persistent" not in bm._RETRYABLE_STATUSES
 
 
 def test_run_apply_aborts_rest_of_run_on_systemic_failure(monkeypatch, tmp_path):

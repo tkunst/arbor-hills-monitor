@@ -54,10 +54,12 @@ import fitz  # pymupdf
 # module's own globals — which is what lets existing tests monkeypatch
 # `egle_doc_parser.classify` / `egle_doc_parser.ocr_in_place` (and
 # poison_doc_extractor's `from egle_doc_parser import ocr_in_place`) exactly
-# as before. `classify` itself is kept importable for those callers/tests
-# even though parse_document() below no longer calls it directly (see
-# needs_ocr's docstring and the comment at its call site). `needs_ocr` is the
-# NEW page-by-page check parse_document() uses instead, also from ocr_util.
+# as before. `classify` is STILL called directly by parse_document() below —
+# it decides whether an OCR failure raises (exactly as on `main`) or is
+# fail-open (see parse_document()'s own comment at that call site for the
+# exact split) — it's just no longer the ONLY input to that decision.
+# `needs_ocr` (also from ocr_util) is the NEW page-by-page check that catches
+# what classify()'s 12-page sample can miss.
 from ocr_util import classify, ocr_in_place, needs_ocr  # noqa: F401
 
 

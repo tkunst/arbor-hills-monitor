@@ -278,8 +278,18 @@ def run() -> int:
             text, npages, has_text = rc.extract_text(local)
             ocr_applied = False
             if not has_text and searchable_local != local:
-                text, npages, has_text = rc.extract_text(searchable_local)
-                ocr_applied = has_text
+                try:
+                    text, npages, has_text = rc.extract_text(searchable_local)
+                    ocr_applied = has_text
+                except Exception:  # noqa: BLE001 — found by round-2 independent review: on
+                    # `main`, a scanned month always got mirrored + flagged for review
+                    # (ADR 016's fail-safe). If the OCR'd copy's own extraction raises
+                    # (ocrmypdf produced something fitz/extract_text can't parse), that
+                    # fail-safe must still fire -- fall back to has_text=False so the
+                    # "no text layer" branch below still writes a row, instead of
+                    # letting this propagate to the per-month handler and skip the
+                    # month entirely (no row, no alert -- a real regression from main).
+                    has_text = False
 
             # (1) Drive mirror (optional, idempotent) — BEST-EFFORT per file, then
             # classify + extract. The upload is wrapped so a transient Drive failure

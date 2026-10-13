@@ -585,6 +585,28 @@ def test_scan_only_report_with_exceedance_via_ocr_still_alerts_full_list(monkeyp
     assert len(sent) == 1 and sent[0][2] is None   # None -> send_email uses the full alert_recipients
 
 
+def test_scan_only_report_ocr_extraction_failure_still_gets_review_row(monkeypatch, tmp_path):
+    # Regression fix (round-2 independent review): if ensure_searchable()
+    # returns a path whose own extraction then raises (ocrmypdf produced
+    # something fitz/extract_text can't parse), the month must still get a
+    # dedup row + review alert (ADR 016's fail-safe) -- not silently dropped
+    # by the per-month exception handler, which would be a real regression
+    # from `main` (a scanned month there always got mirrored + flagged).
+    cfg = _cfg()
+    fake, sent, _ = _wire(
+        monkeypatch, cfg, months=[("2026-11", None)],
+        specs={"2026-11": {"values": [], "text": False}})
+
+    broken_path = str(tmp_path / "broken-ocr-output.pdf")  # never created -- extract_text raises
+    monkeypatch.setattr(ra.ocr_util, "ensure_searchable", lambda path, **kw: broken_path)
+
+    assert ra.run() == 0
+    reports = _rows(fake, sw.TAB_RIDGEWOOD)
+    assert len(reports) == 1
+    assert reports[0][4] == "review"           # still recorded -- not silently dropped
+    assert _rows(fake, sw.TAB_MEASUREMENTS) == []
+
+
 def test_review_recipients_unset_falls_back_to_full_list(monkeypatch):
     # With review_recipients unset, a review-tier alert falls back to the full list.
     cfg = _cfg(review_recipients=None)
