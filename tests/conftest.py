@@ -104,6 +104,32 @@ def mixed_pdf(tmp_path):
 
 
 @pytest.fixture
+def captioned_image_pdf(tmp_path):
+    """A 2-page document: page 0 is real text, page 1 is an image with a
+    SHORT CAPTION (e.g. a figure/photo label) -- some real text, just very
+    little. Regression fixture for the 2026-10-13 spike against the real
+    ocrmypdf binary: `--skip-text` skips a page the moment it has ANY text at
+    all, even a single character -- confirmed empirically ("1 skipping all
+    processing on this page" for a page captioned just "Photo 1"). The first
+    version of needs_ocr() used a <20-char threshold, which flagged this page
+    as needing OCR even though ocrmypdf would just skip it, so the file never
+    converged (needs_ocr() stayed True after a "successful" OCR run). The
+    fixed threshold (text == 0 chars) must NOT flag this page."""
+    path = str(tmp_path / "captioned_image.pdf")
+    doc = fitz.open()
+    page0 = doc.new_page()
+    page0.insert_text((72, 72), "Arbor Hills Landfill compliance report. " * 12)
+    page1 = doc.new_page()
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 120, 120))
+    pix.clear_with(140)
+    page1.insert_image(fitz.Rect(10, 10, 110, 110), pixmap=pix)
+    page1.insert_text((10, 125), "Photo 1")
+    doc.save(path)
+    doc.close()
+    return path
+
+
+@pytest.fixture
 def blank_page_pdf(tmp_path):
     """A 2-page document: page 0 is real text, page 1 is a GENUINE blank
     separator page -- no text, no image, nothing on it. needs_ocr() must NOT

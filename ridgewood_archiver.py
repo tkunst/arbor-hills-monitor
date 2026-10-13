@@ -267,8 +267,19 @@ def run() -> int:
             # (content_hash above and the ADR 066 manifest both need the original
             # bytes untouched).
             searchable_local = ocr_util.ensure_searchable(local)
-            ocr_applied = searchable_local != local
-            text, npages, has_text = rc.extract_text(searchable_local)
+            # `ocr_applied` must mean "this month's value came from OCR'd
+            # text", not just "ensure_searchable() changed the file" — a born-
+            # digital report with one unrelated image-only page (a logo, a
+            # stamp) still has its real data table natively readable, and
+            # forcing review-tier on every such report would be a false
+            # alarm. Try the NATIVE extraction first; only fall back to the
+            # OCR'd copy (and only then set ocr_applied) when the native pass
+            # found nothing.
+            text, npages, has_text = rc.extract_text(local)
+            ocr_applied = False
+            if not has_text and searchable_local != local:
+                text, npages, has_text = rc.extract_text(searchable_local)
+                ocr_applied = has_text
 
             # (1) Drive mirror (optional, idempotent) — BEST-EFFORT per file, then
             # classify + extract. The upload is wrapped so a transient Drive failure
@@ -303,7 +314,9 @@ def run() -> int:
                     # alert-routing below, keyed on exceed_24h, not on this flag).
                     verdict = dict(verdict)
                     verdict["alert"] = True
-                    verdict["severity"] = verdict.get("severity") or "alert"
+                    verdict["severity"] = "alert"   # classify_report always returns a truthy
+                                                    # severity string ("routine"/"alert"), so
+                                                    # `x or "alert"` was dead -- set it directly.
                     verdict["reasons"] = list(verdict.get("reasons") or []) + [
                         "text extracted via OCR (no native text layer) — verify the "
                         "numeric values against the original scan before relying on them"]

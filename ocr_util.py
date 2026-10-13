@@ -6,31 +6,37 @@ Two call shapes live here, for two different callers with different
 tolerance for failure:
 
   1. classify() / ocr_in_place() — moved HERE, UNCHANGED, from egle_doc_parser.py.
-     egle_doc_parser.parse_document() calls these BEFORE classification, and
      poison_doc_extractor.py calls ocr_in_place() proactively for synthesized
-     PDFs. Both callers rely on ocr_in_place() RAISING on failure (a poison
-     strike, or a logged-and-skipped best-effort — never a silent pass), so
-     that behavior is preserved exactly. classify()'s verdict is a
-     WHOLE-DOCUMENT judgment over the first `min(n, 12)` pages — this is the
-     existing classification gate, not touched by this task (see the
-     coder:mirror-ocr handoff: "the classifier is not blind; this task is
-     about the Drive copies, not classification").
+     PDFs and relies on it RAISING on failure (a logged-and-skipped best-
+     effort, never a silent pass) — that behavior is preserved exactly.
+     classify()'s verdict is a WHOLE-DOCUMENT judgment over the first
+     `min(n, 12)` pages — the function ITSELF is unchanged. What DID change
+     (2026-10-13, mid-build, after a real 1,006-page specimen was found):
+     egle_doc_parser.parse_document() no longer uses classify()'s verdict as
+     its sole gate for whether to call ocr_in_place() — see needs_ocr() below
+     and parse_document()'s own docstring for why, and for how its raise-on-
+     failure contract is preserved for exactly the cases classify() would
+     already have triggered on `main`, with a new fail-open path for the
+     cases only needs_ocr() catches.
 
-  2. needs_ocr() / ensure_searchable() — NEW, for archive_client.upload_file().
-     needs_ocr() is PAGE-BY-PAGE (every page, not a 12-page sample), because a
-     mixed EGLE filing (pages of real text plus a handful of image-only cover
-     letters or signature pages) reads as "has_text" overall under classify()'s
-     aggregate judgment, so parse_document() never OCRs those pages — exactly
-     the gap the 2026-10-08 OCR audit found (392/2,103 mirrored PDFs with no
-     text layer; the worst group, N2688 WOI/HOV reports, at 36%). A page needs
-     OCR here if it is BOTH near-empty of text AND carries at least one image —
-     the same "imageonly_page" signal classify() already uses per-page
-     internally, just applied to every page instead of a 12-page sample and
-     without the aggregate roll-up. (A genuinely blank separator page — no
-     text, no image — does NOT need OCR: there is nothing on it to OCR, and
-     flagging it would make ensure_searchable() shell out to ocrmypdf on every
-     single upload of a document that has a blank page, defeating the
-     "already-searchable files pass straight through" requirement.)
+  2. needs_ocr() / ensure_searchable() — NEW, for archive_client.upload_file()
+     (and now also read by parse_document(), see above). needs_ocr() is
+     PAGE-BY-PAGE (every page, not a 12-page sample), because a mixed EGLE
+     filing (pages of real text plus a handful of image-only cover letters or
+     signature pages) reads as "has_text" overall under classify()'s
+     aggregate judgment — exactly the gap the 2026-10-08 OCR audit found
+     (392/2,103 mirrored PDFs with no text layer; the worst group, N2688
+     WOI/HOV reports, at 36%). A page needs OCR here if it has LITERALLY NO
+     extractable text AND carries at least one image — matching exactly what
+     `ocrmypdf --skip-text` itself treats as "already has text" (confirmed
+     empirically: it skips a page with even a single stray character, not
+     just a page past some character-count threshold — see needs_ocr()'s own
+     docstring for why a looser threshold doesn't converge). A genuinely
+     blank separator page — no text, no image — does NOT need OCR either:
+     there is nothing on it to OCR, and flagging it would make
+     ensure_searchable() shell out to ocrmypdf on every single upload of a
+     document that has a blank page, defeating the "already-searchable files
+     pass straight through" requirement from the other direction.
 
      ensure_searchable() is FAIL-OPEN: it never raises. Any failure (corrupt
      PDF, missing ocrmypdf binary, non-zero exit, timeout) logs a count-only
@@ -142,19 +148,34 @@ def ocr_in_place(pdf_path: str, timeout: int = 600) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def needs_ocr(path: str, char_threshold: int = _IMAGEONLY_CHAR_THRESHOLD) -> bool:
-    """True if ANY page in the document is image-only (near-empty text layer
-    AND at least one image) — checked page by page, every page, not a sampled
-    aggregate. This is what catches the mixed-document gap: a 300-page WOI
-    report that is almost entirely real text still needs this check to find
-    the handful of image-only cover/signature pages classify()'s 12-page,
-    whole-document verdict can miss.
+def needs_ocr(path: str, char_threshold: int = 0) -> bool:
+    """True if ANY page in the document is image-only (LITERALLY NO
+    extractable text AND at least one image) — checked page by page, every
+    page, not a sampled aggregate. This is what catches the mixed-document
+    gap: a 300-page WOI report that is almost entirely real text still needs
+    this check to find the handful of image-only cover/signature pages
+    classify()'s 12-page, whole-document verdict can miss.
+
+    The threshold is EXACTLY ZERO characters, matching `ocrmypdf --skip-text`'s
+    own real behavior, confirmed empirically (2026-10-13 spike against the
+    actual binary): ocrmypdf skips a page entirely — no OCR attempt at all —
+    the moment it has ANY text, even a single stray character or a short
+    caption like "Photo 1". A looser threshold (the first version of this
+    function used <20 chars) flags such a page as needing OCR, but ocrmypdf
+    then skips it anyway, so the page reads needs_ocr()==True again on the
+    very next check — the file never converges to "no longer needs OCR",
+    `archive_client.upload_file()`'s "already-searchable files pass straight
+    through" promise silently breaks for any document with such a page (every
+    future upload re-invokes ocrmypdf for no gain), and the backfill script
+    mislabels a genuinely successful OCR run as `ocr_incomplete` forever.
+    Matching ocrmypdf's own zero-text threshold makes a single OCR pass
+    actually converge.
 
     A page with no text AND no image (a genuine blank separator page) is NOT
     flagged — there's nothing for ocrmypdf to add, and flagging it would
     re-trigger an OCR subprocess on every upload of any document that
-    happens to have a blank page, breaking the "already-searchable files
-    pass straight through, no re-run" requirement.
+    happens to have a blank page, breaking the same "pass straight through"
+    requirement from the other direction.
 
     Raises on a read error (corrupt file, not a real PDF) — ensure_searchable()
     is the fail-open layer; this function stays a plain, honest predicate."""
@@ -165,7 +186,7 @@ def needs_ocr(path: str, char_threshold: int = _IMAGEONLY_CHAR_THRESHOLD) -> boo
         for page in doc:
             text_len = len(page.get_text().strip())
             has_image = len(page.get_images(full=False)) >= 1
-            if text_len < char_threshold and has_image:
+            if text_len <= char_threshold and has_image:
                 return True
         return False
     finally:

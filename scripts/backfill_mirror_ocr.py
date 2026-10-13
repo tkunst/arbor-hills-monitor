@@ -93,10 +93,27 @@ STATE_PATH = os.path.join("local-state", "backfill-mirror-ocr-state.json")
 _MAX_SCAN_PER_RUN = 500
 
 # Outcomes that represent an ACTUAL OCR attempt (needs_ocr() was True) --
-# these, and only these, count against --limit. skip_has_text and every
-# error_* outcome below this line are "free": cheap to discover, no
+# these, and only these, count against --limit. skip_has_text, error_bad_link,
+# error_download, and error_malformed are "free": cheap to discover, no
 # ocrmypdf subprocess run.
-_COUNTS_AGAINST_LIMIT = {"done", "ocr_incomplete", "ocr_failed"}
+_COUNTS_AGAINST_LIMIT = {"done", "done_unverified", "ocr_incomplete", "ocr_failed",
+                        "error_upload", "error_id_changed"}
+
+# Every status is TERMINAL (never automatically retried on a later run) EXCEPT
+# these two -- a transient network/API blip on a single file shouldn't
+# permanently give up on it the way a genuinely malformed PDF or a real OCR
+# failure should. (A human can also force a retry of any terminal status by
+# deleting its entry from the state file.)
+_RETRYABLE_STATUSES = {"error_download", "error_upload"}
+
+# A status that signals a SYSTEMIC problem (bad credentials/scope, a dead
+# OAuth token) rather than a one-off bad file -- found 2026-10-13 by
+# independent review: without this, a systemic failure would burn through up
+# to _MAX_SCAN_PER_RUN OCR attempts in one run, each recorded as a permanent
+# failure, before the run ever noticed something was fundamentally wrong.
+# run_apply() aborts the REST of the run (not just this candidate) the first
+# time either of these fires.
+_ABORT_RUN_STATUSES = {"error_upload", "error_id_changed"}
 
 # (tab constant, id-column header, link-column header) -- the 5 archive tabs,
 # in the FIXED priority order this script processes them. See module
@@ -228,7 +245,23 @@ def process_candidate(drive, cand: dict, tmp_dir: str) -> dict:
     """Download, check, and (if needed) OCR + re-upload-in-place ONE
     candidate. Returns a state-entry dict (at least {"status": ...}) — NEVER
     RAISES; every failure mode is a recorded status, not an exception, so one
-    bad file can't abort a run."""
+    bad file can't abort a run.
+
+    coder:mirror-ocr fixes (2026-10-13, found by independent review + the
+    advisor before any --apply run against live data):
+      - Checks needs_ocr() on the OCR'd copy LOCALLY, BEFORE touching Drive
+        at all. A page with a genuinely unreadable image (no recoverable
+        text no matter how many times OCR runs — e.g. a photo with nothing
+        printed on it) still fails needs_ocr() after a real, successful
+        ocrmypdf pass; without this check the file would be pinned and
+        overwritten in Drive for zero gain, every single run.
+      - The pin+update step and the post-update verify step are now TWO
+        separate try/except blocks, not one. A failure in the verify step
+        (a transient re-download blip) no longer gets mislabeled
+        `error_upload` when the update itself actually succeeded — that
+        mislabeling would make a LATER run re-OCR and re-upload a file
+        that's probably already fixed. See `done_unverified` below.
+    """
     file_id = extract_file_id(cand["link"])
     if file_id is None:
         return {"status": "error_bad_link"}
@@ -258,36 +291,60 @@ def process_candidate(drive, cand: dict, tmp_dir: str) -> dict:
         return {"status": "ocr_failed"}
 
     try:
-        ac.pin_head_revision(drive, file_id)
-        new_id = ac.update_file_content(drive, file_id, searchable)
+        try:
+            still_needs = ocr_util.needs_ocr(searchable)
+        except Exception:
+            # ocrmypdf produced something fitz can't even open -- treat the
+            # same as any other malformed-PDF finding (reported, not retried).
+            return {"status": "error_malformed"}
+        if still_needs:
+            # OCR ran (rc=0) but genuinely found nothing on at least one page
+            # — don't touch Drive for zero benefit.
+            return {"status": "ocr_incomplete"}
+
+        try:
+            ac.pin_head_revision(drive, file_id)
+            new_id = ac.update_file_content(drive, file_id, searchable)
+        except Exception as e:  # noqa: BLE001 — recorded, not raised
+            return {"status": "error_upload", "note": type(e).__name__}
         if new_id != file_id:
             # Structurally shouldn't happen (files().update always keeps the
             # id) -- defense in depth, never silently accept a changed id.
             return {"status": "error_id_changed", "note": f"{file_id}->{new_id}"}
+
         verify_path = local + ".verify.pdf"
-        ac.download_file(drive, file_id, verify_path)
-        still_needs = ocr_util.needs_ocr(verify_path)
-        _cleanup(verify_path)
-        return {"status": "ocr_incomplete"} if still_needs else {"status": "done"}
-    except Exception as e:  # noqa: BLE001 — recorded, not raised
-        return {"status": "error_upload", "note": type(e).__name__}
+        try:
+            ac.download_file(drive, file_id, verify_path)
+            verify_still_needs = ocr_util.needs_ocr(verify_path)
+        except Exception as e:  # noqa: BLE001 — the UPDATE already succeeded; see docstring
+            return {"status": "done_unverified", "note": type(e).__name__}
+        finally:
+            _cleanup(verify_path)
+
+        return {"status": "ocr_incomplete"} if verify_still_needs else {"status": "done"}
     finally:
         _cleanup(local, searchable)
 
 
-def run_apply(sheets_svc, sheet_id: str, drive, state: dict, limit: int) -> dict:
-    """Mutates `state` in place. Returns {"scanned", "fixed", "by_status"}
-    for THIS RUN only (not cumulative across all runs)."""
+def run_apply(sheets_svc, sheet_id: str, drive, state: dict, limit: int,
+              state_path: str = STATE_PATH) -> dict:
+    """Mutates `state` in place, saving it incrementally after EVERY
+    candidate (a crash or Ctrl-C mid-run must never lose the record of a
+    file whose Drive content was already overwritten). Returns
+    {"scanned", "fixed", "by_status", "aborted"} for THIS RUN only (not
+    cumulative across all runs)."""
     scanned = 0
     fixed = 0
     by_status: Counter = Counter()
+    aborted = False
     with tempfile.TemporaryDirectory() as tmp_dir:
         for tab, id_header, link_header in SOURCE_TABS:
-            if scanned >= _MAX_SCAN_PER_RUN or fixed >= limit:
+            if aborted or scanned >= _MAX_SCAN_PER_RUN or fixed >= limit:
                 break
             for cand in enumerate_tab(sheets_svc, sheet_id, tab, id_header, link_header):
-                if cand["key"] in state:
-                    continue  # already resolved by a prior run -- terminal, never re-attempted
+                already = state.get(cand["key"])
+                if already is not None and already.get("status") not in _RETRYABLE_STATUSES:
+                    continue  # resolved by a prior run (and not a retryable transient failure)
                 if scanned >= _MAX_SCAN_PER_RUN or fixed >= limit:
                     break
                 scanned += 1
@@ -295,10 +352,20 @@ def run_apply(sheets_svc, sheet_id: str, drive, state: dict, limit: int) -> dict
                 status = result["status"]
                 extra = {k: v for k, v in result.items() if k != "status"}
                 _record(state, cand["key"], status, link=cand["link"], tab=tab, **extra)
+                save_state(state, state_path)
                 by_status[status] += 1
                 if status in _COUNTS_AGAINST_LIMIT:
                     fixed += 1
-    return {"scanned": scanned, "fixed": fixed, "by_status": by_status}
+                if status in _ABORT_RUN_STATUSES:
+                    print(f"[backfill] {status} on {cand['key']} looks SYSTEMIC "
+                          f"(credentials/scope/token), not a one-off bad file -- "
+                          f"aborting the rest of this run rather than repeating the "
+                          f"same failure. It will be retried on the next run.")
+                    aborted = True
+                    break
+            if aborted:
+                break
+    return {"scanned": scanned, "fixed": fixed, "by_status": by_status, "aborted": aborted}
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +380,9 @@ def dry_run_report(sheets_svc, sheet_id: str, state: dict) -> str:
     total = resolved_total = 0
     for tab, id_header, link_header in SOURCE_TABS:
         candidates = enumerate_tab(sheets_svc, sheet_id, tab, id_header, link_header)
-        resolved = sum(1 for c in candidates if c["key"] in state)
+        resolved = sum(1 for c in candidates
+                      if c["key"] in state
+                      and state[c["key"]].get("status") not in _RETRYABLE_STATUSES)
         lines.append(f"  {tab:<28} {len(candidates):>5} candidate row(s), "
                      f"{resolved:>5} already resolved by a prior --apply run")
         total += len(candidates)
@@ -336,6 +405,11 @@ def render_apply_summary(result: dict) -> str:
     if malformed:
         lines.append(f"\n{malformed} malformed PDF(s) found this run — NOT retried "
                      f"(per the handoff). See {STATE_PATH} for which file ids.")
+    if result.get("aborted"):
+        lines.append("\nThis run ABORTED EARLY on a systemic-looking failure "
+                     "(credentials/scope/token) -- see the [backfill] line above. "
+                     "Fix that before running again; the affected file will retry "
+                     "automatically.")
     return "\n".join(lines)
 
 
@@ -368,6 +442,19 @@ def main(argv=None) -> int:
     if not all(os.environ.get(k) for k in ac.CREDENTIAL_ENV):
         print("ERROR: --apply needs GOAUTH_CLIENT_ID / GOAUTH_CLIENT_SECRET / "
               "GOAUTH_REFRESH_TOKEN set (see scripts/oauth_setup.py). Aborting -- no state written.")
+        return 1
+
+    # Machine-level precheck (found by independent review): if ocrmypdf isn't
+    # actually installed here, EVERY candidate that needs OCR would otherwise
+    # get recorded `ocr_failed` -- a config problem on THIS machine, not a
+    # per-file problem, so it shouldn't burn through candidates or write any
+    # state at all. ensure_searchable() itself already fails open per-file;
+    # this is a whole-run guard in front of it.
+    binpath = ocr_util._ocrmypdf_bin()
+    if not (os.path.isfile(binpath) and os.access(binpath, os.X_OK)):
+        print(f"ERROR: ocrmypdf not found/executable (resolved to {binpath!r}). "
+              f"Install it (e.g. `brew install ocrmypdf`) before running --apply. "
+              f"Aborting -- no state written.")
         return 1
     drive = ac.oauth_drive_service()
 

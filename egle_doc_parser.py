@@ -7,21 +7,24 @@ different register (diagnostic criteria, eligibility standards) instead of
 R1-R8.
 
 Pipeline:
-  1. ocr_util.needs_ocr() — PyMuPDF text-layer detection, PAGE BY PAGE (every
-     page, not a sample). Decides whether step 2 runs. (`classify()` — the
-     original whole-document verdict over a 12-page sample — still lives in
-     ocr_util.py too and stays importable as `egle_doc_parser.classify` for
-     existing callers/tests, but parse_document() no longer uses it for this
-     gate: a large multi-hundred-page compilation whose first 12 pages are
-     real text but whose LATER pages are scanned read as "has_text" under
-     the old sampled verdict, so ocr_in_place() was never called on those
-     later pages at all — found 2026-10-13 against a real 1,006-page WOI/CJ
-     compilation with 316 image-only pages, all past page 12. needs_ocr()
-     checking every page closes that gap.)
+  1. classify() (ocr_util.py, moved from here, unchanged — PyMuPDF text-layer
+     detection over the first min(n, 12) pages) decides whether ocr_in_place()
+     runs with its ORIGINAL raise-on-failure contract — exactly `main`'s
+     behavior, preserved. ocr_util.needs_ocr() (NEW, PAGE-BY-PAGE, every page,
+     not a sample) catches the documents classify() misses — a large
+     multi-hundred-page compilation whose first 12 pages are real text but
+     whose LATER pages are scanned reads "has_text" under the old sampled
+     verdict (found 2026-10-13 against a real 1,006-page WOI/CJ compilation
+     with 316 image-only pages, all past page 12) — but for THIS needs_ocr()-
+     only case, ocr_in_place() runs FAIL-OPEN (a failure is logged and
+     skipped, not raised): a document that classified fine on `main` must
+     keep doing so even if its new, optional OCR attempt fails. See
+     parse_document()'s own comment at this call site for the exact split.
   2. If needs_ocr -> ocrmypdf --skip-text, in place (searchable PDF).
      `ocr_in_place()` in ocr_util.py now (moved, unchanged — same 600s
-     timeout, still raises on failure, same import-and-re-expose treatment).
-     Originally ported from zotero-tools/zotero-ocr-batch.py.
+     timeout, still raises BY DEFAULT on failure; parse_document() is the one
+     caller that catches that raise, and only for the needs_ocr()-only case
+     above). Originally ported from zotero-tools/zotero-ocr-batch.py.
   3. Extract text. Docs over the page threshold use targeted keyword-window
      extraction (only pages with signal keywords + the cover page) instead of
      full text — saves tokens, produces a better key_data_point. Robust for
@@ -818,24 +821,52 @@ def parse_document(
     if signal_keywords is None:
         signal_keywords = []
 
-    # coder:mirror-ocr (2026-10-13): the OCR-or-not decision uses ocr_util's
-    # PAGE-BY-PAGE needs_ocr() check, not classify()'s whole-document verdict
-    # over a 12-page sample. classify() reading a large compilation as
+    # coder:mirror-ocr (2026-10-13): the OCR-or-not decision now ALSO checks
+    # ocr_util's PAGE-BY-PAGE needs_ocr(), not just classify()'s whole-document
+    # verdict over a 12-page sample. classify() reading a large compilation as
     # "has_text" because its FIRST 12 pages are real text was found to let
     # scanned pages much later in the same file through un-OCR'd (a real
     # specimen: a 1,006-page WOI/CJ compilation with 316 image-only pages,
     # all past page 12 — classify() verdict "has_text", ocr_applied stayed
     # False, those 316 pages' content never reached the classifier at all).
-    # needs_ocr() checking every page catches this; --skip-text still leaves
-    # already-text pages alone, so a mixed document is safe either way.
-    # ocr_in_place()'s own contract is UNCHANGED: same 600s timeout, still
-    # raises on failure (a poison strike, same as before this change) — only
-    # the GATE deciding whether to call it moved. A very large (thousands of
-    # pages) scanned document can still hit that 600s ceiling; see the PR
+    #
+    # The two verdicts get DIFFERENT failure handling, and this split is
+    # load-bearing, not cosmetic:
+    #   - classify() says needs_ocr/likely -> call ocr_in_place() EXACTLY as
+    #     before this change: no try/except, so a failure RAISES (a poison
+    #     strike upstream in watcher.py/backfill.py) -- identical to `main`'s
+    #     behavior for every document that already triggered OCR there.
+    #   - classify() says has_text/empty but needs_ocr() still finds an
+    #     image-only page -- a document this repo has NEVER attempted OCR on
+    #     before (on `main` it never called ocr_in_place() at all, so it
+    #     always classified, alerted, and shipped fine). This is a NEW
+    #     capability, not a tightened requirement: FAIL OPEN. A timeout or an
+    #     ocrmypdf failure here (a digitally-signed/encrypted PDF, a
+    #     pathologically large file) must not turn a document that classified
+    #     fine on `main` into a poison strike / stub after MAX_ERRORS on this
+    #     branch. Log the failure class only (SEC-001 posture, no filename/
+    #     exception text) and proceed with the native text, same as if
+    #     needs_ocr() had said False.
+    # ocr_in_place()'s own contract (600s timeout, raises on failure) is
+    # otherwise UNCHANGED. A very large (thousands of pages) scanned document
+    # that classify() ALSO flags can still hit that 600s ceiling and poison-
+    # strike -- same as on `main` today; not a new risk, see the PR
     # description for this residual risk.
+    verdict, _, _ = classify(pdf_path)
+    classify_says_ocr = verdict in ("needs_ocr", "likely")
     ocr_applied = False
-    if needs_ocr(pdf_path):
+    if classify_says_ocr:
         ocr_applied = ocr_in_place(pdf_path)
+    elif needs_ocr(pdf_path):
+        try:
+            ocr_applied = ocr_in_place(pdf_path)
+        except Exception:
+            log.warning(
+                "parse_document: OCR failed for a needs_ocr()-only page "
+                "(classify() read this document as has_text/empty) -- "
+                "proceeding without OCR, same as a document with no "
+                "image-only pages at all (class=ocr_failed_fail_open)")
+            ocr_applied = False
 
     doc = fitz.open(pdf_path)
     try:

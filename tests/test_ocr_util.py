@@ -42,6 +42,15 @@ def test_needs_ocr_true_for_mixed_pdf_classify_misses_it(mixed_pdf):
     assert ocr_util.needs_ocr(mixed_pdf) is True
 
 
+def test_needs_ocr_false_for_captioned_image_page(captioned_image_pdf):
+    # ocrmypdf --skip-text skips a page the moment it has ANY text at all
+    # (confirmed empirically against the real binary, 2026-10-13 spike — see
+    # the fixture's own docstring). A page captioned "Photo 1" plus an image
+    # must NOT be flagged: ocrmypdf would just skip it, so flagging it means
+    # the file never converges to "no longer needs OCR" after a real run.
+    assert ocr_util.needs_ocr(captioned_image_pdf) is False
+
+
 def test_needs_ocr_false_for_blank_separator_page(blank_page_pdf):
     # A genuinely blank page (no text, no image) must NOT be flagged — there
     # is nothing for ocrmypdf to add. Flagging it would re-shell to ocrmypdf
