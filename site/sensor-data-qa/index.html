@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The sensor worked. Is the number right?</title>
+<meta name="description" content="A data-science note on two kinds of quality assurance that are often confused: checking that a sensor is powered, communicating and inside its operating specifications, and checking that the numbers it reports are correct. Worked examples from the Arbor Hills Landfill's public monitoring records.">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="canonical" href="https://arborhillsmonitor.org/sensor-data-qa/">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://arborhillsmonitor.org/sensor-data-qa/">
+<meta property="og:site_name" content="Arbor Hills Monitor">
+<meta property="og:title" content="The sensor worked. Is the number right?">
+<meta property="og:description" content="Hardware QA asks whether the instrument is running. Data QA asks whether its numbers are correct. Worked examples from the Arbor Hills Landfill's public monitoring records.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="The sensor worked. Is the number right?">
+<meta name="twitter:description" content="Hardware QA asks whether the instrument is running. Data QA asks whether its numbers are correct. Worked examples from the Arbor Hills Landfill's public monitoring records.">
+<style>
+  .backlink { font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .lede { font-size: 1.05rem; }
+  h2.section { font-size: 1.15rem; margin: 2.75rem 0 0.5rem; }
+  h3.case { font-size: 1rem; margin: 1.9rem 0 0.35rem; }
+  .callout {
+    margin: 1.75rem 0; padding: 1rem 1.25rem;
+    border: 1px solid var(--border); border-left: 3px solid var(--muted); border-radius: 6px;
+    font-size: 0.95rem;
+  }
+  .callout strong.head { display: block; margin-bottom: 0.35rem; }
+  .datatable { width: 100%; overflow-x: auto; margin: 1.1rem 0 0.75rem; }
+  .datatable table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  .datatable th, .datatable td {
+    text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .datatable th {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted);
+  }
+  .src { font-size: 0.82rem; color: var(--muted); margin: 0.4rem 0 0; }
+  ol.checklist li, ul.tight li { margin-bottom: 0.45rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="backlink"><a href="../">&larr; Arbor Hills Monitor</a></p>
+
+<header class="site-header">
+<h1>The sensor worked. Is the number right?</h1>
+<p class="tagline">Two kinds of quality assurance that are easy to mix up, with worked examples from the Arbor Hills Landfill's own monitoring records.</p>
+</header>
+
+<p class="lede">When a monitoring report says the instrument was "functioning within
+specifications," it is answering one question: was the device running? It is not answering a
+second question: were the numbers it reported correct? A sensor can be powered, communicating,
+and free of fault codes while it reports a value that does not match what is actually in the
+air or the ground. The two questions need different checks, and passing the first tells you
+very little about the second.</p>
+
+<div class="callout">
+<strong class="head">The distinction in one line each.</strong>
+<strong>Hardware (and transport) QA</strong> checks the pipe: the device has power, its pump and
+flow are in range, it raised no fault code, the data logger downloaded, the file arrived.
+<strong>Data QA</strong> checks the payload: whether the values themselves are plausible,
+consistent with each other and with neighboring instruments, and traceable to a known
+reference. A third question sits beside both: whether the measurement point
+<strong>represents</strong> the thing you care about at all.
+</div>
+
+<h2 class="section">What each kind of check can and cannot catch</h2>
+
+<div class="datatable">
+<table>
+<thead>
+<tr><th>Check</th><th>What it confirms</th><th>What it cannot tell you</th></tr>
+</thead>
+<tbody>
+<tr><td>Power, communications, data download, "no fault conditions"</td><td>The device ran and the data arrived</td><td>Whether the sensing element is responding to the gas</td></tr>
+<tr><td>Pump flow rate within limits</td><td>Air was drawn through the instrument</td><td>Whether the reading of that air is correct</td></tr>
+<tr><td>A file transfer or web request that succeeds</td><td>The bytes were delivered</td><td>Whether the bytes are right</td></tr>
+<tr><td>Range and saturation checks</td><td>A value is inside what the instrument can report</td><td>What the true value was when the instrument hit its ceiling</td></tr>
+<tr><td>Flatline (zero-variance) checks and comparison with neighboring instruments</td><td>Whether a channel is still responding to the world</td><td>Which instrument is right, without a reference</td></tr>
+<tr><td>Internal consistency (for example, gas percentages that should sum to about 100%)</td><td>Whether a reading agrees with itself</td><td>Whether a self-consistent reading is accurate</td></tr>
+<tr><td>Calibration or audit against a known reference gas</td><td>Whether the sensor reads a known concentration correctly</td><td>Anything that happened between audits</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>The failure that hardware QA is blind to is a sensor that degrades or sticks while the
+device around it keeps working. Electrochemical gas sensors can drift or stop responding and
+still report a steady, plausible-looking value. Nothing in a power, flow or communications
+check looks at the value, so nothing in those checks changes. The examples below come from
+the public monitoring records for the Arbor Hills Landfill.</p>
+
+<h2 class="section">Worked examples from the Arbor Hills record</h2>
+
+<h3 class="case">1. A fence-line channel that stopped moving</h3>
+
+<p>The landfill's perimeter network has six stations (MS-1 through MS-6), each reporting
+methane and hydrogen sulfide every hour to a public feed. For long stretches, several stations'
+hydrogen-sulfide channels reported a single constant value while the same station kept
+reporting and its methane channel kept varying. MS-5 read 0.0&nbsp;ppb from May 28, 2025 (apart
+from one 0.1&nbsp;ppb reading) and MS-2 read 0.0&nbsp;ppb from June 30, 2025, both until
+mid-to-late September 2026. Other stations sat at a constant 3.0 to 3.2&nbsp;ppb for months.</p>
+
+<p>From the outside these stations looked like they were working: their data kept
+arriving, hour after hour. The problem showed up only in the values: a
+channel with zero variance for more than a year while its neighbors varied. That is a data-QA
+finding, made by looking at the numbers, not by looking at device status. The feed's own label
+did not help either: it marks readings below 7&nbsp;ppb as "BDL" (below detection limit), apart from a
+few with no label,
+so a stuck channel and a working channel in clean air carry the same label. A sensor in clean
+air can legitimately read near zero for a long time, which is why the useful test is the
+combination of a flat channel, a varying sister channel at the same station, and varying
+neighbors.</p>
+
+<p class="src">Source: GFL's public perimeter feed (hosted by Barr Engineering), as documented in
+the <a href="../data/perimeter-air/">perimeter air dataset's data-quality note</a>, status as of
+October 9, 2026. The cause has not been publicly confirmed by GFL, EGLE or Barr Engineering.</p>
+
+<h3 class="case">2. A monthly report that answers the device question every month</h3>
+
+<p>The school monitor at Ridge Wood Elementary is operated by Barr Engineering, which posts a
+monthly report. The reports follow a standard set of numbered sections: equipment operation,
+data downloading, meteorological conditions, maintenance and audits. When something real happens,
+the reports say so, with dates: a failed pump in April 2022 ("A total of 27 hours of data were
+lost"), an instrument swapped for a spare in November 2023, a unit sent to the manufacturer for
+repair in July 2025. That channel is informative. When a report names a problem, take it at its
+word.</p>
+
+<p>The reverse does not hold. In 65 of the 70 reports the equipment section says the monitor's
+"functioning and operations were within the manufacturer specified ranges" (often followed by
+"except as noted below"), which is a statement about the device. The audits section, the one place in the format where a check of
+the readings against a reference would be reported, reads "No audits of the network were
+conducted during the time period" in all 70 reports from December 2020 through September 2026.
+Five of the 70 reports mention the monitor units being sent out for routine or annual
+calibration (the last mention is November 2023), so calibration does happen; the reports after
+November 2023 do not mention it, and none reports a field audit. A month with no reported
+problem means no device problem was reported. It does not, by itself, show that the readings
+were checked against a known value that month.</p>
+
+<p class="src">Source: the 70 monthly reports posted at
+<a href="https://arborhillsmonitoring.com/Home/Ridgewood">arborhillsmonitoring.com/Home/Ridgewood</a>,
+read October 12, 2026.</p>
+
+<h3 class="case">3. A reading that disagrees with itself</h3>
+
+<p>Wellhead gas readings report methane, carbon dioxide, oxygen and a "balance" percentage,
+which together should come to about 100%. That gives a free internal-consistency check. In this
+project's wellfield dataset, 43 as-found readings in the operator's April&ndash;June 2024
+report fail it (114 rows in the dataset, which also counts adjusted readings and rows the filing repeats); each misses
+100% by 1.5 to 2.5 points. They are kept exactly as filed and flagged
+(<code>validation_ok = no</code>) rather than corrected or deleted, so anyone can see them.
+One of them is the half-year maximum: as filed, the hottest reading of the first half of 2024
+was 154.4&deg;F at well AHWW0279 on May 31, 2024, and that reading fails the gas-percentage
+check. Restricted to readings that pass, the maximum is 154.2&deg;F (well AHWW312R, June 20,
+2024). The difference is small, and a missed gas sum does not prove the temperature is wrong,
+but which number you report depends on whether you apply the check, so the choice should be
+stated.</p>
+
+<p class="src">Source: the <a href="https://github.com/tkunst/arbor-hills-monitor/releases/tag/wellfield-data-2026-10-09">wellfield gas and temperature dataset</a>
+(release of October 9, 2026; method and validation rule in its README).</p>
+
+<h3 class="case">4. An instrument with a ceiling</h3>
+
+<p>Every instrument has a range. The operator's Wells of Interest reports record carbon
+monoxide in the wells with colorimetric (Dr&auml;ger) tubes (from late 2023, monthly readings come
+from an "HCH meter," with "draeger tubes used as needed"), and the 2022&ndash;2024 tables state the tube
+scale: "5 - 700 ppm." A tube with that scale cannot report 14,000&nbsp;ppm; at
+its ceiling it saturates. In
+April 2019, an EGLE air-quality inspector's report noted that a request for an alternate
+temperature operating standard from the landfill's then-owner, Advanced Disposal, included a
+14,400&nbsp;ppm carbon-monoxide reading at well AHW272R2 from January 2019 (the report does not
+say how it was measured), and that a more recent attempt to take a carbon-monoxide reading with a
+Dr&auml;ger tube had failed: the tube "simply turned pink," which the inspector wrote possibly
+meant it was saturated or otherwise contaminated. A saturated reading is censored data: the true value is somewhere above
+the scale, and treating the ceiling as the value understates it. The same reports supplement the
+tubes with a quarterly laboratory analysis (ASTM Methods 3C/25), which is a reference-level check
+the tubes cannot provide on their own.</p>
+
+<p class="src">Sources: EGLE Air Quality Division staff activity report, April 2, 2019; the
+operator's HOV Wells of Interest status reports (2022&ndash;2024), Attachment 2. Both are in the
+<a href="../public-records/">public records</a>.</p>
+
+<h3 class="case">5. A working sensor in the wrong place</h3>
+
+<p>Representativeness is a separate question from both device health and value accuracy. A
+thermometer can be accurate and still not measure what you need. Wellhead temperature is taken
+in the gas stream at the top of the well; the heat of concern is far below. In August 2019 an
+EGLE inspector watched a contractor lower a thermocouple down two wells. At well 290, the
+wellhead read 75&deg;F; going down, the readings rose, with small dips, to 163.8&deg;F at
+160 feet (in liquid), and the July wellhead temperature on file had also been 75&deg;F. Two
+weeks earlier, at well 259R3, the inspector
+recorded a wellhead temperature of 94.1&deg;F with 9.5% oxygen, noted that a borehole reading
+taken in April 2019 had shown 175&deg;F at depth, and wrote that air dilution meant the wellhead
+temperature was not representative for that well. Nothing in these readings required an
+instrument to fail: the wellhead number was measuring the top of the well.</p>
+
+<p class="src">Source: EGLE Air Quality Division staff activity reports, August 15 and
+August 28, 2019 (the landfill was then owned by Advanced Disposal; GFL took ownership on
+October 30, 2020). In the <a href="../public-records/">public records</a>.</p>
+
+<h2 class="section">A short checklist for reading any monitoring record</h2>
+
+<ol class="checklist">
+<li><strong>Separate the two claims.</strong> "The monitor was operating" and "the readings are
+correct" are different statements. Look for evidence of each.</li>
+<li><strong>Trust affirmative disclosures.</strong> A report that names a failure, a lost-data
+window or a swapped unit is telling you something real.</li>
+<li><strong>Do not read silence as verification.</strong> The absence of a reported problem is
+not evidence that the values were checked against a reference.</li>
+<li><strong>Look at the numbers over time.</strong> A channel that does not move for weeks or
+months, while related channels and nearby instruments do, deserves a question.</li>
+<li><strong>Know the range and the labels.</strong> Find the instrument's scale and detection
+limit. A value at the ceiling is censored; a "below detection" label can hide a stuck sensor.</li>
+<li><strong>Use the checks the data gives you for free.</strong> Sums that should add to 100%,
+duplicate readings that should match, units that should agree.</li>
+<li><strong>Ask for the reference check.</strong> Calibration and audit records against a known
+gas are the only routine way to confirm that a sensor reads a known value correctly.</li>
+<li><strong>Ask what the measurement point represents.</strong> An accurate reading in the
+wrong place can still mislead.</li>
+</ol>
+
+<footer class="site-footer">
+<p>An independent project. Every example on this page is drawn from public records: the
+operator's EGLE filings, EGLE Air Quality Division inspection reports, GFL's public perimeter
+feed, and the school monitor's monthly reports, as cited under each example. This is a note on
+method; it does not determine the cause of any instrument problem described, and it makes no
+regulatory finding.</p>
+</footer>
+
+</div>
+</body>
+</html>
