@@ -667,8 +667,14 @@ def run() -> int:
                         label, ev_date, prefetched_ev, kw_enabled, keywords, cfg,
                         recipients)
                 except Exception as e:  # noqa: BLE001
-                    print(f"[meeting-watch] {label}: FAILED this run "
-                          f"({type(e).__name__}) — other events continue.")
+                    # Log by event_id, not `label` -- label can be an
+                    # externally-sourced CivicClerk eventName (auto-discover
+                    # groups fall back to ev.get("eventName")), and the
+                    # class-only-logging rule this diff follows elsewhere
+                    # means the identifying key should never be untrusted
+                    # external content.
+                    print(f"[meeting-watch] event {event_id} ({gname}): FAILED "
+                          f"this run ({type(e).__name__}) — other events continue.")
                     exit_code = 1
                     consecutive_failures += 1
                     if consecutive_failures >= _CIRCUIT_BREAKER:

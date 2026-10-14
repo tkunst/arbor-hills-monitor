@@ -517,7 +517,6 @@ def test_group_level_isolation_when_has_rows_check_fails(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "could not determine baseline status" in out
     assert sent == []
-    assert sent == []
 
 
 def test_changed_records_row_and_emails_only_the_override(monkeypatch):

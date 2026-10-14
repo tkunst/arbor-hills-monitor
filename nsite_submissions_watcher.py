@@ -358,6 +358,11 @@ def run() -> int:
                     print(f"[nsite-submissions-watch] {label}: NO BASELINE and fetch failed "
                           f"(failing loudly so activation surfaces it): {e}")
                     exit_code = 1
+                # A gracefully-handled NsiteFetchError is not the Sheets-outage
+                # failure mode the breaker targets -- reset it here too, same
+                # as a normal success below, so an unrelated fetch blip on one
+                # site can't be miscounted toward tripping the breaker.
+                consecutive_failures = 0
                 continue
 
             snap = submissions_snapshot(subs)

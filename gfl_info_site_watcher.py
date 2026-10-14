@@ -497,6 +497,13 @@ def run(probe: bool = False) -> int:
                 # (more pages than the cap genuinely look new) under the cap
                 # and fire individual alert emails for whichever pages DID
                 # classify successfully this run.
+                #
+                # RESIDUAL (narrow, not covered): a page already confirmed
+                # REMOVED (url IS in seen_urls, so it's excluded here) whose
+                # read fails this run would have been a "returned" alert_new
+                # candidate too, had the read succeeded -- it isn't counted.
+                # Needs a prior confirmed removal AND a same-run read failure
+                # on that same URL; accepted as out of scope for this pass.
                 isolated_new_candidates += 1
 
     # Liveness (never go silently blind): if a real run (baselines already exist)
