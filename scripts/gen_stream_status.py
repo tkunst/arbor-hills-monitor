@@ -42,14 +42,13 @@ END_MARKER = "<!-- stream-status:end -->"
 
 def find_enabled_flags(node, prefix: str = "") -> list[tuple[str, bool]]:
     """[(dotted.path, value)] for every key literally `enabled` or ending in
-    `_enabled`, at any nesting depth -- including inside list items (a review
-    finding on this script's first draft: a future per-item flag, e.g. one
-    `enabled:` per entry in a `mirrors:` list, would otherwise be silently
-    skipped, exactly the drift class this tool exists to close) -- in config
-    order (PyYAML preserves the source file's key order via plain dicts).
-    `bool(v)` coercion means a QUOTED string value ("false") would read as
-    truthy; no flag in config.yml is quoted today, and this matches the
-    runtime's own truthiness convention (e.g. `gfl_air_hourly_capture.py`'s
+    `_enabled`, at any nesting depth -- including inside list items, so a
+    future per-item flag (e.g. one `enabled:` per entry in a `mirrors:`
+    list) is not silently skipped -- in config order (PyYAML preserves the
+    source file's key order via plain dicts). `bool(v)` coercion means a
+    QUOTED string value ("false") would read as truthy; no flag in
+    config.yml is quoted today, and this matches the runtime's own
+    truthiness convention (e.g. `gfl_air_hourly_capture.py`'s
     `if not hc.get("enabled")`), so it's a known, accepted limitation rather
     than a silent one."""
     out: list[tuple[str, bool]] = []

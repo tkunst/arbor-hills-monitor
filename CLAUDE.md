@@ -45,8 +45,8 @@ external users but no sensitive data). Public repo.
 - `config_loader.py` — twelve lines: `load_config()` reads this repo's own
   `config.yml` with `yaml.safe_load`. No secrets here (those are env/GitHub
   Secrets only); this is the chokepoint dozens of other modules across the
-  repo use
-  to read the non-secret config, including `kdp_check.default_reference()`
+  repo use to read the non-secret config, including
+  `kdp_check.default_reference()`
   (see below) and `scripts/gen_stream_status.py` — though NOT every
   `scripts/gen_*.py` job (`gen_findings_feed.py`/`gen_sitemap.py`/
   `gen_public_comment_feed.py` don't touch it).
@@ -62,12 +62,10 @@ external users but no sensitive data). Public repo.
   `recheck_key_data_points.py`'s own `run_llm()`) ever passes one, so in
   practice it always falls through to `kdp_check.default_reference()`, which
   reads THIS repo's own `config.yml` (`temperature_thresholds`) directly —
-  see `kdp_check.py` below for the ONE narrow exception to "nobody builds a
-  ref": `recheck_key_data_points.py` builds its own `ref` via
-  `kdp_check.reference_from_config()` and passes it straight to
-  `check_fields()`, bypassing `parse_document()`'s kwarg entirely. (See the
-  `nsite_client.py` entry further down for a SEPARATE coupling fact in the
-  same spirit — a different module, not this one.) **ADR 065** added
+  see `kdp_check.py` below for the one narrow exception to "nobody builds a
+  ref." (See the `nsite_client.py` entry further down for a SEPARATE
+  coupling fact in the same spirit — a different module, not this one.)
+  **ADR 065** added
   `document_date`/`document_date_method` (a deterministic
   dateline/label regex pass over the doc's own raw first pages, LLM only as
   fallback — same classification call, no extra LLM call) and
@@ -91,9 +89,10 @@ external users but no sensitive data). Public repo.
   so every PDF upload, across all
   seven call sites, either already has a text layer or gets one before
   landing in Drive. Never raises; SEC-001 count-only logging.
-- `kdp_check.py` — **ADR 067**: a deterministic, pure (no I/O) consistency
-  check run on the classifier's free-text `key_data_point`/`summary` before
-  they reach the public Sheet/feed, catching cases where the model writes a
+- `kdp_check.py` — **ADR 067**: a deterministic consistency check (pure
+  logic; `default_reference()` below is its ONE I/O entry point) run on
+  the classifier's free-text `key_data_point`/`summary` before they reach
+  the public Sheet/feed, catching cases where the model writes a
   wellhead-temperature claim the code itself would never make (a "135°F
   baseline MACT limit", an H2S ppm value reported as a °F reading). Checks
   a stated regulatory limit against reference values, reconciles "N°F above
@@ -102,12 +101,15 @@ external users but no sensitive data). Public repo.
   attributed to a well that doesn't hold it. A failing field is withheld
   (`WITHHELD_KDP`/`WITHHELD_SUMMARY`) after one retry; `sanitize_measurements()`
   re-tags an implausible MEASURED temperature reading `basis="unknown"`
-  rather than dropping it. `default_reference()` is the ONLY place this
-  module touches I/O: it calls `config_loader.load_config()` to build the
-  `TempReference` from `config.yml`'s `temperature_thresholds` block,
-  falling back to the plain 131/145°F defaults if config can't be read. See
-  the `egle_doc_parser.py` entry above for who actually calls it (no
-  production caller passes a `ref` in; the default is always what runs).
+  rather than dropping it. `default_reference()` calls
+  `config_loader.load_config()` to build the `TempReference` from
+  `config.yml`'s `temperature_thresholds` block, falling back to the plain
+  131/145°F defaults if config can't be read. See the `egle_doc_parser.py`
+  entry above for who actually calls it: no `parse_document()` call site
+  passes `temperature_reference` — the ONE exception is
+  `recheck_key_data_points.py`, which bypasses `parse_document()`'s kwarg
+  entirely and instead builds its own `ref` via
+  `reference_from_config()`, passed straight to `check_fields()`.
 - `retry_policy.py` — classifies a per-document processing exception as
   TRANSIENT (infra/quota — a 429, a 5xx, the 2026-07-07 workspace API cap's
   400 "usage limit" message, the `anthropic` SDK's own connection/timeout/
@@ -136,12 +138,15 @@ external users but no sensitive data). Public repo.
   payload) inherits them for free. `poison_stub.py` (no parse exists for a
   poison doc) applies only the override map.
 - `nsite_client.py` — EGLE nSITE API: session, list, download. **A coupling
-  fact worth stating plainly** (surfaced by the claude-md-drift pass, not
-  refactored here): `nsite_client.py:93` imports `poison_doc_extractor` at
-  MODULE level, and that module imports `fitz`/`defusedxml` at module level
-  too — so every one of the six nSITE PROFILE watchers (Streams K/L/M/N/O/P/Q,
-  which only need a structured JSON API, not a PDF) still loads the
-  PDF-parsing stack the instant they `import nsite_client`. Verified
+  fact worth stating plainly, not refactored here:** `nsite_client.py:93`
+  imports `poison_doc_extractor` at MODULE level, and that module imports
+  `fitz`/`defusedxml` at module level too — so every one of the seven nSITE
+  PROFILE watchers (Streams K/L/M/N/O/P/Q — all seven import `nsite_client`;
+  six of them, L/M/N/O/P/Q, use a bespoke raising reader for their OWN state,
+  while K/Submissions uses `_tab_rows_strict`, see the state-vs-data
+  Invariant below), which only need a structured JSON API, not a PDF, still
+  loads the PDF-parsing stack the instant they `import nsite_client`.
+  Verified
   empirically, not asserted: a bare `import nsite_client` puts `fitz` and
   `defusedxml` in `sys.modules`. The LLM/OCR half
   (`egle_doc_parser`/`anthropic`/`ocrmypdf`) stays OUT of that chain —
@@ -966,8 +971,13 @@ answers "is it live right now."
   `Evidence by Risk`, `_tab_rows_strict()` for `WDS Evidence by Risk`). Every
   OTHER tab (New/Historical/Related Documents, Measurements,
   Compliance Deadlines, Risk Register, All Evidence by Risk, Hand-Curated
-  Files, WOI Well Summary, Perimeter Action-Level Episodes) is pure DATA,
-  never diffed/baselined and never read back as run state.
+  Files, WOI Well Summary, Perimeter Action-Level Episodes,
+  `WDS New Documents`, `WDS Page Snapshots`) is pure DATA, never
+  diffed/baselined and never read back as run state
+  (`WDS New Documents`/`WDS Page Snapshots` confirmed by grep to have no
+  reader anywhere in `sheet_writer.py` — the WDS snapshot dedup this might
+  look like it should feed actually runs
+  through `_meta`'s `wds_snapshot_hashes` instead).
 
 ## Tests
 
