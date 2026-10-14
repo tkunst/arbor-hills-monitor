@@ -42,9 +42,31 @@ external users but no sensitive data). Public repo.
 
 ## Architecture (one line each)
 
+- `config_loader.py` — twelve lines: `load_config()` reads this repo's own
+  `config.yml` with `yaml.safe_load`. No secrets here (those are env/GitHub
+  Secrets only); this is the one chokepoint nearly every other module uses
+  to read the non-secret config, including `kdp_check.default_reference()`
+  (see below) and most `scripts/gen_*.py` jobs.
 - `egle_doc_parser.py` — THE reusable module (the Decode parsing base). PDF →
-  `ParsedDoc`. Domain-agnostic: the risk register is passed in, never hardcoded.
-  **ADR 065** added `document_date`/`document_date_method` (a deterministic
+  `ParsedDoc`. Domain-agnostic in the sense Decode needs: the risk register is
+  passed in, never hardcoded. **This is not true end-to-end**, though — two
+  places this module is NOT domain-agnostic, stated plainly rather than
+  refactored here: (1) `_enforce_temperature_consistency()` takes an optional
+  `temperature_reference`/`parse_document(temperature_reference=)` kwarg, but
+  neither `watcher.py` nor `backfill.py` ever passes one, so in practice it
+  always falls through to `kdp_check.default_reference()`, which reads THIS
+  repo's own `config.yml` (`temperature_thresholds`) directly — see
+  `kdp_check.py` below; (2) every nSITE profile watcher (Streams K/L/M/N/O/P/Q)
+  imports `nsite_client`, and `nsite_client.py` imports `poison_doc_extractor`
+  at module level, which imports `fitz`/`defusedxml` at module level too — so a
+  watcher that only needs a structured JSON API still loads the PDF-parsing
+  stack on every run (verified empirically: `import nsite_client` alone puts
+  `fitz` and `defusedxml` in `sys.modules`). The LLM/OCR half
+  (`egle_doc_parser`, `anthropic`, `ocrmypdf`) stays OUT of that chain —
+  `poison_doc_extractor` only imports those lazily, inside the functions that
+  actually need them (`extract_msg`, `openpyxl`, `xlrd`, and
+  `from egle_doc_parser import ocr_in_place` are all deferred imports). **ADR
+  065** added `document_date`/`document_date_method` (a deterministic
   dateline/label regex pass over the doc's own raw first pages, LLM only as
   fallback — same classification call, no extra LLM call) and
   `display_title` (the model's raw proposal, only requested when the caller
@@ -67,6 +89,34 @@ external users but no sensitive data). Public repo.
   so every PDF upload, across all
   seven call sites, either already has a text layer or gets one before
   landing in Drive. Never raises; SEC-001 count-only logging.
+- `kdp_check.py` — **ADR 067**: a deterministic, pure (no I/O) consistency
+  check run on the classifier's free-text `key_data_point`/`summary` before
+  they reach the public Sheet/feed, catching cases where the model writes a
+  wellhead-temperature claim the code itself would never make (a "135°F
+  baseline MACT limit", an H2S ppm value reported as a °F reading). Checks
+  a stated regulatory limit against reference values, reconciles "N°F above
+  X" gap language, flags an implausible (>`max_plausible_wellhead_f`)
+  non-flare wellhead reading, and catches the site's top HOV value
+  attributed to a well that doesn't hold it. A failing field is withheld
+  (`WITHHELD_KDP`/`WITHHELD_SUMMARY`) after one retry; `sanitize_measurements()`
+  re-tags an implausible MEASURED temperature reading `basis="unknown"`
+  rather than dropping it. `default_reference()` is the ONLY place this
+  module touches I/O: it calls `config_loader.load_config()` to build the
+  `TempReference` from `config.yml`'s `temperature_thresholds` block,
+  falling back to the plain 131/145°F defaults if config can't be read. See
+  the `egle_doc_parser.py` entry above for who actually calls it (nobody
+  passes a `ref` in; the default is always what runs).
+- `retry_policy.py` — classifies a per-document processing exception as
+  TRANSIENT (infra/quota — a 429, a 5xx, the 2026-07-07 workspace API cap's
+  400 "usage limit" message, the `anthropic` SDK's own connection/timeout/
+  rate-limit/server error types) vs. PERMANENT (a genuinely unprocessable
+  source — bad PDF, OCR failure, truncation, generic 400). `watcher.py`/
+  `backfill.py` call `is_transient()` before accruing a poison strike, so an
+  API-cap or infra blip can no longer permanently mark a real filing
+  "skipped" the way it did pre-fix (a real June-2026 incident: a cap-hit
+  "skipped" two urgent docs). Duck-typed detection; `anthropic` is an
+  optional import so callers don't need it installed just to classify an
+  error.
 - `risk_register.py` — R1–R8 + R8 signal keywords (single source of truth).
 - `document_titles.py` — Arbor-Hills-specific half of ADR 065, kept OUT of
   egle_doc_parser.py on purpose: `title_is_generic` (config-driven exact/
@@ -81,6 +131,20 @@ external users but no sensitive data). Public repo.
   payload) inherits them for free. `poison_stub.py` (no parse exists for a
   poison doc) applies only the override map.
 - `nsite_client.py` — EGLE nSITE API: session, list, download.
+- `poison_doc_extractor.py` — **ADR 011**: text extraction + PDF synthesis for
+  nSITE documents whose source isn't a PDF (.msg, .docx, bare images, zip
+  bundles) — the gap `nsite_client.download_pdf()` alone can't close. Wired in
+  as that function's last-resort fallback (imported at module level —
+  `nsite_client.py:93` — so it loads with every caller of `nsite_client`, see
+  the `egle_doc_parser.py` entry above): native bytes are sniffed for format
+  and, if supported, synthesized into a PDF containing every extractable
+  piece of content, so `egle_doc_parser.parse_document()`'s existing
+  classify/OCR/extract pipeline ingests it unchanged downstream. Recurses
+  into `.msg`/zip-bundle attachments (nested `.msg`, PDF pages merged via
+  `fitz.insert_pdf`, `.docx`/`.xls`/`.xlsx` attachments, image attachments
+  OCR'd proactively). `extract_msg`/`openpyxl`/`xlrd` and
+  `from egle_doc_parser import ocr_in_place` are all deferred (function-level)
+  imports — only `fitz`/`defusedxml` load at module import time.
 - `well_aliases.py` — **ADR 068**: the curated well-ID alias map (38 pairs at
   build), loaded from the committed `data/well_aliases.json`, which is GENERATED by
   Lotext's `merge_well_aliases.py --export-only`. Never hand-edit it; add pairs in
@@ -113,7 +177,8 @@ external users but no sensitive data). Public repo.
   failure is isolated from the others. Dedup is ONE shared set/tab across all
   mirrors (`CivicClerk Archived Files`) since CivicClerk file IDs are a single
   global sequence, not per-category. Gated on `civicclerk_archive.enabled`
-  (new external-write capability; ships `false`).
+  (shipped `false`; activated 2026-09-06 (Trisha) — DPW + BOC Drive folders
+  created, `GOAUTH_DPW_FOLDER_ID`/`GOAUTH_BOC_FOLDER_ID` set; live).
 - `archiver.py` — the durable nSITE PDF → Drive mirror (ADR 007). Two entry
   points: `mirror_one_now()`, called INLINE from watcher.py/backfill.py at
   write time (ADR 007 addendum, 2026-08-23) so a same-day Sheet row/alert can
@@ -164,6 +229,18 @@ external users but no sensitive data). Public repo.
   URL so penalties/compliance_actions and the two composting grids don't
   double-snapshot their shared pages. See ADR 043.
   Same inline-mirror-before-write as backfill.py.
+- `well_watch.py` — **ADR 058**: named single-well temperature trip-wires.
+  `email_alerts.is_urgent` already fires on any measured wellhead temperature
+  ≥145°F, but several wells hold an EGLE HOV above that, so the generic alert
+  fires on nearly every WOI Status Report and never says WHICH well crossed.
+  `watcher.py` calls `well_watch.check_and_alert()` after `woi_router` routes a
+  WOI-format filing, and a configured well (`well_watch.wells` in `config.yml`)
+  at or above its own threshold gets its own dedicated email naming the well,
+  value, reading time, as-found vs. ADJ, and the filing. Matches by well
+  NUMBER via regex (not exact ID — wells get redrilled, R5→R6, and the AHW/AHWW
+  prefix/zero-padding is inconsistent); `since` drops re-printed historical
+  rows. Runs only on the live WOI-routed path — the NESHAP semi-annual roster
+  and any spreadsheet EGLE emails outside nSITE are not covered.
 - `pfas_client.py` — content-hash normalizer for EGLE's PFAS pages (isolates
   `<main>`, ignores Sitecore theme cache-busters). Pure; stdlib-only.
 - `pfas_watcher.py` — daily page-watch: alerts on any change vs. the last
@@ -204,6 +281,32 @@ external users but no sensitive data). Public repo.
   H2S 72-24hr-avg) is untouched. Episode state committed like the cursor; emails
   best-effort (no retry, matching the exceedance email). See ADR 039 (+ ADR 014's
   2026-07-21 addendum, now folded in).
+- `gfl_air_hourly_capture.py` — ADR 026 addendum (2026-10-06): a SEPARATE
+  hourly durable-capture job alongside the daily Stream E poll above, shrinking
+  the window in which a reading could sit in GFL's feed (and be silently
+  edited/removed) unseen from ~24h to ~1-2h. Deliberately minimal — no alerts,
+  no Sheet, no case-file cursor. Its cursor is DERIVED FROM DRIVE (the highest
+  `oid<N>` already captured in the app-only GFL Air Exhibit folder, shared with
+  the daily job's own files), so the two jobs never race over shared state.
+  A failed hour exits 0 (silently retried next hour) except four fixed UTC
+  hours/day (`LOUD_HOURS_UTC`), which exit 1 so a persistent failure still
+  surfaces a few times a day. Gated on `gfl_air.hourly_capture.enabled`
+  (live).
+- `gfl_feed_snapshot.py` — **ADR 063**: a monthly FULL snapshot of GFL's public
+  perimeter-air feed (every row of every layer, ~226k hourly H2S/CH4 readings,
+  verbatim) with change detection against the previous snapshot — the backstop
+  for whatever the daily/hourly captures above missed (an over-cap re-baseline,
+  a failed upload) or for the source silently deleting/editing PAST readings.
+  Uploads an immutable zip (data + manifest with per-file SHA-256 and a row-
+  count cross-check against the server's own count) to the GFL Air Exhibit
+  Drive folder FIRST, then compares against the newest earlier snapshot that
+  itself carries a `.compared` marker; a DELETED or EDITED past reading, or a
+  changed field set, emails Trisha (the owner list) ONLY — the new snapshot's
+  `.compared` marker is set only after that succeeds, so a failed comparison
+  or email retries against the same baseline next run. Gated on
+  `gfl_feed_snapshot.enabled` (live, switched on 2026-10-06 — the module's own
+  docstring still says "ships false" and should be corrected in a future
+  change, see this PR's notes).
 - `civicclerk_watcher.py` — Stream F: twice-daily change-watch on MMPC +
   Washtenaw County BOC meeting events (hand-picked, via `mmpc_client.fetch_event`)
   plus the Board of Public Works/DPA (categoryId 68, AUTO-DISCOVERED via the new
@@ -269,7 +372,8 @@ external users but no sensitive data). Public repo.
   retries idempotently next run. `ridgewood_client.py` gained two additive-only
   helpers (`scrape_all_report_links`, `allowed_report_host`); Stream G's own
   `scrape_report_links`/`download_report`/the archiver itself are untouched. Gated
-  on `ridgewood.reverify_enabled` (ships `false`).
+  on `ridgewood.reverify_enabled` (shipped `false`; activated 2026-10-12 (Trisha)
+  — see ADR 066).
 - `rop_client.py` — Stream H: fetch + parse for the ROP (air Title V permit)
   watch. EPA ROP Monthly Report CSV rows for N2688/N1504/P1488 (excludes the
   M3333 "Emerald" name-collision by exact SRN match, never by name), the N2688
@@ -366,12 +470,12 @@ external users but no sensitive data). Public repo.
   to a digest multiset above `snapshot_char_budget`. `snapshot_hash` is
   always taken over the FULL snapshot, never the truncated payload. Makes no
   severity judgment about which EGLE status is good or bad. Gated on
-  `nsite_violations.enabled` (new source; ships `false`). Its workflow lives
-  at `.github/workflows/nsite-violations-watch.yml` — moved out of
+  `nsite_violations.enabled` (shipped `false`; activated 2026-08-06 (Trisha) —
+  the 2pm-ET cron is live). Its workflow lives at
+  `.github/workflows/nsite-violations-watch.yml` — moved out of
   `docs/pending-workflows/` when PR #36 merged (the build session's token
   lacked the `workflow` OAuth scope, so the file was parked until a
-  scope-bearing SSH push could land it). The 2pm-ET cron runs as a no-op
-  until `enabled` is flipped. See ADR 023.
+  scope-bearing SSH push could land it). See ADR 023.
 - `nsite_compliance_actions_watcher.py` — Stream M: daily snapshot-diff of
   EGLE's nSITE **Compliance Actions** profile (the formal actions the regulator
   takes in *response* to a violation — Violation Notices, Consent Orders,
@@ -389,10 +493,11 @@ external users but no sensitive data). Public repo.
   severity judgment. Tiers are this profile's own (**2 daily / 4 biweekly / 13
   quarterly**), NOT a copy of Violations' 3/3/13 — N1504 drops to biweekly
   because its two actions are both *Closed*. Gated on
-  `nsite_compliance_actions.enabled` (new source; ships `false`). Its workflow
-  is parked at `docs/pending-workflows/nsite-compliance-actions-watch.yml` (the
-  build token lacked the `workflow` OAuth scope) and must be `git mv`'d into
-  `.github/workflows/` before the flag is flipped. See ADR 028.
+  `nsite_compliance_actions.enabled` (shipped `false`; activated 2026-08-09
+  (Trisha)). Its workflow lives at
+  `.github/workflows/nsite-compliance-actions-watch.yml` — moved out of
+  `docs/pending-workflows/` (which now holds only a README) the same way
+  Stream L's was. See ADR 028.
 - `nsite_evaluations_watcher.py` — Stream N: daily snapshot-diff of EGLE's
   nSITE **Evaluations** profile (the underlying inspection record a violation
   or compliance action often stems from — a Violations record already
@@ -413,11 +518,11 @@ external users but no sensitive data). Public repo.
   new/changed/removed. Makes no severity judgment. Tiers are this profile's
   own (**1 daily / 4 biweekly / 14 quarterly**), NOT a copy of any sibling —
   only N2688 has recent evaluation activity (latest 2026-08-07). Gated on
-  `nsite_evaluations.enabled` (new source; ships `false`). Its workflow
-  landed directly in `.github/workflows/nsite-evaluations-watch.yml` (this
-  build session's SSH key authenticated non-interactively, so the
-  `workflow`-OAuth-scope parking Streams L/M needed did not apply). See
-  ADR 029.
+  `nsite_evaluations.enabled` (shipped `false`; activated 2026-08-22 (Trisha)
+  — see ADR 029; no new secret). Its workflow landed directly in
+  `.github/workflows/nsite-evaluations-watch.yml` (this build session's SSH
+  key authenticated non-interactively, so the `workflow`-OAuth-scope parking
+  Streams L/M needed did not apply). See ADR 029.
 - `nsite_permits_watcher.py` — Stream O: daily snapshot-diff of EGLE's nSITE
   **Permits** profile (a facility's permit lifecycle — issued, extended,
   expiring, terminated — across EVERY permit type on file, broader than
@@ -441,7 +546,8 @@ external users but no sensitive data). Public repo.
   "Extended" permit, this profile's own headline concern. The budget-
   degradation guard is inherited for structural parity but verified-inert at
   real Permits volumes (max 9 records). Gated on `nsite_permits.enabled`
-  (new source; ships `false`). Its workflow landed directly in
+  (shipped `false`; activated 2026-08-22 (Trisha) — see ADR 030; no new
+  secret). Its workflow landed directly in
   `.github/workflows/nsite-permits-watch.yml` (this build session's SSH key
   authenticated non-interactively, so the `workflow`-OAuth-scope parking
   Streams L/M needed did not apply). See ADR 030.
@@ -549,8 +655,9 @@ external users but no sensitive data). Public repo.
   (rows, no email — never falls back to the coalition list). PROBE mode
   (`--probe` / workflow_dispatch `probe=true`) is a fetch-path diagnostic that runs
   regardless of the flag and touches neither Sheet nor email — the pre-activation
-  Azure-runner Cloudflare check. Gated on `gfl_info_site.enabled` (ships `false`).
-  See ADR 041.
+  Azure-runner Cloudflare check. Gated on `gfl_info_site.enabled` (shipped
+  `false`; activated 2026-09-12 (Trisha-directed) — Azure-runner probe green,
+  recipients = Trisha). See ADR 041.
 - `pfas_pws_client.py` — Stream R: fetch + canonicalize for the Public Water
   Supply PFAS sampling watch. Keyless EGLE ArcGIS FeatureServer (the data behind
   the MPART PFAS map), one query per run (`WSSN IN (...)`, explicit outFields);
@@ -573,7 +680,9 @@ external users but no sensitive data). Public repo.
   skip-and-warn after baseline / loud on activation; ParseError = always loud.
   **No MCL comparison** (MI-2020 vs federal-2024 dual-regime accuracy trap — the
   raw value+analyte+date is actionable; see ADR 042). Recipients scoped verbatim
-  (Trisha to start). Gated on `pfas_pws.enabled` (ships `false`). See ADR 042.
+  (Trisha to start). Gated on `pfas_pws.enabled` (shipped `false`; activated
+  2026-09-13 (Trisha-directed) — keyless EGLE ArcGIS, no runner probe needed).
+  See ADR 042.
 
 - `mpart_client.py` — Stream V: fetch + canonicalize for MPART's PFAS open-data layers
   (ADR 060): surface-water samples (`PfasOpenData/MapServer/0`; composite key
@@ -665,6 +774,81 @@ external users but no sensitive data). Public repo.
   check (exit 1 if any program doesn't resolve). Manual dispatch input
   `mirror_uris` (comma-separated RIDE file ids) mirrors just those files now.
   Gated on `ride_docs.enabled` (shipped `false`; ACTIVATED 2026-09-28). See ADR 061.
+- `egle_newsroom_watcher.py` — standalone, self-terminating daily watch on
+  EGLE's newsroom landing page (no ADR; added 2026-10-01, Trisha-directed), the
+  same shape as `pfas_watcher.py`. The landing page lists only the newest four
+  items and is the only server-rendered view (the full archive is a keyless JS
+  search; the GovDelivery feed refuses non-browser requests), so the workflow
+  polls several times a day and fires a GAP NOTICE if every listed item comes
+  back new (more may have scrolled past between polls). Items never seen
+  before (the `EGLE Newsroom Watch` tab IS the state) are scored against
+  `egle_newsroom.keywords` in `config.yml` — `specific` terms alert on any
+  hit, `area` terms only alongside a `topic` term (county names appear in
+  unrelated statewide lists), `topic` terms alert on a title hit or
+  `topic_min_body_hits` body hits — using ONLY the article body (each page's
+  trailing "Related News" block would otherwise leak a neighbor's keywords
+  in). Durable row first, alert email second (best-effort). First run
+  baselines silently; a state-tab read error raises; zero parsed article
+  links on a page that did fetch is a liveness failure (exit 1). Recipients
+  are scoped (`egle_newsroom.recipients`) and never fall back to the shared
+  `alert_recipients` list. Gated on `egle_newsroom.enabled` (live).
+- `public_comment_feed.py` — **ADR 035**: pure render logic (no I/O, same
+  shape as `findings_feed.py`) for the public "Public Comment Periods" page
+  (`site/public-comment/`) — an Open table and a Closed table, sourced from
+  EGLE's live active public notices (`nsite_client.fetch_site_public_notices`)
+  plus the statewide ROP notice (`rop_client.py`), via the thin I/O wrapper
+  `scripts/gen_public_comment_feed.py`. Since EGLE drops a notice from its
+  active feed once the comment window ends, state (closed periods, and any
+  hand-set Outcome) rides inside the committed page itself as a hidden JSON
+  block that each run reads back — the same self-referential trick
+  `gen_findings_feed` uses. No `enabled` flag; it has its own scheduled
+  workflow (`public-comment.yml`) and is always on. Editorial note baked into
+  the module: this page is FACTUAL RECORDS ONLY — it never tells anyone to
+  comment; that call to action lives on the separate advocacy site.
+
+## Activation status (generated — do not hand-edit the table)
+
+The table below is generated by `scripts/gen_stream_status.py` from every
+`enabled`/`*_enabled` flag in `config.yml`, at any nesting depth, and pinned
+by `tests/test_stream_status.py` (same pattern as `tests/test_sitemap.py` for
+`site/sitemap.xml`). Regenerate with `python3 scripts/gen_stream_status.py`
+and paste its output between the markers verbatim — a hand edit here drifts
+exactly the way the per-module prose above did. That prose still carries each
+flag's activation *date* and the human decision behind it; this table only
+answers "is it live right now."
+
+<!-- stream-status:begin -->
+| Config flag | Live |
+| --- | --- |
+| `wds.enabled` | yes |
+| `mmpc_archive.enabled` | yes |
+| `civicclerk_archive.enabled` | yes |
+| `pfas.enabled` | yes |
+| `gfl_air.enabled` | yes |
+| `gfl_air.capture.enabled` | yes |
+| `gfl_air.hourly_capture.enabled` | yes |
+| `gfl_feed_snapshot.enabled` | yes |
+| `civicclerk_watch.enabled` | yes |
+| `civicclerk_watch.keyword_scan.enabled` | yes |
+| `ridgewood.enabled` | yes |
+| `ridgewood.reverify_enabled` | yes |
+| `rop.enabled` | yes |
+| `mmd.enabled` | yes |
+| `ride.enabled` | yes |
+| `ride_docs.enabled` | yes |
+| `nsite_submissions.enabled` | yes |
+| `nsite_violations.enabled` | yes |
+| `nsite_compliance_actions.enabled` | yes |
+| `nsite_evaluations.enabled` | yes |
+| `nsite_permits.enabled` | yes |
+| `nsite_complaints.enabled` | no |
+| `nsite_public_notices.enabled` | yes |
+| `gfl_info_site.enabled` | yes |
+| `pfas_pws.enabled` | yes |
+| `govqa.enabled` | yes |
+| `mpart.enabled` | yes |
+| `egle_newsroom.enabled` | yes |
+<!-- stream-status:end -->
 
 ## Forbidden patterns (do not do these)
 
@@ -713,6 +897,37 @@ external users but no sensitive data). Public repo.
   digest's "Upcoming" tab, read by `upcoming.py`) is a **separate Sheet shared
   ONLY with the service account and Trisha** — never share it with the operator.
   Keep strategy-flavored key dates on the private Sheet, never the public one.
+- **State tabs vs. data tabs — and state reads must raise.** A tab any
+  watcher DIFFS or BASELINES off of (`_state`, `_meta`, and every `<X> Watch`
+  snapshot tab — ROP/MMD/RIDE/PFAS/Public Water Supply PFAS/GFL Info Site/
+  Meeting/MPART Data/Submissions/Violations/Compliance Actions/Evaluations/
+  Permits/Complaints/Public Notices/EGLE Newsroom, plus the private-Sheet
+  `GovQA Archive Watch`/`RRD Documents`) must RAISE on a genuine read failure
+  (429/5xx/network/exhausted-retries), never swallow it to `[]` — a swallowed
+  transient error misreads as "nothing seen yet" and silently re-baselines
+  over real state (the ADR 018/023 "spurious baseline becomes the state"
+  failure). Enforced two ways in the code: `sheet_writer._tab_rows_strict()`
+  (added when PR #135 fixed this across most state/snapshot tabs) for the
+  tabs it covers, and — for tabs with their own reader predating that helper
+  (`read_mpart_rows`, `read_govqa_rows`, `read_rrd_docs_rows`, and the six
+  nSITE-profile readers for Violations/Compliance Actions/Evaluations/
+  Permits/Complaints/Public Notices) — a bespoke per-tab read with no
+  try/except at all, which raises by construction. The LENIENT `_tab_rows()`
+  (returns `[]` on ANY failure, including a genuinely absent tab) is correct
+  ONLY for append-only DEDUP-INDEX tabs whose worst-case failure is redundant
+  work, never a lost alert or an overwritten record — `_tab_rows`'s own
+  docstring is the audited, authoritative list of its remaining callers
+  (`archived_doc_ids`/`archived_doc_links`, `mmpc_archived_file_ids`/
+  `civicclerk_archived_file_ids`, `wds_historical_collections_dumped`,
+  `ridgewood_last_event`/`ridgewood_multi_link_flagged_months`). A few tabs
+  are HYBRID — simultaneously the run's state (last row per key = current)
+  AND a durable append-only record (every row is also data): `GFL Info Site
+  Watch`, `Ridge Wood Reports`, `RRD Documents`, `EGLE Newsroom Watch` — these
+  get the strict/raising contract above. Every other tab (New/Historical/
+  Related Documents, Evidence by Risk/All Evidence by Risk, Measurements,
+  Compliance Deadlines, Risk Register, Hand-Curated Files, WOI Well Summary,
+  Perimeter Action-Level Episodes) is pure DATA that no diff/baseline ever
+  reads back.
 
 ## Tests
 

@@ -23,9 +23,12 @@ requests>=2.32
 # docs the downloadpdf render endpoint 400s on. extract-msg pulls in oletools
 # and RTFDE transitively (OLE2/RTF parsing) — no action needed, just larger
 # than it looks from this one line. NOTE: extract-msg is GPL-licensed; xlrd
-# and openpyxl are BSD/MIT. This repo has no LICENSE file of its own yet, so
-# there's no direct copyleft conflict today, but flag before adding a license
-# or redistributing, since the README invites reuse by other advocacy groups.
+# and openpyxl are BSD/MIT. This repo's root LICENSE file is CC BY 4.0, but it
+# is scoped to the published /data/ datasets only (README's "License / reuse"
+# section is explicit about this) -- the CODE's license is undecided, so
+# there's no direct copyleft conflict today, but flag before choosing a code
+# license or redistributing, since the README invites reuse by other
+# advocacy groups.
 # defusedxml hardens the .docx word/document.xml parse against XXE / billion-
 # laughs: the bytes are an untrusted nSITE download, so a hostile document.xml
 # must be refused (raised → caught as a poison strike), never entity-expanded.
