@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 import smtplib
+import ssl
 from email.message import EmailMessage
 from email.utils import parseaddr
 from typing import Optional
@@ -496,12 +497,22 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
     # footer line (advocacy alerts don't require a physical address). ADR 040.
     armed = bool(mailto)
 
+    # SEC-003 (classifier-untrusted-input, 2026-10-14): `subject` can carry a
+    # raw, filer-controlled nSITE document title (send_urgent_alert's
+    # f-string). A literal CR/LF inside it makes EmailMessage raise ValueError
+    # the instant the Subject header is set (email.policy.default's header-
+    # folding check) -- collapsed ONCE here, in the shared send path, so
+    # every caller (urgent, digest, GFL-air watch, ...) is covered without
+    # each one having to sanitize its own subject first.
+    subject = " ".join(subject.split())
+
     sender = os.environ.get("SMTP_FROM") or user
     sent = 0
     dropped = []
+    skipped_headers = 0
     try:
         with smtplib.SMTP(host, port, timeout=30) as server:
-            server.starttls()
+            server.starttls(context=ssl.create_default_context())  # SEC-004
             server.login(user, password)
             for recipient in recipients:
                 is_owner = (_norm_email(recipient) in owners
@@ -523,15 +534,26 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
                     # else: owners empty → can't classify a third party → send as-is
                     # (never risk silencing Trisha); the WARNING above surfaced it.
                 msg = EmailMessage()
-                msg["Subject"] = subject
-                msg["From"] = sender
-                msg["To"] = recipient
-                if add_unsub_header:
-                    # No List-Unsubscribe-Post header: RFC-8058 one-click needs an
-                    # HTTPS POST endpoint, and this static-Pages project has no
-                    # backend — mailto is the compliant mechanism.
-                    msg["List-Unsubscribe"] = build_list_unsubscribe(mailto, recipient)
-                msg.set_content(out_body)
+                try:
+                    # SEC-003: header assignment is pure/local (no network I/O
+                    # yet) -- a ValueError here (a bad header value) is a
+                    # per-message problem, not a connection failure, so it
+                    # must not abort every OTHER recipient's send. Subject is
+                    # already collapsed above; this remains in case any other
+                    # per-recipient header value (e.g. a malformed address
+                    # slipping past config) carries an embedded CR/LF.
+                    msg["Subject"] = subject
+                    msg["From"] = sender
+                    msg["To"] = recipient
+                    if add_unsub_header:
+                        # No List-Unsubscribe-Post header: RFC-8058 one-click needs an
+                        # HTTPS POST endpoint, and this static-Pages project has no
+                        # backend — mailto is the compliant mechanism.
+                        msg["List-Unsubscribe"] = build_list_unsubscribe(mailto, recipient)
+                    msg.set_content(out_body)
+                except ValueError:
+                    skipped_headers += 1
+                    continue
                 server.send_message(msg)
                 sent += 1
     except OSError as e:   # SMTPException, socket, timeout and TLS errors are all OSError
@@ -551,6 +573,11 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
         print(f"[email_alerts] {len(dropped)} non-owner recipient(s) NOT sent "
               f"{subject!r} — unsubscribe apparatus not armed. Set "
               f"unsubscribe.mailto to send them. Held: {len(dropped)} recipient(s)")
+    if skipped_headers:
+        # SEC-001/SEC-003: count only, never the address or header value.
+        print(f"[email_alerts] {skipped_headers} recipient(s) SKIPPED for "
+              f"{subject!r} — a malformed header value (never logged here); "
+              f"other recipients were still sent.")
     print(f"[email_alerts] sent {subject!r} to {sent} recipient(s)")
     return sent > 0
 
