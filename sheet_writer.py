@@ -46,6 +46,8 @@ import json
 from types import SimpleNamespace
 from typing import Iterable
 
+from googleapiclient.errors import HttpError
+
 # Every Sheets execute() call below passes this so a transient Google 5xx/429 is
 # retried with backoff instead of aborting the run — see drive_client.
 from drive_client import GOOGLE_API_NUM_RETRIES
@@ -1007,7 +1009,16 @@ def rebuild_risk_register_tab(service, sheet_id: str, risk_register: list[dict])
     by Risk exists. Both tabs put their date in column C (index 2) despite
     different remaining schemas, so one _tally() helper serves both. Overwrites
     the tab body (rows 2+) so it always reflects current evidence from both
-    streams."""
+    streams.
+
+    The WDS-side read uses the STRICT reader (state-reads-raise): a transient
+    read failure there must RAISE rather than read as "no WDS evidence" —
+    that would silently blind-overwrite the Risk Register with undercounted
+    R1/R2/R5 totals. Both of this function's callers (watcher.py) already
+    wrap the call in their own isolated try/except, so a raise here is caught
+    there and simply skips the rebuild for this run, leaving yesterday's
+    (correct) counts in place — never a red run, by that caller's own
+    design."""
     counts: dict[str, int] = {}
     latest: dict[str, str] = {}
 
@@ -1029,7 +1040,7 @@ def rebuild_risk_register_tab(service, sheet_id: str, risk_register: list[dict])
     )
     _tally(nsite_resp.get("values", []), date_col=2)
 
-    wds_resp = _tab_rows(service, sheet_id, TAB_WDS_EVIDENCE, "A2:I")
+    wds_resp = _tab_rows_strict(service, sheet_id, TAB_WDS_EVIDENCE, "A2:I")
     _tally(wds_resp, date_col=2)
 
     body_rows = []
@@ -1057,7 +1068,16 @@ def rebuild_all_evidence_tab(service, sheet_id: str) -> None:
     8-row register, safe to blind-overwrite), this tab's row count tracks total
     evidence and only grows under normal operation — but isn't GUARANTEED to
     (e.g. a manual re-dump can shrink the source tabs), so the range is
-    cleared before writing rather than assuming monotonic growth."""
+    cleared before writing rather than assuming monotonic growth.
+
+    The WDS-side read uses the STRICT reader (state-reads-raise): a transient
+    read failure there must RAISE rather than read as "no WDS evidence" —
+    that would CLEAR this tab and rewrite it with the nSITE rows only,
+    wiping out every WDS evidence row that was visible before this run.
+    Like rebuild_risk_register_tab(), this function's only caller
+    (watcher.py) wraps the call in its own isolated try/except, so a raise
+    here is caught and the clear+rewrite simply doesn't happen this run,
+    leaving yesterday's tab intact."""
     # Ranges match EVIDENCE_HEADERS'/ALL_EVIDENCE_HEADERS' current width (10
     # columns, A-J, since ADR 065 appended Document Date/EGLE Title) -- a
     # stale narrower range here would silently clip those two columns right
@@ -1068,7 +1088,7 @@ def rebuild_all_evidence_tab(service, sheet_id: str) -> None:
         .get(spreadsheetId=sheet_id, range=f"'{TAB_EVIDENCE}'!A2:{chr(ord('A') + len(EVIDENCE_HEADERS) - 1)}")
         .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
-    wds_rows = _tab_rows(service, sheet_id, TAB_WDS_EVIDENCE, "A2:I")
+    wds_rows = _tab_rows_strict(service, sheet_id, TAB_WDS_EVIDENCE, "A2:I")
     body_rows = all_evidence_rows(nsite_resp.get("values", []), wds_rows)
 
     service.spreadsheets().values().clear(
@@ -1098,9 +1118,17 @@ def read_meta(service, sheet_id: str) -> dict:
     caller re-read FRESH right before each write_meta() call instead of writing
     back a stale run-start snapshot of keys it doesn't own — shrinks (doesn't
     eliminate) the window where a concurrent job's _meta write could be
-    clobbered, since write_meta() always overwrites every key at once."""
+    clobbered, since write_meta() always overwrites every key at once.
+
+    Uses the STRICT reader (state-reads-raise): a transient Sheets read
+    failure here must RAISE, never silently read as "no pending digest items /
+    no wds_seen cursor" — write_meta() would then overwrite the real stored
+    values with those defaults at the end of the run, erasing queued digest
+    items and resetting every live watcher's cursor. A genuinely absent _meta
+    tab (a fresh Sheet before ensure_tabs()) still reduces to the module
+    defaults, same as before."""
     state = {k: _copy_default(k) for k in _META_DEFAULTS}
-    for r in _tab_rows(service, sheet_id, TAB_META, "A2:B"):
+    for r in _tab_rows_strict(service, sheet_id, TAB_META, "A2:B"):
         if not r:
             continue  # a blank padding row (write_meta clears orphans) — skip
         key = r[0]
@@ -1117,10 +1145,18 @@ def read_state(service, sheet_id: str) -> dict:
 
     _state is append-only and chronological, so a doc's 'error' rows always
     precede its 'processed' row: we count errors as we go and clear them when the
-    'processed' row arrives. Missing tabs (first run) reduce to an empty state."""
+    'processed' row arrives. A genuinely absent tab (first run, before
+    ensure_tabs()) reduces to an empty state.
+
+    Uses the STRICT reader (state-reads-raise): a transient Sheets read
+    failure must RAISE rather than read as "nothing processed yet" — watcher.run
+    would otherwise reprocess every document as new and `write_meta` at the end
+    of the run would persist a blown-away pending_digest/wds_seen; backfill.run
+    would re-classify and write duplicate rows for every already-processed doc.
+    Callers must not catch this and proceed to write state afterward."""
     state = {"processed": {}, "errors": {}, "skipped": {}}
 
-    for r in _tab_rows(service, sheet_id, TAB_STATE, "A2:E"):
+    for r in _tab_rows_strict(service, sheet_id, TAB_STATE, "A2:E"):
         doc_id = r[0]
         status = r[1] if len(r) > 1 else ""
         if status == "processed":
@@ -1222,8 +1258,30 @@ def _append_state_row(service, sheet_id: str, row: list) -> None:
 
 
 def _tab_rows(service, sheet_id: str, tab: str, a1: str) -> list[list]:
-    """Return the non-empty value rows of a tab range, or [] if the tab is absent
-    (a fresh Sheet before ensure_tabs, or a transient read error)."""
+    """LENIENT reader: return the non-empty value rows of a tab range, or []
+    for ANY read failure — the tab is genuinely absent, OR a transient Sheets
+    error (429/5xx/network/exhausted retries). The second case is exactly the
+    bug ADR 018/023 name as the "spurious baseline becomes the state" failure:
+    a caller that DIFFS or BASELINES off this helper would read a throttled
+    response as "never seen before" and write a fresh baseline that silently,
+    permanently erases whatever real state existed — see `_tab_rows_strict`
+    below, which every such caller must use instead.
+
+    This lenient form stays correct ONLY for an append-only dedup-set reader
+    whose worst-case consequence of a false-empty read is redundant work (a
+    duplicate Drive upload, a duplicate dump-tracking row) — never a lost
+    alert or an overwritten record. Every remaining caller of this function is
+    exactly that kind of dedup set (audited in the state-reads-raise PR):
+    `archived_doc_ids`/`archived_doc_links` (duplicate Drive mirror attempt),
+    `mmpc_archived_file_ids`/`civicclerk_archived_file_ids` (duplicate meeting
+    PDF re-upload), `wds_historical_collections_dumped` (duplicate one-off
+    dump), and `ridgewood_last_event`/`ridgewood_report_rows`/
+    `ridgewood_multi_link_flagged_months` (a duplicate owner alert, or a wrong
+    bootstrap date on Stream G's tamper-evident manifest — never a lost
+    detection, since Ridge Wood's own exceedance alert path reads the
+    archiver's PDF-derived value directly, not these helpers). Every OTHER
+    diff/baseline reader in this module has been moved to `_tab_rows_strict`
+    below."""
     try:
         resp = (
             service.spreadsheets()
@@ -1233,6 +1291,58 @@ def _tab_rows(service, sheet_id: str, tab: str, a1: str) -> list[list]:
         )
     except Exception:  # noqa: BLE001 — missing tab / transient API error
         return []
+    return [r for r in resp.get("values", []) if r]
+
+
+def _is_absent_tab_error(exc: BaseException) -> bool:
+    """True only for the specific signature Sheets returns when a range names
+    a tab that doesn't exist: an HttpError with HTTP 400 whose reason reads
+    "Unable to parse range: ...". This is deliberately narrow — an HttpError
+    with a DIFFERENT 400 (a malformed request some other way) or any other
+    status (429/5xx) is NOT this case and must not be swallowed."""
+    if not isinstance(exc, HttpError):
+        return False
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "resp", None), "status", None)
+    if status != 400:
+        return False
+    reason = (getattr(exc, "reason", "") or "").lower()
+    return "unable to parse range" in reason
+
+
+def _tab_rows_strict(service, sheet_id: str, tab: str, a1: str) -> list[list]:
+    """STRICT reader — the fix for ADR 018/023's "spurious baseline becomes
+    the state" failure (see `_tab_rows`'s docstring for the full mechanism).
+    A genuinely ABSENT tab (Sheets' own 400 "Unable to parse range...", e.g. a
+    fresh Sheet before ensure_tabs()/ensure_*_tabs() has ever run) still reads
+    as [] — that is a real "no data yet," not a failure. Every OTHER
+    exception — a 429/5xx, a network/timeout error, an exhausted-retries
+    HttpError, or any non-HttpError exception at all — RAISES instead of
+    masquerading as an empty read.
+
+    Use this for every state/snapshot read a caller DIFFS or BASELINES off of:
+    `_state`, `_meta`, and every `last_*_snapshot(s)` / first-run-check reader
+    (ROP, MMD, PFAS-PWS, RIDE, nSITE Submissions, the PFAS page watch, the
+    CivicClerk Meeting watch, the GFL info-site first-run checks, the WDS
+    evidence tally two rebuild_*_tab() read, the WDS-seen recovery log, and
+    the Ridge Wood archived-months dedup — the last one because a false-empty
+    read there doesn't just duplicate work, it can re-fire an already-sent
+    exceedance alert for an old month). Every caller listed above already
+    calls its own `ensure_*_tabs()` before this runs, so in steady-state
+    operation the absent-tab branch is pure defensive insurance, not a path
+    that fires on every "first ever run"."""
+    try:
+        resp = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=sheet_id, range=f"'{tab}'!{a1}")
+            .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+        )
+    except HttpError as e:
+        if _is_absent_tab_error(e):
+            return []
+        raise
     return [r for r in resp.get("values", []) if r]
 
 
@@ -1289,9 +1399,19 @@ def read_wds_seen_log_latest(service, sheet_id: str) -> dict:
 
     Used ONLY for recovery (see watcher.py's WDS block): the live diff cursor is
     still `_meta.wds_seen`. This is what makes a `_meta` wipe non-catastrophic
-    (Gap G1-C-1, ADR 024)."""
+    (Gap G1-C-1, ADR 024).
+
+    Uses the STRICT reader (state-reads-raise): a transient read failure here
+    must RAISE rather than read as {} ("nothing to recover") — on a run where
+    `_meta.wds_seen` is ALSO genuinely empty, a false-empty log read would
+    silently skip recovery and let check_wds() re-baseline every WDS
+    collection as if seen for the first time. watcher.py's WDS block already
+    wraps this whole step in its own isolated try/except ("Stream C must
+    never break the watcher"), so a raise here is caught there and the
+    recovery attempt is simply skipped for this run, logged, with no write —
+    never a red run, by that caller's own design."""
     latest: dict = {}
-    for r in _tab_rows(service, sheet_id, TAB_WDS_SEEN, "A2:E"):
+    for r in _tab_rows_strict(service, sheet_id, TAB_WDS_SEEN, "A2:E"):
         # row = [checked_at, collection, last_count, snapshot_hash, records_json]
         if len(r) < 5 or not r[1]:
             continue
@@ -1554,9 +1674,14 @@ def last_pfas_snapshot(service, sheet_id: str, url: str) -> tuple[str, str] | No
     Reading the last matching row (not a _meta cell) is what makes the watch
     race-free — the tab is append-only, so no concurrent job can clobber it the
     way _meta singletons get clobbered. Rows are appended chronologically, so the
-    last URL match is the latest snapshot."""
+    last URL match is the latest snapshot.
+
+    Uses the STRICT reader (state-reads-raise): a transient read failure must
+    RAISE, never read as None ("never snapshotted") — that would make the
+    watcher silently re-baseline a page whose content actually changed,
+    permanently erasing the un-alerted edit (ADR 018/023's failure mode)."""
     latest = None
-    for r in _tab_rows(service, sheet_id, TAB_PFAS, "A2:I"):
+    for r in _tab_rows_strict(service, sheet_id, TAB_PFAS, "A2:I"):
         if len(r) > 2 and r[2] == url:
             latest = r
     if latest is None:
@@ -1647,9 +1772,14 @@ def last_gfl_info_site_row(service, sheet_id: str, url: str) -> tuple[str, str, 
     'pending-removal' (one 404 seen, awaiting a second) or a confirmed
     'removed-page'. Reading the last matching row (not a _meta cell) is what makes
     the watch race-free — the tab is append-only, so no concurrent job can clobber
-    it. Rows are appended chronologically, so the last URL match is the latest."""
+    it. Rows are appended chronologically, so the last URL match is the latest.
+
+    Uses the STRICT reader (state-reads-raise): a transient read failure must
+    RAISE, never read as None ("never snapshotted") — that would restart the
+    404-removal debounce state machine from scratch and could silently
+    re-baseline a page as if it had never been watched."""
     latest = None
-    for r in _tab_rows(service, sheet_id, TAB_GFL_INFO_SITE, "A2:I"):
+    for r in _tab_rows_strict(service, sheet_id, TAB_GFL_INFO_SITE, "A2:I"):
         if len(r) > 2 and r[2] == url:
             latest = r
     if latest is None:
@@ -1665,9 +1795,14 @@ def all_gfl_info_site_urls(service, sheet_id: str) -> set[str]:
     type). The watcher needs this to (a) tell a genuinely new page apart from the
     silent initial baseline, and (b) know which previously-seen pages to re-check
     for removal — a page absent from today's discovery but present here is
-    fetched, and only a real HTTP 404/410 makes it a 'removed-page' alert."""
+    fetched, and only a real HTTP 404/410 makes it a 'removed-page' alert.
+
+    Uses the STRICT reader (state-reads-raise): a transient read failure must
+    RAISE, never read as an empty set — that would make every previously-seen
+    page look brand new (false 'Page ADDED' alerts) and silently drop every
+    previously-seen page from the removal re-check."""
     urls: set[str] = set()
-    for r in _tab_rows(service, sheet_id, TAB_GFL_INFO_SITE, "A2:I"):
+    for r in _tab_rows_strict(service, sheet_id, TAB_GFL_INFO_SITE, "A2:I"):
         if len(r) > 2 and r[2]:
             urls.add(r[2])
     return urls
@@ -1677,10 +1812,15 @@ def gfl_info_site_tab_is_empty(service, sheet_id: str) -> bool:
     """True if the tab holds no data rows yet — i.e. this is the very first run
     (the initial-baseline run, where every discovered page is baselined SILENTLY
     rather than each firing a 'new-page' alert). Distinct from
-    all_gfl_info_site_urls() being empty only in intent/readability."""
+    all_gfl_info_site_urls() being empty only in intent/readability.
+
+    Uses the STRICT reader (state-reads-raise): a transient read failure must
+    RAISE, never read as True ("first run ever") — that would silently
+    re-baseline every page (incl. ones already flagged changed/removed) as if
+    this were the launch run."""
     return not any(
         len(r) > 2 and r[2]
-        for r in _tab_rows(service, sheet_id, TAB_GFL_INFO_SITE, "A2:C"))
+        for r in _tab_rows_strict(service, sheet_id, TAB_GFL_INFO_SITE, "A2:C"))
 
 
 def append_gfl_info_site_snapshot_row(
@@ -1725,10 +1865,16 @@ def last_meeting_snapshot(service, sheet_id: str, event_id) -> tuple[str, str] |
     matching row (not a _meta cell) is what makes the watch race-free — the tab is
     append-only, so no concurrent job can clobber it. event_id is compared as a
     string: it's an int in the API/config but Sheets round-trips cell values as
-    strings (same normalization as mmpc_archived_file_ids())."""
+    strings (same normalization as mmpc_archived_file_ids()).
+
+    Uses the STRICT reader (state-reads-raise): a transient read failure must
+    RAISE, never read as None ("never snapshotted") — that would silently
+    re-baseline a meeting that already has a real snapshot, erasing an
+    un-alerted agenda/minutes change (incl. a keyword-match note already
+    folded into a prior row)."""
     latest = None
     target = str(event_id)
-    for r in _tab_rows(service, sheet_id, TAB_MEETING_WATCH, "A2:K"):
+    for r in _tab_rows_strict(service, sheet_id, TAB_MEETING_WATCH, "A2:K"):
         if len(r) > 3 and str(r[3]) == target:
             latest = r
     if latest is None:
@@ -1744,9 +1890,14 @@ def meeting_watch_group_has_rows(service, sheet_id: str, group: str) -> bool:
     category fetch fails (ADR 015 addendum) — distinguishes 'this group has never
     successfully run before' (loud, activation-time block, same as a hand-picked
     event's first-ever fetch failure) from 'this group is already established and
-    this is a transient blip' (skip-and-warn, baselines preserved)."""
+    this is a transient blip' (skip-and-warn, baselines preserved).
+
+    Uses the STRICT reader (state-reads-raise): a transient read failure must
+    RAISE rather than read as False ("never established") — that would
+    misroute an already-established group's transient fetch blip into the
+    loud activation-time block instead of the correct skip-and-warn."""
     return any(len(r) > 1 and r[1] == group
-               for r in _tab_rows(service, sheet_id, TAB_MEETING_WATCH, "A2:B"))
+               for r in _tab_rows_strict(service, sheet_id, TAB_MEETING_WATCH, "A2:B"))
 
 
 def append_meeting_watch_row(
@@ -1787,10 +1938,18 @@ def ensure_ridgewood_tabs(service, sheet_id: str) -> None:
 
 def ridgewood_archived_months(service, sheet_id: str) -> set:
     """The set of report months (YYYY-MM) already archived (col A of Ridge Wood
-    Reports, as strings). Modeled on mmpc_archived_file_ids(); _tab_rows() returns
-    [] for a tab that doesn't exist yet (first run, before ensure_ridgewood_tabs()
-    has created it), so no extra first-run handling is needed."""
-    return {str(r[0]) for r in _tab_rows(service, sheet_id, TAB_RIDGEWOOD, "A2:A") if r and r[0]}
+    Reports, as strings). A genuinely absent tab (first run, before
+    ensure_ridgewood_tabs() has created it) still reads as [], same as before.
+
+    Uses the STRICT reader (state-reads-raise), UNLIKE the otherwise-similar
+    mmpc_archived_file_ids()/civicclerk_archived_file_ids(): this read happens
+    ONCE, up front in ridgewood_archiver.run(), before the per-month loop, so
+    a transient failure here aborts the run with zero writes rather than
+    reading as "nothing archived yet" — which would re-download, re-mirror,
+    and re-append EVERY already-archived month this run, up to the batch cap,
+    including months whose exceedance alert already fired (a duplicate
+    alert), not just a duplicate Drive upload."""
+    return {str(r[0]) for r in _tab_rows_strict(service, sheet_id, TAB_RIDGEWOOD, "A2:A") if r and r[0]}
 
 
 def append_ridgewood_report_row(
@@ -1961,9 +2120,15 @@ def last_rop_snapshots(
     item (the CSV's per-facility keys) — checking whether EVERY key already has
     a baseline previously cost one full-tab read per key (worst case N
     sequential Sheets API round trips just to confirm N booleans); this costs
-    one, regardless of how many keys are asked for."""
+    one, regardless of how many keys are asked for.
+
+    Uses the STRICT reader (state-reads-raise): a transient read failure must
+    RAISE, never read as None ("never snapshotted") for every key — that would
+    silently re-baseline every ROP item, erasing an un-alerted status change,
+    and would misread a genuine all-baselined fetch-failure skip as an
+    activation-time block."""
     latest_by_key: dict[str, list] = {}
-    for r in _tab_rows(service, sheet_id, TAB_ROP, "A2:H"):
+    for r in _tab_rows_strict(service, sheet_id, TAB_ROP, "A2:H"):
         if len(r) > 1:
             latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
     result: dict[str, tuple[str, str] | None] = {}
@@ -2024,9 +2189,12 @@ def last_mmd_snapshots(
     """Batched form of last_mmd_snapshot: ONE tab read for however many keys are
     asked for (the all-baselined check on a fetch failure), instead of one
     full-tab read per key. Same race-free append-only read as the singular
-    form — the last_rop_snapshots idiom."""
+    form — the last_rop_snapshots idiom.
+
+    Uses the STRICT reader (state-reads-raise): a transient read failure must
+    RAISE rather than silently re-baseline every watched wdsid."""
     latest_by_key: dict[str, list] = {}
-    for r in _tab_rows(service, sheet_id, TAB_MMD, "A2:H"):
+    for r in _tab_rows_strict(service, sheet_id, TAB_MMD, "A2:H"):
         if len(r) > 1:
             latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
     result: dict[str, tuple[str, str] | None] = {}
@@ -2085,9 +2253,13 @@ def last_pfas_pws_snapshots(
 ) -> dict[str, tuple[str, str] | None]:
     """Batched form of last_pfas_pws_snapshot: ONE tab read for however many keys
     are asked for (the all-baselined check on a fetch failure), instead of one
-    full-tab read per key. Same race-free append-only read as last_mmd_snapshots."""
+    full-tab read per key. Same race-free append-only read as last_mmd_snapshots.
+
+    Uses the STRICT reader (state-reads-raise): a transient read failure must
+    RAISE — a false-empty read here would silently re-baseline a WSSN and
+    could absorb a real PFAS detection into a "no alert" baseline row."""
     latest_by_key: dict[str, list] = {}
-    for r in _tab_rows(service, sheet_id, TAB_PFAS_PWS, "A2:H"):
+    for r in _tab_rows_strict(service, sheet_id, TAB_PFAS_PWS, "A2:H"):
         if len(r) > 1:
             latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
     result: dict[str, tuple[str, str] | None] = {}
@@ -2151,9 +2323,13 @@ def last_ride_snapshots(
     """Batched form of last_ride_snapshot: ONE tab read for however many keys
     are asked for (the all-baselined check on a fetch failure), instead of one
     full-tab read per key. Same race-free append-only read as the singular
-    form — the last_mmd_snapshots idiom."""
+    form — the last_mmd_snapshots idiom.
+
+    Uses the STRICT reader (state-reads-raise): a transient read failure must
+    RAISE rather than silently re-baseline a watched Part 201 site/UST
+    facility, erasing an un-alerted RiskCondition flip or new Open_Release."""
     latest_by_key: dict[str, list] = {}
-    for r in _tab_rows(service, sheet_id, TAB_RIDE, "A2:H"):
+    for r in _tab_rows_strict(service, sheet_id, TAB_RIDE, "A2:H"):
         if len(r) > 1:
             latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
     result: dict[str, tuple[str, str] | None] = {}
@@ -2344,9 +2520,13 @@ def last_submissions_snapshots(
     """Batched form of last_submissions_snapshot: ONE tab read for however
     many keys are asked for (the all-baselined check on a fetch failure),
     instead of one full-tab read per key. Same race-free append-only read as
-    the singular form — the last_ride_snapshots idiom."""
+    the singular form — the last_ride_snapshots idiom.
+
+    Uses the STRICT reader (state-reads-raise): a transient read failure must
+    RAISE rather than silently re-baseline a watched nSITE site, erasing an
+    un-alerted new filing or status advance."""
     latest_by_key: dict[str, list] = {}
-    for r in _tab_rows(service, sheet_id, TAB_SUBMISSIONS, "A2:H"):
+    for r in _tab_rows_strict(service, sheet_id, TAB_SUBMISSIONS, "A2:H"):
         if len(r) > 1:
             latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
     result: dict[str, tuple[str, str] | None] = {}

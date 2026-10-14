@@ -435,3 +435,31 @@ def test_alert_email_failure_still_records_row(monkeypatch):
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("smtp down")))
     assert pw.run() == 0
     assert any(r[3] == "changed" for r in _rows(fake))
+
+
+def test_a_per_wssn_read_failure_isolates_the_item_but_fails_the_run_loud(monkeypatch):
+    """state-reads-raise: BEFORE this fix, a strict-reader raise from one
+    WSSN's sw.last_pfas_pws_snapshot() read was swallowed by the per-item
+    `except Exception` in run()'s loop, which unconditionally returned 0 — a
+    real Sheets outage on one WSSN would look exactly like a clean, green
+    run. The per-item isolation must stay (the OTHER WSSN still gets
+    baselined this run), but the overall run must now exit 1 so the outage
+    is visible."""
+    cfg = {"pfas_pws": {"enabled": True, "wssns": [2001381, 2222222],
+                        "recipients": ["trisha@example.org"]}}
+    recs = baseline_records() + [_row(2222222, "HX", _ms(2019, 5, 1), "EP01",
+                                      system="OTHER PWS")]
+    fake, sent = _wire(monkeypatch, cfg=cfg, records=recs)
+
+    real_last = sw.last_pfas_pws_snapshot
+
+    def _boom_for_one(service, sheet_id, item_key):
+        if item_key == "pws:2222222":
+            raise RuntimeError("HTTP 503")
+        return real_last(service, sheet_id, item_key)
+    monkeypatch.setattr(pw.sw, "last_pfas_pws_snapshot", _boom_for_one)
+
+    assert pw.run() == 1                              # the run must go red
+    rows = _rows(fake)
+    assert any(r[1] == "pws:2001381" for r in rows)    # the healthy WSSN still baselined
+    assert not any(r[1] == "pws:2222222" for r in rows)  # the failed one wrote nothing

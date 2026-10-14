@@ -35,8 +35,14 @@ class FakeSheet:
     def install(self, mp):
         mp.setattr(sw, "_append_state_row",
                    lambda svc, sid, row: self.state_rows.append(list(row)))
-        mp.setattr(sw, "_tab_rows", lambda svc, sid, tab, a1:
-                   [list(r) for r in self.state_rows] if tab == sw.TAB_STATE else [])
+        # read_state() now scans TAB_STATE via the STRICT reader
+        # (state-reads-raise) — patch that one, not the lenient _tab_rows,
+        # or every read_state() call below would hit the real
+        # _tab_rows_strict against a bare object() service and raise.
+        fake_rows = lambda svc, sid, tab, a1: (  # noqa: E731
+            [list(r) for r in self.state_rows] if tab == sw.TAB_STATE else [])
+        mp.setattr(sw, "_tab_rows_strict", fake_rows)
+        mp.setattr(sw, "_tab_rows", fake_rows)
         mp.setattr(sw, "read_meta", lambda svc, sid:
                    {"pending_digest": [], "pending_urgent_recap": []})
         mp.setattr(sw, "write_stub_row",

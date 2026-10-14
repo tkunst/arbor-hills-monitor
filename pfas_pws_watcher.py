@@ -426,10 +426,15 @@ def run() -> int:
         return 1
 
     counts = {"baseline": 0, "changed": 0, "detection": 0, "unchanged": 0}
+    exit_code = 0
     for wssn in wssns:
         # Per-item guard: a fault on one WSSN (a Sheets write hiccup, a malformed
         # record) must not abort the others — the per-item guarantee mmd_watcher's
-        # docstring claims but does not enforce.
+        # docstring claims but does not enforce. It must still fail the RUN loudly
+        # (state-reads-raise): a strict-reader raise from _diff_and_record's
+        # sw.last_pfas_pws_snapshot() read means this WSSN's baseline/diff did NOT
+        # happen this run (caught here before any watch-row write) — silently
+        # returning 0 anyway would hide a real Sheets outage behind a green run.
         try:
             snap = wssn_snapshot(records, wssn)
             result = _diff_and_record(sheets, sheet_id, today, f"pws:{wssn}", wssn,
@@ -437,10 +442,11 @@ def run() -> int:
             counts[result] += 1
         except Exception as e:  # noqa: BLE001 — isolate one WSSN's failure
             print(f"[pws-pfas] WSSN {wssn}: FAILED this run (other WSSNs continue): {e}")
+            exit_code = 1
 
     print(f"[pws-pfas] done — {counts['detection']} detection, {counts['changed']} "
           f"changed, {counts['baseline']} baselined, {counts['unchanged']} unchanged.")
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

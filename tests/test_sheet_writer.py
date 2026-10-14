@@ -1,5 +1,10 @@
 """Sheet routing: feed row, evidence fan-out (one row per risk), measurements."""
+import json
 import re
+
+import httplib2
+import pytest
+from googleapiclient.errors import HttpError
 
 import nsite_client as nc
 import sheet_writer as sw
@@ -652,3 +657,228 @@ def test_write_compliance_deadlines_appends_and_noops_when_empty():
     assert len(svc._values._tabs[sw.TAB_COMPLIANCE_DEADLINES]) == 3   # header + 2
     sw.write_compliance_deadlines(svc, "SID", [], "nSITE", "F", "ref", "t")
     assert len(svc._values._tabs[sw.TAB_COMPLIANCE_DEADLINES]) == 3   # unchanged
+
+
+# ---------------------------------------------------------------------------
+# state-reads-raise: _tab_rows_strict distinguishes a genuinely ABSENT tab
+# (Sheets' own 400 "Unable to parse range...") from every other read failure,
+# which must RAISE instead of masquerading as an empty read (ADR 018/023's
+# "spurious baseline becomes the state" failure). This block covers (1) the
+# helper itself against the REAL googleapiclient exception shape, and (2) one
+# "raises rather than swallowing" test per converted reader — the same style
+# as test_nsite_violations.py's test_last_violations_snapshots_raises_
+# rather_than_swallowing_a_read_error, which this generalizes to every other
+# caller that now shares its contract.
+# ---------------------------------------------------------------------------
+
+
+def _http_error(status: int, message: str) -> HttpError:
+    """A real googleapiclient HttpError carrying `status`/`message`, exactly
+    as `.resp.status`/`.reason` would read it from a live Sheets 400/503 —
+    see tests/test_ride_docs.py's `_http_error` for the same construction."""
+    body = json.dumps({"error": {"code": status, "message": message}}).encode()
+    return HttpError(httplib2.Response({"status": status}), body)
+
+
+class _Exploding:
+    """A Sheets service whose values().get() always raises — the fake used by
+    test_nsite_violations.py's raises-rather-than-swallowing test, generalized
+    here so every converted reader in this file can reuse one definition."""
+
+    def spreadsheets(self):
+        return self
+
+    def values(self):
+        return self
+
+    def get(self, spreadsheetId, range):
+        raise RuntimeError("HTTP 503")
+
+
+class _ExplodingOneTab:
+    """Like _Exploding, but raises ONLY for one named tab and returns an
+    ordinary empty read for any other — needed for rebuild_risk_register_tab/
+    rebuild_all_evidence_tab, whose FIRST read (nSITE Evidence by Risk) is a
+    raw, unguarded call that must succeed so the test actually exercises the
+    SECOND (WDS Evidence by Risk) read, which is the one now going through
+    _tab_rows_strict."""
+
+    def __init__(self, boom_tab: str):
+        self._boom_tab = boom_tab
+
+    def spreadsheets(self):
+        return self
+
+    def values(self):
+        return self
+
+    def get(self, spreadsheetId, range):
+        tab = re.match(r"'([^']+)'", range).group(1)
+        if tab == self._boom_tab:
+            raise RuntimeError("HTTP 503")
+        return _Req({"values": []})
+
+
+def test_is_absent_tab_error_matches_only_the_real_400_unable_to_parse_range():
+    assert sw._is_absent_tab_error(
+        _http_error(400, "Unable to parse range: 'Nonexistent Tab'!A2:H")) is True
+
+
+def test_is_absent_tab_error_false_for_a_different_400():
+    assert sw._is_absent_tab_error(_http_error(400, "Invalid value")) is False
+
+
+def test_is_absent_tab_error_false_for_5xx_and_429():
+    assert sw._is_absent_tab_error(_http_error(503, "Backend Error")) is False
+    assert sw._is_absent_tab_error(_http_error(429, "Quota exceeded")) is False
+
+
+def test_is_absent_tab_error_false_for_a_non_http_error():
+    assert sw._is_absent_tab_error(RuntimeError("boom")) is False
+
+
+def test_tab_rows_strict_absent_tab_reads_empty():
+    svc = _Exploding()
+    svc.get = lambda spreadsheetId, range: (
+        _ for _ in ()).throw(_http_error(400, "Unable to parse range: 'Ghost'!A2:H"))
+    assert sw._tab_rows_strict(svc, "SID", "Ghost", "A2:H") == []
+
+
+def test_tab_rows_strict_raises_on_5xx():
+    svc = _Exploding()
+    svc.get = lambda spreadsheetId, range: (
+        _ for _ in ()).throw(_http_error(503, "Backend Error"))
+    with pytest.raises(HttpError):
+        sw._tab_rows_strict(svc, "SID", "Tab", "A2:H")
+
+
+def test_tab_rows_strict_raises_on_a_non_http_error():
+    with pytest.raises(RuntimeError):
+        sw._tab_rows_strict(_Exploding(), "SID", "Tab", "A2:H")
+
+
+def test_tab_rows_strict_returns_rows_on_a_normal_read():
+    tabs = {"Tab": [["hdr"], ["a", "b"], ["c", "d"]]}
+    svc = FakeSheets(tabs)
+    assert sw._tab_rows_strict(svc, "SID", "Tab", "A2:B") == [["a", "b"], ["c", "d"]]
+
+
+# --- core _state/_meta --------------------------------------------------------
+
+def test_read_state_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.read_state(_Exploding(), "SID")
+
+
+def test_read_meta_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.read_meta(_Exploding(), "SID")
+
+
+def test_read_state_still_reads_empty_for_a_genuinely_absent_tab():
+    """The real 400 "Unable to parse range" signature, not just a fake that
+    quietly returns []: a fresh Sheet before ensure_tabs() has ever run must
+    still reduce to the empty default state, never raise."""
+    svc = _Exploding()
+    svc.get = lambda spreadsheetId, range: (
+        _ for _ in ()).throw(_http_error(400, f"Unable to parse range: {range}"))
+    state = sw.read_state(svc, "SID")
+    assert state["processed"] == {} and state["errors"] == {}
+    assert state["pending_digest"] == []
+
+
+# --- the 8 enabled watchers' snapshot/first-run readers -----------------------
+
+def test_last_submissions_snapshots_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.last_submissions_snapshots(_Exploding(), "SID", ["subm:N2688"])
+
+
+def test_last_rop_snapshots_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.last_rop_snapshots(_Exploding(), "SID", ["csv:N2688"])
+
+
+def test_last_mmd_snapshots_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.last_mmd_snapshots(_Exploding(), "SID", ["mmd:475946"])
+
+
+def test_last_pfas_pws_snapshots_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.last_pfas_pws_snapshots(_Exploding(), "SID", ["pws:2001381"])
+
+
+def test_last_ride_snapshots_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.last_ride_snapshots(_Exploding(), "SID", ["ride:81000033"])
+
+
+def test_last_pfas_snapshot_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.last_pfas_snapshot(_Exploding(), "SID", "http://example/arbor-hills")
+
+
+def test_last_gfl_info_site_row_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.last_gfl_info_site_row(_Exploding(), "SID", "http://example/page")
+
+
+def test_all_gfl_info_site_urls_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.all_gfl_info_site_urls(_Exploding(), "SID")
+
+
+def test_gfl_info_site_tab_is_empty_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.gfl_info_site_tab_is_empty(_Exploding(), "SID")
+
+
+def test_last_meeting_snapshot_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.last_meeting_snapshot(_Exploding(), "SID", 12345)
+
+
+def test_meeting_watch_group_has_rows_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.meeting_watch_group_has_rows(_Exploding(), "SID", "DPW")
+
+
+# --- the scope-expansion readers (same destructive-write-on-false-empty-read
+# pattern; live/enabled, their only callers already isolate the failure) ------
+
+def test_rebuild_risk_register_tab_raises_rather_than_swallowing_a_wds_read_error():
+    with pytest.raises(RuntimeError):
+        sw.rebuild_risk_register_tab(
+            _ExplodingOneTab(sw.TAB_WDS_EVIDENCE), "SID", RISK_REGISTER)
+
+
+def test_rebuild_all_evidence_tab_raises_rather_than_swallowing_a_wds_read_error():
+    with pytest.raises(RuntimeError):
+        sw.rebuild_all_evidence_tab(_ExplodingOneTab(sw.TAB_WDS_EVIDENCE), "SID")
+
+
+def test_read_wds_seen_log_latest_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.read_wds_seen_log_latest(_Exploding(), "SID")
+
+
+def test_ridgewood_archived_months_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.ridgewood_archived_months(_Exploding(), "SID")
+
+
+# --- a representative absent-tab-still-empty check per profile shape ---------
+
+def test_last_rop_snapshots_absent_tab_still_reads_empty():
+    svc = _Exploding()
+    svc.get = lambda spreadsheetId, range: (
+        _ for _ in ()).throw(_http_error(400, f"Unable to parse range: {range}"))
+    assert sw.last_rop_snapshots(svc, "SID", ["csv:N2688"]) == {"csv:N2688": None}
+
+
+def test_gfl_info_site_tab_is_empty_true_for_a_genuinely_absent_tab():
+    svc = _Exploding()
+    svc.get = lambda spreadsheetId, range: (
+        _ for _ in ()).throw(_http_error(400, f"Unable to parse range: {range}"))
+    assert sw.gfl_info_site_tab_is_empty(svc, "SID") is True

@@ -5,6 +5,8 @@ A "poison" doc is one with >= MAX_ERRORS_PER_DOC failed attempts and no later
 success; normal runs skip it so the job self-terminates. After raising
 classification_max_tokens to fix a truncation, a RETRY_POISONED run re-attempts
 those docs without touching the append-only _state log."""
+import pytest
+
 import backfill as bf
 
 ME = bf.MAX_ERRORS_PER_DOC
@@ -172,3 +174,31 @@ def test_select_todo_force_reprocess_multiple_in_docs_order():
     todo = [d["doc_id"] for d in bf.select_todo(
         docs, state, force_reprocess_doc_ids={"c", "a"})]
     assert todo == ["a", "c"]  # both forced, returned in docs order
+
+
+# --- state-reads-raise: a transient read_state() failure must fail run() ----
+# loudly, before ANY doc is (re)fetched/classified. The old lenient reader
+# would reduce a throttled/5xx response to the empty state, making every doc
+# look unprocessed, and backfill would re-classify + write a duplicate row
+# for up to a full batch of already-done documents.
+
+def test_run_propagates_a_read_state_failure_without_fetching_docs(monkeypatch):
+    monkeypatch.setattr(bf, "load_config", lambda: {
+        "anthropic_model": "m", "backfill_batch_size": 50,
+        "large_doc_page_threshold": 50, "large_doc_max_keyword_pages": 10,
+    })
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.setattr(bf.dc, "sheets_service", lambda: object())
+    monkeypatch.setattr(bf.sw, "ensure_tabs", lambda svc, sid: None)
+
+    def _boom(svc, sid):
+        raise RuntimeError("HTTP 503")
+    monkeypatch.setattr(bf.sw, "read_state", _boom)
+
+    def _must_not_be_called(*a, **k):
+        raise AssertionError("must not be reached once read_state raises")
+    monkeypatch.setattr(bf.nc, "make_session", _must_not_be_called)
+    monkeypatch.setattr(bf.nc, "fetch_all_documents", _must_not_be_called)
+
+    with pytest.raises(RuntimeError):
+        bf.run()
