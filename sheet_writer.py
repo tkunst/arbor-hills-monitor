@@ -923,6 +923,31 @@ def _set_header(service, sheet_id: str, tab: str, headers: list) -> None:
     ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
 
 
+def ensure_tab(service, sheet_id: str, tab: str, headers: list) -> None:
+    """Generic single-tab form of ensure_tabs(): create `tab` if it doesn't
+    exist yet, then reconcile its header row (row 1) on EVERY run — same
+    self-healing policy as ensure_tabs() (ADR 008), so a newly-added header
+    column reaches an already-created tab too, not just one created after the
+    change. This is the ONE place that logic lives; every `ensure_*_tab(s)`
+    watch/archive helper in this module (ROP, MMD, PFAS-PWS, RIDE, MPART,
+    GovQA, RRD Documents, Submissions, Violations, Compliance Actions,
+    Evaluations, Permits, Complaints, Public Notices, WOI, GFL Air, Perimeter
+    Episodes, PFAS, GFL Info Site, Meeting Watch, Ridge Wood Reports/Revisions,
+    MMPC Archive, CivicClerk Archive, EGLE Newsroom) is a thin wrapper that
+    only supplies its own tab constant + header list. Each is called only
+    from its own watcher/archiver, so the tab doesn't appear in the Sheet
+    until that source actually runs (the no-empty-tab-pre-activation policy
+    every one of those docstrings used to repeat individually)."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    if tab not in existing:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [{"addSheet": {"properties": {"title": tab}}}]},
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    _set_header(service, sheet_id, tab, headers)
+
+
 def append_rows(service, sheet_id: str, tab: str, rows: Iterable[list]) -> None:
     rows = [list(r) for r in rows]
     if not rows:
@@ -1366,6 +1391,100 @@ def _tab_rows_strict(service, sheet_id: str, tab: str, a1: str) -> list[list]:
     return [r for r in resp.get("values", []) if r]
 
 
+# ---------------------------------------------------------------------------
+# Generic Watch-tab helpers — shared by every nSITE-profile-style "<X> Watch"
+# tab (ROP, MMD, Public Water Supply PFAS, RIDE, MPART, nSITE Submissions /
+# Violations / Compliance Actions / Evaluations / Permits / Complaints /
+# Public Notices). Every one of those tabs has the IDENTICAL row shape
+# [date, item_key, label, change, snapshot_hash, note, checked_at,
+# snapshot_json] over "A2:H", so the append + batched-lookup logic is written
+# ONCE here; each `append_*_watch_row` / `last_*_snapshot(s)` function below
+# is a thin wrapper supplying its own tab constant (see each wrapper's
+# docstring for its item_key format and which EGLE/ArcGIS field changing is
+# the signal this watch exists to catch).
+# ---------------------------------------------------------------------------
+
+
+def append_watch_row(
+    service, sheet_id: str, tab: str, date: str, item_key: str, label: str,
+    change: str, snapshot_hash: str, note: str, checked_at: str,
+    snapshot_json: str,
+) -> None:
+    """Append one row to a Watch tab in the shared 8-column shape. Written
+    BEFORE the change email is sent in every caller (durable record first,
+    alert best-effort second — a kill after the row but before the email
+    loses the alert, never the record, and never re-fires next run since the
+    row already advances the stored hash)."""
+    append_rows(service, sheet_id, tab, [[
+        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
+    ]])
+
+
+def last_snapshots(
+    service, sheet_id: str, tab: str, item_keys: list[str], *,
+    a1: str = "A2:H", key_col: int = 1, hash_col: int = 4, json_col: int = 7,
+    tolerate_absent_tab: bool = True,
+) -> dict[str, tuple[str, str] | None]:
+    """Batched snapshot-hash/json reader for a Watch tab in the shared
+    8-column shape: ONE tab read for however many `item_keys` are asked for
+    (the all-baselined check on a fetch failure), instead of one full-tab
+    read per key. Reading the LAST matching row per key (not a _meta cell) is
+    what makes every Watch tab race-free — the tab is append-only, so no
+    concurrent job can clobber it. None for a key means 'baseline this item';
+    a hash mismatch means 'changed'.
+
+    `tolerate_absent_tab` selects which of the two STRICT-reader contracts a
+    caller was merged with (coder:state-reads-raise, ADR 018/023) — both
+    RAISE on a transient 429/5xx/network/exhausted-retries error, never
+    silently reading it as "never snapshotted" (that would make the watcher
+    write a fresh "baseline" row, and because the tab is append-only with
+    last-write-wins, that spurious baseline BECOMES the state — erasing a
+    real, un-alerted change permanently rather than deferring it):
+      - True (the default; ROP/MMD/PFAS-PWS/RIDE/Submissions) — a genuinely
+        ABSENT tab (`_tab_rows_strict`'s own fresh-Sheet case) still reads as
+        "never snapshotted" rather than raising.
+      - False (Violations/Compliance Actions/Evaluations/Permits/Complaints/
+        Public Notices) — there is no absent-tab allowance at all; those six
+        watchers always call their own `ensure_*_tabs()` before this runs, so
+        the tab's own absence is not a case their design distinguishes, and
+        ANY exception (including an absent tab) propagates.
+    """
+    if tolerate_absent_tab:
+        rows = _tab_rows_strict(service, sheet_id, tab, a1)
+    else:
+        resp = (
+            service.spreadsheets()
+            .values()
+            .get(spreadsheetId=sheet_id, range=f"'{tab}'!{a1}")
+            .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+        )
+        rows = [r for r in resp.get("values", []) if r]
+    latest_by_key: dict[str, list] = {}
+    for r in rows:
+        if len(r) > key_col:
+            latest_by_key[r[key_col]] = r  # append-only tab -> last write for a key wins
+    result: dict[str, tuple[str, str] | None] = {}
+    for key in item_keys:
+        r = latest_by_key.get(key)
+        if r is None:
+            result[key] = None
+        else:
+            result[key] = (
+                r[hash_col] if len(r) > hash_col else "",
+                r[json_col] if len(r) > json_col else "",
+            )
+    return result
+
+
+def last_snapshot(
+    service, sheet_id: str, tab: str, item_key: str, **kwargs,
+) -> tuple[str, str] | None:
+    """Single-key convenience form of last_snapshots() for the Watch tabs that
+    offer one (ROP/MMD/PFAS-PWS/RIDE/Submissions) — one tab read per call, same
+    as the batched form with a single-element key list."""
+    return last_snapshots(service, sheet_id, tab, [item_key], **kwargs)[item_key]
+
+
 def _load_json(raw: str, fallback):
     try:
         return json.loads(raw)
@@ -1593,18 +1712,10 @@ def append_archive_row(
 
 
 def ensure_mmpc_tabs(service, sheet_id: str) -> None:
-    """Create the MMPC Archived Files tab if missing and reconcile its header
-    row on every run (same self-healing policy as ensure_tabs()/
-    ensure_wds_tabs()). Called only from mmpc_archiver.py, so the tab doesn't
-    appear until Mirror D actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_MMPC_ARCHIVE not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_MMPC_ARCHIVE}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_MMPC_ARCHIVE, MMPC_ARCHIVE_HEADERS)
+    """Create/heal the MMPC Archived Files tab. Called only from
+    mmpc_archiver.py, so it doesn't appear until Mirror D actually runs. See
+    ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_MMPC_ARCHIVE, MMPC_ARCHIVE_HEADERS)
 
 
 def mmpc_archived_file_ids(service, sheet_id: str) -> set:
@@ -1618,19 +1729,10 @@ def mmpc_archived_file_ids(service, sheet_id: str) -> set:
 
 
 def ensure_civicclerk_archive_tabs(service, sheet_id: str) -> None:
-    """Create the CivicClerk Archived Files tab if missing and reconcile its
-    header row on every run (same self-healing policy as ensure_mmpc_tabs()).
-    Called only from civicclerk_archiver.py, so the tab doesn't appear until
-    that archiver actually runs. This is a SEPARATE tab from MMPC Archived
-    Files — a new sibling mirror (ADR 037), not an extension of Mirror D."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_CIVICCLERK_ARCHIVE not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_CIVICCLERK_ARCHIVE}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_CIVICCLERK_ARCHIVE, CIVICCLERK_ARCHIVE_HEADERS)
+    """Create/heal the CivicClerk Archived Files tab — a SEPARATE tab from
+    MMPC Archived Files (a new sibling mirror, ADR 037, not an extension of
+    Mirror D). Called only from civicclerk_archiver.py. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_CIVICCLERK_ARCHIVE, CIVICCLERK_ARCHIVE_HEADERS)
 
 
 def civicclerk_archived_file_ids(service, sheet_id: str) -> set:
@@ -1678,17 +1780,9 @@ def append_mmpc_archive_row(
 
 
 def ensure_pfas_tabs(service, sheet_id: str) -> None:
-    """Create the PFAS Page Watch tab if missing and reconcile its header row on
-    every run (same self-healing policy as ensure_mmpc_tabs()). Called only from
-    pfas_watcher.py, so the tab doesn't appear until the watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_PFAS not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_PFAS}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_PFAS, PFAS_SNAPSHOT_HEADERS)
+    """Create/heal the PFAS Page Watch tab. Called only from pfas_watcher.py.
+    See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_PFAS, PFAS_SNAPSHOT_HEADERS)
 
 
 def last_pfas_snapshot(service, sheet_id: str, url: str) -> tuple[str, str] | None:
@@ -1736,16 +1830,8 @@ EGLE_NEWS_HEADERS = [
 
 
 def ensure_egle_news_tab(service, sheet_id: str) -> None:
-    """Create the EGLE Newsroom Watch tab if missing and reconcile its header row
-    every run (same self-healing policy as ensure_pfas_tabs)."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_EGLE_NEWS not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_EGLE_NEWS}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_EGLE_NEWS, EGLE_NEWS_HEADERS)
+    """Create/heal the EGLE Newsroom Watch tab. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_EGLE_NEWS, EGLE_NEWS_HEADERS)
 
 
 def egle_news_seen_urls(service, sheet_id: str) -> set:
@@ -1774,18 +1860,9 @@ def append_egle_news_rows(service, sheet_id: str, rows: list[list]) -> None:
 
 
 def ensure_gfl_info_site_tabs(service, sheet_id: str) -> None:
-    """Create the GFL Info Site Watch tab if missing and reconcile its header row
-    on every run (same self-healing policy as ensure_pfas_tabs()). Called only
-    from gfl_info_site_watcher.py, so the tab doesn't appear until the watch
-    actually runs — same no-empty-tab policy as the PFAS/Meeting/GFL Air tabs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_GFL_INFO_SITE not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_GFL_INFO_SITE}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_GFL_INFO_SITE, GFL_INFO_SITE_HEADERS)
+    """Create/heal the GFL Info Site Watch tab. Called only from
+    gfl_info_site_watcher.py. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_GFL_INFO_SITE, GFL_INFO_SITE_HEADERS)
 
 
 def last_gfl_info_site_row(service, sheet_id: str, url: str) -> tuple[str, str, str] | None:
@@ -1868,18 +1945,9 @@ def append_gfl_info_site_snapshot_row(
 
 
 def ensure_meeting_watch_tabs(service, sheet_id: str) -> None:
-    """Create the Meeting Watch tab if missing and reconcile its header row on
-    every run (same self-healing policy as ensure_pfas_tabs()). Called only from
-    civicclerk_watcher.py, so the tab doesn't appear until the watch actually
-    runs — same no-empty-tab policy as the WDS/MMPC/PFAS/WOI/GFL tabs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_MEETING_WATCH not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_MEETING_WATCH}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_MEETING_WATCH, MEETING_WATCH_HEADERS)
+    """Create/heal the Meeting Watch tab. Called only from
+    civicclerk_watcher.py. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_MEETING_WATCH, MEETING_WATCH_HEADERS)
 
 
 def last_meeting_snapshot(service, sheet_id: str, event_id) -> tuple[str, str] | None:
@@ -1947,17 +2015,9 @@ def append_meeting_watch_row(
 
 
 def ensure_ridgewood_tabs(service, sheet_id: str) -> None:
-    """Create the Ridge Wood Reports tab if missing and reconcile its header row on
-    every run (same self-healing policy as ensure_mmpc_tabs()). Called only from
-    ridgewood_archiver.py, so the tab doesn't appear until the archiver runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_RIDGEWOOD not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_RIDGEWOOD}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_RIDGEWOOD, RIDGEWOOD_REPORT_HEADERS)
+    """Create/heal the Ridge Wood Reports tab. Called only from
+    ridgewood_archiver.py. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_RIDGEWOOD, RIDGEWOOD_REPORT_HEADERS)
 
 
 def ridgewood_archived_months(service, sheet_id: str) -> set:
@@ -2040,17 +2100,9 @@ def ridgewood_report_rows(service, sheet_id: str) -> dict:
 
 
 def ensure_ridgewood_revisions_tab(service, sheet_id: str) -> None:
-    """Create the Ridge Wood Revisions tab if missing and reconcile its header row on
-    every run (same self-healing policy as ensure_ridgewood_tabs()). Called only from
-    ridgewood_reverify.py, so the tab doesn't appear until that job runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_RIDGEWOOD_REVISIONS not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_RIDGEWOOD_REVISIONS}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_RIDGEWOOD_REVISIONS, RIDGEWOOD_REVISIONS_HEADERS)
+    """Create/heal the Ridge Wood Revisions tab. Called only from
+    ridgewood_reverify.py. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_RIDGEWOOD_REVISIONS, RIDGEWOOD_REVISIONS_HEADERS)
 
 
 def ridgewood_last_event(service, sheet_id: str) -> dict:
@@ -2127,70 +2179,35 @@ def ridgewood_multi_link_flagged_months(service, sheet_id: str) -> set:
 
 
 def ensure_rop_tabs(service, sheet_id: str) -> None:
-    """Create the ROP Watch tab if missing and reconcile its header row on every
-    run (same self-healing policy as ensure_pfas_tabs()/ensure_meeting_watch_tabs()).
-    Called only from rop_watcher.py, so the tab doesn't appear until the watch
-    actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_ROP not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_ROP}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_ROP, ROP_WATCH_HEADERS)
+    """Create/heal the ROP Watch tab. Called only from rop_watcher.py. See
+    ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_ROP, ROP_WATCH_HEADERS)
 
 
 def last_rop_snapshot(service, sheet_id: str, item_key: str) -> tuple[str, str] | None:
-    """Return (snapshot_hash, snapshot_json) from the most recent row for this
-    item_key (e.g. "csv:N2688", "folder:N2688", "notice:N2688"), or None if the
-    item has never been snapshotted. None means 'baseline this item'; a hash
-    mismatch means 'changed'. Reading the last matching row (not a _meta cell) is
-    what makes the watch race-free — the tab is append-only, so no concurrent job
-    can clobber it (same idiom as last_pfas_snapshot/last_meeting_snapshot)."""
-    return last_rop_snapshots(service, sheet_id, [item_key])[item_key]
+    """Single ROP item_key (e.g. "csv:N2688", "folder:N2688", "notice:N2688")
+    form of last_rop_snapshots(). See last_snapshot()."""
+    return last_snapshot(service, sheet_id, TAB_ROP, item_key)
 
 
 def last_rop_snapshots(
     service, sheet_id: str, item_keys: list[str],
 ) -> dict[str, tuple[str, str] | None]:
-    """Batched form of last_rop_snapshot: ONE tab read for however many keys are
-    asked for, instead of one full-tab read per key. Same race-free append-only
-    read as the singular form. Matters for a source that derives more than one
-    item (the CSV's per-facility keys) — checking whether EVERY key already has
-    a baseline previously cost one full-tab read per key (worst case N
-    sequential Sheets API round trips just to confirm N booleans); this costs
-    one, regardless of how many keys are asked for.
-
-    Uses the STRICT reader (state-reads-raise): a transient read failure must
-    RAISE, never read as None ("never snapshotted") for every key — that would
-    silently re-baseline every ROP item, erasing an un-alerted status change,
-    and would misread a genuine all-baselined fetch-failure skip as an
-    activation-time block."""
-    latest_by_key: dict[str, list] = {}
-    for r in _tab_rows_strict(service, sheet_id, TAB_ROP, "A2:H"):
-        if len(r) > 1:
-            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
-    result: dict[str, tuple[str, str] | None] = {}
-    for key in item_keys:
-        r = latest_by_key.get(key)
-        if r is None:
-            result[key] = None
-        else:
-            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
-    return result
+    """Batched ROP Watch snapshot reader — matters for a source that derives
+    more than one item (the CSV's per-facility keys): checking whether EVERY
+    key already has a baseline costs ONE tab read here, not one per key. See
+    last_snapshots() (tolerates an absent tab, like last_pfas_snapshot/
+    last_meeting_snapshot)."""
+    return last_snapshots(service, sheet_id, TAB_ROP, item_keys)
 
 
 def append_rop_watch_row(
     service, sheet_id: str, date: str, item_key: str, label: str, change: str,
     snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
 ) -> None:
-    """Append one ROP Watch row. Written BEFORE the change email is sent (durable
-    record first, alert best-effort second — same crash-safe ordering as
-    append_pfas_snapshot_row/append_meeting_watch_row)."""
-    append_rows(service, sheet_id, TAB_ROP, [[
-        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
-    ]])
+    """Append one ROP Watch row. See append_watch_row()."""
+    append_watch_row(service, sheet_id, TAB_ROP, date, item_key, label, change,
+                      snapshot_hash, note, checked_at, snapshot_json)
 
 
 # ---------------------------------------------------------------------------
@@ -2200,63 +2217,32 @@ def append_rop_watch_row(
 
 
 def ensure_mmd_tabs(service, sheet_id: str) -> None:
-    """Create the MMD Watch tab if missing and reconcile its header row on every
-    run (same self-healing policy as ensure_rop_tabs()). Called only from
-    mmd_watcher.py, so the tab doesn't appear until the watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_MMD not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_MMD}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_MMD, MMD_WATCH_HEADERS)
+    """Create/heal the MMD Watch tab. Called only from mmd_watcher.py. See
+    ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_MMD, MMD_WATCH_HEADERS)
 
 
 def last_mmd_snapshot(service, sheet_id: str, item_key: str) -> tuple[str, str] | None:
-    """Return (snapshot_hash, snapshot_json) from the most recent row for this
-    item_key (e.g. "mmd:475946"), or None if the item has never been
-    snapshotted. None means 'baseline this item'; a hash mismatch means
-    'changed'. Reading the last matching row (not a _meta cell) is what makes
-    the watch race-free — the tab is append-only, so no concurrent job can
-    clobber it (same idiom as last_rop_snapshot)."""
-    return last_mmd_snapshots(service, sheet_id, [item_key])[item_key]
+    """Single MMD item_key (e.g. "mmd:475946") form of last_mmd_snapshots().
+    See last_snapshot()."""
+    return last_snapshot(service, sheet_id, TAB_MMD, item_key)
 
 
 def last_mmd_snapshots(
     service, sheet_id: str, item_keys: list[str],
 ) -> dict[str, tuple[str, str] | None]:
-    """Batched form of last_mmd_snapshot: ONE tab read for however many keys are
-    asked for (the all-baselined check on a fetch failure), instead of one
-    full-tab read per key. Same race-free append-only read as the singular
-    form — the last_rop_snapshots idiom.
-
-    Uses the STRICT reader (state-reads-raise): a transient read failure must
-    RAISE rather than silently re-baseline every watched wdsid."""
-    latest_by_key: dict[str, list] = {}
-    for r in _tab_rows_strict(service, sheet_id, TAB_MMD, "A2:H"):
-        if len(r) > 1:
-            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
-    result: dict[str, tuple[str, str] | None] = {}
-    for key in item_keys:
-        r = latest_by_key.get(key)
-        if r is None:
-            result[key] = None
-        else:
-            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
-    return result
+    """Batched MMD Watch snapshot reader. See last_snapshots() (tolerates an
+    absent tab, like last_rop_snapshots)."""
+    return last_snapshots(service, sheet_id, TAB_MMD, item_keys)
 
 
 def append_mmd_watch_row(
     service, sheet_id: str, date: str, item_key: str, label: str, change: str,
     snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
 ) -> None:
-    """Append one MMD Watch row. Written BEFORE the change email is sent
-    (durable record first, alert best-effort second — same crash-safe ordering
-    as append_rop_watch_row)."""
-    append_rows(service, sheet_id, TAB_MMD, [[
-        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
-    ]])
+    """Append one MMD Watch row. See append_watch_row()."""
+    append_watch_row(service, sheet_id, TAB_MMD, date, item_key, label, change,
+                      snapshot_hash, note, checked_at, snapshot_json)
 
 
 # ---------------------------------------------------------------------------
@@ -2266,50 +2252,25 @@ def append_mmd_watch_row(
 
 
 def ensure_pfas_pws_tabs(service, sheet_id: str) -> None:
-    """Create the Public Water Supply PFAS Watch tab if missing and reconcile its
-    header row on every run (same self-healing policy as ensure_mmd_tabs()).
-    Called only from pfas_pws_watcher.py, so the tab doesn't appear until the
-    watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_PFAS_PWS not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_PFAS_PWS}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_PFAS_PWS, PFAS_PWS_WATCH_HEADERS)
+    """Create/heal the Public Water Supply PFAS Watch tab. Called only from
+    pfas_pws_watcher.py. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_PFAS_PWS, PFAS_PWS_WATCH_HEADERS)
 
 
 def last_pfas_pws_snapshot(service, sheet_id: str, item_key: str) -> tuple[str, str] | None:
-    """Return (snapshot_hash, snapshot_json) from the most recent row for this
-    item_key (e.g. "pws:2001381"), or None if never snapshotted. None means
-    'baseline this item'; a hash mismatch means 'changed'. Race-free append-only
-    read (last write for a key wins), same idiom as last_mmd_snapshot."""
-    return last_pfas_pws_snapshots(service, sheet_id, [item_key])[item_key]
+    """Single PFAS-PWS item_key (e.g. "pws:2001381") form of
+    last_pfas_pws_snapshots(). See last_snapshot()."""
+    return last_snapshot(service, sheet_id, TAB_PFAS_PWS, item_key)
 
 
 def last_pfas_pws_snapshots(
     service, sheet_id: str, item_keys: list[str],
 ) -> dict[str, tuple[str, str] | None]:
-    """Batched form of last_pfas_pws_snapshot: ONE tab read for however many keys
-    are asked for (the all-baselined check on a fetch failure), instead of one
-    full-tab read per key. Same race-free append-only read as last_mmd_snapshots.
-
-    Uses the STRICT reader (state-reads-raise): a transient read failure must
-    RAISE — a false-empty read here would silently re-baseline a WSSN and
-    could absorb a real PFAS detection into a "no alert" baseline row."""
-    latest_by_key: dict[str, list] = {}
-    for r in _tab_rows_strict(service, sheet_id, TAB_PFAS_PWS, "A2:H"):
-        if len(r) > 1:
-            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
-    result: dict[str, tuple[str, str] | None] = {}
-    for key in item_keys:
-        r = latest_by_key.get(key)
-        if r is None:
-            result[key] = None
-        else:
-            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
-    return result
+    """Batched Public Water Supply PFAS Watch snapshot reader. See
+    last_snapshots() (tolerates an absent tab, like last_mmd_snapshots) — a
+    false-empty read here would silently re-baseline a WSSN and could absorb
+    a real PFAS detection into a "no alert" baseline row."""
+    return last_snapshots(service, sheet_id, TAB_PFAS_PWS, item_keys)
 
 
 def append_pfas_pws_watch_row(
@@ -2319,10 +2280,10 @@ def append_pfas_pws_watch_row(
     """Append one Public Water Supply PFAS Watch row. Written AFTER any
     Measurements rows for a detection (system of record first) but BEFORE the
     change email — advancing the stored hash here is what makes a crash re-detect
-    rather than re-alert (see pfas_pws_watcher._diff_and_record)."""
-    append_rows(service, sheet_id, TAB_PFAS_PWS, [[
-        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
-    ]])
+    rather than re-alert (see pfas_pws_watcher._diff_and_record). See
+    append_watch_row()."""
+    append_watch_row(service, sheet_id, TAB_PFAS_PWS, date, item_key, label,
+                      change, snapshot_hash, note, checked_at, snapshot_json)
 
 
 # ---------------------------------------------------------------------------
@@ -2333,65 +2294,34 @@ def append_pfas_pws_watch_row(
 
 
 def ensure_ride_tabs(service, sheet_id: str) -> None:
-    """Create the RIDE Watch tab if missing and reconcile its header row on
-    every run (same self-healing policy as ensure_mmd_tabs()). Called only
-    from ride_watcher.py, so the tab doesn't appear until the watch actually
-    runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_RIDE not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_RIDE}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_RIDE, RIDE_WATCH_HEADERS)
+    """Create/heal the RIDE Watch tab. Called only from ride_watcher.py. See
+    ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_RIDE, RIDE_WATCH_HEADERS)
 
 
 def last_ride_snapshot(service, sheet_id: str, item_key: str) -> tuple[str, str] | None:
-    """Return (snapshot_hash, snapshot_json) from the most recent row for this
-    item_key (e.g. "ride:81000033"), or None if the item has never been
-    snapshotted. None means 'baseline this item'; a hash mismatch means
-    'changed'. Reading the last matching row (not a _meta cell) is what makes
-    the watch race-free — the tab is append-only, so no concurrent job can
-    clobber it (same idiom as last_mmd_snapshot)."""
-    return last_ride_snapshots(service, sheet_id, [item_key])[item_key]
+    """Single RIDE item_key (e.g. "ride:81000033") form of
+    last_ride_snapshots(). See last_snapshot()."""
+    return last_snapshot(service, sheet_id, TAB_RIDE, item_key)
 
 
 def last_ride_snapshots(
     service, sheet_id: str, item_keys: list[str],
 ) -> dict[str, tuple[str, str] | None]:
-    """Batched form of last_ride_snapshot: ONE tab read for however many keys
-    are asked for (the all-baselined check on a fetch failure), instead of one
-    full-tab read per key. Same race-free append-only read as the singular
-    form — the last_mmd_snapshots idiom.
-
-    Uses the STRICT reader (state-reads-raise): a transient read failure must
-    RAISE rather than silently re-baseline a watched Part 201 site/UST
-    facility, erasing an un-alerted RiskCondition flip or new Open_Release."""
-    latest_by_key: dict[str, list] = {}
-    for r in _tab_rows_strict(service, sheet_id, TAB_RIDE, "A2:H"):
-        if len(r) > 1:
-            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
-    result: dict[str, tuple[str, str] | None] = {}
-    for key in item_keys:
-        r = latest_by_key.get(key)
-        if r is None:
-            result[key] = None
-        else:
-            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
-    return result
+    """Batched RIDE Watch snapshot reader. See last_snapshots() (tolerates an
+    absent tab, like last_mmd_snapshots) — a false-empty read here would
+    silently re-baseline a watched Part 201 site/UST facility, erasing an
+    un-alerted RiskCondition flip or new Open_Release."""
+    return last_snapshots(service, sheet_id, TAB_RIDE, item_keys)
 
 
 def append_ride_watch_row(
     service, sheet_id: str, date: str, item_key: str, label: str, change: str,
     snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
 ) -> None:
-    """Append one RIDE Watch row. Written BEFORE the change email is sent
-    (durable record first, alert best-effort second — same crash-safe ordering
-    as append_mmd_watch_row)."""
-    append_rows(service, sheet_id, TAB_RIDE, [[
-        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
-    ]])
+    """Append one RIDE Watch row. See append_watch_row()."""
+    append_watch_row(service, sheet_id, TAB_RIDE, date, item_key, label, change,
+                      snapshot_hash, note, checked_at, snapshot_json)
 
 
 # ---------------------------------------------------------------------------
@@ -2401,16 +2331,8 @@ def append_ride_watch_row(
 
 
 def ensure_mpart_tabs(service, sheet_id: str) -> None:
-    """Create the MPART Data Watch tab if missing and reconcile its header row on
-    every run (same self-healing policy as ensure_ride_tabs)."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_MPART not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_MPART}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_MPART, MPART_WATCH_HEADERS)
+    """Create/heal the MPART Data Watch tab. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_MPART, MPART_WATCH_HEADERS)
 
 
 def read_mpart_rows(service, sheet_id: str) -> list[list]:
@@ -2431,11 +2353,9 @@ def append_mpart_watch_row(
     service, sheet_id: str, date: str, item_key: str, label: str, change: str,
     snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
 ) -> None:
-    """Append one MPART Data Watch row. Written BEFORE the alert email (durable
-    record first, alert best-effort second — the append_ride_watch_row ordering)."""
-    append_rows(service, sheet_id, TAB_MPART, [[
-        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
-    ]])
+    """Append one MPART Data Watch row. See append_watch_row()."""
+    append_watch_row(service, sheet_id, TAB_MPART, date, item_key, label, change,
+                      snapshot_hash, note, checked_at, snapshot_json)
 
 
 # ---------------------------------------------------------------------------
@@ -2446,16 +2366,8 @@ def append_mpart_watch_row(
 
 
 def ensure_govqa_tabs(service, sheet_id: str) -> None:
-    """Create the GovQA Archive Watch tab if missing and reconcile its header row on
-    every run (same self-healing policy as ensure_ride_tabs)."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_GOVQA not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_GOVQA}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_GOVQA, GOVQA_HEADERS)
+    """Create/heal the GovQA Archive Watch tab. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_GOVQA, GOVQA_HEADERS)
 
 
 def read_govqa_rows(service, sheet_id: str) -> list[list]:
@@ -2485,17 +2397,9 @@ def append_govqa_rows(service, sheet_id: str, rows: list[list]) -> None:
 
 
 def ensure_rrd_docs_tabs(service, sheet_id: str) -> None:
-    """Create the RRD Documents tab if missing and reconcile its header row on
-    every run (same self-healing policy as ensure_ride_tabs). Called only from
-    ride_docs_watcher.py, so the tab doesn't appear until the watch runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_RRD_DOCS not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_RRD_DOCS}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_RRD_DOCS, RRD_DOCS_HEADERS)
+    """Create/heal the RRD Documents tab. Called only from
+    ride_docs_watcher.py. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_RRD_DOCS, RRD_DOCS_HEADERS)
 
 
 def read_rrd_docs_rows(service, sheet_id: str) -> list[list]:
@@ -2530,65 +2434,34 @@ def append_rrd_docs_rows(service, sheet_id: str, rows: list[list]) -> None:
 
 
 def ensure_submissions_tabs(service, sheet_id: str) -> None:
-    """Create the Submissions Watch tab if missing and reconcile its header
-    row on every run (same self-healing policy as ensure_ride_tabs()). Called
-    only from nsite_submissions_watcher.py, so the tab doesn't appear until
-    the watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_SUBMISSIONS not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_SUBMISSIONS}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_SUBMISSIONS, SUBMISSIONS_WATCH_HEADERS)
+    """Create/heal the Submissions Watch tab. Called only from
+    nsite_submissions_watcher.py. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_SUBMISSIONS, SUBMISSIONS_WATCH_HEADERS)
 
 
 def last_submissions_snapshot(service, sheet_id: str, item_key: str) -> tuple[str, str] | None:
-    """Return (snapshot_hash, snapshot_json) from the most recent row for this
-    item_key (e.g. "subm:N2688"), or None if the item has never been
-    snapshotted. None means 'baseline this item'; a hash mismatch means
-    'changed'. Reading the last matching row (not a _meta cell) is what makes
-    the watch race-free — the tab is append-only, so no concurrent job can
-    clobber it (same idiom as last_ride_snapshot)."""
-    return last_submissions_snapshots(service, sheet_id, [item_key])[item_key]
+    """Single Submissions item_key (e.g. "subm:N2688") form of
+    last_submissions_snapshots(). See last_snapshot()."""
+    return last_snapshot(service, sheet_id, TAB_SUBMISSIONS, item_key)
 
 
 def last_submissions_snapshots(
     service, sheet_id: str, item_keys: list[str],
 ) -> dict[str, tuple[str, str] | None]:
-    """Batched form of last_submissions_snapshot: ONE tab read for however
-    many keys are asked for (the all-baselined check on a fetch failure),
-    instead of one full-tab read per key. Same race-free append-only read as
-    the singular form — the last_ride_snapshots idiom.
-
-    Uses the STRICT reader (state-reads-raise): a transient read failure must
-    RAISE rather than silently re-baseline a watched nSITE site, erasing an
+    """Batched Submissions Watch snapshot reader. See last_snapshots()
+    (tolerates an absent tab, like last_ride_snapshots) — a false-empty read
+    here would silently re-baseline a watched nSITE site, erasing an
     un-alerted new filing or status advance."""
-    latest_by_key: dict[str, list] = {}
-    for r in _tab_rows_strict(service, sheet_id, TAB_SUBMISSIONS, "A2:H"):
-        if len(r) > 1:
-            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
-    result: dict[str, tuple[str, str] | None] = {}
-    for key in item_keys:
-        r = latest_by_key.get(key)
-        if r is None:
-            result[key] = None
-        else:
-            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
-    return result
+    return last_snapshots(service, sheet_id, TAB_SUBMISSIONS, item_keys)
 
 
 def append_submissions_watch_row(
     service, sheet_id: str, date: str, item_key: str, label: str, change: str,
     snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
 ) -> None:
-    """Append one Submissions Watch row. Written BEFORE the change email is
-    sent (durable record first, alert best-effort second — same crash-safe
-    ordering as append_ride_watch_row)."""
-    append_rows(service, sheet_id, TAB_SUBMISSIONS, [[
-        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
-    ]])
+    """Append one Submissions Watch row. See append_watch_row()."""
+    append_watch_row(service, sheet_id, TAB_SUBMISSIONS, date, item_key, label,
+                      change, snapshot_hash, note, checked_at, snapshot_json)
 
 
 # ---------------------------------------------------------------------------
@@ -2598,78 +2471,34 @@ def append_submissions_watch_row(
 
 
 def ensure_violations_tabs(service, sheet_id: str) -> None:
-    """Create the Violations Watch tab if missing and reconcile its header row
-    on every run (same self-healing policy as ensure_submissions_tabs()).
-    Called only from nsite_violations_watcher.py, so the tab doesn't appear
-    until the watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_VIOLATIONS not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_VIOLATIONS}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_VIOLATIONS, VIOLATIONS_WATCH_HEADERS)
+    """Create/heal the Violations Watch tab. Called only from
+    nsite_violations_watcher.py. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_VIOLATIONS, VIOLATIONS_WATCH_HEADERS)
 
 
 def last_violations_snapshots(
     service, sheet_id: str, item_keys: list[str],
 ) -> dict[str, tuple[str, str] | None]:
-    """Return {item_key: (snapshot_hash, snapshot_json) or None} for each key
-    (e.g. "viol:N2688"), reading the whole tab ONCE however many keys are
-    asked for. None means 'baseline this item'; a hash mismatch means
-    'changed'. Reading the last matching row (not a _meta cell) is what makes
-    the watch race-free — the tab is append-only, so no concurrent job can
-    clobber it.
-
-    There is deliberately no singular convenience wrapper (unlike
-    last_ride_snapshot / last_submissions_snapshot): the watcher reads every
-    key it needs in ONE call at the top of the run, and a per-site variant
-    would reintroduce the ~19-reads-per-run throttling exposure this exists to
-    remove.
-
-    DELIBERATELY does NOT go through _tab_rows, which swallows every read
-    exception and returns [] (fine for its append-only-accumulator callers,
-    wrong here). For a watch that DIFFS, an indistinguishable [] is a silent
-    data-loss bug: a throttled read would make every key look never-seen, the
-    watcher would write a fresh "baseline" row, and because the tab is
-    append-only with last-write-wins that spurious baseline BECOMES the state
-    — erasing a real, un-alerted change permanently rather than deferring it.
-    So a read failure raises and the caller fails loudly instead.
-
-    The tab's own absence is not a case here: nsite_violations_watcher calls
-    ensure_violations_tabs() before any read, so the tab always exists by the
-    time this runs."""
-    resp = (
-        service.spreadsheets()
-        .values()
-        .get(spreadsheetId=sheet_id, range=f"'{TAB_VIOLATIONS}'!A2:H")
-        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    )
-    latest_by_key: dict[str, list] = {}
-    for r in resp.get("values", []):
-        if r and len(r) > 1:
-            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
-    result: dict[str, tuple[str, str] | None] = {}
-    for key in item_keys:
-        r = latest_by_key.get(key)
-        if r is None:
-            result[key] = None
-        else:
-            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
-    return result
+    """Batched Violations Watch snapshot reader (e.g. "viol:N2688"). See
+    last_snapshots(tolerate_absent_tab=False) — this profile has no singular
+    convenience wrapper (the watcher reads every key it needs in ONE call at
+    the top of the run; a per-site variant would reintroduce the
+    ~19-reads-per-run throttling exposure this exists to remove), and ANY
+    read failure (including an absent tab) raises rather than looking like
+    "never snapshotted": nsite_violations_watcher always calls
+    ensure_violations_tabs() before this runs, so the tab's own absence is
+    not a case this profile's design distinguishes."""
+    return last_snapshots(service, sheet_id, TAB_VIOLATIONS, item_keys,
+                           tolerate_absent_tab=False)
 
 
 def append_violations_watch_row(
     service, sheet_id: str, date: str, item_key: str, label: str, change: str,
     snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
 ) -> None:
-    """Append one Violations Watch row. Written BEFORE the change email is sent
-    (durable record first, alert best-effort second — same crash-safe ordering
-    as append_submissions_watch_row)."""
-    append_rows(service, sheet_id, TAB_VIOLATIONS, [[
-        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
-    ]])
+    """Append one Violations Watch row. See append_watch_row()."""
+    append_watch_row(service, sheet_id, TAB_VIOLATIONS, date, item_key, label,
+                      change, snapshot_hash, note, checked_at, snapshot_json)
 
 
 # ---------------------------------------------------------------------------
@@ -2679,74 +2508,28 @@ def append_violations_watch_row(
 
 
 def ensure_compliance_actions_tabs(service, sheet_id: str) -> None:
-    """Create the Compliance Actions Watch tab if missing and reconcile its
-    header row on every run (same self-healing policy as ensure_violations_tabs()).
-    Called only from nsite_compliance_actions_watcher.py, so the tab doesn't
-    appear until the watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_COMPLIANCE_ACTIONS not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_COMPLIANCE_ACTIONS}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_COMPLIANCE_ACTIONS, COMPLIANCE_ACTIONS_WATCH_HEADERS)
+    """Create/heal the Compliance Actions Watch tab. Called only from
+    nsite_compliance_actions_watcher.py. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_COMPLIANCE_ACTIONS, COMPLIANCE_ACTIONS_WATCH_HEADERS)
 
 
 def last_compliance_actions_snapshots(
     service, sheet_id: str, item_keys: list[str],
 ) -> dict[str, tuple[str, str] | None]:
-    """Return {item_key: (snapshot_hash, snapshot_json) or None} for each key
-    (e.g. "ca:N2688"), reading the whole tab ONCE however many keys are asked
-    for. None means 'baseline this item'; a hash mismatch means 'changed'.
-    Reading the last matching row (not a _meta cell) is what makes the watch
-    race-free — the tab is append-only, so no concurrent job can clobber it.
-
-    Same contract as last_violations_snapshots (batched, no singular wrapper):
-    the watcher reads every key it needs in ONE call at the top of the run.
-
-    DELIBERATELY does NOT go through _tab_rows, which swallows every read
-    exception and returns [] (fine for its append-only-accumulator callers,
-    wrong here). For a watch that DIFFS, an indistinguishable [] is a silent
-    data-loss bug: a throttled read would make every key look never-seen, the
-    watcher would write a fresh "baseline" row, and because the tab is
-    append-only with last-write-wins that spurious baseline BECOMES the state —
-    erasing a real, un-alerted change permanently rather than deferring it. So a
-    read failure raises and the caller fails loudly instead.
-
-    The tab's own absence is not a case here: nsite_compliance_actions_watcher
-    calls ensure_compliance_actions_tabs() before any read, so the tab always
-    exists by the time this runs."""
-    resp = (
-        service.spreadsheets()
-        .values()
-        .get(spreadsheetId=sheet_id, range=f"'{TAB_COMPLIANCE_ACTIONS}'!A2:H")
-        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    )
-    latest_by_key: dict[str, list] = {}
-    for r in resp.get("values", []):
-        if r and len(r) > 1:
-            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
-    result: dict[str, tuple[str, str] | None] = {}
-    for key in item_keys:
-        r = latest_by_key.get(key)
-        if r is None:
-            result[key] = None
-        else:
-            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
-    return result
+    """Batched Compliance Actions Watch snapshot reader (e.g. "ca:N2688"). Same
+    contract as last_violations_snapshots. See
+    last_snapshots(tolerate_absent_tab=False)."""
+    return last_snapshots(service, sheet_id, TAB_COMPLIANCE_ACTIONS, item_keys,
+                           tolerate_absent_tab=False)
 
 
 def append_compliance_actions_watch_row(
     service, sheet_id: str, date: str, item_key: str, label: str, change: str,
     snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
 ) -> None:
-    """Append one Compliance Actions Watch row. Written BEFORE the change email
-    is sent (durable record first, alert best-effort second — same crash-safe
-    ordering as append_violations_watch_row)."""
-    append_rows(service, sheet_id, TAB_COMPLIANCE_ACTIONS, [[
-        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
-    ]])
+    """Append one Compliance Actions Watch row. See append_watch_row()."""
+    append_watch_row(service, sheet_id, TAB_COMPLIANCE_ACTIONS, date, item_key,
+                      label, change, snapshot_hash, note, checked_at, snapshot_json)
 
 
 # ---------------------------------------------------------------------------
@@ -2757,76 +2540,28 @@ def append_compliance_actions_watch_row(
 
 
 def ensure_evaluations_tabs(service, sheet_id: str) -> None:
-    """Create the Evaluations Watch tab if missing and reconcile its header row
-    on every run (same self-healing policy as ensure_compliance_actions_tabs()).
-    Called only from nsite_evaluations_watcher.py, so the tab doesn't appear
-    until the watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_EVALUATIONS not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_EVALUATIONS}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_EVALUATIONS, EVALUATIONS_WATCH_HEADERS)
+    """Create/heal the Evaluations Watch tab. Called only from
+    nsite_evaluations_watcher.py. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_EVALUATIONS, EVALUATIONS_WATCH_HEADERS)
 
 
 def last_evaluations_snapshots(
     service, sheet_id: str, item_keys: list[str],
 ) -> dict[str, tuple[str, str] | None]:
-    """Return {item_key: (snapshot_hash, snapshot_json) or None} for each key
-    (e.g. "eval:N2688"), reading the whole tab ONCE however many keys are
-    asked for. None means 'baseline this item'; a hash mismatch means
-    'changed'. Reading the last matching row (not a _meta cell) is what makes
-    the watch race-free — the tab is append-only, so no concurrent job can
-    clobber it.
-
-    Same contract as last_violations_snapshots/last_compliance_actions_snapshots
-    (batched, no singular wrapper): the watcher reads every key it needs in ONE
-    call at the top of the run.
-
-    DELIBERATELY does NOT go through _tab_rows, which swallows every read
-    exception and returns [] (fine for its append-only-accumulator callers,
-    wrong here). For a watch that DIFFS, an indistinguishable [] is a silent
-    data-loss bug: a throttled read would make every key look never-seen, the
-    watcher would write a fresh "baseline" row, and because the tab is
-    append-only with last-write-wins that spurious baseline BECOMES the state —
-    erasing a real, un-alerted change permanently rather than deferring it. So a
-    read failure raises and the caller fails loudly instead.
-
-    The tab's own absence is not a case here: nsite_evaluations_watcher calls
-    ensure_evaluations_tabs() before any read, so the tab always exists by the
-    time this runs."""
-    resp = (
-        service.spreadsheets()
-        .values()
-        .get(spreadsheetId=sheet_id, range=f"'{TAB_EVALUATIONS}'!A2:H")
-        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    )
-    latest_by_key: dict[str, list] = {}
-    for r in resp.get("values", []):
-        if r and len(r) > 1:
-            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
-    result: dict[str, tuple[str, str] | None] = {}
-    for key in item_keys:
-        r = latest_by_key.get(key)
-        if r is None:
-            result[key] = None
-        else:
-            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
-    return result
+    """Batched Evaluations Watch snapshot reader (e.g. "eval:N2688"). Same
+    contract as last_violations_snapshots/last_compliance_actions_snapshots.
+    See last_snapshots(tolerate_absent_tab=False)."""
+    return last_snapshots(service, sheet_id, TAB_EVALUATIONS, item_keys,
+                           tolerate_absent_tab=False)
 
 
 def append_evaluations_watch_row(
     service, sheet_id: str, date: str, item_key: str, label: str, change: str,
     snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
 ) -> None:
-    """Append one Evaluations Watch row. Written BEFORE the change email is
-    sent (durable record first, alert best-effort second — same crash-safe
-    ordering as append_violations_watch_row/append_compliance_actions_watch_row)."""
-    append_rows(service, sheet_id, TAB_EVALUATIONS, [[
-        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
-    ]])
+    """Append one Evaluations Watch row. See append_watch_row()."""
+    append_watch_row(service, sheet_id, TAB_EVALUATIONS, date, item_key, label,
+                      change, snapshot_hash, note, checked_at, snapshot_json)
 
 
 # ---------------------------------------------------------------------------
@@ -2836,76 +2571,28 @@ def append_evaluations_watch_row(
 
 
 def ensure_permits_tabs(service, sheet_id: str) -> None:
-    """Create the Permits Watch tab if missing and reconcile its header row on
-    every run (same self-healing policy as ensure_evaluations_tabs()). Called
-    only from nsite_permits_watcher.py, so the tab doesn't appear until the
-    watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_PERMITS not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_PERMITS}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_PERMITS, PERMITS_WATCH_HEADERS)
+    """Create/heal the Permits Watch tab. Called only from
+    nsite_permits_watcher.py. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_PERMITS, PERMITS_WATCH_HEADERS)
 
 
 def last_permits_snapshots(
     service, sheet_id: str, item_keys: list[str],
 ) -> dict[str, tuple[str, str] | None]:
-    """Return {item_key: (snapshot_hash, snapshot_json) or None} for each key
-    (e.g. "prmt:N2688"), reading the whole tab ONCE however many keys are
-    asked for. None means 'baseline this item'; a hash mismatch means
-    'changed'. Reading the last matching row (not a _meta cell) is what makes
-    the watch race-free — the tab is append-only, so no concurrent job can
-    clobber it.
-
-    Same contract as last_evaluations_snapshots/last_compliance_actions_
-    snapshots (batched, no singular wrapper): the watcher reads every key it
-    needs in ONE call at the top of the run.
-
-    DELIBERATELY does NOT go through _tab_rows, which swallows every read
-    exception and returns [] (fine for its append-only-accumulator callers,
-    wrong here). For a watch that DIFFS, an indistinguishable [] is a silent
-    data-loss bug: a throttled read would make every key look never-seen, the
-    watcher would write a fresh "baseline" row, and because the tab is
-    append-only with last-write-wins that spurious baseline BECOMES the state —
-    erasing a real, un-alerted change permanently rather than deferring it. So a
-    read failure raises and the caller fails loudly instead.
-
-    The tab's own absence is not a case here: nsite_permits_watcher calls
-    ensure_permits_tabs() before any read, so the tab always exists by the
-    time this runs."""
-    resp = (
-        service.spreadsheets()
-        .values()
-        .get(spreadsheetId=sheet_id, range=f"'{TAB_PERMITS}'!A2:H")
-        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    )
-    latest_by_key: dict[str, list] = {}
-    for r in resp.get("values", []):
-        if r and len(r) > 1:
-            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
-    result: dict[str, tuple[str, str] | None] = {}
-    for key in item_keys:
-        r = latest_by_key.get(key)
-        if r is None:
-            result[key] = None
-        else:
-            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
-    return result
+    """Batched Permits Watch snapshot reader (e.g. "prmt:N2688"). Same
+    contract as last_evaluations_snapshots/last_compliance_actions_snapshots.
+    See last_snapshots(tolerate_absent_tab=False)."""
+    return last_snapshots(service, sheet_id, TAB_PERMITS, item_keys,
+                           tolerate_absent_tab=False)
 
 
 def append_permits_watch_row(
     service, sheet_id: str, date: str, item_key: str, label: str, change: str,
     snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
 ) -> None:
-    """Append one Permits Watch row. Written BEFORE the change email is sent
-    (durable record first, alert best-effort second — same crash-safe ordering
-    as append_evaluations_watch_row)."""
-    append_rows(service, sheet_id, TAB_PERMITS, [[
-        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
-    ]])
+    """Append one Permits Watch row. See append_watch_row()."""
+    append_watch_row(service, sheet_id, TAB_PERMITS, date, item_key, label,
+                      change, snapshot_hash, note, checked_at, snapshot_json)
 
 
 # ---------------------------------------------------------------------------
@@ -2918,79 +2605,31 @@ def append_permits_watch_row(
 
 
 def ensure_complaints_tabs(service, sheet_id: str) -> None:
-    """Create the Complaints Watch tab if missing and reconcile its header row
-    on every run (same self-healing policy as ensure_permits_tabs()). Called
-    only from nsite_complaints_watcher.py, so the tab doesn't appear until the
-    watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_COMPLAINTS not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_COMPLAINTS}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_COMPLAINTS, COMPLAINTS_WATCH_HEADERS)
+    """Create/heal the Complaints Watch tab. Called only from
+    nsite_complaints_watcher.py. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_COMPLAINTS, COMPLAINTS_WATCH_HEADERS)
 
 
 def last_complaints_snapshots(
     service, sheet_id: str, item_keys: list[str],
 ) -> dict[str, tuple[str, str] | None]:
-    """Return {item_key: (snapshot_hash, snapshot_json) or None} for each key
-    (e.g. "cmplt:N2688"), reading the whole tab ONCE however many keys are
-    asked for. None means 'baseline this item'; a hash mismatch means
-    'changed'. Reading the last matching row (not a _meta cell) is what makes
-    the watch race-free — the tab is append-only, so no concurrent job can
-    clobber it.
-
-    Same contract as last_permits_snapshots/last_evaluations_snapshots
-    (batched, no singular wrapper): the watcher reads every key it needs in
-    ONE call at the top of the run.
-
-    DELIBERATELY does NOT go through _tab_rows, which swallows every read
-    exception and returns [] (fine for its append-only-accumulator callers,
-    wrong here). For a watch that DIFFS, an indistinguishable [] is a silent
-    data-loss bug: a throttled read would make every key look never-seen, the
-    watcher would write a fresh "baseline" row, and because the tab is
-    append-only with last-write-wins that spurious baseline BECOMES the state
-    — erasing a real, un-alerted change permanently rather than deferring it.
-    So a read failure raises and the caller fails loudly instead. This is
-    especially load-bearing here: N2688 alone holds 6,396 complaints, so a
-    spurious re-baseline at this site would silently discard the most
-    consequential history this watch is meant to protect.
-
-    The tab's own absence is not a case here: nsite_complaints_watcher calls
-    ensure_complaints_tabs() before any read, so the tab always exists by the
-    time this runs."""
-    resp = (
-        service.spreadsheets()
-        .values()
-        .get(spreadsheetId=sheet_id, range=f"'{TAB_COMPLAINTS}'!A2:H")
-        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    )
-    latest_by_key: dict[str, list] = {}
-    for r in resp.get("values", []):
-        if r and len(r) > 1:
-            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
-    result: dict[str, tuple[str, str] | None] = {}
-    for key in item_keys:
-        r = latest_by_key.get(key)
-        if r is None:
-            result[key] = None
-        else:
-            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
-    return result
+    """Batched Complaints Watch snapshot reader (e.g. "cmplt:N2688"). Same
+    contract as last_permits_snapshots/last_evaluations_snapshots — especially
+    load-bearing here: N2688 alone holds 6,396 complaints, so a spurious
+    re-baseline from a swallowed read failure would silently discard the most
+    consequential history this watch is meant to protect. See
+    last_snapshots(tolerate_absent_tab=False)."""
+    return last_snapshots(service, sheet_id, TAB_COMPLAINTS, item_keys,
+                           tolerate_absent_tab=False)
 
 
 def append_complaints_watch_row(
     service, sheet_id: str, date: str, item_key: str, label: str, change: str,
     snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
 ) -> None:
-    """Append one Complaints Watch row. Written BEFORE the change email is
-    sent (durable record first, alert best-effort second — same crash-safe
-    ordering as append_permits_watch_row)."""
-    append_rows(service, sheet_id, TAB_COMPLAINTS, [[
-        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
-    ]])
+    """Append one Complaints Watch row. See append_watch_row()."""
+    append_watch_row(service, sheet_id, TAB_COMPLAINTS, date, item_key, label,
+                      change, snapshot_hash, note, checked_at, snapshot_json)
 
 
 # ---------------------------------------------------------------------------
@@ -3002,76 +2641,28 @@ def append_complaints_watch_row(
 
 
 def ensure_public_notices_tabs(service, sheet_id: str) -> None:
-    """Create the Public Notices Watch tab if missing and reconcile its header
-    row on every run (same self-healing policy as ensure_complaints_tabs()).
-    Called only from nsite_public_notices_watcher.py, so the tab doesn't
-    appear until the watch actually runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_PUBLIC_NOTICES not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_PUBLIC_NOTICES}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_PUBLIC_NOTICES, PUBLIC_NOTICES_WATCH_HEADERS)
+    """Create/heal the Public Notices Watch tab. Called only from
+    nsite_public_notices_watcher.py. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_PUBLIC_NOTICES, PUBLIC_NOTICES_WATCH_HEADERS)
 
 
 def last_public_notices_snapshots(
     service, sheet_id: str, item_keys: list[str],
 ) -> dict[str, tuple[str, str] | None]:
-    """Return {item_key: (snapshot_hash, snapshot_json) or None} for each key
-    (e.g. "pubntc:N2688"), reading the whole tab ONCE however many keys are
-    asked for. None means 'baseline this item'; a hash mismatch means
-    'changed'. Reading the last matching row (not a _meta cell) is what makes
-    the watch race-free — the tab is append-only, so no concurrent job can
-    clobber it.
-
-    Same contract as last_permits_snapshots/last_evaluations_snapshots
-    (batched, no singular wrapper): the watcher reads every key it needs in
-    ONE call at the top of the run.
-
-    DELIBERATELY does NOT go through _tab_rows, which swallows every read
-    exception and returns [] (fine for its append-only-accumulator callers,
-    wrong here). For a watch that DIFFS, an indistinguishable [] is a silent
-    data-loss bug: a throttled read would make every key look never-seen, the
-    watcher would write a fresh "baseline" row, and because the tab is
-    append-only with last-write-wins that spurious baseline BECOMES the state
-    — erasing a real, un-alerted change permanently rather than deferring it.
-    So a read failure raises and the caller fails loudly instead.
-
-    The tab's own absence is not a case here: nsite_public_notices_watcher
-    calls ensure_public_notices_tabs() before any read, so the tab always
-    exists by the time this runs."""
-    resp = (
-        service.spreadsheets()
-        .values()
-        .get(spreadsheetId=sheet_id, range=f"'{TAB_PUBLIC_NOTICES}'!A2:H")
-        .execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    )
-    latest_by_key: dict[str, list] = {}
-    for r in resp.get("values", []):
-        if r and len(r) > 1:
-            latest_by_key[r[1]] = r  # append-only tab -> last write for a key wins
-    result: dict[str, tuple[str, str] | None] = {}
-    for key in item_keys:
-        r = latest_by_key.get(key)
-        if r is None:
-            result[key] = None
-        else:
-            result[key] = (r[4] if len(r) > 4 else "", r[7] if len(r) > 7 else "")
-    return result
+    """Batched Public Notices Watch snapshot reader (e.g. "pubntc:N2688"). Same
+    contract as last_permits_snapshots/last_evaluations_snapshots. See
+    last_snapshots(tolerate_absent_tab=False)."""
+    return last_snapshots(service, sheet_id, TAB_PUBLIC_NOTICES, item_keys,
+                           tolerate_absent_tab=False)
 
 
 def append_public_notices_watch_row(
     service, sheet_id: str, date: str, item_key: str, label: str, change: str,
     snapshot_hash: str, note: str, checked_at: str, snapshot_json: str,
 ) -> None:
-    """Append one Public Notices Watch row. Written BEFORE the change email is
-    sent (durable record first, alert best-effort second — same crash-safe
-    ordering as append_complaints_watch_row)."""
-    append_rows(service, sheet_id, TAB_PUBLIC_NOTICES, [[
-        date, item_key, label, change, snapshot_hash, note, checked_at, snapshot_json,
-    ]])
+    """Append one Public Notices Watch row. See append_watch_row()."""
+    append_watch_row(service, sheet_id, TAB_PUBLIC_NOTICES, date, item_key,
+                      label, change, snapshot_hash, note, checked_at, snapshot_json)
 
 
 # ---------------------------------------------------------------------------
@@ -3080,19 +2671,10 @@ def append_public_notices_watch_row(
 
 
 def ensure_woi_tabs(service, sheet_id: str) -> None:
-    """Create the WOI Well Summary tab if missing and reconcile its header row on
-    every run (same self-healing policy as ensure_mmpc_tabs()/ensure_pfas_tabs()).
-    Called from the watcher/backfill only when a WOI Status Report is actually
-    routed (woi_router), so the tab doesn't appear until then — same no-empty-tab
-    policy as the WDS/MMPC/PFAS tabs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_WOI_SUMMARY not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_WOI_SUMMARY}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_WOI_SUMMARY, WOI_SUMMARY_HEADERS)
+    """Create/heal the WOI Well Summary tab. Called from the watcher/backfill
+    only when a WOI Status Report is actually routed (woi_router), so the tab
+    doesn't appear until then. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_WOI_SUMMARY, WOI_SUMMARY_HEADERS)
 
 
 def write_woi_summary(
@@ -3114,18 +2696,9 @@ def write_woi_summary(
 
 
 def ensure_gfl_air_tabs(service, sheet_id: str) -> None:
-    """Create the GFL Air tab if missing and reconcile its header row on every run
-    (same self-healing policy as ensure_pfas_tabs()/ensure_woi_tabs()). Called only
-    from gfl_air_watcher.py, so the tab doesn't appear until the watch actually
-    runs."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_GFL_AIR not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_GFL_AIR}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_GFL_AIR, GFL_AIR_SUMMARY_HEADERS)
+    """Create/heal the GFL Air tab. Called only from gfl_air_watcher.py. See
+    ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_GFL_AIR, GFL_AIR_SUMMARY_HEADERS)
 
 
 # Fixed write span for the GFL Air snapshot: the six MS-* stations plus headroom.
@@ -3317,17 +2890,10 @@ def set_gfl_air_episode_state(service, sheet_id: str, state: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def ensure_perimeter_episodes_tab(service, sheet_id: str) -> None:
-    """Create the Perimeter Action-Level Episodes tab if missing and reconcile its
-    header row (same self-healing policy as ensure_gfl_air_tabs). Called only from
-    gfl_air_watcher.py, so the tab doesn't appear until an episode actually closes."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
-    if TAB_PERIMETER_EPISODES not in existing:
-        service.spreadsheets().batchUpdate(
-            spreadsheetId=sheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": TAB_PERIMETER_EPISODES}}}]},
-        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    _set_header(service, sheet_id, TAB_PERIMETER_EPISODES, PERIMETER_EPISODE_HEADERS)
+    """Create/heal the Perimeter Action-Level Episodes tab. Called only from
+    gfl_air_watcher.py, so the tab doesn't appear until an episode actually
+    closes. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_PERIMETER_EPISODES, PERIMETER_EPISODE_HEADERS)
 
 
 # ---------------------------------------------------------------------------

@@ -887,3 +887,133 @@ def test_gfl_info_site_tab_is_empty_true_for_a_genuinely_absent_tab():
     svc.get = lambda spreadsheetId, range: (
         _ for _ in ()).throw(_http_error(400, f"Unable to parse range: {range}"))
     assert sw.gfl_info_site_tab_is_empty(svc, "SID") is True
+
+
+# ---------------------------------------------------------------------------
+# Generic Watch-tab helpers (sheet-writer-generic): ensure_tab(),
+# append_watch_row(), last_snapshots()/last_snapshot(). Every ensure_*_tab(s)/
+# append_*_watch_row/last_*_snapshot(s) function above is now a thin wrapper
+# over exactly one of these four; the existing per-profile tests throughout
+# this file (and tests/test_nsite_violations.py etc.) already pin the
+# wrappers' observable behavior unchanged, so these tests target the shared
+# implementations directly.
+# ---------------------------------------------------------------------------
+
+def test_ensure_tab_creates_when_absent():
+    svc = FakeSheets()
+    sw.ensure_tab(svc, "SID", "A New Tab", ["H1", "H2"])
+    assert "A New Tab" in svc._created                   # create-if-absent fired
+    assert "A New Tab" in svc._values._tabs
+
+
+def test_ensure_tab_idempotent_when_present():
+    svc = FakeSheets({"Already There": [["H1", "H2"]]})
+    sw.ensure_tab(svc, "SID", "Already There", ["H1", "H2"])
+    assert svc._created == []                            # already present -> not re-created
+
+
+def test_append_watch_row_writes_the_shared_eight_column_shape():
+    svc = FakeSheets()
+    sw.append_watch_row(svc, "SID", "Some Watch", "2026-10-14", "key:1", "label",
+                         "new", "hash1", "note", "now", "{}")
+    rows = svc._values._tabs["Some Watch"][1:]
+    assert rows == [["2026-10-14", "key:1", "label", "new", "hash1", "note", "now", "{}"]]
+
+
+def test_last_snapshots_batches_into_one_tab_read():
+    reads = []
+    tabs = {"W": [["d", "k", "l", "c", "h", "n", "t", "j"],
+                  ["2026-01-01", "key:A", "L", "baseline", "ha", "", "t1", "{}"],
+                  ["2026-01-02", "key:B", "L", "baseline", "hb", "", "t2", "{}"]]}
+    svc = FakeSheets(tabs)
+    real_get = svc._values.get
+
+    def _counting(spreadsheetId, range):
+        reads.append(range)
+        return real_get(spreadsheetId, range)
+    svc._values.get = _counting
+    result = sw.last_snapshots(svc, "SID", "W", ["key:A", "key:B", "key:C"])
+    assert len(reads) == 1
+    assert result == {"key:A": ("ha", "{}"), "key:B": ("hb", "{}"), "key:C": None}
+
+
+def test_last_snapshots_last_row_wins_for_a_repeated_key():
+    tabs = {"W": [["d", "k", "l", "c", "h", "n", "t", "j"],
+                  ["2026-01-01", "key:A", "L", "baseline", "h-old", "", "t1", "{}"],
+                  ["2026-01-02", "key:A", "L", "changed", "h-new", "", "t2", "{}"]]}
+    svc = FakeSheets(tabs)
+    assert sw.last_snapshots(svc, "SID", "W", ["key:A"]) == {"key:A": ("h-new", "{}")}
+
+
+def test_last_snapshot_singular_matches_batched_form():
+    tabs = {"W": [["d", "k", "l", "c", "h", "n", "t", "j"],
+                  ["2026-01-01", "key:A", "L", "baseline", "ha", "", "t1", "{}"]]}
+    svc = FakeSheets(tabs)
+    assert sw.last_snapshot(svc, "SID", "W", "key:A") == ("ha", "{}")
+    assert sw.last_snapshot(svc, "SID", "W", "key:absent") is None
+
+
+def test_last_snapshots_tolerates_absent_tab_by_default():
+    svc = _Exploding()
+    svc.get = lambda spreadsheetId, range: (
+        _ for _ in ()).throw(_http_error(400, f"Unable to parse range: {range}"))
+    assert sw.last_snapshots(svc, "SID", "Ghost", ["key:A"]) == {"key:A": None}
+
+
+def test_last_snapshots_raises_on_absent_tab_when_not_tolerated():
+    """tolerate_absent_tab=False is the contract every one of the six nSITE
+    profile watchers (Violations/Compliance Actions/Evaluations/Permits/
+    Complaints/Public Notices) is merged with: unlike ROP/MMD/PFAS-PWS/RIDE/
+    Submissions, a genuinely absent tab is NOT a case their design
+    distinguishes, so it raises like any other read failure."""
+    svc = _Exploding()
+    svc.get = lambda spreadsheetId, range: (
+        _ for _ in ()).throw(_http_error(400, f"Unable to parse range: {range}"))
+    with pytest.raises(HttpError):
+        sw.last_snapshots(svc, "SID", "Ghost", ["key:A"], tolerate_absent_tab=False)
+
+
+def test_last_snapshots_raises_on_a_non_absent_failure_either_way():
+    with pytest.raises(RuntimeError):
+        sw.last_snapshots(_Exploding(), "SID", "W", ["key:A"])
+    with pytest.raises(RuntimeError):
+        sw.last_snapshots(_Exploding(), "SID", "W", ["key:A"], tolerate_absent_tab=False)
+
+
+# --- identity: each of the six strict (no-absent-tab-allowance) nSITE
+# profile readers raises on a genuinely absent tab too, not just a generic
+# failure (test_last_*_snapshots_raises_rather_than_swallowing_a_read_error
+# above already covers the generic-failure case for all of them) ------------
+
+@pytest.mark.parametrize("fn, key", [
+    (sw.last_violations_snapshots, "viol:N2688"),
+    (sw.last_compliance_actions_snapshots, "ca:N2688"),
+    (sw.last_evaluations_snapshots, "eval:N2688"),
+    (sw.last_permits_snapshots, "prmt:N2688"),
+    (sw.last_complaints_snapshots, "cmplt:N2688"),
+    (sw.last_public_notices_snapshots, "pubntc:N2688"),
+])
+def test_strict_nsite_profile_snapshots_raise_even_on_a_genuinely_absent_tab(fn, key):
+    svc = _Exploding()
+    svc.get = lambda spreadsheetId, range: (
+        _ for _ in ()).throw(_http_error(400, f"Unable to parse range: {range}"))
+    with pytest.raises(HttpError):
+        fn(svc, "SID", [key])
+
+
+# --- identity: the five tolerant watchers (ROP/MMD/PFAS-PWS/RIDE/Submissions)
+# all still read a genuinely absent tab as "never snapshotted" (the ROP case
+# is already covered above by test_last_rop_snapshots_absent_tab_still_reads_
+# empty) -----------------------------------------------------------------
+
+@pytest.mark.parametrize("fn, key", [
+    (sw.last_mmd_snapshots, "mmd:475946"),
+    (sw.last_pfas_pws_snapshots, "pws:2001381"),
+    (sw.last_ride_snapshots, "ride:81000033"),
+    (sw.last_submissions_snapshots, "subm:N2688"),
+])
+def test_tolerant_nsite_profile_snapshots_still_read_absent_tab_as_empty(fn, key):
+    svc = _Exploding()
+    svc.get = lambda spreadsheetId, range: (
+        _ for _ in ()).throw(_http_error(400, f"Unable to parse range: {range}"))
+    assert fn(svc, "SID", [key]) == {key: None}
