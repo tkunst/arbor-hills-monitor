@@ -2,6 +2,8 @@
 document becomes a same-day [URGENT] email (recapped the next Sunday) or a
 routine pending_digest entry. See docs/overnight-coder-handoffs/digest-urgent-recap.md.
 """
+import pytest
+
 import watcher as w
 from egle_doc_parser import ParsedDoc
 
@@ -117,6 +119,37 @@ def test_digest_record_is_correspondence_false_when_not_generic():
     d = dict(_doc_meta(), title_was_generic=False)
     rec = w._digest_record(_parsed_with_text(_EGLE_LETTER_TEXT), d, "http://x")
     assert rec["is_correspondence"] is False
+
+
+# --- state-reads-raise: a transient read_state() failure must fail run() ----
+# loudly, BEFORE write_meta() ever runs (the exact bug this fix closes: the
+# old lenient reader would reduce a throttled/5xx response to the empty
+# default state, every doc would look unprocessed, and the end-of-run
+# write_meta() call would then persist that blown-away pending_digest /
+# pending_urgent_recap / wds_seen over the real stored values).
+
+def _min_cfg():
+    return {"anthropic_model": "m", "large_doc_page_threshold": 50,
+            "large_doc_max_keyword_pages": 10, "classification_max_tokens": 100,
+            "backfill_batch_size": 50}
+
+
+def test_run_propagates_a_read_state_failure_without_writing_meta(monkeypatch):
+    monkeypatch.setattr(w, "load_config", lambda: _min_cfg())
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.setattr(w.dc, "sheets_service", lambda: object())
+    monkeypatch.setattr(w.sw, "ensure_tabs", lambda svc, sid: None)
+
+    def _boom(svc, sid):
+        raise RuntimeError("HTTP 503")
+    monkeypatch.setattr(w.sw, "read_state", _boom)
+
+    writes = []
+    monkeypatch.setattr(w.sw, "write_meta", lambda svc, sid, state: writes.append(state))
+
+    with pytest.raises(RuntimeError):
+        w.run()
+    assert writes == []  # the destructive end-of-run write never happened
 
 
 def test_digest_record_is_correspondence_false_when_generic_but_not_a_letter():
