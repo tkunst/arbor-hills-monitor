@@ -24,8 +24,9 @@ requests>=2.32
 # and RTFDE transitively (OLE2/RTF parsing) — no action needed, just larger
 # than it looks from this one line. NOTE: extract-msg is GPL-licensed; xlrd
 # and openpyxl are BSD/MIT. This repo's root LICENSE file is CC BY 4.0, but it
-# is scoped to the published /data/ datasets only (README's "License / reuse"
-# section is explicit about this) -- the CODE's license is undecided, so
+# is scoped to the published site/data/ pages only (README's "License / reuse"
+# section is explicit about this -- NOT the unrelated top-level data/
+# directory, e.g. data/well_aliases.json) -- the CODE's license is undecided, so
 # there's no direct copyleft conflict today, but flag before choosing a code
 # license or redistributing, since the README invites reuse by other
 # advocacy groups.

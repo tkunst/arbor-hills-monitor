@@ -53,9 +53,9 @@ external users but no sensitive data). Public repo.
 - `egle_doc_parser.py` — THE reusable module (the Decode parsing base). PDF →
   `ParsedDoc`. Domain-agnostic in the sense Decode needs: the risk register is
   passed in, never hardcoded. **That claim is not true end-to-end**, though,
-  stated plainly rather than refactored here:
-  `_enforce_temperature_consistency()` takes an optional
-  `temperature_reference`/`parse_document(temperature_reference=)` kwarg, but
+  stated plainly rather than refactored here: `parse_document()` takes an
+  optional `temperature_reference` kwarg (passed to
+  `_enforce_temperature_consistency()` as its own `ref` parameter), but
   no `parse_document()` call site anywhere in this repo (`watcher.py`,
   `backfill.py`, or the `scripts/` one-offs —
   `backfill_document_dates_titles.py`, `smoke_one.py`, and
