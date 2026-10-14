@@ -110,10 +110,21 @@ jobs:
           TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          current=$(gh pr view "$PR_NUMBER" --json author,headRefOid,isDraft,state)
-          login=$(echo "$current" | jq -r '.author.login')
-          sha=$(echo "$current" | jq -r '.headRefOid')
-          draft=$(echo "$current" | jq -r '.isDraft')
+          # Uses the REST API (`gh api repos/.../pulls/{n}`), NOT `gh pr view
+          # --json author` -- `gh pr view` goes through GraphQL, which
+          # reports a bot author's login as "app/dependabot" (confirmed
+          # directly against a real PR), never "dependabot[bot]". The
+          # classify step's commit-level check already (correctly) uses the
+          # REST "dependabot[bot]" form via `gh api .../pulls/{n}/commits`;
+          # this step was the one place still assuming GraphQL's shape
+          # without having exercised it -- the same class of unverified-
+          # API-shape bug as the original PR-body-vs-commit-message mistake.
+          # REST's `state` is also lowercase ("open"), unlike GraphQL's
+          # "OPEN".
+          current=$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}")
+          login=$(echo "$current" | jq -r '.user.login')
+          sha=$(echo "$current" | jq -r '.head.sha')
+          draft=$(echo "$current" | jq -r '.draft')
           state=$(echo "$current" | jq -r '.state')
 
           if [ "$login" != "dependabot[bot]" ]; then
@@ -121,7 +132,7 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ "$state" != "OPEN" ] || [ "$draft" = "true" ]; then
+          if [ "$state" != "open" ] || [ "$draft" = "true" ]; then
             echo "PR #${PR_NUMBER} is not an open, non-draft PR (state=${state} draft=${draft}). Skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
