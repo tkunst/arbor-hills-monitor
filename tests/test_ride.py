@@ -345,19 +345,78 @@ def _arm_tab_failure(fake, boom_tab):
     fake._values.get = _boom_get
 
 
-def test_run_raises_without_writing_when_ride_watch_read_fails(monkeypatch):
-    """state-reads-raise: a transient read failure on the RIDE Watch tab must
-    propagate out of run() rather than reading as "never snapshotted"."""
+def _arm_tab_failures_at(fake, boom_tab, fail_on_calls):
+    """Wrap fake._values.get so every call number in `fail_on_calls`
+    (1-indexed, counted per-tab) against `boom_tab` raises; every other call
+    behaves normally."""
+    real_get = fake._values.get
+    counter = {"n": 0}
+    fail_on_calls = set(fail_on_calls)
+
+    def _maybe_boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            counter["n"] += 1
+            if counter["n"] in fail_on_calls:
+                raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _maybe_boom_get
+
+
+def test_run_returns_1_without_writing_when_ride_watch_read_fails(monkeypatch):
+    """state-reads-raise + per-item isolation: a transient read failure on the
+    RIDE Watch tab is now caught PER ITEM (no longer propagated out of
+    run()) -- but it must still redden the run (exit 1), never silently
+    re-baseline, and write nothing."""
     fake, sent = _wire(monkeypatch)
     assert rw.run() == 0
     baseline_rows = _data_rows(fake)
     assert len(baseline_rows) == 7
 
     _arm_tab_failure(fake, sw.TAB_RIDE)
-    with pytest.raises(RuntimeError):
-        rw.run()
+    assert rw.run() == 1                       # isolated per item, but the run is red
     assert _data_rows(fake) == baseline_rows
     assert sent == []
+
+
+def test_one_sites_read_failure_isolates_another_site(monkeypatch):
+    """Per-item isolation: ride:81000033 (ordinal 1, the first site) fails its
+    Sheets read, but ride:82008712 (ordinal 5, an independent site in the
+    SAME run) still records its real RiskCondition change and alerts."""
+    fake, sent = _wire(monkeypatch)
+    assert rw.run() == 0
+    assert len(_data_rows(fake)) == 7
+
+    changed = site_records()
+    changed[4]["RiskCondition"] = "Risks Present and Require Action in Short-term"
+    monkeypatch.setattr(rw.rc, "fetch_site_records",
+                        lambda site_ids=None, url=None, timeout=60: copy.deepcopy(changed))
+    _arm_tab_failures_at(fake, sw.TAB_RIDE, fail_on_calls={1})  # ride:81000033
+    assert rw.run() == 1
+    rows = _data_rows(fake)
+    assert len(rows) == 8                      # only ride:82008712's new row
+    new_row = rows[-1]
+    assert new_row[1] == "ride:82008712" and new_row[3] == "changed"
+    assert len(sent) == 1 and "Short-term" in sent[0][1]
+
+
+def test_item_failure_logs_class_only_not_the_raw_message(monkeypatch, capsys):
+    """Rule: a per-item isolation catch must never print the raw exception
+    string -- an HttpError's str() embeds the request URI, which contains the
+    spreadsheet id -- only the exception class name."""
+    fake, sent = _wire(monkeypatch)
+    assert rw.run() == 0
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == sw.TAB_RIDE:
+            raise RuntimeError("SENTINEL-DO-NOT-PRINT https://sheets.googleapis.com/SID")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+    assert rw.run() == 1
+    out = capsys.readouterr().out
+    assert "SENTINEL-DO-NOT-PRINT" not in out
+    assert "RuntimeError" in out
 
 
 def test_disabled_run_is_noop_touches_nothing(monkeypatch):

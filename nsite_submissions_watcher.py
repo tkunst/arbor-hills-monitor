@@ -48,6 +48,15 @@ RopFetchError/RopParseError — the Submissions response shape has been stable
 across all 5 tracked facilities' live data through this build; a future
 persistent-vs-transient split can be added if that assumption ever breaks.
 
+PER-ITEM ISOLATION: each facility's fetch+diff+record+alert runs in its own
+try/except — a Sheets read raise (state-reads-raise, ADR 020/023) or any other
+failure on ONE site is logged (class-only, never the raw exception string) and
+the run continues to the next site, returning exit 1 at the end. A CIRCUIT
+BREAKER (3 consecutive site-level failures, the govqa_watcher precedent) aborts
+the remaining sites for this run rather than paying each one's full Sheets
+retry backoff during a real outage — up to 44 `tiers` entries can be due in the
+same 3-day window.
+
 GATED on nsite_submissions.enabled (Trisha directed this build live and it
 was verified end-to-end via a real workflow_dispatch run before merging — see
 the ADR — so it ships enabled, not disabled-by-default like an unattended
@@ -119,6 +128,12 @@ def _should_run(cfg: dict) -> tuple[bool, str]:
 _POLL_PERIOD_DAYS = {"biweekly": 14, "quarterly": 90}
 _DUE_WINDOW_DAYS = 3  # a due tier fires on this many consecutive days per
                        # period, not one exact day — see ADR 021 Decision 3.
+
+# Consecutive per-site failures (fetch or Sheets read) that abort the rest of
+# this run's site loop rather than paying N separate Sheets-retry backoffs
+# during a real outage (up to 44 `tiers` entries can be due in the same
+# 3-day window) — the govqa_watcher._CIRCUIT_BREAKER precedent.
+_CIRCUIT_BREAKER = 3
 
 
 def _is_due(cadence: str, srn: str, today: date) -> bool:
@@ -311,6 +326,7 @@ def run() -> int:
     today = today_date.isoformat()
     counts = {"baseline": 0, "changed": 0, "unchanged": 0, "skipped": 0}
     exit_code = 0
+    consecutive_failures = 0  # circuit breaker — see module docstring
 
     for site in sites:
         srn, name, nsite_id = site["srn"], site["name"], site["id"]
@@ -323,23 +339,42 @@ def run() -> int:
             counts["skipped"] += 1
             continue
 
+        # Isolate THIS site's whole body — a strict-reader raise (state-reads-
+        # raise, ADR 020) from last_submissions_snapshot (called either below or
+        # inside the NsiteFetchError handler's baseline check) or anything else
+        # unexpected must not abort the remaining sites. The already-correct
+        # NsiteFetchError skip-and-warn/loud-on-no-baseline handling stays as is —
+        # this is an outer safety net around it, not a replacement for it.
         try:
-            subs = nc.fetch_site_submissions(session, nsite_id)
-            print(f"[nsite-submissions-watch] {label}: fetched {len(subs)} submission(s).")
-        except nc.NsiteFetchError as e:
-            has_baseline = sw.last_submissions_snapshot(sheets, sheet_id, key) is not None
-            if has_baseline:
-                print(f"[nsite-submissions-watch] {label}: fetch failed, skipping this run "
-                      f"(baseline preserved, not diffed): {e}")
-            else:
-                print(f"[nsite-submissions-watch] {label}: NO BASELINE and fetch failed "
-                      f"(failing loudly so activation surfaces it): {e}")
-                exit_code = 1
-            continue
+            try:
+                subs = nc.fetch_site_submissions(session, nsite_id)
+                print(f"[nsite-submissions-watch] {label}: fetched {len(subs)} submission(s).")
+            except nc.NsiteFetchError as e:
+                has_baseline = sw.last_submissions_snapshot(sheets, sheet_id, key) is not None
+                if has_baseline:
+                    print(f"[nsite-submissions-watch] {label}: fetch failed, skipping this run "
+                          f"(baseline preserved, not diffed): {e}")
+                else:
+                    print(f"[nsite-submissions-watch] {label}: NO BASELINE and fetch failed "
+                          f"(failing loudly so activation surfaces it): {e}")
+                    exit_code = 1
+                continue
 
-        snap = submissions_snapshot(subs)
-        result = _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients)
-        counts[result] += 1
+            snap = submissions_snapshot(subs)
+            result = _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients)
+            counts[result] += 1
+            consecutive_failures = 0
+        except Exception as e:  # noqa: BLE001 — isolate ONE site's failure
+            print(f"[nsite-submissions-watch] {key}: FAILED this run "
+                  f"({type(e).__name__}) — other sites continue.")
+            exit_code = 1
+            consecutive_failures += 1
+            if consecutive_failures >= _CIRCUIT_BREAKER:
+                print(f"[nsite-submissions-watch] circuit breaker: "
+                      f"{consecutive_failures} sites in a row failed this run — "
+                      "aborting the remaining sites rather than paying each one's "
+                      "full Sheets retry backoff.")
+                break
 
     print(f"[nsite-submissions-watch] done — {counts['changed']} changed, "
           f"{counts['baseline']} baselined, {counts['unchanged']} unchanged, "

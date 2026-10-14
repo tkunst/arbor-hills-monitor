@@ -39,6 +39,14 @@ no-op forever). A response that fetched but is structurally wrong
 reorganization persists across runs, and going quiet would hide it forever
 (same posture as mmd_watcher's MmdParseError / rop_watcher's RopParseError).
 
+PER-ITEM ISOLATION: each watched site/facility is diffed/recorded/alerted in its
+own try/except — a Sheets read raise (state-reads-raise, ADR 018/023) or any
+other failure on ONE item is logged (class-only, never the raw exception
+string) and the run continues to the next item, returning exit 1 at the end
+rather than crashing mid-loop. The per-layer `_all_baselined` batched
+all-baselined check stays unisolated — one read for that layer's whole id set,
+so a failure there fails the whole run.
+
 GATED on ride.enabled (built disabled per overnight-coder's new-source gate;
 activated 2026-08-07 by Trisha — the live flag is in config.yml, not here). Runs daily (see
 .github/workflows/ride-watch.yml).
@@ -346,11 +354,18 @@ def run() -> int:
 
     if site_records is not None:
         for site_id in site_ids:
-            snap = site_snapshot(site_records, site_id)
-            result = _diff_and_record(sheets, sheet_id, today, f"ride:{site_id}",
-                                      site_label(site_id), snap, summarize_site_change,
-                                      cfg, recipients)
-            counts[result] += 1
+            try:
+                snap = site_snapshot(site_records, site_id)
+                result = _diff_and_record(sheets, sheet_id, today, f"ride:{site_id}",
+                                          site_label(site_id), snap, summarize_site_change,
+                                          cfg, recipients)
+                counts[result] += 1
+            except Exception as e:  # noqa: BLE001 — isolate ONE site's failure (a
+                # strict-reader raise on last_ride_snapshot, or anything else); the
+                # other watched sites/facilities still get processed this run.
+                print(f"[ride-watch] ride:{site_id}: FAILED this run "
+                      f"({type(e).__name__}) — other items continue.")
+                exit_code = 1
 
     # --- Layer 1: UST facilities -------------------------------------------
     facility_keys = [f"ride:{f}" for f in facility_ids]
@@ -374,11 +389,16 @@ def run() -> int:
 
     if ust_records is not None:
         for facility_id in facility_ids:
-            snap = ust_snapshot(ust_records, facility_id)
-            result = _diff_and_record(sheets, sheet_id, today, f"ride:{facility_id}",
-                                      ust_label(facility_id), snap, summarize_ust_change,
-                                      cfg, recipients)
-            counts[result] += 1
+            try:
+                snap = ust_snapshot(ust_records, facility_id)
+                result = _diff_and_record(sheets, sheet_id, today, f"ride:{facility_id}",
+                                          ust_label(facility_id), snap, summarize_ust_change,
+                                          cfg, recipients)
+                counts[result] += 1
+            except Exception as e:  # noqa: BLE001 — isolate ONE facility's failure
+                print(f"[ride-watch] ride:{facility_id}: FAILED this run "
+                      f"({type(e).__name__}) — other items continue.")
+                exit_code = 1
 
     print(f"[ride-watch] done — {counts['changed']} changed, {counts['baseline']} "
           f"baselined, {counts['unchanged']} unchanged.")
