@@ -24,7 +24,7 @@ jobs:
 
       # Markdown: internal + external links (unchanged behaviour).
       - name: Markdown links
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:
           args: >-
             --no-progress
@@ -41,7 +41,7 @@ jobs:
       # --root-dir lets lychee form root-relative links so the exclude can drop
       # them instead of hard-erroring at resolution.
       - name: Site HTML internal links
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:
           args: >-
             --no-progress

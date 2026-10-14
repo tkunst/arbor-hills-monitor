@@ -30,7 +30,7 @@ jobs:
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install --require-hashes -r requirements.txt
       - name: Capture new GFL perimeter readings
         env:
           # Same kunst.trisha OAuth identity + folder as the daily capture (gfl-air.yml).
