@@ -116,6 +116,22 @@ updates:
       # pinned SHA and the trailing `# vX` version comment together -- it
       # already understands this repo's pin-with-comment convention, no
       # config needed for that part.
+      #
+      # Deliberately no `update-types` restriction here, unlike the pip
+      # group above -- a monthly batch can freely mix majors with patch/minor
+      # action bumps. This is safe only because dependabot-auto-merge.yml's
+      # classify step routes EVERY github-actions-ecosystem PR to
+      # needs-review unconditionally, by branch name
+      # (`dependabot/github_actions/...`), before it ever looks at
+      # update-type -- GITHUB_TOKEN can never be granted the `workflows`
+      # permission a push to .github/workflows/ requires, so none of this
+      # ecosystem could auto-merge regardless of how it's grouped. If that
+      # routing is ever removed, this group needs an update-types split like
+      # pip's, or a single major riding along would silently withhold an
+      # entire otherwise-safe grouped PR from auto-merge (not unsafe, just
+      # surprising) -- or worse, if the branch-name routing were removed
+      # without a replacement, nothing would catch the GITHUB_TOKEN
+      # failure at all.
       github-actions-all:
         patterns:
           - "*"

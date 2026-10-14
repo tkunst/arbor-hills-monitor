@@ -21,6 +21,9 @@ on:
 
 permissions:
   pull-requests: write
+  issues: write   # `gh label create`/`gh pr edit --add-label` both need this,
+                  # not pull-requests -- labels are an Issues-API resource
+                  # even when applied to a PR.
 
 jobs:
   label-major:
@@ -32,6 +35,20 @@ jobs:
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Ensure the needs-review label exists
+        # `gh pr edit --add-label` does NOT auto-create a missing label (it
+        # just fails) -- unlike Dependabot's own `labels:` handling in
+        # dependabot.yml, which does. `--force` makes this idempotent: a
+        # no-op update on every run after the first, never an error.
+        if: steps.metadata.outputs.update-type == 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create needs-review --force \
+            --color b60205 \
+            --description "Dependabot bump awaiting manual review" \
+            -R "${{ github.repository }}"
 
       - name: Label major updates for review
         if: steps.metadata.outputs.update-type == 'version-update:semver-major'

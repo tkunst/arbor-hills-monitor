@@ -65,6 +65,9 @@ permissions:
   contents: write
   pull-requests: write
   checks: read
+  issues: write   # `gh label create`/`gh pr edit --add-label` both need this,
+                  # not pull-requests -- labels are an Issues-API resource
+                  # even when applied to a PR.
 
 env:
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -266,6 +269,20 @@ jobs:
         env:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: gh pr merge "$PR_NUMBER" --rebase --delete-branch
+
+      - name: Ensure the needs-review label exists
+        # `gh pr edit --add-label` does NOT auto-create a missing label --
+        # `--force` makes this idempotent: a no-op update on every run after
+        # the first, never an error. Duplicated from dependabot-label.yml
+        # rather than factored out: GitHub Actions has no shared-step
+        # mechanism across separate workflow files short of a reusable
+        # workflow, which would be disproportionate for two lines.
+        if: steps.classify.outputs.result == 'major-or-other' || steps.classify.outputs.result == 'unknown'
+        run: |
+          gh label create needs-review --force \
+            --color b60205 \
+            --description "Dependabot bump awaiting manual review" \
+            -R "${{ github.repository }}"
 
       - name: Label for review (major, a forced-review package, or an update-type this workflow couldn't read)
         if: steps.classify.outputs.result == 'major-or-other' || steps.classify.outputs.result == 'unknown'
