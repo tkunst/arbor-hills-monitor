@@ -2,7 +2,9 @@ name: dependabot-auto-merge
 
 # Policy 2A (Trisha, 2026-10-14): a Dependabot PR bumping only patch/minor
 # versions merges itself once tests pass; a major waits for Trisha (labeled
-# `needs-review` by dependabot-label.yml, not merged here).
+# `needs-review` by dependabot-label.yml, not merged here). `anthropic` and
+# `google-api-python-client` are ALWAYS routed to needs-review regardless of
+# semver level (see the classify step below and dependabot.yml's comment).
 #
 # WHY THIS DOESN'T USE GITHUB'S NATIVE "required status checks" + auto-merge:
 # the obvious design is `gh pr merge --auto` plus a required `pytest` status
@@ -18,31 +20,48 @@ name: dependabot-auto-merge
 # commit is created after. Required status checks would break the daily
 # public feed. So: no branch-protection change, no `allow_auto_merge` flip --
 # this workflow gates and performs the merge itself, entirely stateless
-# between runs, triggered only by the already-completed `tests` workflow_run
-# for the exact commit in question. See the handoff's settings-commands
-# section: none are needed for this design.
+# between runs, triggered only by an already-completed workflow_run for the
+# exact commit in question. See the handoff's settings-commands section:
+# none are needed for this design.
 #
 # WHY `workflow_run`, NOT `pull_request_target`: `pull_request_target` runs
 # with base-branch privileges against attacker-influenced PR metadata the
 # moment a PR is opened/updated -- its well-known hazard is a job that then
 # checks out and runs the PR's own (untrusted) code with that write token.
 # This workflow sidesteps the whole hazard class: it isn't triggered by a
-# pull_request event at all. It reacts to a SEPARATE event -- the `tests`
-# workflow_run object completing -- well after that run's own checkout step
-# (which used the ordinary, correctly-scoped `pull_request` token) finished.
-# Nothing here ever checks out PR code. The `tests` workflow itself still
-# runs under the normal `pull_request` trigger with its own, separate,
+# pull_request event at all. It reacts to a SEPARATE event -- a workflow_run
+# object completing -- well after that run's own checkout step (which used
+# the ordinary, correctly-scoped `pull_request` token) finished. Nothing here
+# ever checks out PR code. The triggering workflows themselves still run
+# under the normal `pull_request` trigger with their own, separate,
 # read-only-by-default token; this job only re-derives facts about an
-# already-finished run via the API.
+# already-finished run via the API. There is also no checkout step in THIS
+# workflow at all -- `GH_REPO` (job env, below) is set explicitly so every
+# `gh pr ...` call below has repo context without one.
+#
+# WHY FOUR `workflows:` ENTRIES, NOT JUST `tests`: `tests`, `sast`, `secrets`,
+# and `data-guard` all run independently on the same PR and finish at
+# different times. Gating on `tests` alone means if `bandit`/`gitleaks`/
+# `block-data-files` is still mid-run when `tests` finishes, the "Confirm the
+# other gates" step below sees it as "missing" and skips (correctly -- it
+# never merges on an incomplete gate) -- but nothing re-triggers this
+# workflow once that slower gate finishes, so the PR would just sit at
+# "STUCK" in the morning-briefing's Check 15 instead of actually merging.
+# Listening to all four means whichever one happens to finish LAST is the one
+# that re-checks everything and performs the merge.
 on:
   workflow_run:
-    workflows: ["tests"]
+    workflows: ["tests", "sast", "secrets", "data-guard"]
     types: [completed]
 
 permissions:
   contents: write
   pull-requests: write
   checks: read
+
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_REPO: ${{ github.repository }}
 
 concurrency:
   group: dependabot-auto-merge-${{ github.event.workflow_run.head_branch }}
@@ -60,15 +79,13 @@ jobs:
       - name: Resolve the open PR for this commit
         id: pr
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          prs=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/pulls" --jq '[.[] | select(.state=="open")]')
+          prs=$(gh api "repos/${GH_REPO}/commits/${HEAD_SHA}/pulls" --jq '[.[] | select(.state=="open")]')
           count=$(echo "$prs" | jq 'length')
           if [ "$count" -ne 1 ]; then
-            echo "Expected exactly one open PR for ${HEAD_SHA}, found ${count}. Skipping (not an error -- e.g. the PR may already be closed/merged)."
+            echo "Expected exactly one open PR for ${HEAD_SHA}, found ${count}. Skipping (not an error -- e.g. the PR may already be closed/merged, or this is a stale duplicate of another workflow's completion for the same SHA)."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -79,12 +96,11 @@ jobs:
         id: verify
         if: steps.pr.outputs.skip == 'false'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          current=$(gh pr view "$PR_NUMBER" --json author,headRefOid,isDraft,state,body)
+          current=$(gh pr view "$PR_NUMBER" --json author,headRefOid,isDraft,state)
           login=$(echo "$current" | jq -r '.author.login')
           sha=$(echo "$current" | jq -r '.headRefOid')
           draft=$(echo "$current" | jq -r '.isDraft')
@@ -101,80 +117,130 @@ jobs:
             exit 0
           fi
           if [ "$sha" != "$TESTED_SHA" ]; then
-            # A newer commit was pushed to this PR after (or while) the tests
-            # run that just completed was testing an older one. Never merge a
+            # A newer commit was pushed to this PR after (or while) the run
+            # that just completed was testing an older one. Never merge a
             # commit that wasn't the one actually tested -- the workflow_run
-            # for the newer push's own `tests` completion will re-trigger this
+            # for the newer push's own completion will re-trigger this
             # workflow and re-check everything against the new HEAD.
-            echo "PR #${PR_NUMBER} head is now ${sha}, but the tests run that just completed tested ${TESTED_SHA}. Not merging an untested commit; skipping."
+            echo "PR #${PR_NUMBER} head is now ${sha}, but the run that just completed tested ${TESTED_SHA}. Not merging an untested commit; skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "$current" | jq -r '.body' > pr_body.txt
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
       - name: Confirm the other PR-blocking gates also passed for this commit
         id: gates
         if: steps.verify.outputs.skip == 'false'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
           SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          # pytest's own result is already known (this job only runs when the
-          # triggering `tests` workflow_run succeeded for this exact SHA).
-          # Independently confirm the other PR-blocking gates -- bandit SAST,
-          # gitleaks, data-guard -- also passed for the SAME commit, via the
-          # Checks API (job names, matching `gh pr checks` output), without
-          # touching branch-protection required-checks at all.
-          runs=$(gh api "repos/${REPO}/commits/${SHA}/check-runs" --paginate --jq '.check_runs')
-          for job in bandit gitleaks block-data-files; do
+          # Independently confirm pytest, bandit SAST, gitleaks, AND
+          # data-guard all passed for the SAME commit, via the Checks API
+          # (job names, matching `gh pr checks` output) -- without touching
+          # branch-protection required-checks at all. Does not assume the
+          # workflow_run that triggered THIS run was `tests` specifically
+          # (see the four-workflow `on:` block above) -- it re-checks all
+          # four every time, so whichever one finishes last is the one that
+          # actually merges.
+          runs=$(gh api "repos/${GH_REPO}/commits/${SHA}/check-runs" --paginate --jq '.check_runs')
+          for job in pytest bandit gitleaks block-data-files; do
             concl=$(echo "$runs" | jq -r --arg j "$job" '[.[] | select(.name==$j)] | sort_by(.started_at) | last | .conclusion // "missing"')
             if [ "$concl" != "success" ]; then
-              echo "Gate '${job}' is '${concl}' for ${SHA}, not success. Not merging."
+              echo "Gate '${job}' is '${concl}' for ${SHA}, not success. Not merging (yet -- if it's still running, a later workflow_run completion will re-check)."
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           done
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
-      - name: Classify update-type from the Dependabot PR body
+      - name: Classify update-type from the Dependabot commit metadata
         id: classify
         if: steps.gates.outputs.skip == 'false'
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: |
           set -euo pipefail
-          # Dependabot appends a stable, documented metadata block to every PR
-          # body (inside `<!--dependabot-start--> ... <!--dependabot-end-->`),
-          # one `update-type:` entry per bumped dependency -- the same data
-          # the `dependabot/fetch-metadata` action parses. That action can't
-          # be used here: it only reads `github.event.pull_request`, which
-          # doesn't exist on a `workflow_run` event. pr_body.txt was written
-          # by the "verify" step above via `jq -r`, never interpolated into a
-          # shell string, so nothing here evaluates PR-body content as a
-          # command.
-          types=$(grep -oE 'update-type:[[:space:]]*[^[:space:]]+' pr_body.txt | awk '{print $2}' | sort -u || true)
-          if [ -z "$types" ]; then
-            echo "No update-type found in the PR body; cannot classify. Not auto-merging."
+          # Dependabot's `updated-dependencies:` / `update-type:` metadata
+          # block lives in the COMMIT MESSAGE of its own commit(s) on the PR
+          # -- NOT the PR body, which carries no such block (verified
+          # directly against real Dependabot PRs, e.g.
+          # github.com/dependabot/fetch-metadata/pull/763's commit message).
+          # This is the same data `dependabot/fetch-metadata` parses; that
+          # action can't be used here since it only reads
+          # `github.event.pull_request`, absent on a `workflow_run` event.
+          commits=$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}/commits")
+
+          # Every commit on the PR must be authored by dependabot[bot] -- a
+          # human (or a compromised token) pushing a commit onto this branch
+          # must never ride along to a merge just because the PR's own
+          # metadata still parses as patch/minor.
+          non_bot=$(echo "$commits" | jq -r '[.[] | select(.author.login != "dependabot[bot]")] | length')
+          if [ "$non_bot" -gt 0 ]; then
+            echo "Found a commit on this PR not authored by dependabot[bot]. Not auto-merging."
+            echo "result=major-or-other" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          entries=$(echo "$commits" | jq -r '[.[].commit.message] | join("\n")' | python3 -c '
+          import json, re, sys
+          text = sys.stdin.read()
+          entries = []
+          cur = None
+          for line in text.splitlines():
+              m = re.match(r"^- dependency-name:\s*\"?([^\"\n]+)\"?\s*$", line)
+              if m:
+                  if cur is not None:
+                      entries.append(cur)
+                  cur = {"name": m.group(1)}
+                  continue
+              m = re.match(r"^\s+update-type:\s*(\S+)\s*$", line)
+              if m and cur is not None:
+                  cur["update_type"] = m.group(1)
+          if cur is not None:
+              entries.append(cur)
+          print(json.dumps(entries))
+          ')
+          n_entries=$(echo "$entries" | jq 'length')
+          if [ "$n_entries" -eq 0 ]; then
+            echo "No dependency entries found in any commit message; cannot classify. Not auto-merging."
             echo "result=unknown" >> "$GITHUB_OUTPUT"
-          elif echo "$types" | grep -qvE '^version-update:semver-(patch|minor)$'; then
-            echo "Found a non-patch/minor update-type among: $(echo "$types" | tr '\n' ' ')"
+            exit 0
+          fi
+
+          missing_type=$(echo "$entries" | jq -r '[.[] | select(.update_type == null)] | length')
+          # Forced needs-review regardless of semver level: anthropic and
+          # google-api-python-client have their real SDK calls fully
+          # monkeypatched out of the hermetic test suite (dependabot.yml's
+          # `exclude-patterns` keeps them OUT of the grouped patch/minor PR
+          # so they always surface as their own standalone PR; this is the
+          # second, independent half of that -- never auto-merge one even if
+          # it somehow arrived grouped).
+          forced_review=$(echo "$entries" | jq -r '[.[] | select(.name == "anthropic" or .name == "google-api-python-client")] | length')
+          non_patch_minor=$(echo "$entries" | jq -r '[.[] | select(.update_type != null and (.update_type | test("^version-update:semver-(patch|minor)$") | not))] | length')
+
+          if [ "$missing_type" -gt 0 ]; then
+            echo "At least one dependency entry has no update-type. Not auto-merging."
+            echo "result=unknown" >> "$GITHUB_OUTPUT"
+          elif [ "$forced_review" -gt 0 ]; then
+            echo "Includes anthropic and/or google-api-python-client -- always needs-review regardless of semver level."
+            echo "result=major-or-other" >> "$GITHUB_OUTPUT"
+          elif [ "$non_patch_minor" -gt 0 ]; then
+            echo "Found a non-patch/minor update-type among this PR's dependencies."
             echo "result=major-or-other" >> "$GITHUB_OUTPUT"
           else
-            echo "All bumped dependencies are patch/minor: $(echo "$types" | tr '\n' ' ')"
+            echo "All bumped dependencies are patch/minor, and none are the forced-review packages."
             echo "result=patch-or-minor" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Auto-merge (patch/minor, tests + SAST + secret-scan + data-guard all green)
         if: steps.classify.outputs.result == 'patch-or-minor'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: gh pr merge "$PR_NUMBER" --rebase --delete-branch
 
-      - name: Label for review (major, or an update-type this workflow couldn't read)
+      - name: Label for review (major, a forced-review package, or an update-type this workflow couldn't read)
         if: steps.classify.outputs.result == 'major-or-other' || steps.classify.outputs.result == 'unknown'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
         run: gh pr edit "$PR_NUMBER" --add-label needs-review
