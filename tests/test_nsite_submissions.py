@@ -364,6 +364,7 @@ def test_second_run_unchanged_is_noop(monkeypatch):
     nw.run()
     assert nw.run() == 0
     assert len(_rows(fake)) == 2
+    assert sent == []
 
 
 def _arm_tab_failure(fake, boom_tab):
@@ -391,7 +392,6 @@ def test_run_raises_without_writing_when_submissions_watch_read_fails(monkeypatc
     with pytest.raises(RuntimeError):
         nw.run()
     assert _rows(fake) == baseline_rows
-    assert sent == []
     assert sent == []
 
 
