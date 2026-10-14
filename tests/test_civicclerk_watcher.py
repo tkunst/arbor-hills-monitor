@@ -485,6 +485,48 @@ def test_circuit_breaker_aborts_after_3_consecutive_item_failures(monkeypatch, c
     assert sent == []
 
 
+def test_not_due_skip_does_not_reset_the_circuit_breaker(monkeypatch, capsys):
+    """A "not due today" skip touches no Sheets read at all -- it must NOT
+    reset the breaker's consecutive-failure count the way a real success
+    does (round-2 review finding). today is a Tuesday (not the weekly
+    weekday), so due-ness depends purely on each event's own date within the
+    3-day window: E2 is far outside it (not due); E1/E3/E4/E5 are due and
+    all fail. Without the fix, E2's not-due skip would reset the counter and
+    the breaker would never trip; with it, E5 is never attempted."""
+    tuesday = date(2026, 7, 21)
+    cadence = {"weekly_weekday": 0, "daily_before_days": 3}
+    cfg = {
+        "civicclerk_watch": {
+            "enabled": True,
+            "recipients": ["x@y.com"],
+            "groups": [
+                {"name": "BOC", "cadence": cadence,
+                 "events": [
+                     {"id": 5001, "event_date": "2026-07-21", "label": "E1"},
+                     {"id": 5002, "event_date": "2026-09-01", "label": "E2"},  # far -> not due
+                     {"id": 5003, "event_date": "2026-07-22", "label": "E3"},
+                     {"id": 5004, "event_date": "2026-07-23", "label": "E4"},
+                     {"id": 5005, "event_date": "2026-07-24", "label": "E5"},
+                 ]},
+            ],
+        }
+    }
+    due_ids = [5001, 5003, 5004, 5005]
+    fetch = _seq_fetch([_ev(id=i) for i in due_ids])
+    fake, sent = _wire(monkeypatch, cfg, fetch, today=tuesday)
+    assert cw.run() == 0
+    assert len(_rows(fake)) == len(due_ids)   # E2 never baselined (not due)
+
+    fetch2 = _seq_fetch([_ev(id=i) for i in due_ids])
+    monkeypatch.setattr(cw.mc, "fetch_event", fetch2)
+    _arm_tab_failure(fake, sw.TAB_MEETING_WATCH)
+    assert cw.run() == 1
+    out = capsys.readouterr().out
+    assert out.count("FAILED this run") == 3   # E1, E3, E4 -- E5 never attempted
+    assert "circuit breaker" in out
+    assert sent == []
+
+
 def test_group_level_isolation_when_has_rows_check_fails(monkeypatch, capsys):
     """The auto-discover group's baseline check (meeting_watch_group_has_rows)
     is ONE batched read for that whole group -- isolate the GROUP, not split

@@ -685,19 +685,31 @@ def run() -> int:
                         raise _CircuitBroken() from None
                     continue
 
-                consecutive_failures = 0
                 kind = result["kind"]
                 if kind == "not_due":
+                    # No Sheets call happened for this event at all (is_due_
+                    # today short-circuits before any read) -- unlike every
+                    # other kind below, this is not evidence the Sheets API is
+                    # healthy, so it must NOT reset the breaker (matches
+                    # nsite_submissions_watcher, where the is_due check
+                    # happens before the per-site try entirely and a skip
+                    # never touches consecutive_failures).
                     not_due += 1
-                elif kind == "activation_block":
-                    exit_code = 1
-                elif kind == "baseline":
-                    baselined += 1
-                elif kind == "unchanged":
-                    unchanged += 1
-                elif kind == "changed":
-                    changed += 1
-                # "fetch_skip" / "phantom" bump nothing (matches prior behavior).
+                else:
+                    # Every other kind means last_meeting_snapshot's Sheets
+                    # read (or, for fetch_skip/activation_block, last_
+                    # meeting_snapshot plus a failed EXTERNAL fetch) actually
+                    # ran this event -- real evidence the breaker should reset.
+                    consecutive_failures = 0
+                    if kind == "activation_block":
+                        exit_code = 1
+                    elif kind == "baseline":
+                        baselined += 1
+                    elif kind == "unchanged":
+                        unchanged += 1
+                    elif kind == "changed":
+                        changed += 1
+                    # "fetch_skip" / "phantom" bump nothing (matches prior behavior).
                 if result["keyword_alert"]:
                     keyword_alerts += 1
     except _CircuitBroken:
