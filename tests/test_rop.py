@@ -7,6 +7,7 @@ real rows from the 2026-07-15 EPA ROP Monthly Report (the handoff's baseline) â€
 not fabricated data â€” so the M3333-exclusion and column-layout assumptions are
 pinned against the real export shape."""
 import copy
+import re
 
 import fitz
 import pytest
@@ -824,3 +825,33 @@ def test_last_rop_snapshots_batches_into_one_tab_read(monkeypatch):
     assert result["csv:N1504"] == ("h2", "{}")
     assert result["csv:P1488"] is None
     assert len(calls) == 1  # one tab read for three keys, not three
+
+
+def _arm_tab_failure(fake, boom_tab):
+    """Wrap fake._values.get so a read of `boom_tab` raises; every other tab
+    read behaves normally. Exercises the REAL _tab_rows_strict path end to
+    end, rather than monkeypatching sheet_writer's reader function away."""
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+
+def test_run_raises_without_writing_when_rop_watch_read_fails(monkeypatch):
+    """state-reads-raise: a transient read failure on the ROP Watch tab must
+    propagate out of run() rather than reading as "never snapshotted" --
+    which would silently re-baseline every item, erasing an un-alerted
+    status change."""
+    fake, sent = _wire(monkeypatch, ROP_CFG)
+    assert rw.run() == 0        # baseline run: 7 rows
+    baseline_rows = _rows(fake)
+    assert len(baseline_rows) == 7
+
+    _arm_tab_failure(fake, sw.TAB_ROP)
+    with pytest.raises(RuntimeError):
+        rw.run()
+    assert _rows(fake) == baseline_rows   # no new/changed rows written
+    assert sent == []

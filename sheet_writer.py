@@ -46,8 +46,6 @@ import json
 from types import SimpleNamespace
 from typing import Iterable
 
-from googleapiclient.errors import HttpError
-
 # Every Sheets execute() call below passes this so a transient Google 5xx/429 is
 # retried with backoff instead of aborting the run — see drive_client.
 from drive_client import GOOGLE_API_NUM_RETRIES
@@ -1014,11 +1012,11 @@ def rebuild_risk_register_tab(service, sheet_id: str, risk_register: list[dict])
     The WDS-side read uses the STRICT reader (state-reads-raise): a transient
     read failure there must RAISE rather than read as "no WDS evidence" —
     that would silently blind-overwrite the Risk Register with undercounted
-    R1/R2/R5 totals. Both of this function's callers (watcher.py) already
-    wrap the call in their own isolated try/except, so a raise here is caught
-    there and simply skips the rebuild for this run, leaving yesterday's
-    (correct) counts in place — never a red run, by that caller's own
-    design."""
+    R1/R2/R5 totals. Every caller of this function (watcher.py's daily run
+    AND backfill.py's end-of-batch rebuild) already wraps the call in its own
+    isolated try/except, so a raise here is caught there and simply skips
+    the rebuild for this run, leaving yesterday's (correct) counts in place —
+    never a red run, by that caller's own design."""
     counts: dict[str, int] = {}
     latest: dict[str, str] = {}
 
@@ -1074,10 +1072,10 @@ def rebuild_all_evidence_tab(service, sheet_id: str) -> None:
     read failure there must RAISE rather than read as "no WDS evidence" —
     that would CLEAR this tab and rewrite it with the nSITE rows only,
     wiping out every WDS evidence row that was visible before this run.
-    Like rebuild_risk_register_tab(), this function's only caller
-    (watcher.py) wraps the call in its own isolated try/except, so a raise
-    here is caught and the clear+rewrite simply doesn't happen this run,
-    leaving yesterday's tab intact."""
+    Like rebuild_risk_register_tab(), every caller of this function
+    (watcher.py and backfill.py) wraps the call in its own isolated
+    try/except, so a raise here is caught and the clear+rewrite simply
+    doesn't happen this run, leaving yesterday's tab intact."""
     # Ranges match EVIDENCE_HEADERS'/ALL_EVIDENCE_HEADERS' current width (10
     # columns, A-J, since ADR 065 appended Document Date/EGLE Title) -- a
     # stale narrower range here would silently clip those two columns right
@@ -1269,19 +1267,24 @@ def _tab_rows(service, sheet_id: str, tab: str, a1: str) -> list[list]:
 
     This lenient form stays correct ONLY for an append-only dedup-set reader
     whose worst-case consequence of a false-empty read is redundant work (a
-    duplicate Drive upload, a duplicate dump-tracking row) — never a lost
-    alert or an overwritten record. Every remaining caller of this function is
-    exactly that kind of dedup set (audited in the state-reads-raise PR):
+    duplicate Drive upload, a duplicate dump-tracking row, a duplicate
+    owner-only alert on an append-only log) — never a lost alert or an
+    overwritten record. Every remaining caller of this function is exactly
+    that kind of dedup set (audited in the state-reads-raise PR):
     `archived_doc_ids`/`archived_doc_links` (duplicate Drive mirror attempt),
     `mmpc_archived_file_ids`/`civicclerk_archived_file_ids` (duplicate meeting
     PDF re-upload), `wds_historical_collections_dumped` (duplicate one-off
-    dump), and `ridgewood_last_event`/`ridgewood_report_rows`/
-    `ridgewood_multi_link_flagged_months` (a duplicate owner alert, or a wrong
-    bootstrap date on Stream G's tamper-evident manifest — never a lost
-    detection, since Ridge Wood's own exceedance alert path reads the
-    archiver's PDF-derived value directly, not these helpers). Every OTHER
-    diff/baseline reader in this module has been moved to `_tab_rows_strict`
-    below."""
+    dump), and `ridgewood_last_event`/`ridgewood_multi_link_flagged_months`
+    (a duplicate owner-only alert for a revision/removal/multi-link condition
+    already logged — never a lost detection, since Ridge Wood's own
+    exceedance alert path reads the archiver's PDF-derived value directly,
+    not these helpers, and the Revisions tab these two read is append-only so
+    nothing already logged is ever erased). `ridgewood_report_rows` is
+    DELIBERATELY NOT in this list — see its own docstring: its false-empty
+    consequence (a wrong bootstrap date in a tamper-evident manifest) is a
+    real accuracy defect, not mere redundant work, so it uses the strict
+    reader. Every OTHER diff/baseline reader in this module has been moved
+    to `_tab_rows_strict` below."""
     try:
         resp = (
             service.spreadsheets()
@@ -1296,12 +1299,22 @@ def _tab_rows(service, sheet_id: str, tab: str, a1: str) -> list[list]:
 
 def _is_absent_tab_error(exc: BaseException) -> bool:
     """True only for the specific signature Sheets returns when a range names
-    a tab that doesn't exist: an HttpError with HTTP 400 whose reason reads
-    "Unable to parse range: ...". This is deliberately narrow — an HttpError
-    with a DIFFERENT 400 (a malformed request some other way) or any other
-    status (429/5xx) is NOT this case and must not be swallowed."""
-    if not isinstance(exc, HttpError):
-        return False
+    a tab that doesn't exist: HTTP 400 whose reason reads "Unable to parse
+    range: ..." (confirmed against the live Sheet — see the state-reads-raise
+    PR's Test plan). This is deliberately narrow — a DIFFERENT 400 (a
+    malformed request some other way) or any other status (429/5xx) is NOT
+    this case and must not be swallowed.
+
+    Duck-typed on `.status_code`/`.resp.status`/`.reason` rather than
+    `isinstance(exc, googleapiclient.errors.HttpError)`, on purpose: this
+    module otherwise has no module-level dependency on googleapiclient (see
+    drive_client.py, which imports it lazily inside each function) — a caller
+    that only uses sheet_writer's pure functions (feed_row, evidence_rows,
+    ...) should never be forced to have the Sheets API client installed just
+    to import this module. A real HttpError carries exactly these attributes,
+    so this matches it identically; anything else (a bare RuntimeError, a
+    network/timeout error) has none of them and correctly falls through to
+    "not absent, raise"."""
     status = getattr(exc, "status_code", None)
     if status is None:
         status = getattr(getattr(exc, "resp", None), "status", None)
@@ -1325,13 +1338,15 @@ def _tab_rows_strict(service, sheet_id: str, tab: str, a1: str) -> list[list]:
     `_state`, `_meta`, and every `last_*_snapshot(s)` / first-run-check reader
     (ROP, MMD, PFAS-PWS, RIDE, nSITE Submissions, the PFAS page watch, the
     CivicClerk Meeting watch, the GFL info-site first-run checks, the WDS
-    evidence tally two rebuild_*_tab() read, the WDS-seen recovery log, and
-    the Ridge Wood archived-months dedup — the last one because a false-empty
-    read there doesn't just duplicate work, it can re-fire an already-sent
-    exceedance alert for an old month). Every caller listed above already
-    calls its own `ensure_*_tabs()` before this runs, so in steady-state
-    operation the absent-tab branch is pure defensive insurance, not a path
-    that fires on every "first ever run"."""
+    evidence tally the two rebuild_*_tab() functions read, the WDS-seen
+    recovery log, the Ridge Wood archived-months dedup — because a false-empty
+    read there would re-download/re-mirror/re-append EVERY already-archived
+    month this run, not just the newest — and ridgewood_report_rows, whose
+    false-empty consequence is a wrong bootstrap date permanently stamped into
+    a tamper-evident manifest). Every caller listed above already calls its
+    own `ensure_*_tabs()` before this runs, so in steady-state operation the
+    absent-tab branch is pure defensive insurance, not a path that fires on
+    every "first ever run"."""
     try:
         resp = (
             service.spreadsheets()
@@ -1339,7 +1354,7 @@ def _tab_rows_strict(service, sheet_id: str, tab: str, a1: str) -> list[list]:
             .get(spreadsheetId=sheet_id, range=f"'{tab}'!{a1}")
             .execute(num_retries=GOOGLE_API_NUM_RETRIES)
         )
-    except HttpError as e:
+    except Exception as e:  # noqa: BLE001 — duck-typed absent-tab check below
         if _is_absent_tab_error(e):
             return []
         raise
@@ -1397,9 +1412,13 @@ def read_wds_seen_log_latest(service, sheet_id: str) -> dict:
     Returns the same shape as `_meta.wds_seen` — {collection: {"records": {...},
     "last_count": N}} — or {} if the log is empty/absent.
 
-    Used ONLY for recovery (see watcher.py's WDS block): the live diff cursor is
+    Used for recovery (see watcher.py's WDS block): the live diff cursor is
     still `_meta.wds_seen`. This is what makes a `_meta` wipe non-catastrophic
-    (Gap G1-C-1, ADR 024).
+    (Gap G1-C-1, ADR 024). Also called a SECOND time per run, internally, by
+    `append_wds_seen_log()` (to decide which collections changed since their
+    last logged row) — that caller is itself documented best-effort ("the
+    caller wraps this and a failure here must not break the run") and is
+    invoked from watcher.py wrapped in its own isolated try/except too.
 
     Uses the STRICT reader (state-reads-raise): a transient read failure here
     must RAISE rather than read as {} ("nothing to recover") — on a run where
@@ -1945,10 +1964,16 @@ def ridgewood_archived_months(service, sheet_id: str) -> set:
     mmpc_archived_file_ids()/civicclerk_archived_file_ids(): this read happens
     ONCE, up front in ridgewood_archiver.run(), before the per-month loop, so
     a transient failure here aborts the run with zero writes rather than
-    reading as "nothing archived yet" — which would re-download, re-mirror,
-    and re-append EVERY already-archived month this run, up to the batch cap,
-    including months whose exceedance alert already fired (a duplicate
-    alert), not just a duplicate Drive upload."""
+    reading as "nothing archived yet" — which would make every one of the
+    ~66+ already-archived months look new, re-downloading/re-mirroring/
+    re-appending up to `max_new_reports_per_run` (default 12) of them this
+    run, EVERY run the failure persists. Checked against the actual
+    run() logic, not assumed: because that count (66+) is already far past
+    the cap, this would land in the archiver's own backlog path on the very
+    first such run — which suppresses ALL alerts for the run (`if
+    verdict.get("alert") and not backlog`) — so the real consequence is
+    purely duplicate Ridge Wood Reports/Measurements rows and duplicate Drive
+    uploads, never a re-fired exceedance alert."""
     return {str(r[0]) for r in _tab_rows_strict(service, sheet_id, TAB_RIDGEWOOD, "A2:A") if r and r[0]}
 
 
@@ -1975,12 +2000,22 @@ def ridgewood_report_rows(service, sheet_id: str) -> dict:
     real original fetch (hash/link/date) instead of re-stamping it as fetched today.
     The LAST row for a given month wins — a crash-recovery re-run of the archiver can
     append a duplicate row for the same month (see ridgewood_archiver's crash-safe
-    ordering note), and the latest one is the freshest state. [] rows (a fresh Sheet,
-    or the tab doesn't exist yet) -> {}."""
+    ordering note), and the latest one is the freshest state. A genuinely absent tab
+    (a fresh Sheet, or the tab doesn't exist yet) still reads as {}.
+
+    Uses the STRICT reader (state-reads-raise): a false-empty read here would
+    permanently stamp TODAY's date, rather than Stream G's real original fetch
+    date, as a month's "original" version in the committed, tamper-evident
+    `data/provenance/ridgewood-manifest.json` the FIRST time ridgewood_reverify
+    ever checks that month — a real accuracy defect in a manifest whose whole
+    purpose is being unarguable, not just redundant work. Checked that this
+    read happens before any write in ridgewood_reverify.run() (ahead of
+    ensure_ridgewood_revisions_tab()), so raising here aborts the run cleanly
+    with nothing written."""
     keys = ["month", "report_title", "max_24h", "n_days", "alert",
             "source_url", "content_hash", "archive_link", "fetched_at"]
     out: dict = {}
-    for r in _tab_rows(service, sheet_id, TAB_RIDGEWOOD, "A2:I"):
+    for r in _tab_rows_strict(service, sheet_id, TAB_RIDGEWOOD, "A2:I"):
         row = dict(zip(keys, r))
         month = row.get("month")
         if month:

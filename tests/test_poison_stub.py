@@ -36,8 +36,9 @@ class FakeSheet:
         mp.setattr(sw, "_append_state_row",
                    lambda svc, sid, row: self.state_rows.append(list(row)))
         # read_state() now scans TAB_STATE via the STRICT reader
-        # (state-reads-raise) — patch that one, not the lenient _tab_rows,
-        # or every read_state() call below would hit the real
+        # (state-reads-raise), not the lenient _tab_rows -- patch BOTH names
+        # to the same fake so this test stays correct regardless of which
+        # one read_state() calls; otherwise read_state() would hit the real
         # _tab_rows_strict against a bare object() service and raise.
         fake_rows = lambda svc, sid, tab, a1: (  # noqa: E731
             [list(r) for r in self.state_rows] if tab == sw.TAB_STATE else [])

@@ -8,6 +8,7 @@ canonicalization and hidden-record (show=0) assumptions are pinned against the
 real service shape."""
 import copy
 import json
+import re
 
 import pytest
 
@@ -384,3 +385,30 @@ def test_alert_email_failure_still_records_the_row(monkeypatch):
     monkeypatch.setattr(mw.ea, "send_email", _mail_boom)
     assert mw.run() == 0                     # best-effort alert never fails the run
     assert any(r[3] == "changed" for r in _data_rows(fake))  # durable row landed
+
+
+def _arm_tab_failure(fake, boom_tab):
+    """Wrap fake._values.get so a read of `boom_tab` raises; every other tab
+    read behaves normally (the test_rop.py idiom)."""
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+
+def test_run_raises_without_writing_when_mmd_watch_read_fails(monkeypatch):
+    """state-reads-raise: a transient read failure on the MMD Watch tab must
+    propagate out of run() rather than reading as "never snapshotted"."""
+    fake, sent = _wire(monkeypatch)
+    assert mw.run() == 0
+    baseline_rows = _data_rows(fake)
+    assert len(baseline_rows) >= 1
+
+    _arm_tab_failure(fake, sw.TAB_MMD)
+    with pytest.raises(RuntimeError):
+        mw.run()
+    assert _data_rows(fake) == baseline_rows
+    assert sent == []

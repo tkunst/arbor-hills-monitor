@@ -436,6 +436,39 @@ def test_unchanged_second_run_is_noop(monkeypatch):
     assert sent == []
 
 
+def _arm_tab_failure(fake, boom_tab):
+    """Wrap fake._values.get so a read of `boom_tab` raises; every other tab
+    read behaves normally (the test_rop.py idiom)."""
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+
+def test_run_raises_without_a_mass_rebaseline_when_the_watch_read_fails(monkeypatch):
+    """state-reads-raise: the THREE first-run-check reads
+    (gfl_info_site_tab_is_empty, all_gfl_info_site_urls, last_gfl_info_site_row)
+    now use the strict reader. A transient read failure on ANY of them must
+    propagate out of run() rather than reading as "first run ever" (a false
+    is_initial=True) or "never seen" -- either of which would silently
+    re-baseline every already-watched page, including ones already flagged
+    changed/removed, as if this were the launch run."""
+    r = _router_with_pages("/", "/faq", "/what-we-do")
+    fake, sent, appends = _wire(monkeypatch, r)
+    assert gw.run() == 0                      # real baseline: 3 pages
+    baseline_rows = _rows(fake)
+    assert len(baseline_rows) == 3
+
+    _arm_tab_failure(fake, sw.TAB_GFL_INFO_SITE)
+    with pytest.raises(RuntimeError):
+        gw.run()
+    assert _rows(fake) == baseline_rows        # no silent mass re-baseline
+    assert sent == []
+
+
 def test_changed_page_records_row_and_emails_with_diff(monkeypatch):
     r = Router()
     r.set_page("/", build_page("Home."))

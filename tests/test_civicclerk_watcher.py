@@ -4,6 +4,7 @@ flows driven through a fake Sheets service (no network, no creds). Mirrors
 test_pfas_watcher; reuses its FakeSheets. The fetch-fail-without-baseline test
 pins the loud-exit-1 activation behaviour; the vanish test pins the
 200-empty-is-a-real-change rule (ADR 015)."""
+import re
 from datetime import date
 
 import fitz
@@ -347,6 +348,35 @@ def test_unchanged_second_run_is_noop(monkeypatch):
     cw.run()               # baseline
     assert cw.run() == 0   # same event again
     assert len(_rows(fake)) == 1
+    assert sent == []
+
+
+def _arm_tab_failure(fake, boom_tab):
+    """Wrap fake._values.get so a read of `boom_tab` raises; every other tab
+    read behaves normally (the test_rop.py idiom)."""
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+
+def test_run_raises_without_writing_when_meeting_watch_read_fails(monkeypatch):
+    """state-reads-raise: a transient read failure on the Meeting Watch tab
+    must propagate out of run() rather than reading as "never snapshotted" --
+    which would silently re-baseline an event that already has a real
+    snapshot (incl. a folded-in keyword-match note)."""
+    fake, sent = _wire(monkeypatch, MMPC_CFG, _seq_fetch([_ev(), _ev()]))
+    cw.run()                              # baseline
+    baseline_rows = _rows(fake)
+    assert len(baseline_rows) == 1
+
+    _arm_tab_failure(fake, sw.TAB_MEETING_WATCH)
+    with pytest.raises(RuntimeError):
+        cw.run()
+    assert _rows(fake) == baseline_rows
     assert sent == []
 
 

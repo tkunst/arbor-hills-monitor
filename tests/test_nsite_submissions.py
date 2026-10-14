@@ -5,6 +5,7 @@ like "zero submissions"), and the full baseline/unchanged/new/changed/fetch-
 fail flows driven through a fake Sheets service (no network, no creds). Reuses
 FakeSheets from test_pfas_watcher, same idiom as test_rop.py."""
 import copy
+import re
 
 import pytest
 
@@ -363,6 +364,34 @@ def test_second_run_unchanged_is_noop(monkeypatch):
     nw.run()
     assert nw.run() == 0
     assert len(_rows(fake)) == 2
+
+
+def _arm_tab_failure(fake, boom_tab):
+    """Wrap fake._values.get so a read of `boom_tab` raises; every other tab
+    read behaves normally (the test_rop.py idiom)."""
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+
+def test_run_raises_without_writing_when_submissions_watch_read_fails(monkeypatch):
+    """state-reads-raise: a transient read failure on the Submissions Watch
+    tab must propagate out of run() rather than reading as "never
+    snapshotted"."""
+    fake, sent = _wire(monkeypatch, SUB_CFG, {"N2688": [_row("A")], "WRD": []})
+    assert nw.run() == 0
+    baseline_rows = _rows(fake)
+    assert len(baseline_rows) == 2
+
+    _arm_tab_failure(fake, sw.TAB_SUBMISSIONS)
+    with pytest.raises(RuntimeError):
+        nw.run()
+    assert _rows(fake) == baseline_rows
+    assert sent == []
     assert sent == []
 
 

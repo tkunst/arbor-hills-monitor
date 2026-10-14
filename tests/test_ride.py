@@ -10,6 +10,7 @@ whitespace-stripping, and epoch-date assumptions are pinned against the real
 service shape."""
 import copy
 import json
+import re
 
 import pytest
 
@@ -330,6 +331,33 @@ def _wire(monkeypatch, cfg=RIDE_CFG, sites=None, usts=None,
 
 def _data_rows(fake):
     return fake._values._tabs.get(sw.TAB_RIDE, [])[1:]  # drop the header row
+
+
+def _arm_tab_failure(fake, boom_tab):
+    """Wrap fake._values.get so a read of `boom_tab` raises; every other tab
+    read behaves normally (the test_rop.py idiom)."""
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+
+def test_run_raises_without_writing_when_ride_watch_read_fails(monkeypatch):
+    """state-reads-raise: a transient read failure on the RIDE Watch tab must
+    propagate out of run() rather than reading as "never snapshotted"."""
+    fake, sent = _wire(monkeypatch)
+    assert rw.run() == 0
+    baseline_rows = _data_rows(fake)
+    assert len(baseline_rows) == 7
+
+    _arm_tab_failure(fake, sw.TAB_RIDE)
+    with pytest.raises(RuntimeError):
+        rw.run()
+    assert _data_rows(fake) == baseline_rows
+    assert sent == []
 
 
 def test_disabled_run_is_noop_touches_nothing(monkeypatch):
