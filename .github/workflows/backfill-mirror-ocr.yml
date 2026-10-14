@@ -1,0 +1,85 @@
+name: backfill-mirror-ocr
+
+# ADR 069: run scripts/backfill_mirror_ocr.py on a runner, with the same
+# KUNST Drive OAuth secrets archive.yml uses (they exist only as repo
+# secrets; there is no local copy). Manual trigger only, never scheduled.
+#
+# Public repo: the script's log carries counts, statuses and file keys only
+# (nSITE / CivicClerk ids), never titles or names.
+#
+# Resume state (local-state/backfill-mirror-ocr-state.json) is carried between
+# runs in the Actions cache (private to the repo, not a downloadable
+# artifact). If the cache is ever evicted (7 days unused), the next run just
+# re-checks files: already-searchable ones are recorded skip_has_text and
+# never re-uploaded, so a lost cache costs time, not correctness.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Actually OCR + overwrite in place (false = dry-run counts only)"
+        type: boolean
+        default: false
+      limit:
+        description: "Max OCR attempts this run (start with 1)"
+        type: string
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backfill-mirror-ocr
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install system OCR tooling
+        # Not continue-on-error here (unlike the archivers): this job exists
+        # only to OCR, and the script's own smoke test aborts --apply without
+        # writing state if ocrmypdf is missing.
+        run: sudo apt-get update && sudo apt-get install -y ocrmypdf
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Restore resume state
+        uses: actions/cache/restore@v4
+        with:
+          path: local-state/backfill-mirror-ocr-state.json
+          key: backfill-mirror-ocr-state-${{ github.run_id }}
+          restore-keys: backfill-mirror-ocr-state-
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Backfill
+        env:
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID_KUNST }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET_KUNST }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN_KUNST }}
+          APPLY: ${{ inputs.apply }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          case "$LIMIT" in ''|*[!0-9]*) echo "limit must be a whole number"; exit 1;; esac
+          mkdir -p local-state
+          if [ "$APPLY" = "true" ]; then
+            python scripts/backfill_mirror_ocr.py --apply --limit "$LIMIT"
+          else
+            python scripts/backfill_mirror_ocr.py
+          fi
+      - name: Save resume state
+        if: always() && inputs.apply
+        uses: actions/cache/save@v4
+        with:
+          path: local-state/backfill-mirror-ocr-state.json
+          key: backfill-mirror-ocr-state-${{ github.run_id }}
