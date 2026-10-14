@@ -1,0 +1,44 @@
+# Core
+anthropic>=0.69          # Claude API (egle_doc_parser classification)
+PyMuPDF>=1.24            # fitz — PDF text-layer detection (needs_ocr vs has_text)
+ocrmypdf>=16.0           # adds a searchable text layer in place (--skip-text)
+PyYAML>=6.0              # config.yml
+# egle_doc_parser.py imports pydantic.BaseModel directly (structured LLM output).
+# Was previously only arriving transitively (via anthropic and ocrmypdf's own
+# deps); pinned explicitly now that this repo compiles a hashed lockfile, so a
+# transitive-only version never silently moves without a line of its own here.
+pydantic>=2.0
+
+# Google Drive + Sheets (service-account auth; no local mount)
+google-api-python-client>=2.130
+google-auth>=2.30
+# OAuth-as-user flow for the durable PDF archive (archiver.py / oauth_setup.py).
+# Only needed for the optional archive job; the core monitor doesn't import it.
+google-auth-oauthlib>=1.2
+
+# requests is used by nsite_client (ported from the EGLE scraper)
+requests>=2.32
+
+# poison_doc_extractor.py (ADR 011): .msg / .docx source extraction for nSITE
+# docs the downloadpdf render endpoint 400s on. extract-msg pulls in oletools
+# and RTFDE transitively (OLE2/RTF parsing) — no action needed, just larger
+# than it looks from this one line. NOTE: extract-msg is GPL-licensed; xlrd
+# and openpyxl are BSD/MIT. This repo has no LICENSE file of its own yet, so
+# there's no direct copyleft conflict today, but flag before adding a license
+# or redistributing, since the README invites reuse by other advocacy groups.
+# defusedxml hardens the .docx word/document.xml parse against XXE / billion-
+# laughs: the bytes are an untrusted nSITE download, so a hostile document.xml
+# must be refused (raised → caught as a poison strike), never entity-expanded.
+defusedxml>=0.7          # XXE-safe drop-in for xml.etree in _docx_body_text
+extract-msg>=0.55       # .msg envelope + attachment extraction (GPL)
+xlrd>=2.0                # legacy .xls attachments (e.g. lab-report EDDs)
+openpyxl>=3.1             # .xlsx attachments, in case a future EDD is that format
+
+# Tests: synthetic PDFs are built with PyMuPDF (already a dep) — no extra
+# PDF library needed. pytest is the only test-time addition.
+pytest>=8.0
+# httplib2 is imported directly in tests/test_sheet_writer.py and
+# tests/test_ride_docs.py (building a fake googleapiclient HttpError). Was
+# previously only arriving transitively via google-api-python-client and
+# google-auth-httplib2; pinned explicitly for the same reason as pydantic above.
+httplib2>=0.22

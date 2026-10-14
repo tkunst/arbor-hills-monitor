@@ -31,7 +31,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - run: pip install pyyaml
+      # Uses the same hashed lockfile as every other workflow (pin-dependencies)
+      # rather than a separate unpinned `pip install pyyaml` — one install
+      # surface to maintain, even though this job only needs PyYAML itself.
+      - run: pip install --require-hashes -r requirements.txt
       - name: Site pages in sync (guard)
         run: python scripts/sync_data_notes.py --check
       - name: Sync release notes + zip README

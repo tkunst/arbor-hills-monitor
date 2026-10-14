@@ -29,7 +29,7 @@ jobs:
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install --require-hashes -r requirements.txt
       - name: Send scoped test email
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
