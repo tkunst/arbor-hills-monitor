@@ -288,3 +288,37 @@ def test_extra_summary_fn_text_reaches_the_done_line(capsys):
 def test_alert_failure_is_reported_as_a_non_zero_exit():
     kwargs = _base_kwargs(diff_and_record_fn=lambda *a: ("changed", "send failed"))
     assert nwc.run_profile_watch(**kwargs) == 1
+
+
+# ---------------------------------------------------------------------------
+# Each watcher's own run() must gate on `_should_run` BEFORE parsing any
+# config value (snapshot_char_budget / latest_window / exclude_fields) --
+# not after. A malformed value there (plausible precisely BECAUSE the watch
+# is disabled and nobody is watching its output) must still return a clean
+# 0, matching every watcher's pre-refactor behavior, not raise.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("watcher,key", [
+    (vw, "nsite_violations"),
+    (caw, "nsite_compliance_actions"),
+    (ew, "nsite_evaluations"),
+    (pw, "nsite_permits"),
+    (pnw, "nsite_public_notices"),
+])
+def test_disabled_run_is_a_noop_even_with_a_malformed_snapshot_char_budget(
+        monkeypatch, watcher, key):
+    monkeypatch.setattr(watcher, "load_config", lambda: {
+        key: {"enabled": False, "snapshot_char_budget": "not-a-number"},
+    })
+    boom = lambda: (_ for _ in ()).throw(AssertionError("must not build a Sheets client"))
+    monkeypatch.setattr(watcher.dc, "sheets_service", boom)
+    assert watcher.run() == 0
+
+
+def test_disabled_complaints_run_is_a_noop_even_with_a_malformed_latest_window(monkeypatch):
+    monkeypatch.setattr(cw, "load_config", lambda: {
+        "nsite_complaints": {"enabled": False, "latest_window": "not-a-number"},
+    })
+    boom = lambda: (_ for _ in ()).throw(AssertionError("must not build a Sheets client"))
+    monkeypatch.setattr(cw.dc, "sheets_service", boom)
+    assert cw.run() == 0

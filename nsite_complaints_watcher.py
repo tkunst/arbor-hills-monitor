@@ -179,12 +179,14 @@ import sheet_writer as sw
 import nsite_client as nc
 from config_loader import load_config
 import nsite_watch_common as nwc
-# _now/_today_date/_load_json/alerting_is_configured are now shared (byte-
-# identical copies, previously 16/8/12/6 of them repo-wide — see
-# nsite_watch_common.py's own module docstring; this profile never had its
-# own `_row_digest`, unlike 5 of its siblings); re-exported here so this
-# module keeps its own names unchanged (cw._now()/cw._load_json(...)/
-# cw.alerting_is_configured(...) all still work exactly as before — see the
+# _now/_today_date/_load_json/alerting_is_configured are now shared -- SIX
+# of the 16/8/12/6 copies of these helpers that existed repo-wide (ROP/MMD/
+# PFAS-PWS/RIDE/Submissions/the other watchers keep their own; this
+# consolidation is scoped to the six nSITE profile watchers only; this
+# profile never had its own `_row_digest`, unlike 5 of its siblings);
+# re-exported here so this module keeps its own names unchanged
+# (cw._now()/cw._load_json(...)/cw.alerting_is_configured(...) all still
+# work exactly as before — see the
 # existing per-watcher identity tests).
 from nsite_watch_common import (  # noqa: F401 -- re-exported, not just used
     _now, _today_date, _load_json, alerting_is_configured,
@@ -536,10 +538,17 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients,
 
 def run() -> int:
     cfg = load_config()
-    # Computing `budget`/`latest_window` even when the watch is disabled
-    # costs nothing — both are pure, side-effect-free, and
-    # run_profile_watch's own enabled gate still short-circuits before any
-    # Sheets/network call either way.
+    # Gate BEFORE parsing any config value below: `_should_run` must be the
+    # very first thing checked, exactly like every sibling watcher, because
+    # `int(...)` on a malformed `snapshot_char_budget`/`latest_window` (a
+    # config edit made while the watch is disabled -- Complaints IS the one
+    # profile that currently ships disabled) would otherwise raise before
+    # run_profile_watch ever gets a chance to no-op on the disabled gate.
+    should, reason = _should_run(cfg)
+    if not should:
+        print(f"[nsite-complaints-watch] {reason}")
+        return 0
+
     ccfg = cfg.get("nsite_complaints") or {}
     budget = min(int(ccfg.get("snapshot_char_budget") or DEFAULT_SNAPSHOT_CHAR_BUDGET),
                  HARD_SHEETS_CELL_LIMIT - 1000)

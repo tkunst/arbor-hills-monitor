@@ -123,7 +123,9 @@ import nsite_client as nc
 from config_loader import load_config
 import nsite_watch_common as nwc
 # _now/_today_date/_load_json/alerting_is_configured/_row_digest are now
-# shared (byte-identical copies, previously 16/8/12/6/5 of them repo-wide —
+# shared -- SIX of the 16/8/12/6/5 copies of these helpers that existed
+# repo-wide (ROP/MMD/PFAS-PWS/RIDE/Submissions/the other watchers keep
+# their own; this consolidation is scoped to these six files only) —
 # see nsite_watch_common.py's own module docstring); re-exported here so
 # this module keeps its own names unchanged (vw._now()/vw._load_json(...)/
 # vw.alerting_is_configured(...) all still work exactly as before — see the
@@ -517,13 +519,21 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients,
 
 def run() -> int:
     cfg = load_config()
+    # Gate BEFORE parsing any config value below: `_should_run` must be the
+    # very first thing checked, exactly like every sibling watcher and like
+    # this function's own pre-refactor shape, because `int(...)` on a
+    # malformed `snapshot_char_budget` (a config edit made while the watch
+    # is disabled) would otherwise raise before run_profile_watch ever gets
+    # a chance to no-op on the disabled gate.
+    should, reason = _should_run(cfg)
+    if not should:
+        print(f"[nsite-violations-watch] {reason}")
+        return 0
+
     # Clamped, because `snapshot_char_budget` sits in config.yml directly under
     # a comment naming the 50,000 cap — so "raise it a bit" is a plausible edit,
     # and any value at or above the cap would disable the truncation guard
-    # entirely and hand the site a permanently rejected write. Computing this
-    # (and `fields` below) even when the watch is disabled costs nothing —
-    # both are pure, side-effect-free, and run_profile_watch's own enabled
-    # gate still short-circuits before any Sheets/network call either way.
+    # entirely and hand the site a permanently rejected write.
     vcfg = cfg.get("nsite_violations") or {}
     budget = min(int(vcfg.get("snapshot_char_budget") or DEFAULT_SNAPSHOT_CHAR_BUDGET),
                  HARD_SHEETS_CELL_LIMIT - 1000)
