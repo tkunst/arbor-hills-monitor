@@ -202,13 +202,31 @@ jobs:
           # `github.event.pull_request`, absent on a `workflow_run` event.
           commits=$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}/commits")
 
-          # Every commit on the PR must be authored by dependabot[bot] -- a
-          # human (or a compromised token) pushing a commit onto this branch
-          # must never ride along to a merge just because the PR's own
-          # metadata still parses as patch/minor.
-          non_bot=$(echo "$commits" | jq -r '[.[] | select(.author.login != "dependabot[bot]")] | length')
+          # Every commit on the PR must pass ALL THREE of: author.login is
+          # dependabot[bot], committer.login is web-flow (GitHub's own
+          # web-based commit identity), AND commit.verification.verified is
+          # true. `author.login` alone is NOT a trust boundary -- it's
+          # derived by matching the commit's author EMAIL against GitHub's
+          # `<id>+<login>@users.noreply.github.com` convention, which
+          # requires no proof of identity (anyone can set `git config
+          # user.email` to that string). A human with push access to this
+          # branch, spoofing only the author email and signing the commit
+          # with their OWN verified key, would still pass a bare
+          # `verified == true` check alone -- but their `committer.login`
+          # would read as their real login, never "web-flow", since only
+          # GitHub's own backend can produce a commit whose committer
+          # identity is web-flow. Verified all three fields hold on three
+          # real, independent Dependabot commits (dependabot/fetch-
+          # metadata PRs #730, #762, #763) before relying on this.
+          non_bot=$(echo "$commits" | jq -r '
+            [.[] | select(
+              .author.login != "dependabot[bot]" or
+              .committer.login != "web-flow" or
+              (.commit.verification.verified != true)
+            )] | length
+          ')
           if [ "$non_bot" -gt 0 ]; then
-            echo "Found a commit on this PR not authored by dependabot[bot]. Not auto-merging."
+            echo "Found a commit on this PR that is not a verified dependabot[bot]/web-flow commit. Not auto-merging."
             echo "result=major-or-other" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -268,7 +286,14 @@ jobs:
         if: steps.classify.outputs.result == 'patch-or-minor'
         env:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
-        run: gh pr merge "$PR_NUMBER" --rebase --delete-branch
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        # --match-head-commit makes the earlier SHA re-verification (the
+        # "Verify" step) actually load-bearing at the moment it matters: GitHub
+        # atomically refuses the merge if the PR's head has moved since
+        # TESTED_SHA was checked, closing the gap between that check and this
+        # call (two more API round-trips: Gates, Classify) during which a new,
+        # never-tested commit could otherwise land and get merged unverified.
+        run: gh pr merge "$PR_NUMBER" --rebase --delete-branch --match-head-commit "$TESTED_SHA"
 
       - name: Ensure the needs-review label exists
         # `gh pr edit --add-label` does NOT auto-create a missing label --
