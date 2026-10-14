@@ -44,29 +44,25 @@ external users but no sensitive data). Public repo.
 
 - `config_loader.py` — twelve lines: `load_config()` reads this repo's own
   `config.yml` with `yaml.safe_load`. No secrets here (those are env/GitHub
-  Secrets only); this is the one chokepoint nearly every other module uses
+  Secrets only); this is the chokepoint ~49 other modules across the repo use
   to read the non-secret config, including `kdp_check.default_reference()`
-  (see below) and most `scripts/gen_*.py` jobs.
+  (see below) and `scripts/gen_stream_status.py` — though NOT every
+  `scripts/gen_*.py` job (`gen_findings_feed.py`/`gen_sitemap.py`/
+  `gen_public_comment_feed.py` don't touch it).
 - `egle_doc_parser.py` — THE reusable module (the Decode parsing base). PDF →
   `ParsedDoc`. Domain-agnostic in the sense Decode needs: the risk register is
-  passed in, never hardcoded. **This is not true end-to-end**, though — two
-  places this module is NOT domain-agnostic, stated plainly rather than
-  refactored here: (1) `_enforce_temperature_consistency()` takes an optional
+  passed in, never hardcoded. **That claim is not true end-to-end**, though,
+  stated plainly rather than refactored here:
+  `_enforce_temperature_consistency()` takes an optional
   `temperature_reference`/`parse_document(temperature_reference=)` kwarg, but
-  neither `watcher.py` nor `backfill.py` ever passes one, so in practice it
-  always falls through to `kdp_check.default_reference()`, which reads THIS
-  repo's own `config.yml` (`temperature_thresholds`) directly — see
-  `kdp_check.py` below; (2) every nSITE profile watcher (Streams K/L/M/N/O/P/Q)
-  imports `nsite_client`, and `nsite_client.py` imports `poison_doc_extractor`
-  at module level, which imports `fitz`/`defusedxml` at module level too — so a
-  watcher that only needs a structured JSON API still loads the PDF-parsing
-  stack on every run (verified empirically: `import nsite_client` alone puts
-  `fitz` and `defusedxml` in `sys.modules`). The LLM/OCR half
-  (`egle_doc_parser`, `anthropic`, `ocrmypdf`) stays OUT of that chain —
-  `poison_doc_extractor` only imports those lazily, inside the functions that
-  actually need them (`extract_msg`, `openpyxl`, `xlrd`, and
-  `from egle_doc_parser import ocr_in_place` are all deferred imports). **ADR
-  065** added `document_date`/`document_date_method` (a deterministic
+  no caller anywhere in this repo (`watcher.py`, `backfill.py`, or any of the
+  `scripts/` one-offs that call `parse_document()` — `recheck_key_data_points
+  .py`, `backfill_document_dates_titles.py`, `smoke_one.py`) ever passes one,
+  so in practice it always falls through to `kdp_check.default_reference()`,
+  which reads THIS repo's own `config.yml` (`temperature_thresholds`)
+  directly — see `kdp_check.py` below. (See the `nsite_client.py` entry
+  further down for a SEPARATE coupling fact in the same spirit — a different
+  module, not this one.) **ADR 065** added `document_date`/`document_date_method` (a deterministic
   dateline/label regex pass over the doc's own raw first pages, LLM only as
   fallback — same classification call, no extra LLM call) and
   `display_title` (the model's raw proposal, only requested when the caller
@@ -104,17 +100,20 @@ external users but no sensitive data). Public repo.
   module touches I/O: it calls `config_loader.load_config()` to build the
   `TempReference` from `config.yml`'s `temperature_thresholds` block,
   falling back to the plain 131/145°F defaults if config can't be read. See
-  the `egle_doc_parser.py` entry above for who actually calls it (nobody
-  passes a `ref` in; the default is always what runs).
+  the `egle_doc_parser.py` entry above for who actually calls it (no
+  production caller passes a `ref` in; the default is always what runs).
 - `retry_policy.py` — classifies a per-document processing exception as
   TRANSIENT (infra/quota — a 429, a 5xx, the 2026-07-07 workspace API cap's
   400 "usage limit" message, the `anthropic` SDK's own connection/timeout/
   rate-limit/server error types) vs. PERMANENT (a genuinely unprocessable
   source — bad PDF, OCR failure, truncation, generic 400). `watcher.py`/
-  `backfill.py` call `is_transient()` before accruing a poison strike, so an
-  API-cap or infra blip can no longer permanently mark a real filing
-  "skipped" the way it did pre-fix (a real June-2026 incident: a cap-hit
-  "skipped" two urgent docs). Duck-typed detection; `anthropic` is an
+  `backfill.py` both call `is_transient()` (confirmed at their respective
+  poison-strike sites) before accruing a strike, so an API-cap or infra blip
+  can no longer permanently mark a real filing "skipped" the way it did
+  pre-fix: the module's own motivating incident was the 2026-07-07
+  workspace-API-cap exhaustion causing a June-16-filed EGLE Surface Emission
+  Monitoring inspection package (two urgent docs) to be silently marked
+  "skipped" with no recovery path. Duck-typed detection; `anthropic` is an
   optional import so callers don't need it installed just to classify an
   error.
 - `risk_register.py` — R1–R8 + R8 signal keywords (single source of truth).
@@ -130,21 +129,32 @@ external users but no sensitive data). Public repo.
   downstream write (Drive mirror, feed/evidence rows, digest/alert, `_state`
   payload) inherits them for free. `poison_stub.py` (no parse exists for a
   poison doc) applies only the override map.
-- `nsite_client.py` — EGLE nSITE API: session, list, download.
+- `nsite_client.py` — EGLE nSITE API: session, list, download. **A coupling
+  fact worth stating plainly** (surfaced by the claude-md-drift pass, not
+  refactored here): `nsite_client.py:93` imports `poison_doc_extractor` at
+  MODULE level, and that module imports `fitz`/`defusedxml` at module level
+  too — so every one of the six nSITE PROFILE watchers (Streams K/L/M/N/O/P/Q,
+  which only need a structured JSON API, not a PDF) still loads the
+  PDF-parsing stack the instant they `import nsite_client`. Verified
+  empirically, not asserted: a bare `import nsite_client` puts `fitz` and
+  `defusedxml` in `sys.modules`. The LLM/OCR half
+  (`egle_doc_parser`/`anthropic`/`ocrmypdf`) stays OUT of that chain —
+  `poison_doc_extractor` only imports those lazily, inside the functions that
+  actually need them (see its own entry below).
 - `poison_doc_extractor.py` — **ADR 011**: text extraction + PDF synthesis for
   nSITE documents whose source isn't a PDF (.msg, .docx, bare images, zip
   bundles) — the gap `nsite_client.download_pdf()` alone can't close. Wired in
   as that function's last-resort fallback (imported at module level —
-  `nsite_client.py:93` — so it loads with every caller of `nsite_client`, see
-  the `egle_doc_parser.py` entry above): native bytes are sniffed for format
-  and, if supported, synthesized into a PDF containing every extractable
-  piece of content, so `egle_doc_parser.parse_document()`'s existing
-  classify/OCR/extract pipeline ingests it unchanged downstream. Recurses
-  into `.msg`/zip-bundle attachments (nested `.msg`, PDF pages merged via
-  `fitz.insert_pdf`, `.docx`/`.xls`/`.xlsx` attachments, image attachments
+  `nsite_client.py:93`, see that entry above): native bytes are sniffed for
+  format and, if supported, synthesized into a PDF containing every
+  extractable piece of content, so `egle_doc_parser.parse_document()`'s
+  existing classify/OCR/extract pipeline ingests it unchanged downstream.
+  Recurses into `.msg`/zip-bundle attachments (nested `.msg`, PDF pages merged
+  via `fitz.insert_pdf`, `.docx`/`.xls`/`.xlsx` attachments, image attachments
   OCR'd proactively). `extract_msg`/`openpyxl`/`xlrd` and
   `from egle_doc_parser import ocr_in_place` are all deferred (function-level)
-  imports — only `fitz`/`defusedxml` load at module import time.
+  imports — only `fitz`/`defusedxml` load at module import time (the fact the
+  `nsite_client.py` entry above states).
 - `well_aliases.py` — **ADR 068**: the curated well-ID alias map (38 pairs at
   build), loaded from the committed `data/well_aliases.json`, which is GENERATED by
   Lotext's `merge_well_aliases.py --export-only`. Never hand-edit it; add pairs in
@@ -291,7 +301,7 @@ external users but no sensitive data). Public repo.
   A failed hour exits 0 (silently retried next hour) except four fixed UTC
   hours/day (`LOUD_HOURS_UTC`), which exit 1 so a persistent failure still
   surfaces a few times a day. Gated on `gfl_air.hourly_capture.enabled`
-  (live).
+  (added + activated together, 2026-10-06, Trisha).
 - `gfl_feed_snapshot.py` — **ADR 063**: a monthly FULL snapshot of GFL's public
   perimeter-air feed (every row of every layer, ~226k hourly H2S/CH4 readings,
   verbatim) with change detection against the previous snapshot — the backstop
@@ -304,9 +314,9 @@ external users but no sensitive data). Public repo.
   changed field set, emails Trisha (the owner list) ONLY — the new snapshot's
   `.compared` marker is set only after that succeeds, so a failed comparison
   or email retries against the same baseline next run. Gated on
-  `gfl_feed_snapshot.enabled` (live, switched on 2026-10-06 — the module's own
-  docstring still says "ships false" and should be corrected in a future
-  change, see this PR's notes).
+  `gfl_feed_snapshot.enabled` (switched on 2026-10-06, Trisha — the module's
+  own docstring is stale and still says "ships false"; a future change should
+  fix that comment to match).
 - `civicclerk_watcher.py` — Stream F: twice-daily change-watch on MMPC +
   Washtenaw County BOC meeting events (hand-picked, via `mmpc_client.fetch_event`)
   plus the Board of Public Works/DPA (categoryId 68, AUTO-DISCOVERED via the new
@@ -774,13 +784,14 @@ external users but no sensitive data). Public repo.
   check (exit 1 if any program doesn't resolve). Manual dispatch input
   `mirror_uris` (comma-separated RIDE file ids) mirrors just those files now.
   Gated on `ride_docs.enabled` (shipped `false`; ACTIVATED 2026-09-28). See ADR 061.
-- `egle_newsroom_watcher.py` — standalone, self-terminating daily watch on
-  EGLE's newsroom landing page (no ADR; added 2026-10-01, Trisha-directed), the
-  same shape as `pfas_watcher.py`. The landing page lists only the newest four
-  items and is the only server-rendered view (the full archive is a keyless JS
-  search; the GovDelivery feed refuses non-browser requests), so the workflow
-  polls several times a day and fires a GAP NOTICE if every listed item comes
-  back new (more may have scrolled past between polls). Items never seen
+- `egle_newsroom_watcher.py` — standalone, self-terminating watch on EGLE's
+  newsroom landing page (no ADR; added 2026-10-01, Trisha-directed), the same
+  shape as `pfas_watcher.py` but on a tighter cadence. The landing page lists
+  only the newest four items and is the only server-rendered view (the full
+  archive is a keyless JS search; the GovDelivery feed refuses non-browser
+  requests), so `egle-newsroom-watch.yml` runs every 3 hours and fires a GAP
+  NOTICE if every listed item comes back new (more may have scrolled past
+  between polls). Items never seen
   before (the `EGLE Newsroom Watch` tab IS the state) are scored against
   `egle_newsroom.keywords` in `config.yml` — `specific` terms alert on any
   hit, `area` terms only alongside a `topic` term (county names appear in
@@ -791,7 +802,9 @@ external users but no sensitive data). Public repo.
   baselines silently; a state-tab read error raises; zero parsed article
   links on a page that did fetch is a liveness failure (exit 1). Recipients
   are scoped (`egle_newsroom.recipients`) and never fall back to the shared
-  `alert_recipients` list. Gated on `egle_newsroom.enabled` (live).
+  `alert_recipients` list. Gated on `egle_newsroom.enabled` (shipped `true` at
+  build, 2026-10-01, on Trisha's explicit request — not the overnight-coder
+  new-source `false` default).
 - `public_comment_feed.py` — **ADR 035**: pure render logic (no I/O, same
   shape as `findings_feed.py`) for the public "Public Comment Periods" page
   (`site/public-comment/`) — an Open table and a Closed table, sourced from
@@ -898,18 +911,22 @@ answers "is it live right now."
   ONLY with the service account and Trisha** — never share it with the operator.
   Keep strategy-flavored key dates on the private Sheet, never the public one.
 - **State tabs vs. data tabs — and state reads must raise.** A tab any
-  watcher DIFFS or BASELINES off of (`_state`, `_meta`, and every `<X> Watch`
-  snapshot tab — ROP/MMD/RIDE/PFAS/Public Water Supply PFAS/GFL Info Site/
-  Meeting/MPART Data/Submissions/Violations/Compliance Actions/Evaluations/
-  Permits/Complaints/Public Notices/EGLE Newsroom, plus the private-Sheet
-  `GovQA Archive Watch`/`RRD Documents`) must RAISE on a genuine read failure
+  watcher DIFFS or BASELINES off of (`_state`, `_meta`, `_wds_seen`, `GFL
+  Air` — its OBJECTID cursor, As-Of liveness marker, and episode-state cell
+  are each its own bare read with no try/except, i.e. they raise by
+  construction too — and every other `<X> Watch` snapshot tab: ROP/MMD/RIDE/
+  PFAS/Public Water Supply PFAS/GFL Info Site/Meeting/MPART Data/
+  Submissions/Violations/Compliance Actions/Evaluations/Permits/Complaints/
+  Public Notices/EGLE Newsroom, plus the private-Sheet `GovQA Archive Watch`/
+  `RRD Documents`) must RAISE on a genuine read failure
   (429/5xx/network/exhausted-retries), never swallow it to `[]` — a swallowed
   transient error misreads as "nothing seen yet" and silently re-baselines
   over real state (the ADR 018/023 "spurious baseline becomes the state"
   failure). Enforced two ways in the code: `sheet_writer._tab_rows_strict()`
   (added when PR #135 fixed this across most state/snapshot tabs) for the
   tabs it covers, and — for tabs with their own reader predating that helper
-  (`read_mpart_rows`, `read_govqa_rows`, `read_rrd_docs_rows`, and the six
+  or never built on it (`read_mpart_rows`, `read_govqa_rows`,
+  `read_rrd_docs_rows`, the GFL Air reads named above, and the six
   nSITE-profile readers for Violations/Compliance Actions/Evaluations/
   Permits/Complaints/Public Notices) — a bespoke per-tab read with no
   try/except at all, which raises by construction. The LENIENT `_tab_rows()`
@@ -923,11 +940,16 @@ answers "is it live right now."
   are HYBRID — simultaneously the run's state (last row per key = current)
   AND a durable append-only record (every row is also data): `GFL Info Site
   Watch`, `Ridge Wood Reports`, `RRD Documents`, `EGLE Newsroom Watch` — these
-  get the strict/raising contract above. Every other tab (New/Historical/
-  Related Documents, Evidence by Risk/All Evidence by Risk, Measurements,
-  Compliance Deadlines, Risk Register, Hand-Curated Files, WOI Well Summary,
-  Perimeter Action-Level Episodes) is pure DATA that no diff/baseline ever
-  reads back.
+  get the strict/raising contract above. `Evidence by Risk` and `WDS Evidence
+  by Risk` are a DIFFERENT exception worth naming: they're read back too, but
+  only by `rebuild_risk_register_tab()`/`rebuild_all_evidence_tab()` to
+  recompute two derived ROLL-UP tabs (`Risk Register`, `All Evidence by
+  Risk`) — never to detect what's new — and that read already raises (a bare
+  read for `Evidence by Risk`, `_tab_rows_strict()` for `WDS Evidence by
+  Risk`). Every OTHER tab (New/Historical/Related Documents, Measurements,
+  Compliance Deadlines, Risk Register, All Evidence by Risk, Hand-Curated
+  Files, WOI Well Summary, Perimeter Action-Level Episodes) is pure DATA,
+  never diffed/baselined and never read back as run state.
 
 ## Tests
 
