@@ -868,6 +868,11 @@ def test_ridgewood_archived_months_raises_rather_than_swallowing_a_read_error():
         sw.ridgewood_archived_months(_Exploding(), "SID")
 
 
+def test_ridgewood_report_rows_raises_rather_than_swallowing_a_read_error():
+    with pytest.raises(RuntimeError):
+        sw.ridgewood_report_rows(_Exploding(), "SID")
+
+
 # --- a representative absent-tab-still-empty check per profile shape ---------
 
 def test_last_rop_snapshots_absent_tab_still_reads_empty():
