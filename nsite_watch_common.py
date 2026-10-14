@@ -175,6 +175,19 @@ def run_profile_watch(
     ...)` or `monkeypatch.setattr(vw, "_diff_and_record", ...)` still reaches
     this function's behavior exactly as it did before this refactor.
 
+    By contrast, `should_run()`/`alerting_is_configured()`/`_today_date()`
+    used below are THIS module's own implementations, not re-dispatched
+    through the calling watcher's re-exported copies — unlike `is_due_fn`/
+    `diff_and_record_fn`, nothing here looks them up via the watcher's
+    globals. That is safe today only because no existing test monkeypatches
+    `<watcher>._today_date`/`<watcher>.alerting_is_configured`/
+    `<watcher>._should_run` and expects `run()` itself to pick up the
+    replacement (every existing use of those three is a direct, standalone
+    call like `vw.alerting_is_configured(cfg, recipients)`, which still
+    works since it's the same shared object). A future test that DOES need
+    to patch one of those three at the `run()`-call level would need the
+    same parameter treatment `is_due_fn`/`diff_and_record_fn` got here.
+
     Each caller supplies ITS OWN diff design via `build_snapshot_fn` (a
     one-argument closure over whatever extra config that profile's snapshot
     builder needs — `fields` for the multiset/ref-keyed profiles, a plain
