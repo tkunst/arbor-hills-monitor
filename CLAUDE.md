@@ -199,7 +199,7 @@ external users but no sensitive data). Public repo.
   mirrors (`CivicClerk Archived Files`) since CivicClerk file IDs are a single
   global sequence, not per-category. Gated on `civicclerk_archive.enabled`
   (shipped `false`; activated 2026-09-06 (Trisha) — DPW + BOC Drive folders
-  created, `GOAUTH_DPW_FOLDER_ID`/`GOAUTH_BOC_FOLDER_ID` set; live).
+  created, `GOAUTH_DPW_FOLDER_ID`/`GOAUTH_BOC_FOLDER_ID` set).
 - `archiver.py` — the durable nSITE PDF → Drive mirror (ADR 007). Two entry
   points: `mirror_one_now()`, called INLINE from watcher.py/backfill.py at
   write time (ADR 007 addendum, 2026-08-23) so a same-day Sheet row/alert can
@@ -491,8 +491,8 @@ external users but no sensitive data). Public repo.
   to a digest multiset above `snapshot_char_budget`. `snapshot_hash` is
   always taken over the FULL snapshot, never the truncated payload. Makes no
   severity judgment about which EGLE status is good or bad. Gated on
-  `nsite_violations.enabled` (shipped `false`; activated 2026-08-06 (Trisha) —
-  the 2pm-ET cron is live). Its workflow lives at
+  `nsite_violations.enabled` (shipped `false`; activated 2026-08-06
+  (Trisha)). Its workflow lives at
   `.github/workflows/nsite-violations-watch.yml` — moved out of
   `docs/pending-workflows/` when PR #36 merged (the build session's token
   lacked the `workflow` OAuth scope, so the file was parked until a
@@ -976,8 +976,15 @@ answers "is it live right now."
   diffed/baselined and never read back as run state
   (`WDS New Documents`/`WDS Page Snapshots` confirmed by grep to have no
   reader anywhere in `sheet_writer.py` — the WDS snapshot dedup this might
-  look like it should feed actually runs
-  through `_meta`'s `wds_snapshot_hashes` instead).
+  look like it should feed actually runs through `_meta`'s
+  `wds_snapshot_hashes` instead). One tab lives OUTSIDE `sheet_writer.py`
+  entirely and so is outside every bucket above by construction: the
+  private Sheet's hand-maintained `Upcoming` tab (defined in `upcoming.py`,
+  read by `fetch_upcoming()`) is read LENIENTLY by design — it returns
+  `[]` on any read error so the Sunday digest drops that section rather
+  than failing the run; nothing diffs or baselines off it, so a false-empty
+  read costs one week's missing digest section, never a lost alert or an
+  overwritten record.
 
 ## Tests
 
