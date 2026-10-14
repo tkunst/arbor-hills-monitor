@@ -53,13 +53,36 @@ def authorized_http(credentials, timeout: int = HTTP_TIMEOUT_S):
     `build(credentials=creds, ...)` — the two are mutually exclusive on
     build() (it raises ValueError if both are given). google_auth_httplib2
     and httplib2 are both already pinned in requirements.txt for other
-    reasons (see requirements.in's own comment) — no new dependency."""
-    import httplib2
-    import google_auth_httplib2
+    reasons (see requirements.in's own comment) — no new dependency.
 
-    return google_auth_httplib2.AuthorizedHttp(
-        credentials, http=httplib2.Http(timeout=timeout)
-    )
+    HIGH finding, fixed before merge (Step 5 independent review,
+    2026-10-14): the first version of this function built a BARE
+    `httplib2.Http(timeout=timeout)` directly, which drops something
+    `googleapiclient.http.build_http()` — what `build(credentials=...)`
+    was already using internally before this PR — does on top of setting
+    the timeout: `http.redirect_codes = http.redirect_codes - {308}`.
+    308 is used by Drive/YouTube resumable uploads as "Resume Incomplete,"
+    not a real redirect; without that line, httplib2 tries to follow a
+    mid-upload 308 as an actual redirect (no `Location` header present)
+    and the upload fails. Every resumable upload in this codebase
+    (`archive_client.upload_file()`, `archive_client.update_file_content()`
+    — this backfill script's own re-upload step — and drive_client's own
+    upload helper, all `MediaFileUpload(..., resumable=True)`) would have
+    broken on any file large enough to span multiple chunks. Confirmed
+    directly against this repo's pinned libraries (not just upstream
+    source): `build_http().redirect_codes` excludes 308; a bare
+    `httplib2.Http()` includes it; the original `authorized_http()`
+    return value included it too. Fixed by building on `build_http()`
+    itself (so `redirect_codes` is correct) and only overriding `.timeout`
+    to make it an explicit, in-repo value instead of relying on
+    `build_http()`'s own `socket.getdefaulttimeout()`-dependent default
+    resolution."""
+    import google_auth_httplib2
+    from googleapiclient.http import build_http
+
+    http = build_http()
+    http.timeout = timeout
+    return google_auth_httplib2.AuthorizedHttp(credentials, http=http)
 
 SCOPES = [
     "https://www.googleapis.com/auth/drive",

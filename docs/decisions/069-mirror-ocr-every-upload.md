@@ -430,32 +430,68 @@ for the incident confirms the script's output was completely silent from
 15:02:59.36Z (the only line being Python's own `fitz` deprecation warning at
 import time) until the 19:56:29.37Z cancellation — consistent with having
 no per-candidate log line at all, not informative about *why*.
-`gh cache list` shows the run's resume-state cache (`local-state/backfill-
-mirror-ocr-state.json`, cached between runs) grew from 1.20 KiB (restored
-from the prior run) to 1.89 KiB when saved at cancellation — roughly enough
-for a handful of new state entries, nowhere near the 6-7 KiB fifty new
-entries would need. This rules out "a cascade of fifty individually-bounded
-~300s OCR timeouts" (50 × 300s ≈ 4.17h is numerically close to the observed
-4h53m, which was the original back-of-envelope suspicion) and instead
-confirms the incident's own literal framing: the run made real progress on
-a small number of files, then genuinely stalled on one, for the rest of the
-~5 hours.
+
+A first attempt to narrow this further used `gh cache list`'s reported
+sizes for the resume-state cache (`local-state/backfill-mirror-ocr-state.
+json`, cached between runs — 1.20 KiB restored from the prior run, 1.89 KiB
+saved at cancellation) to argue the run only recorded a handful of new
+entries, not fifty. **That argument is withdrawn — it doesn't hold up.**
+`gh cache list` reports the size of the compressed cache archive, and this
+state file is repetitive JSON (the same few key names and status strings
+repeated per entry); zstd/gzip-style compression on that kind of data can
+easily fit several dozen entries into well under a kilobyte of compressed
+size. A 0.69 KiB compressed delta says nothing reliable about entry count
+either way, so this evidence does not actually rule out "a cascade of
+individually-bounded OCR timeouts" the way it was first written up to.
+
+A second, more direct check: load the script the way the tests do, import
+`drive_client`, and probe what a bare `log.warning(...)` call actually does
+with NO logging configured anywhere (exactly this script's real condition —
+`main()` never calls `logging.basicConfig()`). Result, confirmed by
+executing it: a `logging.getLogger("ocr_util").warning(...)` call DOES
+reach stderr, via Python's `logging.lastResort` fallback (the root logger
+has no handlers, so the default last-resort stderr handler fires) — meaning
+`ensure_searchable()`'s own count-only timeout/failure warnings WOULD have
+shown up in the Actions log if any had fired during the stall. Since none
+did, this rules out an `ensure_searchable()`-driven OCR-subprocess-timeout
+cascade specifically — a cleaner, more direct way to reach the same
+narrower conclusion the (withdrawn) cache-size argument was reaching for.
+**But this does NOT extend to Drive-API-level retries/timeouts**: importing
+the real `googleapiclient` package and re-running the same probe shows it
+installs a `logging.NullHandler()` on its own top-level `googleapiclient`
+logger at import time — and once ANY handler (even a no-op one) is present
+anywhere in a logger's ancestor chain, Python's `lastResort` fallback never
+fires for it. A warning logged from `googleapiclient.http` (where this
+library's own retry/backoff logging would originate) is confirmed, by the
+same direct test, to produce **zero output anywhere** — not even to
+stderr. So a silent, repeated Drive-side retry/backoff grind (bounded, per
+call, by `HTTP_TIMEOUT_S` × `GOOGLE_API_NUM_RETRIES` plus backoff, but
+possibly recurring across many calls within one candidate) is **not ruled
+out** by the empty log; the log would look identical either way.
 
 **Honest conclusion: the exact call that hung is not conclusively
 identified.** Every timeout mechanism this addendum could directly test —
 `subprocess.run()`'s own deadline, `httplib2`'s per-request socket timeout,
 `google.auth`'s OAuth-refresh timeout, this repo's existing
 `GOOGLE_API_NUM_RETRIES` retry/backoff — behaved correctly and boundedly
-under realistic simulation of their documented failure modes. This does not
-rule out a real hang in the actual `ocrmypdf` binary's behavior under a
-condition this addendum's Python stand-in couldn't reproduce (e.g. an
-uninterruptible kernel wait state), or a resumable-upload / token-refresh
-edge case specific to a pathological server response that a 60s
-per-request timeout doesn't actually bound end-to-end in practice. Given
-that, the two fixes below are deliberately **root-cause-agnostic** — they
-guarantee this exact failure mode (one file silently consuming an entire
-run) cannot recur, regardless of which call turns out to be responsible,
-rather than resting on a specific, unconfirmed mechanism:
+under realistic simulation of their documented failure modes, and an
+`ensure_searchable()`-specific OCR-timeout cascade is now reasonably ruled
+out by the logging check above. What remains open: a real hang in the
+actual `ocrmypdf` binary under a condition this addendum's Python stand-in
+couldn't reproduce (e.g. an uninterruptible kernel wait state — `signal.
+alarm`/`proc.wait()` cannot interrupt that either, so if this is the real
+mechanism, nothing in this PR can break it loose, only bound how long it's
+allowed to hold up the REST of a run); a resumable-upload / token-refresh
+edge case specific to a pathological server response not bounded
+end-to-end by a 60s per-request timeout; or a silent Drive-side retry grind
+per the `NullHandler` finding above. Given that, the two fixes below are
+deliberately **root-cause-agnostic** — they bound the BLAST RADIUS of this
+exact failure mode (one file silently consuming an entire run) regardless
+of which call turns out to be responsible, rather than resting on a
+specific, unconfirmed mechanism. This is a strong mitigation, not a
+guarantee that no candidate can ever stall again — see the explicit
+residual risk on the watchdog below, and the open security finding noted
+at the end of this addendum, which is NOT fixed in this PR:
 
 1. **Per-candidate progress lines** (`scripts/backfill_mirror_ocr.py`):
    `[backfill] <n> <key> starting` before each candidate, flushed, and
@@ -492,12 +528,89 @@ rather than resting on a specific, unconfirmed mechanism:
 end-to-end test (`test_ensure_searchable_real_subprocess_kills_grandchild_
 on_timeout`) that forks an actual grandchild process holding the output
 pipes open and confirms it is genuinely killed (never completes its sleep),
-not merely orphaned-and-left-running — this is the regression test that
-would have failed against `main` before this fix. `tests/test_drive_
-client.py` and `tests/test_archive_client.py` (both new) assert the service
-builders pass `http=` with the expected finite timeout, never a bare
-`credentials=`. `tests/test_backfill_mirror_ocr.py` gained watchdog and
-progress-line tests, including one that a hung candidate (simulated via
-`time.sleep()` under a shortened test ceiling) is bounded, recorded
-`error_timeout`, and does not stop the run from reaching the next
-candidate.
+not merely orphaned-and-left-running — confirmed directly (not just
+asserted) to fail against `main`'s `ocr_util.py` before this fix: swapping
+`main`'s version in and re-running just this one test reproduces the
+orphan surviving, with `ocr_util`'s own "ocrmypdf timed out" warning
+confirming `subprocess.run()`'s timeout still fired correctly even then —
+i.e. the test fails for the REASON this addendum claims, not some other
+reason. `tests/test_drive_client.py` and `tests/test_archive_client.py`
+(both new) assert the service builders pass `http=` with the expected
+finite timeout, never a bare `credentials=`. `tests/test_backfill_mirror_
+ocr.py` gained watchdog and progress-line tests, including one that a hung
+candidate (simulated via `time.sleep()` under a shortened test ceiling) is
+bounded, recorded `error_timeout`, and does not stop the run from reaching
+the next candidate.
+
+**Step 5 independent review found one HIGH finding, fixed before merge.**
+`drive_client.authorized_http()`'s first draft built a bare
+`httplib2.Http(timeout=timeout)` directly. `googleapiclient.http.
+build_http()` — what `build(credentials=...)` was already using
+internally, before this PR — does one thing on top of setting that same
+timeout: `http.redirect_codes = http.redirect_codes - {308}`. 308 is
+Drive/YouTube's "Resume Incomplete" status for resumable uploads, not a
+real redirect; a bare `httplib2.Http()` keeps 308 in its default
+`redirect_codes` set, so httplib2 would try to follow a mid-upload 308 as
+an actual redirect (no `Location` header present) and the upload would
+fail. This would have broken every resumable upload in this codebase —
+`archive_client.upload_file()`, `archive_client.update_file_content()`
+(this backfill script's own re-upload step), and `drive_client.py`'s own
+upload helper, all `MediaFileUpload(..., resumable=True)` — on any file
+large enough to span multiple chunks. Confirmed directly against this
+repo's pinned libraries, not just upstream source: `build_http().
+redirect_codes` excludes 308, a bare `httplib2.Http()` includes it, and
+the original `authorized_http()` did too, before the fix. **Fixed:**
+`authorized_http()` now builds on `build_http()` itself (so
+`redirect_codes` is correct) and only overrides `.timeout`, rather than
+constructing a bare `httplib2.Http()`. `tests/test_drive_client.py`
+gained a dedicated test asserting `308 not in http.http.redirect_codes`.
+This is exactly the kind of gap the earlier "corrected framing" paragraph
+above should have caught — the direct inspection that found the 60s
+timeout default stopped at the timeout and never checked what else
+`build_http()` does.
+
+## Open finding from Step 6 security review — NOT fixed in this PR
+
+The independent Step 6 security review of this PR (`/security-review`
+could not run cross-repo from the build session; a dedicated review
+subagent given the diff + full post-change file content was used instead
+— see PR #143's comments for its full report) found **one MEDIUM
+finding**, which this repo's standing procedure requires treating as a
+hard stop: escalate, do not fix it autonomously, do not merge past it.
+
+**The finding:** `ocr_util._run_ocrmypdf()`'s `TimeoutExpired` branch, after
+`os.killpg()`-ing the process group, calls `proc.communicate()` a SECOND
+time with no timeout, intending to "drain cleanly" before re-raising. This
+is backwards and reintroduces a worse version of the exact bug this PR set
+out to fix: `communicate()` on a PIPE blocks until **every** process
+holding that pipe's write end closes it, and `killpg()` only reaches
+processes still in ocrmypdf's own process group — a descendant that calls
+its own `setsid()`/`setpgid()` (escaping the group) would still hold the
+pipe open, and the second `communicate()` call would then hang forever.
+`main`'s original `subprocess.run()` avoided this specific trap by calling
+`process.wait()` after a timeout kill, never `communicate()` again — this
+PR's fix, in trying to go further than `main`, introduced a regression
+past it. This path is reachable on a LIVE, unattended path with no
+watchdog backstop: `capture=True` (the affected branch) is used only by
+`ocr_in_place()`, which `egle_doc_parser.parse_document()` calls directly
+on every real, externally-submitted filing `watcher.py`/`backfill.py`
+processes every run — and neither of those jobs has anything like
+`scripts/backfill_mirror_ocr.py`'s new per-candidate watchdog wrapping
+that call.
+
+**Not fixed here, on purpose** — per this repo's standing rule, security
+findings are Trisha's call, regardless of how confident a fix looks. A
+sketch exists (not applied): make `ensure_searchable()`'s `capture=False`
+pattern — stdout to `DEVNULL`, nothing captured — the norm for the
+timeout/kill path too, and for `ocr_in_place()`'s `capture=True` case,
+write stderr to a real temp file (never a pipe) and read it back with a
+plain `open()` after the process is confirmed dead; a file read never
+blocks waiting for some other process to close it, unlike a pipe, so
+there is nothing left that killpg's reach can fail to fully clean up.
+`os.killpg(proc.pid, SIGKILL)` directly (no `os.getpgid()` lookup) was
+also suggested, since under `start_new_session=True` the process group id
+equals the leader's own pid by construction — looking it up fresh via
+`getpgid()` is both redundant and a real TOCTOU risk if the leader has
+already been reaped and its pid reused by an unrelated process. This is
+recorded here for whoever picks this up next; it has not been
+independently re-reviewed since it was only ever a sketch.

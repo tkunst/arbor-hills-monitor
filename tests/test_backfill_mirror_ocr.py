@@ -393,6 +393,33 @@ def test_process_candidate_id_changed_is_a_defensive_error_not_done(monkeypatch,
     assert result["status"] == "error_id_changed"
 
 
+def test_process_candidate_cleans_up_local_file_when_interrupted_before_check_after(
+        monkeypatch, tmp_path):
+    # MEDIUM finding, fixed before merge (Step 5 independent review,
+    # 2026-10-14): a watchdog timeout (_CandidateTimedOut, a BaseException)
+    # interrupting the download / check_before / ocr phases used to leak
+    # the already-downloaded temp file -- only the back half of
+    # process_candidate() (from check_after onward) was wrapped in a
+    # cleanup try/finally, so an interrupt any earlier propagated straight
+    # out without ever reaching the inline _cleanup(local) calls those
+    # earlier phases' NORMAL-exit paths relied on. tmp_dir is scoped to the
+    # whole run_apply() call, not per-candidate, so a leaked file would
+    # have persisted for the rest of the run.
+    def fake_download(drive, fid, dest):
+        open(dest, "wb").write(b"x")
+        return dest
+    monkeypatch.setattr(ac, "download_file", fake_download)
+
+    def boom(path):
+        raise bm._CandidateTimedOut()  # the watchdog fires mid check_before
+    monkeypatch.setattr(ocr_util, "image_only_pages", boom)
+
+    cand = {"link": "https://drive.google.com/file/d/FID/view"}
+    with pytest.raises(bm._CandidateTimedOut):
+        bm.process_candidate(_fake_drive(), cand, str(tmp_path))
+    assert list(tmp_path.iterdir()) == []  # the downloaded temp file was NOT leaked
+
+
 # ---------------------------------------------------------------------------
 # run_apply — resumable, --limit caps ACTUAL OCR attempts only
 # ---------------------------------------------------------------------------

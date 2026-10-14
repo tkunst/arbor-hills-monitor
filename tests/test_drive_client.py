@@ -30,6 +30,21 @@ def test_authorized_http_default_timeout_is_the_module_constant():
     assert http.http.timeout == dc.HTTP_TIMEOUT_S
 
 
+def test_authorized_http_preserves_build_https_308_redirect_exclusion():
+    # HIGH finding, fixed before merge (Step 5 independent review,
+    # 2026-10-14): a first draft built a bare httplib2.Http(timeout=...)
+    # directly, which does NOT strip 308 from redirect_codes the way
+    # googleapiclient.http.build_http() does -- 308 is Drive/YouTube's
+    # "Resume Incomplete" status for resumable uploads, not a real
+    # redirect. Treating it as one would break every resumable upload in
+    # this codebase (archive_client.upload_file()/update_file_content(),
+    # drive_client's own upload helper) on any file spanning multiple
+    # chunks. authorized_http() must build on build_http() itself (only
+    # overriding .timeout), never a bare httplib2.Http().
+    http = dc.authorized_http(credentials="fake-creds-object")
+    assert 308 not in http.http.redirect_codes
+
+
 def _capture_build(monkeypatch):
     calls = []
 
