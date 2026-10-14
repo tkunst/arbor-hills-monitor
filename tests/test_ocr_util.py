@@ -10,15 +10,86 @@ No test in this file invokes the real ocrmypdf binary — same convention this
 repo already follows everywhere else OCR is touched (test_poison_doc_extractor.py
 monkeypatches ocr_in_place entirely rather than ever shelling out); tests.yml
 doesn't install ocrmypdf, so a real-binary test would only ever run locally,
-diverging silently from CI. subprocess.run() is mocked instead."""
+diverging silently from CI. subprocess.Popen() is mocked instead for most
+tests (coder:ocr-hang-fix, 2026-10-14: ocr_util moved from subprocess.run()
+to subprocess.Popen()+communicate() so a timeout can kill ocrmypdf's WHOLE
+process group, not just its own pid -- see ocr_util._run_ocrmypdf()'s own
+docstring). The two "_real_subprocess" tests near the bottom are the
+deliberate exception: they invoke a tiny FAKE python script (never the real
+ocrmypdf binary) to prove the process-group kill against an actual fork()'d
+grandchild, which a Popen mock structurally cannot exercise."""
 import logging
 import os
 import subprocess
+import sys
+import time
 
 import fitz
 import pytest
 
 import ocr_util
+
+
+# ---------------------------------------------------------------------------
+# FakePopen -- stands in for subprocess.Popen so tests can control what
+# ocr_util._run_ocrmypdf()'s Popen(...).communicate() calls "return" without
+# ever invoking a real binary. `steps` is consumed one entry per
+# communicate() call (the last entry repeats if called more times than
+# there are steps -- mirrors the real post-kill drain call, which always
+# succeeds once the whole group is dead). Each entry is either:
+#   - a callable `f(cmd) -> (stdout, stderr, returncode)` -- do the
+#     "ocrmypdf ran" side effect (e.g. write the output file) and report
+#     the result, or
+#   - an exception INSTANCE to raise instead (e.g. a real TimeoutExpired).
+# ---------------------------------------------------------------------------
+
+
+def fake_popen_factory(steps, instances=None):
+    calls = {"n": 0}
+
+    class _FakePopen:
+        def __init__(self, cmd, *, env=None, stdout=None, stderr=None,
+                     text=None, start_new_session=None):
+            self.cmd = cmd
+            self.env = env
+            self.stdout_dest = stdout
+            self.stderr_dest = stderr
+            self.text = text
+            self.start_new_session = start_new_session
+            self.pid = 4242424
+            self.returncode = None
+            if instances is not None:
+                instances.append(self)
+
+        def communicate(self, timeout=None):
+            i = min(calls["n"], len(steps) - 1)
+            calls["n"] += 1
+            step = steps[i]
+            if isinstance(step, BaseException):
+                raise step
+            stdout, stderr, rc = step(self.cmd)
+            self.returncode = rc
+            return stdout, stderr
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    return _FakePopen
+
+
+def _writes_text(text: str):
+    """A `steps` entry: stands in for a successful ocrmypdf run — writes a
+    real text-bearing PDF to the command's output path (the last argv
+    element) and reports rc=0."""
+    def step(cmd):
+        out_path = cmd[-1]
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((72, 72), text)
+        doc.save(out_path)
+        doc.close()
+        return "", "", 0
+    return step
 
 
 # ---------------------------------------------------------------------------
@@ -117,30 +188,15 @@ def test_image_only_pages_multiple_pages_flagged(tmp_path):
 
 def test_ensure_searchable_passthrough_for_text_pdf(text_pdf, monkeypatch):
     calls = []
-    monkeypatch.setattr(ocr_util.subprocess, "run", lambda *a, **k: calls.append(1))
+    monkeypatch.setattr(ocr_util.subprocess, "Popen", lambda *a, **k: calls.append(1))
     out = ocr_util.ensure_searchable(text_pdf)
     assert out == text_pdf          # unchanged, no copy
     assert calls == []              # the fast path: no subprocess call at all
 
 
-def _fake_ocrmypdf_writes_text(text: str):
-    """Stands in for a successful ocrmypdf run: writes a real text-bearing
-    PDF to the command's output path (the last argv element) and returns
-    rc=0 — simulates what ocrmypdf would produce without the real binary."""
-    def _run(cmd, **kwargs):
-        out_path = cmd[-1]
-        doc = fitz.open()
-        page = doc.new_page()
-        page.insert_text((72, 72), text)
-        doc.save(out_path)
-        doc.close()
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-    return _run
-
-
 def test_ensure_searchable_ocrs_scan_only_fixture(image_pdf, monkeypatch):
-    monkeypatch.setattr(ocr_util.subprocess, "run",
-                        _fake_ocrmypdf_writes_text("OCR'd content here. " * 10))
+    monkeypatch.setattr(ocr_util.subprocess, "Popen",
+                        fake_popen_factory([_writes_text("OCR'd content here. " * 10)]))
     out = ocr_util.ensure_searchable(image_pdf)
     try:
         assert out != image_pdf     # a new temp path, original untouched
@@ -160,7 +216,7 @@ def test_ensure_searchable_ocrs_scan_only_fixture(image_pdf, monkeypatch):
 def test_ensure_searchable_mixed_fixture_calls_skip_text(mixed_pdf, monkeypatch):
     seen_cmds = []
 
-    def _run(cmd, **kwargs):
+    def step(cmd):
         seen_cmds.append(cmd)
         out_path = cmd[-1]
         # simulate --skip-text: copy the original (page 0's real text
@@ -168,8 +224,8 @@ def test_ensure_searchable_mixed_fixture_calls_skip_text(mixed_pdf, monkeypatch)
         doc = fitz.open(mixed_pdf)
         doc.save(out_path)
         doc.close()
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-    monkeypatch.setattr(ocr_util.subprocess, "run", _run)
+        return "", "", 0
+    monkeypatch.setattr(ocr_util.subprocess, "Popen", fake_popen_factory([step]))
 
     out = ocr_util.ensure_searchable(mixed_pdf)
     try:
@@ -189,18 +245,15 @@ def test_ensure_searchable_passes_a_minimal_env_not_the_full_environment(image_p
     # child processes, which parse untrusted PDFs. Only PATH (plus a small
     # allowlist) should reach the subprocess call.
     monkeypatch.setenv("GOAUTH_CLIENT_SECRET", "super-secret-value")
-    seen_envs = []
-
-    def _run(cmd, **kwargs):
-        seen_envs.append(kwargs.get("env"))
-        return _fake_ocrmypdf_writes_text("text")(cmd, **kwargs)
-    monkeypatch.setattr(ocr_util.subprocess, "run", _run)
+    instances = []
+    monkeypatch.setattr(ocr_util.subprocess, "Popen",
+                        fake_popen_factory([_writes_text("text")], instances=instances))
 
     out = ocr_util.ensure_searchable(image_pdf)
     try:
-        assert len(seen_envs) == 1
-        assert "GOAUTH_CLIENT_SECRET" not in seen_envs[0]
-        assert "PATH" in seen_envs[0]
+        assert len(instances) == 1
+        assert "GOAUTH_CLIENT_SECRET" not in instances[0].env
+        assert "PATH" in instances[0].env
     finally:
         if os.path.exists(out):
             os.remove(out)
@@ -225,39 +278,39 @@ def test_ensure_searchable_skips_rerun_when_already_ocrmypdf_stamped(tmp_path, m
     assert ocr_util.needs_ocr(path) is True   # still genuinely flagged
 
     calls = []
-    monkeypatch.setattr(ocr_util.subprocess, "run", lambda *a, **k: calls.append(1))
+    monkeypatch.setattr(ocr_util.subprocess, "Popen", lambda *a, **k: calls.append(1))
     out = ocr_util.ensure_searchable(path)
     assert out == path
     assert calls == []   # never even tried -- the subprocess call was skipped
 
 
 def test_ensure_searchable_rejects_empty_output(image_pdf, monkeypatch):
-    def _run(cmd, **kwargs):
+    def step(cmd):
         open(cmd[-1], "wb").close()   # ocrmypdf claims success but writes nothing
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-    monkeypatch.setattr(ocr_util.subprocess, "run", _run)
+        return "", "", 0
+    monkeypatch.setattr(ocr_util.subprocess, "Popen", fake_popen_factory([step]))
     assert ocr_util.ensure_searchable(image_pdf) == image_pdf
 
 
 def test_ensure_searchable_rejects_unreadable_output(image_pdf, monkeypatch):
-    def _run(cmd, **kwargs):
+    def step(cmd):
         with open(cmd[-1], "wb") as fh:
             fh.write(b"not a real pdf, but not empty either")
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-    monkeypatch.setattr(ocr_util.subprocess, "run", _run)
+        return "", "", 0
+    monkeypatch.setattr(ocr_util.subprocess, "Popen", fake_popen_factory([step]))
     assert ocr_util.ensure_searchable(image_pdf) == image_pdf
 
 
 def test_ensure_searchable_rejects_page_count_mismatch(mixed_pdf, monkeypatch):
     # mixed_pdf has 2 pages; a fake "successful" ocrmypdf run that drops a
     # page must be rejected, not trusted over the original.
-    def _run(cmd, **kwargs):
+    def step(cmd):
         doc = fitz.open()
         doc.new_page().insert_text((72, 72), "only one page now")
         doc.save(cmd[-1])
         doc.close()
-        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-    monkeypatch.setattr(ocr_util.subprocess, "run", _run)
+        return "", "", 0
+    monkeypatch.setattr(ocr_util.subprocess, "Popen", fake_popen_factory([step]))
     assert ocr_util.ensure_searchable(mixed_pdf) == mixed_pdf
 
 
@@ -281,11 +334,10 @@ def test_ensure_searchable_fails_open_on_missing_binary(image_pdf, monkeypatch, 
 
 
 def test_ensure_searchable_fails_open_on_nonzero_exit(image_pdf, monkeypatch, caplog):
-    def _run(cmd, **kwargs):
-        return subprocess.CompletedProcess(
-            cmd, 1, stdout="",
-            stderr="some ocrmypdf error naming a document titled Secret Enforcement Letter\nlast line")
-    monkeypatch.setattr(ocr_util.subprocess, "run", _run)
+    def step(cmd):
+        return ("", "some ocrmypdf error naming a document titled Secret "
+                "Enforcement Letter\nlast line", 1)
+    monkeypatch.setattr(ocr_util.subprocess, "Popen", fake_popen_factory([step]))
     with caplog.at_level(logging.WARNING):
         out = ocr_util.ensure_searchable(image_pdf)
     assert out == image_pdf
@@ -294,13 +346,77 @@ def test_ensure_searchable_fails_open_on_nonzero_exit(image_pdf, monkeypatch, ca
 
 
 def test_ensure_searchable_fails_open_on_timeout(image_pdf, monkeypatch, caplog):
-    def _run(cmd, **kwargs):
-        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 300))
-    monkeypatch.setattr(ocr_util.subprocess, "run", _run)
+    first = subprocess.TimeoutExpired(cmd=["ocrmypdf"], timeout=300)
+    drain = lambda cmd: ("", "", -9)  # noqa: E731 -- the post-kill drain call
+    monkeypatch.setattr(ocr_util.subprocess, "Popen", fake_popen_factory([first, drain]))
     with caplog.at_level(logging.WARNING):
         out = ocr_util.ensure_searchable(image_pdf)
     assert out == image_pdf
     assert "timeout" in caplog.text
+
+
+def test_ensure_searchable_kills_whole_group_on_timeout(image_pdf, monkeypatch):
+    # The actual fix (coder:ocr-hang-fix, 2026-10-14): a timeout must kill
+    # ocrmypdf's WHOLE process group, not just subprocess.run()'s own one
+    # pid. Unit-tested here against a controlled fake (see the real,
+    # end-to-end fork()-based proof further down this file); this test
+    # just confirms the WIRING -- os.getpgid()/os.killpg() are called with
+    # the right pid/signal before the exception propagates.
+    killpg_calls = []
+    getpgid_calls = []
+    monkeypatch.setattr(ocr_util.os, "getpgid",
+                        lambda pid: getpgid_calls.append(pid) or pid + 1000)
+    monkeypatch.setattr(ocr_util.os, "killpg",
+                        lambda pgid, sig: killpg_calls.append((pgid, sig)))
+    first = subprocess.TimeoutExpired(cmd=["ocrmypdf"], timeout=1)
+    drain = lambda cmd: ("", "", -9)  # noqa: E731
+    monkeypatch.setattr(ocr_util.subprocess, "Popen", fake_popen_factory([first, drain]))
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        ocr_util._run_ocrmypdf(["ocrmypdf", "x"], env={}, timeout=1, capture=False)
+
+    assert getpgid_calls == [4242424]                      # FakePopen's fixed .pid
+    assert killpg_calls == [(4242424 + 1000, ocr_util.signal.SIGKILL)]
+
+
+def test_run_ocrmypdf_kills_group_on_other_exceptions_too(monkeypatch):
+    # Mirrors subprocess.run()'s own `except: process.kill(); raise` branch
+    # (e.g. KeyboardInterrupt during communicate()) -- extended to the
+    # whole group, same as the timeout path.
+    killpg_calls = []
+    monkeypatch.setattr(ocr_util.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(ocr_util.os, "killpg",
+                        lambda pgid, sig: killpg_calls.append((pgid, sig)))
+    monkeypatch.setattr(ocr_util.subprocess, "Popen",
+                        fake_popen_factory([KeyboardInterrupt()]))
+
+    with pytest.raises(KeyboardInterrupt):
+        ocr_util._run_ocrmypdf(["ocrmypdf"], env={}, timeout=5, capture=False)
+
+    assert killpg_calls == [(4242424, ocr_util.signal.SIGKILL)]
+
+
+def test_ocr_in_place_raises_timeout_expired_and_kills_group(tmp_path, monkeypatch):
+    # ocr_in_place()'s raise-on-failure contract (ADR 069: "moved verbatim,
+    # unchanged") must survive this refactor exactly -- a timeout still
+    # propagates as TimeoutExpired, and its own tmp file is still cleaned up
+    # by its `finally` block, now with the process GROUP killed too.
+    pdf_path = str(tmp_path / "doc.pdf")
+    with open(pdf_path, "wb") as fh:
+        fh.write(b"x")
+    killpg_calls = []
+    monkeypatch.setattr(ocr_util.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(ocr_util.os, "killpg",
+                        lambda pgid, sig: killpg_calls.append((pgid, sig)))
+    first = subprocess.TimeoutExpired(cmd=["ocrmypdf"], timeout=1)
+    drain = lambda cmd: ("", "", -9)  # noqa: E731
+    monkeypatch.setattr(ocr_util.subprocess, "Popen", fake_popen_factory([first, drain]))
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        ocr_util.ocr_in_place(pdf_path, timeout=1)
+
+    assert killpg_calls == [(4242424, ocr_util.signal.SIGKILL)]
+    assert not os.path.exists(pdf_path + ".ocr_tmp.pdf")
 
 
 def test_ensure_searchable_cleans_up_its_temp_file_on_failure(image_pdf, monkeypatch):
@@ -315,10 +431,68 @@ def test_ensure_searchable_cleans_up_its_temp_file_on_failure(image_pdf, monkeyp
         return fd, path
     monkeypatch.setattr(ocr_util.tempfile, "mkstemp", spy_mkstemp)
 
-    def _run(cmd, **kwargs):
-        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="boom")
-    monkeypatch.setattr(ocr_util.subprocess, "run", _run)
+    def step(cmd):
+        return "", "boom", 1
+    monkeypatch.setattr(ocr_util.subprocess, "Popen", fake_popen_factory([step]))
 
     ocr_util.ensure_searchable(image_pdf)
     assert len(created_paths) == 1
     assert not os.path.exists(created_paths[0])
+
+
+# ---------------------------------------------------------------------------
+# Real, end-to-end proof (no Popen mocking): a fake "ocrmypdf" that forks a
+# grandchild which does NOT call setsid() itself (matching ocrmypdf's own
+# real worker processes, which inherit the parent's process group) and
+# sleeps well past the configured timeout. Proves two things a mock
+# structurally can't: (1) ensure_searchable() returns promptly, at roughly
+# the configured timeout -- subprocess's own timeout already does this
+# correctly even with a grandchild holding the pipes open (confirmed by a
+# direct repro before writing this fix; see ocr_util's module docstring
+# addendum); (2) this fix's actual improvement -- the grandchild is
+# genuinely KILLED, not merely orphaned and left running to completion.
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_searchable_real_subprocess_kills_grandchild_on_timeout(
+        image_pdf, tmp_path, monkeypatch):
+    started = tmp_path / "grandchild_started"
+    finished = tmp_path / "grandchild_finished"
+    script = tmp_path / "fake_ocrmypdf"
+    script.write_text(
+        "#!{python}\n"
+        "import os, sys, time\n"
+        "pid = os.fork()\n"
+        "if pid == 0:\n"
+        "    open({started!r}, 'w').close()\n"
+        "    time.sleep(5)\n"
+        "    open({finished!r}, 'w').close()\n"  # only reached if NOT killed in time
+        "    sys.exit(0)\n"
+        "else:\n"
+        "    time.sleep(5)\n".format(python=sys.executable, started=str(started),
+                                     finished=str(finished))
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("OCRMYPDF_BIN", str(script))
+
+    t0 = time.monotonic()
+    out = ocr_util.ensure_searchable(image_pdf, timeout=1)
+    elapsed = time.monotonic() - t0
+
+    assert out == image_pdf     # fail-open: original returned unchanged on timeout
+    assert elapsed < 4          # promptly -- nowhere near the grandchild's 5s sleep
+
+    deadline = time.monotonic() + 3
+    while not started.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert started.exists(), "test setup is broken -- the grandchild never even started"
+
+    # Wait past when the grandchild WOULD have finished its sleep(5) if it
+    # had survived, unkilled, as an orphan.
+    time.sleep(4.5)
+    assert not finished.exists(), (
+        "the grandchild ran to completion -- it was orphaned, not killed. "
+        "This is exactly the bug this fix closes: subprocess.run()'s own "
+        "timeout only kills the DIRECT child; the process-group kill below "
+        "it must reach ocrmypdf's own worker processes too."
+    )

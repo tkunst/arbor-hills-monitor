@@ -82,6 +82,45 @@ reading than "counts only" might first suggest; see ADR 069 decision 9.
 locally, after reading the dry-run report. Credentials: GSHEET_ID +
 GDRIVE_SA_KEY for the dry-run's Sheet read; `--apply` additionally needs the
 GOAUTH_* trio (see `archive_client.py` / `scripts/oauth_setup.py`).
+
+ADDENDUM (2026-10-14, coder:ocr-hang-fix): the 2026-10-14 `--apply --limit 50`
+run (GitHub Actions run 38585715746) fixed one candidate at 15:04Z, then
+produced ZERO further log output for ~4h53m until manually cancelled — this
+script had no PER-CANDIDATE log line at all (only a final summary, never
+reached on a stall), so the stuck candidate was unknowable from the log.
+Two fixes:
+  - **A log line before AND after every candidate**, flushed immediately:
+    `[backfill] <n> <key> starting` before `process_candidate()` runs, then
+    `[backfill] <n> <key> <status> <elapsed>s` after. `<key>` is the same
+    `"{tab}:{id}"` state key used elsewhere (nSITE/CivicClerk ids are
+    public) — NEVER a title, link, or `result["note"]` (which can carry a
+    file id pair on `error_id_changed`, or an exception class name) — this
+    is the public Actions log.
+  - **A per-candidate watchdog** (`_CANDIDATE_TIMEOUT_S`, 900s = 15 min):
+    `signal.alarm()` (POSIX-only, fine here — this only ever runs on
+    macOS locally or ubuntu-latest in Actions) bounds the ENTIRE
+    `process_candidate()` call, regardless of which internal step is slow
+    or stuck (a hung subprocess, a stalled network read, anything) —
+    deliberately root-cause-agnostic, since forensics on the actual
+    2026-10-14 incident (a real repro of ocr_util's own subprocess timeout,
+    reading the incident's own GitHub Actions log, and inspecting the
+    googleapiclient version actually installed) refuted BOTH of the two
+    originally-suspected causes as literally "can hang forever" (see
+    `ocr_util.py`'s and `drive_client.py`'s own ADDENDUM docstrings, and
+    ADR 069's addendum, for the full writeup) without turning up a
+    conclusively-identified third mechanism. A timed-out candidate is
+    recorded `error_timeout` (terminal — not auto-retried, same posture as
+    `error_malformed`) and the run continues to the next candidate; it also
+    counts against `--limit` (a real, if failed, attempt). The state
+    entry's `note` (never printed — see above) records which PHASE was
+    in flight (download / ocr / upload / verify) when the alarm fired, so
+    a human reviewing the state file afterward knows e.g. that a timeout
+    during `upload` means the Drive write may have already landed even
+    though this run couldn't confirm it — `signal.alarm` can only interrupt
+    a blocking call (a subprocess wait, a socket read); it does NOT
+    interrupt a pure CPU-bound loop inside PyMuPDF's C extension (e.g. a
+    pathological `image_only_pages()` call), so this is a strong
+    mitigation, not an absolute guarantee, against every conceivable hang.
 """
 from __future__ import annotations
 
@@ -89,8 +128,10 @@ import argparse
 import json
 import os
 import re
+import signal
 import sys
 import tempfile
+import time
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -117,9 +158,12 @@ _MAX_SCAN_PER_RUN = 500
 # error_bad_link, error_download, and error_malformed are "free": cheap to
 # discover, no ocrmypdf subprocess run. done_partial (added 2026-10-13, see
 # process_candidate()) is a REAL attempt that improved the file, just not
-# all the way -- it counts too.
+# all the way -- it counts too. error_timeout (added 2026-10-14, the
+# per-candidate watchdog -- see module docstring ADDENDUM) also counts: a
+# candidate that burned the full 900s ceiling is a real, if failed, attempt.
 _COUNTS_AGAINST_LIMIT = {"done", "done_partial", "done_unverified", "ocr_incomplete",
-                        "ocr_failed", "error_upload", "error_id_changed"}
+                        "ocr_failed", "error_upload", "error_id_changed",
+                        "error_timeout"}
 
 # Every status is TERMINAL (never automatically retried on a later run) EXCEPT
 # these two -- a transient network/API blip on a single file shouldn't
@@ -127,8 +171,40 @@ _COUNTS_AGAINST_LIMIT = {"done", "done_partial", "done_unverified", "ocr_incompl
 # failure should. (A human can also force a retry of any terminal status by
 # deleting its entry from the state file.) Note: a "_persistent" suffixed
 # status (see run_apply()) is deliberately NOT in this set -- it's terminal
-# by construction, the same way "error_malformed" is.
+# by construction, the same way "error_malformed" is. error_timeout is ALSO
+# deliberately not in this set: a candidate that burns the full 900s ceiling
+# once is a strong signal something is structurally wrong with it, not a
+# one-off network blip -- auto-retrying it would risk burning another 900s
+# of every future run on the same stuck file. A human can still force a
+# retry by deleting its state entry, same as any other terminal status.
 _RETRYABLE_STATUSES = {"error_download", "error_upload"}
+
+# Per-candidate watchdog ceiling (ADDENDUM, 2026-10-14): no single candidate
+# -- download, OCR check, ensure_searchable(), Drive upload, or verify --
+# may consume more than this many seconds. Deliberately root-cause-agnostic
+# (see module docstring ADDENDUM): it bounds whatever hangs, known or not.
+# 900s (15 min) is well above any individual step's own documented ceiling
+# (ensure_searchable()'s own 300s ocrmypdf timeout; a single Drive
+# execute() call's own ~GOOGLE_API_NUM_RETRIES-bounded worst case), so it
+# should never fire during ordinary operation -- only when something is
+# genuinely stuck.
+_CANDIDATE_TIMEOUT_S = 900
+
+
+class _CandidateTimedOut(BaseException):
+    """Raised by _alarm_handler() inside process_candidate() when a single
+    candidate exceeds _CANDIDATE_TIMEOUT_S. Subclasses BaseException, not
+    Exception: process_candidate() and the functions it calls
+    (ensure_searchable(), archive_client's Drive calls) catch broad
+    `except Exception` internally to stay fail-open/never-raises for their
+    OWN failure modes -- a plain Exception here would be caught by one of
+    those and silently relabeled (e.g. as ocr_failed or error_download)
+    instead of reaching run_apply(), which is the only place this is meant
+    to be caught."""
+
+
+def _alarm_handler(signum, frame):
+    raise _CandidateTimedOut()
 
 # A status that signals a SYSTEMIC problem (bad credentials/scope, a dead
 # OAuth token) rather than a one-off bad file -- found 2026-10-13 by
@@ -275,11 +351,13 @@ def enumerate_tab(sheets_svc, sheet_id: str, tab: str, id_header: str,
 # ---------------------------------------------------------------------------
 
 
-def process_candidate(drive, cand: dict, tmp_dir: str) -> dict:
+def process_candidate(drive, cand: dict, tmp_dir: str,
+                      phase: list[str] | None = None) -> dict:
     """Download, check, and (if needed) OCR + re-upload-in-place ONE
     candidate. Returns a state-entry dict (at least {"status": ...}) — NEVER
-    RAISES; every failure mode is a recorded status, not an exception, so one
-    bad file can't abort a run.
+    RAISES (for ITS OWN failure modes — see the ADDENDUM below for the one
+    outside exception that's allowed through); every failure mode is a
+    recorded status, not an exception, so one bad file can't abort a run.
 
     coder:mirror-ocr fixes (2026-10-13, found by independent review + the
     advisor, before any --apply run against live data):
@@ -302,17 +380,31 @@ def process_candidate(drive, cand: dict, tmp_dir: str) -> dict:
         update itself actually succeeded — that mislabeling would make a
         LATER run re-OCR and re-upload a file that's probably already fixed.
         See `done_unverified` below.
-    """
+
+    ADDENDUM (2026-10-14, the per-candidate watchdog): `phase`, when given
+    by run_apply(), is updated at the start of each major step below so that
+    IF run_apply()'s SIGALRM watchdog interrupts this call (a
+    _CandidateTimedOut, a BaseException — see that class's own docstring for
+    why it is deliberately NOT caught by the broad `except Exception` blocks
+    below), the LAST phase written before the interrupt tells a human
+    reviewing the state file afterward roughly where it got stuck. This is
+    diagnostic only — `phase` is never read by this function, only written."""
+    def _set_phase(name: str) -> None:
+        if phase is not None:
+            phase[0] = name
+
     file_id = extract_file_id(cand["link"])
     if file_id is None:
         return {"status": "error_bad_link"}
 
     local = os.path.join(tmp_dir, f"{file_id}.pdf")
+    _set_phase("download")
     try:
         ac.download_file(drive, file_id, local)
     except Exception as e:  # noqa: BLE001 — recorded, not raised; see module docstring
         return {"status": "error_download", "note": type(e).__name__}
 
+    _set_phase("check_before")
     try:
         before_pages = ocr_util.image_only_pages(local)
     except Exception:
@@ -323,6 +415,7 @@ def process_candidate(drive, cand: dict, tmp_dir: str) -> dict:
         _cleanup(local)
         return {"status": "skip_has_text"}
 
+    _set_phase("ocr")
     searchable = ocr_util.ensure_searchable(local)
     if searchable == local:
         # ensure_searchable() is fail-open: returning the input path unchanged
@@ -333,6 +426,7 @@ def process_candidate(drive, cand: dict, tmp_dir: str) -> dict:
         return {"status": "ocr_failed"}
 
     try:
+        _set_phase("check_after")
         try:
             after_pages = ocr_util.image_only_pages(searchable)
         except Exception:
@@ -348,6 +442,7 @@ def process_candidate(drive, cand: dict, tmp_dir: str) -> dict:
             # Drive for zero benefit.
             return {"status": "ocr_incomplete"}
 
+        _set_phase("upload")
         try:
             ac.pin_head_revision(drive, file_id)
             new_id = ac.update_file_content(drive, file_id, searchable)
@@ -358,6 +453,7 @@ def process_candidate(drive, cand: dict, tmp_dir: str) -> dict:
             # id) -- defense in depth, never silently accept a changed id.
             return {"status": "error_id_changed", "note": f"{file_id}->{new_id}"}
 
+        _set_phase("verify")
         verify_path = local + ".verify.pdf"
         try:
             ac.download_file(drive, file_id, verify_path)
@@ -378,54 +474,81 @@ def run_apply(sheets_svc, sheet_id: str, drive, state: dict, limit: int,
     candidate (a crash or Ctrl-C mid-run must never lose the record of a
     file whose Drive content was already overwritten). Returns
     {"scanned", "fixed", "by_status", "aborted"} for THIS RUN only (not
-    cumulative across all runs)."""
+    cumulative across all runs).
+
+    ADDENDUM (2026-10-14, see module docstring): installs a SIGALRM handler
+    for the duration of this call (restored in `finally`, never left armed
+    process-wide after this function returns) and prints a before/after
+    progress line for every candidate -- see _CANDIDATE_TIMEOUT_S and
+    _alarm_handler above."""
     scanned = 0
     fixed = 0
     by_status: Counter = Counter()
     aborted = False
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        for tab, id_header, link_header in SOURCE_TABS:
-            if aborted or scanned >= _MAX_SCAN_PER_RUN or fixed >= limit:
-                break
-            for cand in enumerate_tab(sheets_svc, sheet_id, tab, id_header, link_header):
-                already = state.get(cand["key"])
-                already_status = already.get("status") if already else None
-                if already is not None and already_status not in _RETRYABLE_STATUSES:
-                    continue  # resolved by a prior run (and not a retryable transient failure)
-                if scanned >= _MAX_SCAN_PER_RUN or fixed >= limit:
+    previous_handler = signal.signal(signal.SIGALRM, _alarm_handler)
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            for tab, id_header, link_header in SOURCE_TABS:
+                if aborted or scanned >= _MAX_SCAN_PER_RUN or fixed >= limit:
                     break
-                scanned += 1
-                result = process_candidate(drive, cand, tmp_dir)
-                status = result["status"]
-                extra = {k: v for k, v in result.items() if k != "status"}
-
-                # If this exact failure already happened once before for this
-                # SAME file (a retryable status, retried, and failed the
-                # SAME way again), it's file-specific, not systemic -- make
-                # it terminal so the run can move past it, instead of
-                # aborting a second time over the same file every run.
-                is_repeat_failure = status in _ABORT_RUN_STATUSES and already_status == status
-                recorded_status = f"{status}_persistent" if is_repeat_failure else status
-
-                _record(state, cand["key"], recorded_status, link=cand["link"], tab=tab, **extra)
-                save_state(state, state_path)
-                by_status[recorded_status] += 1
-                if status in _COUNTS_AGAINST_LIMIT:
-                    fixed += 1
-                if status in _ABORT_RUN_STATUSES:
-                    if is_repeat_failure:
-                        print(f"[backfill] {status} on {cand['key']} failed the SAME way "
-                              f"twice -- treating it as file-specific, not systemic. "
-                              f"Recorded {recorded_status} (terminal); continuing this run.")
-                    else:
-                        print(f"[backfill] {status} on {cand['key']} looks SYSTEMIC "
-                              f"(credentials/scope/token), not a one-off bad file -- "
-                              f"aborting the rest of this run rather than repeating the "
-                              f"same failure. This file will retry on the next run.")
-                        aborted = True
+                for cand in enumerate_tab(sheets_svc, sheet_id, tab, id_header, link_header):
+                    already = state.get(cand["key"])
+                    already_status = already.get("status") if already else None
+                    if already is not None and already_status not in _RETRYABLE_STATUSES:
+                        continue  # resolved by a prior run (and not a retryable transient failure)
+                    if scanned >= _MAX_SCAN_PER_RUN or fixed >= limit:
                         break
-            if aborted:
-                break
+                    scanned += 1
+                    print(f"[backfill] {scanned} {cand['key']} starting", flush=True)
+                    phase = ["start"]
+                    t0 = time.monotonic()
+                    signal.alarm(_CANDIDATE_TIMEOUT_S)
+                    try:
+                        result = process_candidate(drive, cand, tmp_dir, phase=phase)
+                    except _CandidateTimedOut:
+                        result = {"status": "error_timeout", "note": f"phase={phase[0]}"}
+                    finally:
+                        signal.alarm(0)
+                    elapsed = time.monotonic() - t0
+                    status = result["status"]
+                    extra = {k: v for k, v in result.items() if k != "status"}
+
+                    # If this exact failure already happened once before for this
+                    # SAME file (a retryable status, retried, and failed the
+                    # SAME way again), it's file-specific, not systemic -- make
+                    # it terminal so the run can move past it, instead of
+                    # aborting a second time over the same file every run.
+                    is_repeat_failure = status in _ABORT_RUN_STATUSES and already_status == status
+                    recorded_status = f"{status}_persistent" if is_repeat_failure else status
+
+                    _record(state, cand["key"], recorded_status, link=cand["link"], tab=tab, **extra)
+                    save_state(state, state_path)
+                    by_status[recorded_status] += 1
+                    # NEVER print `extra`/`note` here -- error_id_changed's note
+                    # carries a Drive file id pair, error_download/error_upload's
+                    # carries an exception class name. Key + status + seconds
+                    # only; this is the public Actions log.
+                    print(f"[backfill] {scanned} {cand['key']} {recorded_status} "
+                          f"{elapsed:.1f}s", flush=True)
+                    if status in _COUNTS_AGAINST_LIMIT:
+                        fixed += 1
+                    if status in _ABORT_RUN_STATUSES:
+                        if is_repeat_failure:
+                            print(f"[backfill] {status} on {cand['key']} failed the SAME way "
+                                  f"twice -- treating it as file-specific, not systemic. "
+                                  f"Recorded {recorded_status} (terminal); continuing this run.")
+                        else:
+                            print(f"[backfill] {status} on {cand['key']} looks SYSTEMIC "
+                                  f"(credentials/scope/token), not a one-off bad file -- "
+                                  f"aborting the rest of this run rather than repeating the "
+                                  f"same failure. This file will retry on the next run.")
+                            aborted = True
+                            break
+                if aborted:
+                    break
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous_handler)
     return {"scanned": scanned, "fixed": fixed, "by_status": by_status, "aborted": aborted}
 
 
