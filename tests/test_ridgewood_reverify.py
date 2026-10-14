@@ -461,6 +461,45 @@ def test_first_run_matching_sheet_hash_baselines_silently_no_alert(monkeypatch, 
     assert rr._saved["months"]["2026-05"][0]["content_hash"] == h
 
 
+def _arm_tab_failure(fake, boom_tab):
+    """Wrap fake._values.get so a read of `boom_tab` raises; every other tab
+    read behaves normally (the test_rop.py idiom)."""
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+
+def test_run_raises_without_writing_when_ridgewood_reports_read_fails(monkeypatch, tmp_path):
+    """state-reads-raise: both sw.ridgewood_archived_months() (called first)
+    and sw.ridgewood_report_rows() (called second) now use the strict
+    reader against the Ridge Wood Reports tab. A transient failure on either
+    must RAISE before any write (Drive upload, Revisions row, or manifest
+    save) -- a false-empty ridgewood_report_rows() read in particular would
+    otherwise stamp today's date, not Stream G's real original fetch date,
+    as this month's first manifest entry."""
+    pdf_path = str(tmp_path / "may.pdf")
+    blob = _build_pdf_bytes(pdf_path, "2026-05", ["<1"] * 10)
+    sheet_row = ["2026-05", "T", "<1", 10, "ok", "u", _hash(blob), "http://drive/orig.pdf",
+                 "2026-07-15T10:00:00"]
+    fake, sent, uploads = _wire(
+        monkeypatch, _cfg(), page_months=["2026-05"], sheet_rows=[sheet_row],
+        pdf_bytes_by_month={"2026-05": blob})
+    saved = {}
+    monkeypatch.setattr(rr, "save_manifest", lambda m, path=rr.MANIFEST_PATH: saved.update(m))
+
+    _arm_tab_failure(fake, sw.TAB_RIDGEWOOD)
+    with pytest.raises(RuntimeError):
+        rr.run()
+
+    assert sent == [] and uploads == []
+    assert sw.TAB_RIDGEWOOD_REVISIONS not in fake._values._tabs   # never even created
+    assert saved == {}   # manifest never saved
+
+
 def test_second_run_unchanged_bumps_last_verified_no_alert(monkeypatch, tmp_path):
     pdf_path = str(tmp_path / "may.pdf")
     blob = _build_pdf_bytes(pdf_path, "2026-05", ["<1"] * 10)

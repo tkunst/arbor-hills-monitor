@@ -236,3 +236,31 @@ def test_content_error_without_baseline_exits_loud(monkeypatch):
     rc = pw.run()
     assert rc == 1
     assert _data_rows(fake) == []
+
+
+def _arm_tab_failure(fake, boom_tab):
+    """Wrap fake._values.get so a read of `boom_tab` raises; every other tab
+    read behaves normally."""
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if _tab(range) == boom_tab:
+            raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+
+def test_run_raises_without_writing_when_pfas_watch_read_fails(monkeypatch):
+    """state-reads-raise: a transient read failure on the PFAS Page Watch tab
+    must propagate out of run() rather than reading as "never snapshotted" --
+    which would silently re-baseline a page whose content actually changed."""
+    fake, sent = _wire(monkeypatch, lambda url, **k: PAGE)
+    pw.run()                              # baseline
+    baseline_rows = _data_rows(fake)
+    assert len(baseline_rows) == 1
+
+    _arm_tab_failure(fake, sw.TAB_PFAS)
+    with pytest.raises(RuntimeError):
+        pw.run()
+    assert _data_rows(fake) == baseline_rows
+    assert sent == []
