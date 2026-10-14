@@ -5,6 +5,9 @@ not via sys.path package import, matching this repo's established convention
 for the one-off scripts/ tools."""
 import importlib.util
 import os
+import time
+
+import pytest
 
 _SPEC = importlib.util.spec_from_file_location(
     "backfill_mirror_ocr",
@@ -464,7 +467,7 @@ def test_run_apply_same_file_failing_twice_is_persistent_not_a_second_abort(monk
     }
     state = {f"{sw.TAB_ARCHIVE}:doc-1": {"status": "error_upload"}}   # already failed once
 
-    def fake_process(drive, cand, tmp_dir):
+    def fake_process(drive, cand, tmp_dir, **kwargs):
         if cand["id"] == "doc-1":
             return {"status": "error_upload", "note": "PermissionDenied"}
         return {"status": "done"}   # doc-2 succeeds -- isolates doc-1's persistent failure
@@ -522,3 +525,133 @@ def test_run_apply_saves_state_incrementally_not_only_at_the_end(monkeypatch, tm
     # must not lose it.
     on_disk = bm.load_state(state_path)
     assert on_disk[f"{sw.TAB_ARCHIVE}:doc-1"]["status"] == "done"
+
+
+# ---------------------------------------------------------------------------
+# ADDENDUM (2026-10-14, coder:ocr-hang-fix): per-candidate progress lines +
+# the per-candidate watchdog -- the direct fix for "the stuck file is
+# unknown" (the 2026-10-14 incident, run 38585715746: one file fixed,
+# then zero log output for ~4h53m before a manual cancel).
+# ---------------------------------------------------------------------------
+
+
+def test_candidate_timed_out_is_a_base_exception_not_caught_by_except_exception():
+    # process_candidate() (and ensure_searchable()/the Drive calls it
+    # wraps) catch broad `except Exception` internally to stay fail-open --
+    # the watchdog exception MUST NOT be one of those, or it would get
+    # silently relabeled (e.g. as ocr_failed/error_download) instead of
+    # reaching run_apply().
+    assert issubclass(bm._CandidateTimedOut, BaseException)
+    assert not issubclass(bm._CandidateTimedOut, Exception)
+
+
+def test_alarm_handler_raises_candidate_timed_out():
+    with pytest.raises(bm._CandidateTimedOut):
+        bm._alarm_handler(None, None)
+
+
+def test_error_timeout_is_terminal_and_counts_against_limit_but_not_abort():
+    assert "error_timeout" in bm._COUNTS_AGAINST_LIMIT   # a real, if failed, attempt
+    assert "error_timeout" not in bm._RETRYABLE_STATUSES  # not auto-retried
+    assert "error_timeout" not in bm._ABORT_RUN_STATUSES  # one stuck file ≠ systemic
+
+
+def test_run_apply_prints_progress_line_before_and_after_each_candidate(
+        monkeypatch, tmp_path, capsys):
+    tabs = {
+        sw.TAB_ARCHIVE: [
+            sw.ARCHIVE_HEADERS,
+            ["doc-1", "n", "d", "", "s", "https://drive.google.com/file/d/F1/view", "ts"],
+        ],
+    }
+    state = {}
+    monkeypatch.setattr(bm, "process_candidate", lambda *a, **k: {"status": "done"})
+    bm.run_apply(FakeSheets(tabs), "SID", _fake_drive(), state, limit=100,
+                state_path=str(tmp_path / "state.json"))
+    out = capsys.readouterr().out
+    key = f"{sw.TAB_ARCHIVE}:doc-1"
+    assert f"[backfill] 1 {key} starting" in out
+    assert any(
+        line.startswith(f"[backfill] 1 {key} done ") and line.rstrip().endswith("s")
+        for line in out.splitlines()
+    ), out
+
+
+def test_run_apply_progress_lines_never_leak_notes_or_links(monkeypatch, tmp_path, capsys):
+    # Key = "{tab}:{id}" only (nSITE/CivicClerk ids are public, per the
+    # module docstring) -- never a title, link, or result["note"] (which can
+    # carry a Drive file id pair on error_id_changed, or an exception class
+    # name on error_download/error_upload). This is the public Actions log.
+    tabs = {
+        sw.TAB_ARCHIVE: [
+            sw.ARCHIVE_HEADERS,
+            ["doc-1", "n", "d", "", "s",
+             "https://drive.google.com/file/d/SUPER_SECRET_LINK_TOKEN/view", "ts"],
+        ],
+    }
+    state = {}
+    monkeypatch.setattr(
+        bm, "process_candidate",
+        lambda *a, **k: {"status": "error_download", "note": "ConnectionResetSecretDetail"},
+    )
+    bm.run_apply(FakeSheets(tabs), "SID", _fake_drive(), state, limit=100,
+                state_path=str(tmp_path / "state.json"))
+    out = capsys.readouterr().out
+    assert "ConnectionResetSecretDetail" not in out
+    assert "SUPER_SECRET_LINK_TOKEN" not in out
+
+
+def test_run_apply_watchdog_times_out_a_hung_candidate_and_continues(monkeypatch, tmp_path):
+    # A short ceiling for test speed -- the mechanism (signal.alarm) is the
+    # same regardless of the configured number of seconds.
+    monkeypatch.setattr(bm, "_CANDIDATE_TIMEOUT_S", 1)
+    tabs = {
+        sw.TAB_ARCHIVE: [
+            sw.ARCHIVE_HEADERS,
+            ["doc-1", "n", "d", "", "s", "https://drive.google.com/file/d/F1/view", "ts"],
+            ["doc-2", "n", "d", "", "s", "https://drive.google.com/file/d/F2/view", "ts"],
+        ],
+    }
+    state = {}
+
+    def fake_process(drive, cand, tmp_dir, phase=None):
+        if cand["id"] == "doc-1":
+            if phase is not None:
+                phase[0] = "ocr"
+            time.sleep(5)              # well past the 1s watchdog ceiling
+            return {"status": "done"}  # never reached -- the alarm fires first
+        return {"status": "done"}
+    monkeypatch.setattr(bm, "process_candidate", fake_process)
+
+    t0 = time.monotonic()
+    result = bm.run_apply(FakeSheets(tabs), "SID", _fake_drive(), state, limit=100,
+                          state_path=str(tmp_path / "state.json"))
+    elapsed = time.monotonic() - t0
+
+    assert elapsed < 4   # bounded by the 1s watchdog, not doc-1's 5s sleep
+    assert state[f"{sw.TAB_ARCHIVE}:doc-1"]["status"] == "error_timeout"
+    assert "phase=ocr" in state[f"{sw.TAB_ARCHIVE}:doc-1"]["note"]
+    assert state[f"{sw.TAB_ARCHIVE}:doc-2"]["status"] == "done"   # the run CONTINUED
+    assert result["aborted"] is False
+    assert result["scanned"] == 2
+    assert result["fixed"] == 2   # error_timeout counts against --limit too
+
+
+def test_run_apply_restores_the_previous_sigalrm_handler_on_exit(tmp_path):
+    import signal
+
+    def someone_elses_handler(signum, frame):
+        pass  # never actually invoked in this test -- just an identity marker
+
+    previous = signal.getsignal(signal.SIGALRM)
+    try:
+        signal.signal(signal.SIGALRM, someone_elses_handler)
+        tabs = {sw.TAB_ARCHIVE: [sw.ARCHIVE_HEADERS]}  # no rows -- loop body never runs
+        bm.run_apply(FakeSheets(tabs), "SID", _fake_drive(), {}, limit=100,
+                    state_path=str(tmp_path / "state.json"))
+        # run_apply() must not leave its OWN _alarm_handler installed
+        # process-wide after it returns -- it restores whatever was there
+        # before it ran.
+        assert signal.getsignal(signal.SIGALRM) is someone_elses_handler
+    finally:
+        signal.signal(signal.SIGALRM, previous)

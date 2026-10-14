@@ -362,3 +362,142 @@ in the PR, since it's a materially larger blast radius than the handoff describe
 - No MB-based size skip for `ensure_searchable()` (per the handoff's decision 3) —
   large scans still upload, just unsearchable until a manual/backfill pass, bounded by
   the 300s timeout and a count-only timeout log line.
+
+## Addendum (2026-10-14) — the backfill-mirror-ocr hang, coder:ocr-hang-fix
+
+**Incident.** The `backfill-mirror-ocr` GitHub Actions run (run `38585715746`,
+`scripts/backfill_mirror_ocr.py --apply --limit 50`) fixed one candidate at
+15:04Z, then produced **zero further log output** until Trisha manually
+cancelled it at 19:56:29Z — 4h53m later (`gh run view 38585715746`: "The run
+was canceled"). The script had no per-candidate log line at all (only a
+final summary, printed once at the very end and never reached on a stall),
+so the stuck candidate was unknowable from the log.
+
+**Two mechanisms were suspected going in; both turned out to be more subtle
+than first described, found by direct verification before writing any fix
+— not assumed:**
+
+1. **"`ocr_in_place()`/`ensure_searchable()`'s `subprocess.run(timeout=...)`
+   can block indefinitely because Python only kills the direct child, and
+   ocrmypdf's own worker processes keep the stdout/stderr pipes open."**
+   **Refuted as literally stated, confirmed by a direct repro:** a fake
+   "ocrmypdf" that forks a detached grandchild holding the pipes open does
+   **not** prevent `subprocess.run(timeout=N)` from raising
+   `TimeoutExpired` and returning within `N` seconds — its `communicate()`
+   loop is driven by a wall-clock deadline check via a selector, not by
+   waiting for pipe EOF. What **is** real, confirmed by the same repro: the
+   grandchild survives, unkilled — `subprocess.run()`'s own timeout handler
+   only `kill()`s the one pid it holds. One leaked orphan per timeout is not
+   a hang by itself, but `scripts/backfill_mirror_ocr.py` can hit this path
+   repeatedly in one run, and a pile of orphaned OCR worker processes
+   competing for a GitHub-hosted runner's 2-4 vCPUs for the rest of a run is
+   a real way for everything after the first timeout to get much slower
+   than the nominal per-call ceiling suggests. **Shipped as "orphan
+   reaping,"** not "fixes an indefinite block": `ocr_util._run_ocrmypdf()`
+   now runs ocrmypdf in its own process group (`start_new_session=True`)
+   and, on timeout, `os.killpg()`s the whole group.
+2. **"Drive API calls (`archive_client`/`drive_client`) have no network
+   timeout — `build()` uses default httplib2 with `timeout=None`."**
+   **Refuted by direct inspection of the installed library:**
+   `googleapiclient.discovery.build(credentials=...)` — which is exactly
+   what `drive_client.drive_service()`, `drive_client.sheets_service()`,
+   and `archive_client.oauth_drive_service()` were all already calling —
+   resolves internally to `googleapiclient.http.build_http()`, which sets
+   `httplib2.Http(timeout=60)` by default (confirmed by reading
+   `googleapiclient._auth.authorized_http()` and `build_http()`'s own
+   source in this repo's pinned version, and by constructing a real
+   service with `AnonymousCredentials()` and reading
+   `svc._http.http.timeout` — it printed `60`, not `None`). The OAuth
+   token-refresh call (`archive_client._credentials()`'s
+   `creds.refresh(Request())`) separately defaults to a 120s timeout via
+   `google.auth.transport.requests.Request`. A bare `httplib2.Http()` (no
+   args) genuinely has no timeout and hangs forever against a stalled
+   connection — confirmed by a local repro against a real TCP listener that
+   accepts the connection and never responds — but that is not the
+   constructor this codebase's `build()` calls were using. **Shipped as
+   "make the existing bound explicit and in-repo,"** not "close a
+   previously-unbounded gap": `drive_client.authorized_http()` builds
+   `httplib2.Http(timeout=HTTP_TIMEOUT_S)` with `HTTP_TIMEOUT_S = 60` — the
+   SAME value, deliberately, so this does not loosen or tighten anything.
+   `drive_service()`/`sheets_service()`/`oauth_drive_service()` now pass
+   `http=authorized_http(creds)` instead of a bare `credentials=` (the two
+   are mutually exclusive on `build()` — confirmed from
+   `build_from_document()`'s own source, which raises `ValueError` if both
+   are given).
+
+**What the evidence actually shows, instead.** `gh run view --job=... --log`
+for the incident confirms the script's output was completely silent from
+15:02:59.36Z (the only line being Python's own `fitz` deprecation warning at
+import time) until the 19:56:29.37Z cancellation — consistent with having
+no per-candidate log line at all, not informative about *why*.
+`gh cache list` shows the run's resume-state cache (`local-state/backfill-
+mirror-ocr-state.json`, cached between runs) grew from 1.20 KiB (restored
+from the prior run) to 1.89 KiB when saved at cancellation — roughly enough
+for a handful of new state entries, nowhere near the 6-7 KiB fifty new
+entries would need. This rules out "a cascade of fifty individually-bounded
+~300s OCR timeouts" (50 × 300s ≈ 4.17h is numerically close to the observed
+4h53m, which was the original back-of-envelope suspicion) and instead
+confirms the incident's own literal framing: the run made real progress on
+a small number of files, then genuinely stalled on one, for the rest of the
+~5 hours.
+
+**Honest conclusion: the exact call that hung is not conclusively
+identified.** Every timeout mechanism this addendum could directly test —
+`subprocess.run()`'s own deadline, `httplib2`'s per-request socket timeout,
+`google.auth`'s OAuth-refresh timeout, this repo's existing
+`GOOGLE_API_NUM_RETRIES` retry/backoff — behaved correctly and boundedly
+under realistic simulation of their documented failure modes. This does not
+rule out a real hang in the actual `ocrmypdf` binary's behavior under a
+condition this addendum's Python stand-in couldn't reproduce (e.g. an
+uninterruptible kernel wait state), or a resumable-upload / token-refresh
+edge case specific to a pathological server response that a 60s
+per-request timeout doesn't actually bound end-to-end in practice. Given
+that, the two fixes below are deliberately **root-cause-agnostic** — they
+guarantee this exact failure mode (one file silently consuming an entire
+run) cannot recur, regardless of which call turns out to be responsible,
+rather than resting on a specific, unconfirmed mechanism:
+
+1. **Per-candidate progress lines** (`scripts/backfill_mirror_ocr.py`):
+   `[backfill] <n> <key> starting` before each candidate, flushed, and
+   `[backfill] <n> <key> <status> <elapsed>s` after — `<key>` only
+   (nSITE/CivicClerk ids, already public), never a title, link, or
+   `result["note"]` (which can carry a Drive file id pair on
+   `error_id_changed`, or an exception class name on `error_download`/
+   `error_upload`). This is the direct fix for "the stuck file is unknown"
+   — the next occurrence will show exactly which candidate, and for how
+   long, before anyone needs to cancel the run.
+2. **A per-candidate watchdog**, `_CANDIDATE_TIMEOUT_S = 900` (15 min):
+   `signal.alarm()` (POSIX-only — fine, this only ever runs on macOS
+   locally or `ubuntu-latest` in Actions) bounds the ENTIRE
+   `process_candidate()` call — download, OCR check, `ensure_searchable()`,
+   Drive upload, verify — regardless of which internal step is responsible.
+   A timed-out candidate is recorded `error_timeout` (terminal, not
+   auto-retried — the same posture as `error_malformed`; it also counts
+   against `--limit`, same as any other real attempt) and the run
+   continues to the next candidate. The state entry's `note` (never
+   printed to the log) records which phase (`download` / `check_before` /
+   `ocr` / `check_after` / `upload` / `verify`) was in flight when the
+   alarm fired, so a human reviewing the state file afterward has a
+   starting point — in particular, a timeout recorded during `verify`
+   means the Drive write in `upload` likely already succeeded even though
+   this run couldn't confirm it.
+   - **Residual risk, explicit:** `signal.alarm` interrupts a blocking
+     syscall (a subprocess wait, a socket read) but not a pure CPU-bound
+     loop inside a C extension (e.g. a pathological PyMuPDF
+     `image_only_pages()` call on a malicious or corrupt PDF structure) —
+     this is a strong mitigation, not an absolute guarantee, against every
+     conceivable hang.
+
+**Verification.** `tests/test_ocr_util.py` gained a real, non-mocked,
+end-to-end test (`test_ensure_searchable_real_subprocess_kills_grandchild_
+on_timeout`) that forks an actual grandchild process holding the output
+pipes open and confirms it is genuinely killed (never completes its sleep),
+not merely orphaned-and-left-running — this is the regression test that
+would have failed against `main` before this fix. `tests/test_drive_
+client.py` and `tests/test_archive_client.py` (both new) assert the service
+builders pass `http=` with the expected finite timeout, never a bare
+`credentials=`. `tests/test_backfill_mirror_ocr.py` gained watchdog and
+progress-line tests, including one that a hung candidate (simulated via
+`time.sleep()` under a shortened test ceiling) is bounded, recorded
+`error_timeout`, and does not stop the run from reaching the next
+candidate.

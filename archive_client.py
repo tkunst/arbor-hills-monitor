@@ -27,7 +27,11 @@ import os
 # num_retries for exponential-backoff retry on transient Google Drive 5xx/429
 # errors, so a blip doesn't abort an archiver run — same rationale + value as
 # the Sheets path (this constant covers Drive too). See drive_client.
-from drive_client import GOOGLE_API_NUM_RETRIES
+# authorized_http(): an explicit, finite HTTP socket timeout for the Drive
+# transport this module builds — see drive_client's own ADDENDUM docstring
+# (2026-10-14) for why this doesn't change actual behavior (60s was already
+# googleapiclient's own default), just makes it explicit and in-repo.
+from drive_client import GOOGLE_API_NUM_RETRIES, authorized_http
 
 # drive.file: per-file access limited to files created by THIS app. Enough to
 # create the mirror folder, upload into it, and list/skip what's already there.
@@ -76,7 +80,7 @@ def _credentials():
 def oauth_drive_service():
     from googleapiclient.discovery import build
 
-    return build("drive", "v3", credentials=_credentials(), cache_discovery=False)
+    return build("drive", "v3", http=authorized_http(_credentials()), cache_discovery=False)
 
 
 def find_in_folder(service, name: str, folder_id: str) -> str | None:

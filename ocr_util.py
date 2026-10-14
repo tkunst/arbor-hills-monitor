@@ -44,12 +44,35 @@ tolerance for failure:
      dropped because OCR failed. SEC-001: this module's log lines never carry
      a filename, title, or exception text — this repo's GitHub Actions logs
      are public.
+
+ADDENDUM (2026-10-14, the backfill-mirror-ocr hang — see ADR 069's own
+addendum for the full incident writeup): both ocrmypdf subprocess call sites
+below now go through `_run_ocrmypdf()`, which runs ocrmypdf in its OWN
+process group (`start_new_session=True`) and, on a timeout, kills the WHOLE
+group (`os.killpg`), not just the one PID `subprocess.run()` itself would
+kill. **This is corrected framing, found by a direct repro before writing
+this fix (kept in this ADR's addendum, not committed as a test fixture
+forever): `subprocess.run(..., timeout=N)` already raises `TimeoutExpired`
+reliably at N seconds even when a detached grandchild holds the output pipes
+open — its internal `communicate()` loop is driven by a wall-clock deadline,
+not by waiting for pipe EOF.** What is real, and what this fixes: on timeout,
+`subprocess.run()`'s own handler only `kill()`s the ONE pid it holds (the
+direct ocrmypdf process) — any worker processes OCRMYPDF ITSELF forked
+(it parallelizes OCR across pages via a multiprocessing pool, each worker
+shelling out to tesseract/ghostscript/qpdf) are never killed, just orphaned
+and reparented, left running and still consuming CPU on the runner. One
+timeout leaking one orphaned worker tree is a leak, not a hang; this repo's
+`scripts/backfill_mirror_ocr.py` can hit this path dozens of times in one
+run, and a pile of orphaned OCR workers competing for a GitHub-hosted
+runner's 2-4 vCPUs for the rest of that run is a real way for things to get
+much slower than the nominal per-call timeout would suggest.
 """
 from __future__ import annotations
 
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 
@@ -139,6 +162,64 @@ def _minimal_ocr_env() -> dict:
     return env
 
 
+def _kill_process_group(pid: int) -> None:
+    """Best-effort SIGKILL of pid's WHOLE process group (not just pid
+    itself). Swallows ProcessLookupError (already exited between the
+    timeout firing and this call) and PermissionError (shouldn't happen
+    under start_new_session=True, since we're the group's own ancestor, but
+    this is a last-resort cleanup path -- it must never itself raise)."""
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _run_ocrmypdf(cmd: list[str], *, env: dict, timeout: int,
+                  capture: bool) -> subprocess.CompletedProcess:
+    """subprocess.run() replacement for the two ocrmypdf call sites below.
+    Behaves exactly like `subprocess.run(cmd, env=env, timeout=timeout,
+    capture_output=capture, text=capture)` for every caller-visible outcome
+    (same CompletedProcess on success, same TimeoutExpired/FileNotFoundError
+    on failure) -- EXCEPT that a timeout kills ocrmypdf's WHOLE process
+    group, not just its own PID. See this module's docstring addendum for
+    why that's the real bug a plain subprocess.run(timeout=...) has here
+    (TimeoutExpired itself already fires correctly and on time).
+
+    `start_new_session=True` makes ocrmypdf the leader of its own new
+    process group (setsid()) -- any worker it forks inherits that same
+    group unless it ALSO calls setsid() (ocrmypdf's own multiprocessing
+    workers don't), so os.killpg() reaches them too.
+
+    `capture`: True captures stdout/stderr as text (ocr_in_place() needs the
+    stderr tail for its raised error message). False (ensure_searchable())
+    sends both to DEVNULL instead -- its failure path only ever logs a class
+    name (SEC-001), never captured text, so there's nothing to drain; this
+    also means that call never holds an inherited PIPE fd open for an
+    orphaned worker in the first place."""
+    pipe = subprocess.PIPE if capture else subprocess.DEVNULL
+    proc = subprocess.Popen(
+        cmd, env=env, stdout=pipe, stderr=pipe, text=capture,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_group(proc.pid)
+        # The whole group is dead now -- this drains/reaps without the
+        # never-EOFs-because-a-grandchild-still-holds-the-pipe risk a bare
+        # proc.wait() would carry if stdout/stderr were still PIPEs.
+        stdout, stderr = proc.communicate()
+        raise subprocess.TimeoutExpired(cmd, timeout, output=stdout, stderr=stderr)
+    except BaseException:
+        # e.g. KeyboardInterrupt during communicate() -- same cleanup, then
+        # let the original exception propagate (mirrors subprocess.run()'s
+        # own `except: process.kill(); raise` branch, extended to the group).
+        _kill_process_group(proc.pid)
+        proc.wait()
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+
+
 def ocr_in_place(pdf_path: str, timeout: int = 600) -> bool:
     """Run `ocrmypdf --skip-text` and replace pdf_path with the searchable
     version. Returns True on success. Raises on failure so the caller can
@@ -147,12 +228,9 @@ def ocr_in_place(pdf_path: str, timeout: int = 600) -> bool:
     env = dict(os.environ, PATH="/opt/homebrew/bin:" + os.environ.get("PATH", ""))
     tmp = pdf_path + ".ocr_tmp.pdf"
     try:
-        r = subprocess.run(
+        r = _run_ocrmypdf(
             [binpath, "--skip-text", "-l", "eng", "--output-type", "pdf", pdf_path, tmp],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=timeout,
+            env=env, timeout=timeout, capture=True,
         )
         if r.returncode != 0 or not os.path.exists(tmp):
             last = (r.stderr or "").strip().split("\n")[-1][:200]
@@ -322,12 +400,9 @@ def ensure_searchable(local_path: str, *, timeout: int = 300, language: str = "e
         binpath = _ocrmypdf_bin()
         env = _minimal_ocr_env()
         try:
-            r = subprocess.run(
+            r = _run_ocrmypdf(
                 [binpath, "--skip-text", "-l", language, "--output-type", "pdf", local_path, tmp_out],
-                capture_output=True,
-                text=True,
-                env=env,
-                timeout=timeout,
+                env=env, timeout=timeout, capture=False,
             )
         except subprocess.TimeoutExpired:
             log.warning("ocr_util.ensure_searchable: ocrmypdf timed out (class=timeout timeout_s=%s)", timeout)
