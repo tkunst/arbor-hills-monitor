@@ -45,8 +45,10 @@ def test_build_table_shape():
 
 def test_claude_md_stream_status_table_matches_generator():
     """Adding/flipping/removing an `enabled` flag in config.yml without
-    regenerating this table fails here -- run:
-    python3 scripts/gen_stream_status.py and paste the output between
-    CLAUDE.md's <!-- stream-status:begin/end --> markers."""
+    regenerating this table fails here -- pytest does not print this
+    docstring on failure, so the assert message below repeats the fix."""
     generated = gss.build_table(gss.load_config()).strip("\n") + "\n"
-    assert _committed_table() == generated
+    assert _committed_table() == generated, (
+        "CLAUDE.md's stream-status table is stale -- run: "
+        "python3 scripts/gen_stream_status.py and paste the output between "
+        "CLAUDE.md's <!-- stream-status:begin/end --> markers")
