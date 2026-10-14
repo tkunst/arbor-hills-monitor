@@ -1343,10 +1343,15 @@ def _tab_rows_strict(service, sheet_id: str, tab: str, a1: str) -> list[list]:
     read there would re-download/re-mirror/re-append EVERY already-archived
     month this run, not just the newest — and ridgewood_report_rows, whose
     false-empty consequence is a wrong bootstrap date permanently stamped into
-    a tamper-evident manifest). Every caller listed above already calls its
-    own `ensure_*_tabs()` before this runs, so in steady-state operation the
-    absent-tab branch is pure defensive insurance, not a path that fires on
-    every "first ever run"."""
+    a tamper-evident manifest). Almost every caller listed above calls its own
+    `ensure_*_tabs()` before this runs, so for them the absent-tab branch is
+    pure defensive insurance, not a path that fires on every "first ever
+    run" — the one exception is `ridgewood_reverify.run()`'s calls to
+    `ridgewood_archived_months`/`ridgewood_report_rows`: that job never
+    ensures the Ridge Wood Reports tab itself (it assumes Stream G already
+    created it), so there the absent-tab branch is load-bearing, not just
+    insurance — a genuinely fresh install with Stream G never having run
+    correctly reduces to "nothing to verify" instead of raising."""
     try:
         resp = (
             service.spreadsheets()
