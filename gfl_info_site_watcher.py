@@ -55,6 +55,21 @@ EMAIL-CONTACT SURFACING. The launch site exposes a PHONE ONLY, no email. If GFL
 adds an email later (even Cloudflare-obfuscated), the client decodes it and the
 change alert calls it out explicitly (not just buried in the diff).
 
+PER-ITEM ISOLATION (Phase 1 / classify ONLY): each URL's read/fetch/classify
+is isolated in its own try/except — a Sheets read raise (state-reads-raise,
+ADR 041/023) from last_gfl_info_site_row, or any other failure on ONE URL, is
+logged (class-only, never the raw exception string) and the run continues to
+the next URL, counting toward `failed` (so the ALL-OR-NOTHING initial baseline
+and the BLIND liveness guard below both still fire correctly) and toward the
+anti-stampede cap if it would have been a candidate new page. Phases 2, 4, and
+6 (the silent baseline/pending/recovered batch appends) and Phase 5's
+confirmed-removal loop are deliberately NOT split per item — they are atomic
+batch writes (or, for Phase 5, email-count-coupled to the durable row count)
+that this change must not touch. The two pre-loop batched reads
+(gfl_info_site_tab_is_empty, all_gfl_info_site_urls) stay unisolated: they feed
+every URL's classification before any URL is processed, so a failure there
+fails the whole run.
+
 GATED ON gfl_info_site.enabled (false by default). A brand-new external source
 ships disabled and a human flips it on + picks recipients — this loop never does
 (overnight-coder procedure). Until enabled: true is on main, every scheduled run
@@ -366,100 +381,123 @@ def run(probe: bool = False) -> int:
     confirm_events: list[dict] = []   # SECOND consecutive 404 — confirmed removal, alerts
     recovered_events: list[dict] = [] # pending page fetched OK & identical — silent state reset
     unchanged = skipped = succeeded = failed = 0
+    isolated_new_candidates = 0  # read-failed, never-seen, non-seed URLs this
+    # run — counted toward the anti-stampede cap below, never alerted directly
+    # (no content survived the failure to write a row from).
     exit_code = 0
 
     for url in check_set:
         label = gc.page_label(url)
-        prior = sw.last_gfl_info_site_row(sheets, sheet_id, url)  # (change, hash, text) | None
-        is_seed = url in seed_canon
+        is_seed = url in seed_canon  # pure; computed BEFORE the try so the
+        # except handler below (isolating a last_gfl_info_site_row raise) can
+        # always reference it safely.
         try:
-            html = gc.fetch_page(url)
-            content = gc.extract_content(html, min_chars=rc["min_chars"])
-        except gc.GFLInfoSiteGone:
-            # A confirmed HTTP 404/410 at the page — but debounced over two runs.
-            if prior is None:
-                print(f"[gfl-info-site]   ignore    {label}: 404 and never baselined.")
+            prior = sw.last_gfl_info_site_row(sheets, sheet_id, url)  # (change, hash, text) | None
+            try:
+                html = gc.fetch_page(url)
+                content = gc.extract_content(html, min_chars=rc["min_chars"])
+            except gc.GFLInfoSiteGone:
+                # A confirmed HTTP 404/410 at the page — but debounced over two runs.
+                if prior is None:
+                    print(f"[gfl-info-site]   ignore    {label}: 404 and never baselined.")
+                    continue
+                prev_change = prior[0]
+                if prev_change == _CHANGE_REMOVED:
+                    print(f"[gfl-info-site]   no-op     {label}: still removed.")
+                    continue
+                if prev_change == _CHANGE_PENDING:
+                    # Second consecutive 404 → confirm the removal.
+                    confirm_events.append({"url": url, "label": label})
+                    continue
+                # First 404 → mark pending SILENTLY, preserving the last real snapshot
+                # (hash + text) so a recovery next run can still diff what changed.
+                pending_events.append({"url": url, "label": label,
+                                       "hash": prior[1], "text": prior[2]})
                 continue
-            prev_change = prior[0]
+            except (gc.GFLInfoSiteFetchError, gc.GFLInfoSiteContentError) as e:
+                # Transient / challenge — never diffed into a false change.
+                failed += 1
+                if prior is None and is_initial:
+                    # ANY fetch/parse failure on the activation run → loud, and the
+                    # initial baseline is ALL-OR-NOTHING (see Phase 2): if any page
+                    # fails, NO page is baselined, so a partially-baselined page can't
+                    # later false-fire "Page ADDED" (a seed OR a discovered non-seed
+                    # like /privacy-policy). A never-seen 404 is "ignore" above, not a
+                    # failure, so a dead sitemap link never blocks — only a real
+                    # challenge/transient failure does, which is the activation
+                    # problem worth blocking on.
+                    print(f"[gfl-info-site]   BLOCK     {label}: NO BASELINE and fetch/"
+                          f"parse failed on the activation run: {e}")
+                    exit_code = 1
+                else:
+                    print(f"[gfl-info-site]   skip      {label}: fetch/parse failed, "
+                          f"baseline preserved, not diffed: {e}")
+                    skipped += 1
+                continue
+
+            succeeded += 1
+            new_hash = gc.hash_text(content)
+            chars = len(gc.visible_text(content))
+
+            if prior is None:
+                new_events.append({"url": url, "label": label, "hash": new_hash,
+                                   "content": content, "chars": chars, "returned": False,
+                                   "is_seed": is_seed, "emails": gc.emails_in(content)})
+                continue
+
+            prev_change, prev_hash, prev_text = prior
             if prev_change == _CHANGE_REMOVED:
-                print(f"[gfl-info-site]   no-op     {label}: still removed.")
+                # Page returned after a CONFIRMED removal (its pre-removal text is not
+                # retained, so this is a bare "returned" — see ADR 041 residual #4).
+                new_events.append({"url": url, "label": label, "hash": new_hash,
+                                   "content": content, "chars": chars, "returned": True,
+                                   "is_seed": is_seed, "emails": gc.emails_in(content)})
                 continue
             if prev_change == _CHANGE_PENDING:
-                # Second consecutive 404 → confirm the removal.
-                confirm_events.append({"url": url, "label": label})
+                # The page recovered from a transient 404. prev_hash/prev_text hold the
+                # last REAL snapshot (stored on the pending row), so we can tell a
+                # true no-change recovery from one that also changed while flapping.
+                if new_hash == prev_hash:
+                    recovered_events.append({"url": url, "label": label, "hash": new_hash,
+                                             "content": content, "chars": chars})
+                else:
+                    note, body_diff = summarize_diff(
+                        gc.visible_text(prev_text), gc.visible_text(content),
+                        max_lines=rc["max_diff_lines"])
+                    change_events.append({
+                        "url": url, "label": label, "hash": new_hash, "content": content,
+                        "chars": chars, "note": note, "body_diff": body_diff,
+                        "added_emails": new_emails(prev_text, content)})
                 continue
-            # First 404 → mark pending SILENTLY, preserving the last real snapshot
-            # (hash + text) so a recovery next run can still diff what changed.
-            pending_events.append({"url": url, "label": label,
-                                   "hash": prior[1], "text": prior[2]})
-            continue
-        except (gc.GFLInfoSiteFetchError, gc.GFLInfoSiteContentError) as e:
-            # Transient / challenge — never diffed into a false change.
-            failed += 1
-            if prior is None and is_initial:
-                # ANY fetch/parse failure on the activation run → loud, and the
-                # initial baseline is ALL-OR-NOTHING (see Phase 2): if any page
-                # fails, NO page is baselined, so a partially-baselined page can't
-                # later false-fire "Page ADDED" (a seed OR a discovered non-seed
-                # like /privacy-policy). A never-seen 404 is "ignore" above, not a
-                # failure, so a dead sitemap link never blocks — only a real
-                # challenge/transient failure does, which is the activation
-                # problem worth blocking on.
-                print(f"[gfl-info-site]   BLOCK     {label}: NO BASELINE and fetch/"
-                      f"parse failed on the activation run: {e}")
-                exit_code = 1
-            else:
-                print(f"[gfl-info-site]   skip      {label}: fetch/parse failed, "
-                      f"baseline preserved, not diffed: {e}")
-                skipped += 1
-            continue
 
-        succeeded += 1
-        new_hash = gc.hash_text(content)
-        chars = len(gc.visible_text(content))
-
-        if prior is None:
-            new_events.append({"url": url, "label": label, "hash": new_hash,
-                               "content": content, "chars": chars, "returned": False,
-                               "is_seed": is_seed, "emails": gc.emails_in(content)})
-            continue
-
-        prev_change, prev_hash, prev_text = prior
-        if prev_change == _CHANGE_REMOVED:
-            # Page returned after a CONFIRMED removal (its pre-removal text is not
-            # retained, so this is a bare "returned" — see ADR 041 residual #4).
-            new_events.append({"url": url, "label": label, "hash": new_hash,
-                               "content": content, "chars": chars, "returned": True,
-                               "is_seed": is_seed, "emails": gc.emails_in(content)})
-            continue
-        if prev_change == _CHANGE_PENDING:
-            # The page recovered from a transient 404. prev_hash/prev_text hold the
-            # last REAL snapshot (stored on the pending row), so we can tell a
-            # true no-change recovery from one that also changed while flapping.
+            # Normal prior snapshot.
             if new_hash == prev_hash:
-                recovered_events.append({"url": url, "label": label, "hash": new_hash,
-                                         "content": content, "chars": chars})
-            else:
-                note, body_diff = summarize_diff(
-                    gc.visible_text(prev_text), gc.visible_text(content),
-                    max_lines=rc["max_diff_lines"])
-                change_events.append({
-                    "url": url, "label": label, "hash": new_hash, "content": content,
-                    "chars": chars, "note": note, "body_diff": body_diff,
-                    "added_emails": new_emails(prev_text, content)})
-            continue
-
-        # Normal prior snapshot.
-        if new_hash == prev_hash:
-            unchanged += 1
-            continue
-        note, body_diff = summarize_diff(
-            gc.visible_text(prev_text), gc.visible_text(content),
-            max_lines=rc["max_diff_lines"])
-        change_events.append({
-            "url": url, "label": label, "hash": new_hash, "content": content,
-            "chars": chars, "note": note, "body_diff": body_diff,
-            "added_emails": new_emails(prev_text, content)})
+                unchanged += 1
+                continue
+            note, body_diff = summarize_diff(
+                gc.visible_text(prev_text), gc.visible_text(content),
+                max_lines=rc["max_diff_lines"])
+            change_events.append({
+                "url": url, "label": label, "hash": new_hash, "content": content,
+                "chars": chars, "note": note, "body_diff": body_diff,
+                "added_emails": new_emails(prev_text, content)})
+        except Exception as e:  # noqa: BLE001 — isolate ONE page's
+            # classification failure (most notably a strict-reader raise
+            # from last_gfl_info_site_row, state-reads-raise ADR 041/023);
+            # this ONLY isolates Phase 1 -- Phases 2/4/6 below are deliberate
+            # ATOMIC batch appends and stay un-split.
+            print(f"[gfl-info-site]   ERROR     {label}: FAILED this run "
+                  f"({type(e).__name__}) — other pages continue.")
+            failed += 1
+            exit_code = 1
+            if not is_initial and not is_seed and url not in seen_urls:
+                # This page would have been a candidate for alert_new had its
+                # read succeeded -- count it toward the anti-stampede cap so a
+                # partial Sheets outage can't silently slip a real stampede
+                # (more pages than the cap genuinely look new) under the cap
+                # and fire individual alert emails for whichever pages DID
+                # classify successfully this run.
+                isolated_new_candidates += 1
 
     # Liveness (never go silently blind): if a real run (baselines already exist)
     # fetched NOTHING successfully while at least one page failed, every page is
@@ -485,14 +523,22 @@ def run(probe: bool = False) -> int:
         else:
             silent_baselines.append(e)
 
-    stampeded = (not is_initial) and len(alert_new) > rc["max_new_pages"]
+    # Count read-FAILED candidate-new URLs (isolated_new_candidates) toward the
+    # cap too, not just the ones that finished classifying — otherwise a
+    # partial Sheets outage during Phase 1 could slip a genuine stampede (more
+    # pages than the cap actually look new) under the threshold and fire
+    # individual alert emails for whichever pages happened to classify
+    # successfully this run, with the rest silently discovered next run.
+    stampeded = ((not is_initial)
+                 and (len(alert_new) + isolated_new_candidates) > rc["max_new_pages"])
     if stampeded:
         # A burst of "new" pages at once (a site republish / host change / sitemap
         # ballooning) — re-baseline them silently instead of blasting emails.
         silent_baselines += alert_new
         alert_new = []
         print(f"[gfl-info-site] ANTI-STAMPEDE: {len(silent_baselines)} pages looked "
-              f"new (> {rc['max_new_pages']}) — re-baselined silently, no alerts. "
+              f"new (> {rc['max_new_pages']}; {isolated_new_candidates} more "
+              "failed to read this run) — re-baselined silently, no alerts. "
               "Likely a site republish / discovery change; review the tab.")
 
     if is_initial and failed:

@@ -250,17 +250,90 @@ def _arm_tab_failure(fake, boom_tab):
     fake._values.get = _boom_get
 
 
-def test_run_raises_without_writing_when_pfas_watch_read_fails(monkeypatch):
-    """state-reads-raise: a transient read failure on the PFAS Page Watch tab
-    must propagate out of run() rather than reading as "never snapshotted" --
-    which would silently re-baseline a page whose content actually changed."""
+def test_run_returns_1_without_writing_when_pfas_watch_read_fails(monkeypatch):
+    """state-reads-raise + per-item isolation: a transient read failure on the
+    PFAS Page Watch tab is now caught PER PAGE (no longer propagated out of
+    run()) -- but it must still redden the run (exit 1) rather than reading as
+    "never snapshotted" (which would silently re-baseline a page whose content
+    actually changed), and write nothing."""
     fake, sent = _wire(monkeypatch, lambda url, **k: PAGE)
     pw.run()                              # baseline
     baseline_rows = _data_rows(fake)
     assert len(baseline_rows) == 1
 
     _arm_tab_failure(fake, sw.TAB_PFAS)
-    with pytest.raises(RuntimeError):
-        pw.run()
+    assert pw.run() == 1                  # isolated per item, but the run is red
     assert _data_rows(fake) == baseline_rows
     assert sent == []
+
+
+def _arm_tab_failures_at(fake, boom_tab, fail_on_calls):
+    """Wrap fake._values.get so every call number in `fail_on_calls`
+    (1-indexed, counted per-tab) against `boom_tab` raises; every other call
+    behaves normally."""
+    real_get = fake._values.get
+    counter = {"n": 0}
+    fail_on_calls = set(fail_on_calls)
+
+    def _maybe_boom_get(spreadsheetId, range):
+        if _tab(range) == boom_tab:
+            counter["n"] += 1
+            if counter["n"] in fail_on_calls:
+                raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _maybe_boom_get
+
+
+_TWO_PAGE_CFG = {
+    "pfas": {
+        "enabled": True,
+        "min_content_chars": 200,
+        "pages": [
+            {"label": "Arbor Hills PFAS", "url": "http://example/arbor-hills"},
+            {"label": "Second page", "url": "http://example/second"},
+        ],
+    }
+}
+
+
+def test_one_pages_read_failure_isolates_the_other(monkeypatch):
+    """Per-item isolation: the first configured page's Sheets read (ordinal 1)
+    fails, but the second page (ordinal 2, an independent item in the SAME
+    run) still records its real content change and alerts."""
+    pages_by_url = {
+        "http://example/arbor-hills": PAGE,
+        "http://example/second": PAGE,
+    }
+    fake, sent = _wire(monkeypatch, lambda url, **k: pages_by_url[url], cfg=_TWO_PAGE_CFG)
+    assert pw.run() == 0
+    assert len(_data_rows(fake)) == 2
+
+    pages_by_url["http://example/second"] = PAGE.replace(
+        "Content posted January 2021", "Content posted August 2026")
+    _arm_tab_failures_at(fake, sw.TAB_PFAS, fail_on_calls={1})  # the first page
+    assert pw.run() == 1
+    rows = _data_rows(fake)
+    assert len(rows) == 3                 # only the second page's new row
+    new_row = rows[-1]
+    assert new_row[1] == "Second page" and new_row[3] == "changed"
+    assert len(sent) == 1
+
+
+def test_item_failure_logs_class_only_not_the_raw_message(monkeypatch, capsys):
+    """Rule: a per-item isolation catch must never print the raw exception
+    string -- an HttpError's str() embeds the request URI, which contains the
+    spreadsheet id -- only the exception class name."""
+    fake, sent = _wire(monkeypatch, lambda url, **k: PAGE)
+    assert pw.run() == 0
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if _tab(range) == sw.TAB_PFAS:
+            raise RuntimeError("SENTINEL-DO-NOT-PRINT https://sheets.googleapis.com/SID")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+    assert pw.run() == 1
+    out = capsys.readouterr().out
+    assert "SENTINEL-DO-NOT-PRINT" not in out
+    assert "RuntimeError" in out

@@ -56,6 +56,18 @@ closing the gap where a GFL plan-amendment/siting/consistency-determination item
 is agendized on a county body without ever touching EGLE's nSITE system. A hit
 elevates the alert and overrides an otherwise-silent first-sighting baseline.
 
+PER-ITEM ISOLATION: each event's fetch/baseline/diff/record/alert
+(`_process_event`) runs isolated by `run()` — a Sheets read raise (state-reads-
+raise, ADR 015/023) or any other failure on ONE event is logged (class-only,
+never the raw exception string) and the run continues to the next event,
+returning exit 1 at the end. The per-GROUP `meeting_watch_group_has_rows`
+check (inside an auto-discover group's category-fetch-failure handler) is
+isolated at the GROUP level, not split per event — it is one batched read for
+that whole group. A CIRCUIT BREAKER (3 consecutive event-level failures)
+aborts the rest of the run rather than paying each one's full Sheets retry
+backoff — MMPC/DPA auto-discover plus BOC's hand-picked list is the largest
+item count of any per-item-isolated watcher in this repo.
+
 GATED on civicclerk_watch.enabled. Recipients are civicclerk_watch.recipients
 (Trisha only) — NOT the shared alert_recipients list. Runs on its own schedule
 (.github/workflows/meeting-watch.yml).
@@ -89,6 +101,19 @@ _PORTAL = "https://washtenawcomi.portal.civicclerk.com/event/{id}/files"
 # any live snapshot (which carries present=True), so a vanish is naturally a hash
 # change that summarize_change explains as a cancellation/removal.
 GONE_SNAPSHOT = {"present": False}
+
+# Consecutive event-level failures (a strict-reader Sheets raise, state-reads-
+# raise ADR 015/023, or anything else unexpected) that abort the rest of this
+# run's event processing rather than pay each one's full Sheets retry backoff
+# during a real outage — MMPC/DPA auto-discover over discover_since_days plus
+# BOC's hand-picked list can run 50-100+ events/day, the largest N of the
+# per-item-isolated watchers. Same precedent as govqa_watcher._CIRCUIT_BREAKER.
+_CIRCUIT_BREAKER = 3
+
+
+class _CircuitBroken(Exception):
+    """Internal sentinel raised to unwind both the group and event loops in
+    run() once the circuit breaker trips. Never escapes run() itself."""
 
 
 def _now() -> str:
@@ -418,6 +443,130 @@ def discoverable_events(events: list[dict], cutoff: date) -> list[dict]:
     return sorted(out, key=lambda e: e.get("eventDate") or "")
 
 
+# --- per-event processing (isolated by the caller) --------------------------
+
+
+def _process_event(sheets, sheet_id, session, today, gname, cadence, event_id, label,
+                    ev_date, prefetched_ev, kw_enabled, keywords, cfg, recipients) -> dict:
+    """Process ONE watched meeting event this run: fetch (or use the already-
+    fetched auto-discover record), baseline/diff against its last snapshot in
+    the Meeting Watch tab, and alert on a change. Returns
+    {"kind": ..., "keyword_alert": bool} describing what happened — run()
+    aggregates counters and exit_code from this. Isolating ONE event's failure
+    is run()'s job, not this function's: this function may itself raise (most
+    notably a strict-reader Sheets read raise from last_meeting_snapshot,
+    state-reads-raise ADR 015/023), and run() catches that without aborting
+    the other events. `kind` is one of: "not_due", "fetch_skip" (fetch failed,
+    baseline preserved, not diffed), "activation_block" (fetch failed with no
+    baseline yet — run() must redden the exit code), "phantom" (a configured
+    event returned no data on first sight — not baselined), "baseline",
+    "unchanged", "changed"."""
+    if not is_due_today(cadence, ev_date, today):
+        return {"kind": "not_due", "keyword_alert": False}
+
+    url = event_url(event_id)
+    last = sw.last_meeting_snapshot(sheets, sheet_id, event_id)
+
+    if prefetched_ev is not None:
+        ev = prefetched_ev
+    else:
+        try:
+            ev = mc.fetch_event(session, event_id)
+        except mc.MMPCFetchError as e:
+            if last is None:
+                # No baseline yet AND unreadable: surface an activation
+                # block loudly rather than a silent forever-no-op (see
+                # module doc).
+                print(f"[meeting-watch] {label}: NO BASELINE and fetch "
+                      f"failed (failing loudly so activation surfaces "
+                      f"it): {e}")
+                return {"kind": "activation_block", "keyword_alert": False}
+            print(f"[meeting-watch] {label}: fetch failed, skipping "
+                  f"this run (baseline preserved, not diffed): {e}")
+            return {"kind": "fetch_skip", "keyword_alert": False}
+
+        if ev is None and last is None:
+            # A configured event returns nothing on FIRST sight — almost
+            # always a wrong id. Don't baseline a phantom (a later real
+            # 200-empty would then read as 'unchanged'); warn and let
+            # next run retry.
+            print(f"[meeting-watch] {label}: event id {event_id} "
+                  f"returned no data on first sight — NOT baselining "
+                  f"(check the id).")
+            return {"kind": "phantom", "keyword_alert": False}
+
+    snap = event_snapshot(ev) if ev is not None else dict(GONE_SNAPSHOT)
+    new_hash = snapshot_hash(snap)
+    snap_files = snap.get("files")
+    snap_files = snap_files if isinstance(snap_files, list) else []
+    n_files = len(snap_files)
+    snap_json = json.dumps(snap, sort_keys=True, ensure_ascii=False)
+
+    if last is None:
+        to_scan = files_to_scan([], snap_files) if kw_enabled else []
+        hits = scan_files_for_keywords(session, to_scan, keywords) if to_scan else []
+        note = "initial snapshot (no alert)"
+        if hits:
+            kws = ", ".join(sorted({h["keyword"] for h in hits}))
+            note = f"initial snapshot — KEYWORD MATCH: {kws}"
+        sw.append_meeting_watch_row(
+            sheets, sheet_id, today.isoformat(), gname, label, event_id, url,
+            "baseline", new_hash, n_files, note, _now(), snap_json)
+        print(f"[meeting-watch] {label}: baseline recorded "
+              f"({new_hash}, {n_files} file(s))"
+              f"{' — KEYWORD MATCH' if hits else ''}.")
+        keyword_alert = False
+        if hits:
+            keyword_alert = True
+            body = (format_keyword_hits(hits) + "\n\n"
+                    "This is a NEWLY-SEEN meeting (not a change to one "
+                    "already being watched) whose agenda/minutes already "
+                    f"carry this content.\n\nMeeting: {label}\nPage: {url}\n")
+            try:
+                ea.send_email(f"[Arbor Hills ALERT] Keyword match — {label}",
+                              body, cfg, recipients=recipients)
+            except Exception as e:  # noqa: BLE001 — alert is best-effort; row is recorded
+                print(f"[meeting-watch] {label}: keyword match recorded "
+                      f"but alert email FAILED: {e}")
+        return {"kind": "baseline", "keyword_alert": keyword_alert}
+
+    last_hash, last_snap_json = last
+    if new_hash == last_hash:
+        return {"kind": "unchanged", "keyword_alert": False}
+
+    # Changed: durable row FIRST, alert email SECOND (best-effort). A crash
+    # between them loses the alert, never the record — and the row already
+    # advanced the stored hash, so next run won't re-fire.
+    old_snap = _load_json(last_snap_json, {"present": True})
+    note, body_diff = summarize_change(old_snap, snap)
+    old_files = old_snap.get("files") or []
+    to_scan = files_to_scan(old_files, snap_files) if kw_enabled else []
+    hits = scan_files_for_keywords(session, to_scan, keywords) if to_scan else []
+    if hits:
+        # Fold the match into the DURABLE row's Note, not just the
+        # best-effort email — same as the baseline branch above. Without
+        # this, a keyword hit on a change is only ever recoverable from
+        # an ephemeral Actions log if the email send happens to fail.
+        kws = ", ".join(sorted({h["keyword"] for h in hits}))
+        note = f"{note} — KEYWORD MATCH: {kws}"
+    sw.append_meeting_watch_row(
+        sheets, sheet_id, today.isoformat(), gname, label, event_id, url,
+        "changed", new_hash, n_files, note, _now(), snap_json)
+    print(f"[meeting-watch] {label}: CHANGED ({last_hash} -> {new_hash}; {note})"
+          f"{' — KEYWORD MATCH' if hits else ''}.")
+    subject = (f"[Arbor Hills ALERT] {label} changed" if hits
+               else f"[Meeting watch] {label} changed")
+    body = format_change_body(label, url, note, body_diff)
+    keyword_alert = bool(hits)
+    if hits:
+        body = format_keyword_hits(hits) + "\n\n" + body
+    try:
+        ea.send_email(subject, body, cfg, recipients=recipients)
+    except Exception as e:  # noqa: BLE001 — alert is best-effort; row is recorded
+        print(f"[meeting-watch] {label}: change recorded but alert email FAILED: {e}")
+    return {"kind": "changed", "keyword_alert": keyword_alert}
+
+
 # --- run ------------------------------------------------------------------------
 
 
@@ -447,155 +596,106 @@ def run() -> int:
     today = _today_date()
     exit_code = 0
     changed = baselined = unchanged = not_due = keyword_alerts = 0
+    consecutive_failures = 0  # circuit breaker — see module docstring
 
-    for group in groups:
-        gname = (group or {}).get("name", "")
-        cadence = (group or {}).get("cadence")
-        category_id = (group or {}).get("category_id")
+    try:
+        for group in groups:
+            gname = (group or {}).get("name", "")
+            cadence = (group or {}).get("cadence")
+            category_id = (group or {}).get("category_id")
 
-        if category_id is not None:
-            # AUTO-DISCOVER mode (ADR 015 addendum) — the group has no hand-picked
-            # `events:` list because future event IDs for this category don't exist
-            # on the portal yet (confirmed live for categoryId 68, the DPA). One
-            # paginated fetch for the whole category; entries carry the ALREADY-
-            # fetched event, so no extra per-event API call follows.
-            since_days = int((group or {}).get("discover_since_days") or 400)
-            cutoff = today - timedelta(days=since_days)
-            try:
-                raw_events = mc.fetch_category_events(session, category_id)
-            except mc.MMPCFetchError as e:
-                if sw.meeting_watch_group_has_rows(sheets, sheet_id, gname):
-                    print(f"[meeting-watch] {gname}: category fetch failed, "
-                          f"skipping this run (baselines preserved): {e}")
-                else:
-                    print(f"[meeting-watch] {gname}: NO BASELINE and category "
-                          f"fetch failed (failing loudly so activation surfaces "
-                          f"it): {e}")
-                    exit_code = 1
-                continue
-            entries = [
-                (ev.get("id"), (ev.get("eventName") or gname),
-                 _parse_date((ev.get("eventDate") or "")[:10]), ev)
-                for ev in discoverable_events(raw_events, cutoff)
-                if ev.get("id") is not None
-            ]
-        else:
-            entries = [
-                ((entry or {}).get("id"),
-                 (entry or {}).get("label") or f"{gname} event {(entry or {}).get('id')}",
-                 _parse_date((entry or {}).get("event_date")), None)
-                for entry in (group or {}).get("events") or []
-                if (entry or {}).get("id") is not None
-            ]
-
-        for event_id, label, ev_date, prefetched_ev in entries:
-            if not is_due_today(cadence, ev_date, today):
-                not_due += 1
-                continue
-
-            url = event_url(event_id)
-            last = sw.last_meeting_snapshot(sheets, sheet_id, event_id)
-
-            if prefetched_ev is not None:
-                ev = prefetched_ev
-            else:
+            if category_id is not None:
+                # AUTO-DISCOVER mode (ADR 015 addendum) — the group has no hand-picked
+                # `events:` list because future event IDs for this category don't exist
+                # on the portal yet (confirmed live for categoryId 68, the DPA). One
+                # paginated fetch for the whole category; entries carry the ALREADY-
+                # fetched event, so no extra per-event API call follows.
+                since_days = int((group or {}).get("discover_since_days") or 400)
+                cutoff = today - timedelta(days=since_days)
                 try:
-                    ev = mc.fetch_event(session, event_id)
+                    raw_events = mc.fetch_category_events(session, category_id)
                 except mc.MMPCFetchError as e:
-                    if last is None:
-                        # No baseline yet AND unreadable: surface an activation
-                        # block loudly rather than a silent forever-no-op (see
-                        # module doc).
-                        print(f"[meeting-watch] {label}: NO BASELINE and fetch "
-                              f"failed (failing loudly so activation surfaces "
+                    # Isolate THIS group's baseline check — a strict-reader raise
+                    # (state-reads-raise, ADR 015/023) from
+                    # meeting_watch_group_has_rows must not abort the other
+                    # groups. It is a single batched read for this whole group
+                    # (not per-event), so a failure here fails THIS group, not
+                    # split further.
+                    try:
+                        has_rows = sw.meeting_watch_group_has_rows(sheets, sheet_id, gname)
+                    except Exception as e2:  # noqa: BLE001
+                        print(f"[meeting-watch] {gname}: could not determine "
+                              f"baseline status ({type(e2).__name__}) — treating "
+                              "as NO BASELINE (failing loudly).")
+                        exit_code = 1
+                        continue
+                    if has_rows:
+                        print(f"[meeting-watch] {gname}: category fetch failed, "
+                              f"skipping this run (baselines preserved): {e}")
+                    else:
+                        print(f"[meeting-watch] {gname}: NO BASELINE and category "
+                              f"fetch failed (failing loudly so activation surfaces "
                               f"it): {e}")
                         exit_code = 1
-                    else:
-                        print(f"[meeting-watch] {label}: fetch failed, skipping "
-                              f"this run (baseline preserved, not diffed): {e}")
+                    continue
+                entries = [
+                    (ev.get("id"), (ev.get("eventName") or gname),
+                     _parse_date((ev.get("eventDate") or "")[:10]), ev)
+                    for ev in discoverable_events(raw_events, cutoff)
+                    if ev.get("id") is not None
+                ]
+            else:
+                entries = [
+                    ((entry or {}).get("id"),
+                     (entry or {}).get("label") or f"{gname} event {(entry or {}).get('id')}",
+                     _parse_date((entry or {}).get("event_date")), None)
+                    for entry in (group or {}).get("events") or []
+                    if (entry or {}).get("id") is not None
+                ]
+
+            for event_id, label, ev_date, prefetched_ev in entries:
+                # PER-ITEM ISOLATION: _process_event may raise (most notably a
+                # strict-reader Sheets read raise, state-reads-raise ADR
+                # 015/023) — isolate THIS event's failure so the remaining
+                # events (in this group and every later group) still get
+                # processed. A CIRCUIT BREAKER aborts the rest of the run after
+                # too many consecutive failures, rather than paying each one's
+                # full Sheets retry backoff during a real outage.
+                try:
+                    result = _process_event(
+                        sheets, sheet_id, session, today, gname, cadence, event_id,
+                        label, ev_date, prefetched_ev, kw_enabled, keywords, cfg,
+                        recipients)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[meeting-watch] {label}: FAILED this run "
+                          f"({type(e).__name__}) — other events continue.")
+                    exit_code = 1
+                    consecutive_failures += 1
+                    if consecutive_failures >= _CIRCUIT_BREAKER:
+                        print(f"[meeting-watch] circuit breaker: "
+                              f"{consecutive_failures} events in a row failed "
+                              "this run — aborting the remaining events rather "
+                              "than paying each one's full Sheets retry backoff.")
+                        raise _CircuitBroken() from None
                     continue
 
-                if ev is None and last is None:
-                    # A configured event returns nothing on FIRST sight — almost
-                    # always a wrong id. Don't baseline a phantom (a later real
-                    # 200-empty would then read as 'unchanged'); warn and let
-                    # next run retry.
-                    print(f"[meeting-watch] {label}: event id {event_id} "
-                          f"returned no data on first sight — NOT baselining "
-                          f"(check the id).")
-                    continue
-
-            snap = event_snapshot(ev) if ev is not None else dict(GONE_SNAPSHOT)
-            new_hash = snapshot_hash(snap)
-            snap_files = snap.get("files")
-            snap_files = snap_files if isinstance(snap_files, list) else []
-            n_files = len(snap_files)
-            snap_json = json.dumps(snap, sort_keys=True, ensure_ascii=False)
-
-            if last is None:
-                to_scan = files_to_scan([], snap_files) if kw_enabled else []
-                hits = scan_files_for_keywords(session, to_scan, keywords) if to_scan else []
-                note = "initial snapshot (no alert)"
-                if hits:
-                    kws = ", ".join(sorted({h["keyword"] for h in hits}))
-                    note = f"initial snapshot — KEYWORD MATCH: {kws}"
-                sw.append_meeting_watch_row(
-                    sheets, sheet_id, today.isoformat(), gname, label, event_id, url,
-                    "baseline", new_hash, n_files, note, _now(), snap_json)
-                baselined += 1
-                print(f"[meeting-watch] {label}: baseline recorded "
-                      f"({new_hash}, {n_files} file(s))"
-                      f"{' — KEYWORD MATCH' if hits else ''}.")
-                if hits:
+                consecutive_failures = 0
+                kind = result["kind"]
+                if kind == "not_due":
+                    not_due += 1
+                elif kind == "activation_block":
+                    exit_code = 1
+                elif kind == "baseline":
+                    baselined += 1
+                elif kind == "unchanged":
+                    unchanged += 1
+                elif kind == "changed":
+                    changed += 1
+                # "fetch_skip" / "phantom" bump nothing (matches prior behavior).
+                if result["keyword_alert"]:
                     keyword_alerts += 1
-                    body = (format_keyword_hits(hits) + "\n\n"
-                            "This is a NEWLY-SEEN meeting (not a change to one "
-                            "already being watched) whose agenda/minutes already "
-                            f"carry this content.\n\nMeeting: {label}\nPage: {url}\n")
-                    try:
-                        ea.send_email(f"[Arbor Hills ALERT] Keyword match — {label}",
-                                      body, cfg, recipients=recipients)
-                    except Exception as e:  # noqa: BLE001 — alert is best-effort; row is recorded
-                        print(f"[meeting-watch] {label}: keyword match recorded "
-                              f"but alert email FAILED: {e}")
-                continue
-
-            last_hash, last_snap_json = last
-            if new_hash == last_hash:
-                unchanged += 1
-                continue
-
-            # Changed: durable row FIRST, alert email SECOND (best-effort). A crash
-            # between them loses the alert, never the record — and the row already
-            # advanced the stored hash, so next run won't re-fire.
-            old_snap = _load_json(last_snap_json, {"present": True})
-            note, body_diff = summarize_change(old_snap, snap)
-            old_files = old_snap.get("files") or []
-            to_scan = files_to_scan(old_files, snap_files) if kw_enabled else []
-            hits = scan_files_for_keywords(session, to_scan, keywords) if to_scan else []
-            if hits:
-                # Fold the match into the DURABLE row's Note, not just the
-                # best-effort email — same as the baseline branch above. Without
-                # this, a keyword hit on a change is only ever recoverable from
-                # an ephemeral Actions log if the email send happens to fail.
-                kws = ", ".join(sorted({h["keyword"] for h in hits}))
-                note = f"{note} — KEYWORD MATCH: {kws}"
-            sw.append_meeting_watch_row(
-                sheets, sheet_id, today.isoformat(), gname, label, event_id, url,
-                "changed", new_hash, n_files, note, _now(), snap_json)
-            changed += 1
-            print(f"[meeting-watch] {label}: CHANGED ({last_hash} -> {new_hash}; {note})"
-                  f"{' — KEYWORD MATCH' if hits else ''}.")
-            subject = (f"[Arbor Hills ALERT] {label} changed" if hits
-                       else f"[Meeting watch] {label} changed")
-            body = format_change_body(label, url, note, body_diff)
-            if hits:
-                keyword_alerts += 1
-                body = format_keyword_hits(hits) + "\n\n" + body
-            try:
-                ea.send_email(subject, body, cfg, recipients=recipients)
-            except Exception as e:  # noqa: BLE001 — alert is best-effort; row is recorded
-                print(f"[meeting-watch] {label}: change recorded but alert email FAILED: {e}")
+    except _CircuitBroken:
+        pass
 
     print(f"[meeting-watch] done — {changed} changed, {baselined} baselined, "
           f"{unchanged} unchanged, {not_due} not-due-today, "

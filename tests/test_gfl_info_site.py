@@ -466,6 +466,101 @@ def test_run_raises_without_a_mass_rebaseline_when_the_watch_read_fails(monkeypa
     with pytest.raises(RuntimeError):
         gw.run()
     assert _rows(fake) == baseline_rows        # no silent mass re-baseline
+
+
+def _arm_tab_failures_at(fake, boom_tab, fail_on_calls):
+    """Wrap fake._values.get so every call number in `fail_on_calls`
+    (1-indexed, counted per-tab) against `boom_tab` raises; every other call
+    (any tab, any other number) behaves normally. Used to pin per-item
+    isolation: with every page's read hitting the same tab/range, this is how
+    SPECIFIC pages' reads fail while the rest still succeed. Call numbers 1
+    and 2 are always the pre-loop gfl_info_site_tab_is_empty/
+    all_gfl_info_site_urls reads (unisolated by design); per-URL reads start
+    at call 3, in check_set's sorted order."""
+    real_get = fake._values.get
+    counter = {"n": 0}
+    fail_on_calls = set(fail_on_calls)
+
+    def _maybe_boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            counter["n"] += 1
+            if counter["n"] in fail_on_calls:
+                raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _maybe_boom_get
+
+
+def test_one_urls_read_failure_isolates_others_still_processed(monkeypatch):
+    """Per-item isolation (Phase 1 only): root's ("/") Sheets read fails on the
+    second run, but /faq (an independent page, same run) is still
+    diffed/recorded/alerted normally -- proving the failure doesn't abort the
+    rest of run(). check_set sorts "http://site.test/" before
+    "http://site.test/faq", so root is the 3rd tab read this run (after the 2
+    pre-loop reads) and /faq is the 4th."""
+    r = _router_with_pages("/", "/faq")
+    fake, sent, _ = _wire(monkeypatch, r)
+    assert gw.run() == 0
+    baseline_rows = _rows(fake)
+    assert len(baseline_rows) == 2
+
+    r.set_page("/faq", build_page("FAQ UPDATED."))
+    _arm_tab_failures_at(fake, sw.TAB_GFL_INFO_SITE, fail_on_calls={3})
+    assert gw.run() == 1
+    rows = _rows(fake)
+    assert len(rows) == 3                      # only /faq's changed row was written
+    changed = [row for row in rows if row[3] == gw._CHANGE_CHANGED]
+    assert len(changed) == 1 and changed[0][2] == "http://site.test/faq"
+    assert len(sent) == 1
+
+
+def test_anti_stampede_counts_read_failed_candidates_too(monkeypatch):
+    """Invariant trap: a partial Sheets outage during Phase 1 must not let a
+    REAL stampede slip under the cap. 5 pages would look new at once (cap=3),
+    but only 3 of them (a, b, c) successfully classify this run -- d and e's
+    reads fail. The failure-aware count (3 classified + 2 read-failed = 5 >
+    cap) must still trigger the silent re-baseline/no-alert path for a, b, c --
+    NOT individually alert 3 of them just because the cap looks satisfied by
+    the successfully-classified subset alone."""
+    r = _router_with_pages("/", "/faq")
+    fake, sent, _ = _wire(monkeypatch, r, cfg=_cfg(max_new=3))
+    assert gw.run() == 0                       # baseline the two seeds
+
+    for p in ("/a", "/b", "/c", "/d", "/e"):
+        r.set_page(p, build_page(f"Page {p}."))
+    # check_set sorted: root(1), a(2), b(3), c(4), d(5), e(6), faq(7) -- tab
+    # reads: 1,2 = pre-loop (unisolated); 3=root, 4=a, 5=b, 6=c, 7=d, 8=e, 9=faq.
+    _arm_tab_failures_at(fake, sw.TAB_GFL_INFO_SITE, fail_on_calls={7, 8})  # d, e
+    assert gw.run() == 1
+    assert sent == []                          # no individual new-page alerts
+    rebaselined = {row[2] for row in _rows(fake)
+                   if row[3] == "baseline" and "re-baseline" in row[6]}
+    assert rebaselined == {"http://site.test/a", "http://site.test/b",
+                            "http://site.test/c"}
+
+
+def test_item_failure_logs_class_only_not_the_raw_message(monkeypatch, capsys):
+    """Rule: a per-item isolation catch must never print the raw exception
+    string -- an HttpError's str() embeds the request URI, which contains the
+    spreadsheet id -- only the exception class name."""
+    r = _router_with_pages("/", "/faq")
+    fake, sent, _ = _wire(monkeypatch, r)
+    assert gw.run() == 0
+    real_get = fake._values.get
+    counter = {"n": 0}
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == sw.TAB_GFL_INFO_SITE:
+            counter["n"] += 1
+            if counter["n"] == 3:   # root's read -- the first per-URL read
+                raise RuntimeError(
+                    "SENTINEL-DO-NOT-PRINT https://sheets.googleapis.com/SID")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+    assert gw.run() == 1
+    out = capsys.readouterr().out
+    assert "SENTINEL-DO-NOT-PRINT" not in out
+    assert "RuntimeError" in out
     assert sent == []
 
 

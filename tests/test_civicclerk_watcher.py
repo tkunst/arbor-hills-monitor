@@ -363,20 +363,160 @@ def _arm_tab_failure(fake, boom_tab):
     fake._values.get = _boom_get
 
 
-def test_run_raises_without_writing_when_meeting_watch_read_fails(monkeypatch):
-    """state-reads-raise: a transient read failure on the Meeting Watch tab
-    must propagate out of run() rather than reading as "never snapshotted" --
-    which would silently re-baseline an event that already has a real
-    snapshot (incl. a folded-in keyword-match note)."""
+def _arm_tab_failure_once(fake, boom_tab, fail_on_call):
+    """Wrap fake._values.get so only the `fail_on_call`-th (1-indexed) read of
+    `boom_tab` raises; every other read (any tab, any other call number)
+    behaves normally. Used to pin per-item isolation: with every item's read
+    hitting the same tab, this is how ONE item's read fails while the rest
+    still succeed."""
+    real_get = fake._values.get
+    counter = {"n": 0}
+
+    def _maybe_boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            counter["n"] += 1
+            if counter["n"] == fail_on_call:
+                raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _maybe_boom_get
+
+
+def test_run_returns_1_without_writing_when_meeting_watch_read_fails(monkeypatch):
+    """state-reads-raise + per-item isolation: a transient read failure on the
+    Meeting Watch tab is now caught PER EVENT (no longer propagated out of
+    run()) -- but it must still redden the run (exit 1) rather than reading as
+    "never snapshotted" (which would silently re-baseline an event that
+    already has a real snapshot, incl. a folded-in keyword-match note), and
+    must still write nothing for the affected event this run."""
     fake, sent = _wire(monkeypatch, MMPC_CFG, _seq_fetch([_ev(), _ev()]))
     cw.run()                              # baseline
     baseline_rows = _rows(fake)
     assert len(baseline_rows) == 1
 
     _arm_tab_failure(fake, sw.TAB_MEETING_WATCH)
-    with pytest.raises(RuntimeError):
-        cw.run()
+    assert cw.run() == 1                  # isolated per item, but the run is red
     assert _rows(fake) == baseline_rows
+    assert sent == []
+
+
+def test_one_events_read_failure_isolates_others_still_processed(monkeypatch):
+    """Per-item isolation: event 4006's Sheets read fails on the second run,
+    but event 4005 (an independent item in the SAME group, same run) is still
+    diffed/recorded/alerted normally -- proving the failure doesn't abort the
+    rest of run()."""
+    cfg = {
+        "civicclerk_watch": {
+            "enabled": True,
+            "recipients": ["arbor-hills@trishakunst.com"],
+            "groups": [
+                {"name": "MMPC", "cadence": "every_run",
+                 "events": [
+                     {"id": 4005, "event_date": "2026-08-19", "label": "MMPC — Aug 19"},
+                     {"id": 4006, "event_date": "2026-08-26", "label": "MMPC — Aug 26"},
+                 ]},
+            ],
+        }
+    }
+    fetch = _seq_fetch([
+        _ev(id=4005), _ev(id=4006),              # baseline run
+        _ev(id=4005, eventName="MMPC CHANGED"),  # second run -- 4005 only; 4006's
+                                                  # fetch is never reached (its read
+                                                  # fails first).
+    ])
+    fake, sent = _wire(monkeypatch, cfg, fetch)
+    assert cw.run() == 0
+    baseline_rows = _rows(fake)
+    assert len(baseline_rows) == 2
+
+    _arm_tab_failure_once(fake, sw.TAB_MEETING_WATCH, fail_on_call=2)
+    assert cw.run() == 1
+    rows = _rows(fake)
+    assert len(rows) == 3                 # only 4005's new row was written
+    assert rows[-1][5] == "changed"
+    assert any("changed" in s[0].lower() for s in sent)
+
+
+def test_item_failure_logs_class_only_not_the_raw_message(monkeypatch, capsys):
+    """Rule: a per-item isolation catch must never print the raw exception
+    string -- an HttpError's str() embeds the request URI, which contains the
+    spreadsheet id -- only the exception class name."""
+    fake, sent = _wire(monkeypatch, MMPC_CFG, _seq_fetch([_ev()]))
+    assert cw.run() == 0
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == sw.TAB_MEETING_WATCH:
+            raise RuntimeError("SENTINEL-DO-NOT-PRINT https://sheets.googleapis.com/SID")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+    assert cw.run() == 1
+    out = capsys.readouterr().out
+    assert "SENTINEL-DO-NOT-PRINT" not in out
+    assert "RuntimeError" in out
+
+
+def test_circuit_breaker_aborts_after_3_consecutive_item_failures(monkeypatch, capsys):
+    """A real Sheets outage must not make this watch pay 4+ separate retry
+    backoffs in one run -- the breaker aborts after 3 consecutive failures."""
+    cfg = {
+        "civicclerk_watch": {
+            "enabled": True,
+            "recipients": ["x@y.com"],
+            "groups": [
+                {"name": "MMPC", "cadence": "every_run",
+                 "events": [
+                     {"id": i, "event_date": "2026-08-19", "label": f"E{i}"}
+                     for i in (4001, 4002, 4003, 4004)
+                 ]},
+            ],
+        }
+    }
+    fetch = _seq_fetch([_ev(id=i) for i in (4001, 4002, 4003, 4004)])
+    fake, sent = _wire(monkeypatch, cfg, fetch)
+    assert cw.run() == 0
+    assert len(_rows(fake)) == 4
+
+    _arm_tab_failure(fake, sw.TAB_MEETING_WATCH)
+    assert cw.run() == 1
+    out = capsys.readouterr().out
+    assert out.count("FAILED this run") == 3   # E4 never attempted
+    assert "circuit breaker" in out
+    assert sent == []
+
+
+def test_group_level_isolation_when_has_rows_check_fails(monkeypatch, capsys):
+    """The auto-discover group's baseline check (meeting_watch_group_has_rows)
+    is ONE batched read for that whole group -- isolate the GROUP, not split
+    into per-event reads that don't exist yet (the category fetch itself
+    already failed)."""
+    cfg = {
+        "civicclerk_watch": {
+            "enabled": True,
+            "recipients": ["x@y.com"],
+            "groups": [
+                {"name": "DPA", "cadence": "every_run", "category_id": 68,
+                 "discover_since_days": 400},
+            ],
+        }
+    }
+
+    def _boom_category(session, category_id):
+        raise mc.MMPCFetchError("bot wall")
+
+    fake, sent = _wire(monkeypatch, cfg, fetch_category=_boom_category)
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == sw.TAB_MEETING_WATCH:
+            raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+    assert cw.run() == 1
+    out = capsys.readouterr().out
+    assert "could not determine baseline status" in out
+    assert sent == []
     assert sent == []
 
 

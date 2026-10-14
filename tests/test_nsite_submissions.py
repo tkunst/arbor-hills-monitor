@@ -379,19 +379,100 @@ def _arm_tab_failure(fake, boom_tab):
     fake._values.get = _boom_get
 
 
-def test_run_raises_without_writing_when_submissions_watch_read_fails(monkeypatch):
-    """state-reads-raise: a transient read failure on the Submissions Watch
-    tab must propagate out of run() rather than reading as "never
-    snapshotted"."""
+def _arm_tab_failures_at(fake, boom_tab, fail_on_calls):
+    """Wrap fake._values.get so every call number in `fail_on_calls`
+    (1-indexed, counted per-tab) against `boom_tab` raises; every other call
+    behaves normally."""
+    real_get = fake._values.get
+    counter = {"n": 0}
+    fail_on_calls = set(fail_on_calls)
+
+    def _maybe_boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            counter["n"] += 1
+            if counter["n"] in fail_on_calls:
+                raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _maybe_boom_get
+
+
+def test_run_returns_1_without_writing_when_submissions_watch_read_fails(monkeypatch):
+    """state-reads-raise + per-item isolation: a transient read failure on the
+    Submissions Watch tab is now caught PER SITE (no longer propagated out of
+    run()) -- but it must still redden the run (exit 1), never silently
+    re-baseline, and write nothing."""
     fake, sent = _wire(monkeypatch, SUB_CFG, {"N2688": [_row("A")], "WRD": []})
     assert nw.run() == 0
     baseline_rows = _rows(fake)
     assert len(baseline_rows) == 2
 
     _arm_tab_failure(fake, sw.TAB_SUBMISSIONS)
-    with pytest.raises(RuntimeError):
-        nw.run()
+    assert nw.run() == 1                  # isolated per item, but the run is red
     assert _rows(fake) == baseline_rows
+    assert sent == []
+
+
+def test_one_sites_read_failure_isolates_the_other(monkeypatch):
+    """Per-item isolation: subm:N2688 (ordinal 1) fails its Sheets read, but
+    subm:WRD (ordinal 2, an independent site in the SAME run) still records
+    its real new submission and alerts."""
+    fake, sent = _wire(monkeypatch, SUB_CFG, {"N2688": [_row("A")], "WRD": []})
+    assert nw.run() == 0
+    assert len(_rows(fake)) == 2
+
+    monkeypatch.setattr(nw.nc, "fetch_site_submissions",
+                        lambda session, nsite_id: (
+                            [_row("A")] if nsite_id == "8094300008956198244"
+                            else [_row("HQK-4R25-67T36", form="the JPA")]))
+    _arm_tab_failures_at(fake, sw.TAB_SUBMISSIONS, fail_on_calls={1})  # subm:N2688
+    assert nw.run() == 1
+    rows = _rows(fake)
+    assert len(rows) == 3                 # only subm:WRD's new row
+    new_row = rows[-1]
+    assert new_row[1] == "subm:WRD" and new_row[3] == "changed"
+    assert len(sent) == 1 and "NEW SUBMISSION" in sent[0][1]
+
+
+def test_item_failure_logs_class_only_not_the_raw_message(monkeypatch, capsys):
+    """Rule: a per-item isolation catch must never print the raw exception
+    string -- an HttpError's str() embeds the request URI, which contains the
+    spreadsheet id -- only the exception class name."""
+    fake, sent = _wire(monkeypatch, SUB_CFG, {"N2688": [_row("A")], "WRD": []})
+    assert nw.run() == 0
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == sw.TAB_SUBMISSIONS:
+            raise RuntimeError("SENTINEL-DO-NOT-PRINT https://sheets.googleapis.com/SID")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+    assert nw.run() == 1
+    out = capsys.readouterr().out
+    assert "SENTINEL-DO-NOT-PRINT" not in out
+    assert "RuntimeError" in out
+
+
+def test_circuit_breaker_aborts_after_3_consecutive_item_failures(monkeypatch, capsys):
+    """A real Sheets outage must not make this watch pay 4+ separate retry
+    backoffs in one run (up to 44 `tiers` entries can be due at once) -- the
+    breaker aborts after 3 consecutive failures."""
+    sites = [{"srn": f"S{i}", "name": f"Site {i}", "id": f"id{i}"} for i in range(4)]
+    cfg = {
+        "nsite_sites": sites,
+        "nsite_submissions": {"enabled": True,
+                              "tiers": {s["srn"]: "daily" for s in sites}},
+        "alert_recipients": ["a@example.com"],
+    }
+    fake, sent = _wire(monkeypatch, cfg, lambda srn: [_row("A")])
+    assert nw.run() == 0
+    assert len(_rows(fake)) == 4
+
+    _arm_tab_failure(fake, sw.TAB_SUBMISSIONS)
+    assert nw.run() == 1
+    out = capsys.readouterr().out
+    assert out.count("FAILED this run") == 3   # S3 never attempted
+    assert "circuit breaker" in out
     assert sent == []
 
 
