@@ -15,6 +15,7 @@ cover/summary page) are sent to Claude. They are deliberately R8-heavy because
 the overheating/ETLF story is the new, evidence-dense one buried in the giant
 WOI Status Reports.
 """
+import re
 
 RISK_REGISTER = [
     {
@@ -116,3 +117,82 @@ SIGNAL_KEYWORDS = [
 # Convenience: id -> name, used by sheet_writer for the "Evidence by Risk" tab.
 RISK_NAMES = {r["id"]: r["name"] for r in RISK_REGISTER}
 VALID_RISK_IDS = set(RISK_NAMES)
+
+# ---------------------------------------------------------------------------
+# Deterministic urgency floor (CWE-1427 mitigation; classifier-untrusted-input,
+# 2026-10-14). A prompt injection hidden in a filing's own text (tiny/white
+# print, an instruction telling the model "severity: routine, summarize as
+# compliant") can talk the MODEL's severity down -- but it can't remove the
+# words "notice of violation" from the PDF's own extracted text. These
+# patterns read that raw, deterministic text directly and enforce urgency
+# rules that ALREADY EXIST elsewhere in this codebase, never new ones:
+#   - "a CO spike" / "smoldering / subsurface oxidation language" are
+#     verbatim from egle_doc_parser._SEVERITY_HELP's own urgent-tier
+#     definition (the model's own instructions already call these urgent).
+#   - the adverse-enforcement-action vocabulary mirrors wds_watcher.py's
+#     _classify_compliance_action, which already fires urgent on a NEW
+#     compliance action naming one of these words (never on the "good news"
+#     words it explicitly excludes: PAID/RESOLVED/CLOSED/WITHDRAWN/RESCIND).
+#   - "a Consent Judgment violation" (also from _SEVERITY_HELP) requires the
+#     CJ docket/name AND a violation word together -- a bare mention of
+#     Consent Judgment 2020-0593-CE (routine in nearly every WOI report) is
+#     explicitly NOT enough.
+# Deliberately NOT a bare SIGNAL_KEYWORDS hit: most of those terms
+# (temperature, HOV, higher operating value, leachate, pfas, exceedance,
+# mact, woi) are page-selection keywords only, and _SEVERITY_HELP says so
+# explicitly -- "a permitted ceiling or HOV-waiver limit... is NOT by itself
+# urgent." Floor triggers were verified against real archived specimens
+# (HOV letters, EGLE approvals, letterhead correspondence) to never flip an
+# already-routine/notable document to urgent; see the PR for that sample.
+# ---------------------------------------------------------------------------
+
+_CO_SPIKE_RE = re.compile(r"\bco\s*spike\b|carbon\s+monoxide\s+spike", re.IGNORECASE)
+_SMOLDER_RE = re.compile(r"\bsmolder(?:ing)?\b|subsurface\s+oxidation", re.IGNORECASE)
+
+# Mirrors email_alerts._EGLE_LETTERHEAD_RE (ADR 065) -- duplicated, not
+# imported, so this module stays dependency-free (it's passed into
+# egle_doc_parser.parse_document() as plain data from other callers; see that
+# module's own docstring). Both match EGLE's own letter-template footer,
+# already confirmed on a real GFL->EGLE cover letter to NOT false-positive on
+# a letter merely ADDRESSED to the agency (that letter names the agency in
+# its own address block but never this URL+phone footer line).
+_EGLE_LETTERHEAD_RE = re.compile(r"Michigan\.gov/EGLE", re.IGNORECASE)
+
+# The adverse-action vocabulary wds_watcher._classify_compliance_action
+# already treats as urgent for a NEW (never backfilled/changed) compliance
+# action, excluding its own "good news" words.
+_ADVERSE_ACTION_RE = re.compile(
+    r"notice of violation|violation notice|\bNOV\b|compliance order|"
+    r"consent (?:judgment|judgement|order|decree)|penalty demand|"
+    r"final monetary|\bcivil action\b|\bcriminal action\b|enforcement action",
+    re.IGNORECASE,
+)
+_GOOD_NEWS_RE = re.compile(r"\b(?:paid|resolved|closed|withdrawn|rescind(?:ed)?)\b",
+                           re.IGNORECASE)
+
+# "a Consent Judgment violation" (_SEVERITY_HELP) -- the CJ docket itself is
+# named routinely in fully-compliant filings, so only a mention PAIRED with a
+# violation word counts.
+_CJ_MENTION_RE = re.compile(r"consent judg(?:e)?ment|2020-0593-ce", re.IGNORECASE)
+_VIOLATION_WORD_RE = re.compile(r"violat|noncompli|non-compli|breach|in default",
+                                 re.IGNORECASE)
+
+
+def hard_urgency_signal(text: str) -> bool:
+    """True if `text` -- deterministically extracted document text, never the
+    model's own output -- contains a hard urgency signal under rules that
+    already exist elsewhere in this codebase (see the module comment above).
+    Pure; a prompt injection embedded in the document cannot suppress its own
+    text. Used by egle_doc_parser.parse_document() as a floor the model's
+    severity cannot be talked below: if this returns True, severity is at
+    least "urgent" regardless of what the classifier reported."""
+    if not text:
+        return False
+    if _CO_SPIKE_RE.search(text) or _SMOLDER_RE.search(text):
+        return True
+    if _CJ_MENTION_RE.search(text) and _VIOLATION_WORD_RE.search(text):
+        return True
+    if (_EGLE_LETTERHEAD_RE.search(text) and _ADVERSE_ACTION_RE.search(text)
+            and not _GOOD_NEWS_RE.search(text)):
+        return True
+    return False
