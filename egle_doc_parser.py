@@ -935,8 +935,11 @@ def parse_document(
     # but it can't erase the signal from the deterministic checks below, both
     # of which read data a filer's instructions cannot suppress by asking:
     #   - the RAW extracted text (risk_register.hard_urgency_signal) for the
-    #     enforcement/CO-spike/smolder language egle_doc_parser._SEVERITY_HELP
-    #     and wds_watcher.py already treat as urgent;
+    #     CO-spike/smolder/subsurface-oxidation language egle_doc_parser's own
+    #     _SEVERITY_HELP already tells the model is urgent (a Notice-of-
+    #     Violation + enforcement-letterhead trigger was also built here and
+    #     dropped after real-specimen testing found false positives -- see
+    #     risk_register.py's module comment);
     #   - the ALREADY temperature-consistency-checked structured measurements
     #     (kdp_check.max_plausible_measured_f, basis-aware -- never a raw
     #     free-text temperature regex, which can't tell a 180F HOV ceiling
