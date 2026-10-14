@@ -3,17 +3,17 @@
 > **STALE (as of the 2026-10-14 claude-md-drift pass).** `extract_topology.py`'s
 > hardcoded `DOMAIN` module map covers 35 of the 67 root `*.py` modules that
 > exist today — it was last fully updated for Stream E (see the Snapshot below)
-> and was never extended through Streams F–V or the later standalone jobs
-> (`egle_newsroom_watcher.py`, `gfl_feed_snapshot.py`,
-> `gfl_air_hourly_capture.py`, `public_comment_feed.py`, `kdp_check.py`,
-> `retry_policy.py`, `well_watch.py`, `poison_doc_extractor.py`,
-> `config_loader.py`, and more). The interactive **`TOPOLOGY.html`** viewer and
-> the `.mmd` diagrams below describe that older, partial system, not the
-> current one. Either classify the missing 32 modules into `DOMAIN` (and
-> re-run both scripts + the plugin re-inject step) or treat this banner as the
-> standing caveat until someone does — don't trust the viewer for anything
-> added after Stream E without checking the module lists in the repo's own
-> `CLAUDE.md` first.
+> and was never extended through Streams F–V or several later standalone jobs,
+> for example (verified against `DOMAIN` directly, not assumed)
+> `egle_newsroom_watcher.py`, `gfl_feed_snapshot.py`,
+> `gfl_air_hourly_capture.py`, `public_comment_feed.py`, `kdp_check.py`, and
+> `well_watch.py` — 32 modules in total are missing. The interactive
+> **`TOPOLOGY.html`** viewer and the `.mmd` diagrams below describe that older,
+> partial system, not the current one. Either classify the missing 32 modules
+> into `DOMAIN` (and re-run both scripts + the plugin re-inject step) or treat
+> this banner as the standing caveat until someone does — don't trust the
+> viewer for anything added after Stream E without checking the module lists
+> in the repo's own `CLAUDE.md` first.
 
 Dependency & topology map of the monitor — the picture an engineer wants before
 touching anything. Generated, not hand-maintained: re-run the two scripts here

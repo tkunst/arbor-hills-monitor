@@ -44,7 +44,8 @@ external users but no sensitive data). Public repo.
 
 - `config_loader.py` — twelve lines: `load_config()` reads this repo's own
   `config.yml` with `yaml.safe_load`. No secrets here (those are env/GitHub
-  Secrets only); this is the chokepoint ~49 other modules across the repo use
+  Secrets only); this is the chokepoint dozens of other modules across the
+  repo use
   to read the non-secret config, including `kdp_check.default_reference()`
   (see below) and `scripts/gen_stream_status.py` — though NOT every
   `scripts/gen_*.py` job (`gen_findings_feed.py`/`gen_sitemap.py`/
@@ -55,14 +56,19 @@ external users but no sensitive data). Public repo.
   stated plainly rather than refactored here:
   `_enforce_temperature_consistency()` takes an optional
   `temperature_reference`/`parse_document(temperature_reference=)` kwarg, but
-  no caller anywhere in this repo (`watcher.py`, `backfill.py`, or any of the
-  `scripts/` one-offs that call `parse_document()` — `recheck_key_data_points
-  .py`, `backfill_document_dates_titles.py`, `smoke_one.py`) ever passes one,
-  so in practice it always falls through to `kdp_check.default_reference()`,
-  which reads THIS repo's own `config.yml` (`temperature_thresholds`)
-  directly — see `kdp_check.py` below. (See the `nsite_client.py` entry
-  further down for a SEPARATE coupling fact in the same spirit — a different
-  module, not this one.) **ADR 065** added `document_date`/`document_date_method` (a deterministic
+  no `parse_document()` call site anywhere in this repo (`watcher.py`,
+  `backfill.py`, or the `scripts/` one-offs —
+  `backfill_document_dates_titles.py`, `smoke_one.py`, and
+  `recheck_key_data_points.py`'s own `run_llm()`) ever passes one, so in
+  practice it always falls through to `kdp_check.default_reference()`, which
+  reads THIS repo's own `config.yml` (`temperature_thresholds`) directly —
+  see `kdp_check.py` below for the ONE narrow exception to "nobody builds a
+  ref": `recheck_key_data_points.py` builds its own `ref` via
+  `kdp_check.reference_from_config()` and passes it straight to
+  `check_fields()`, bypassing `parse_document()`'s kwarg entirely. (See the
+  `nsite_client.py` entry further down for a SEPARATE coupling fact in the
+  same spirit — a different module, not this one.) **ADR 065** added
+  `document_date`/`document_date_method` (a deterministic
   dateline/label regex pass over the doc's own raw first pages, LLM only as
   fallback — same classification call, no extra LLM call) and
   `display_title` (the model's raw proposal, only requested when the caller
@@ -911,24 +917,35 @@ answers "is it live right now."
   ONLY with the service account and Trisha** — never share it with the operator.
   Keep strategy-flavored key dates on the private Sheet, never the public one.
 - **State tabs vs. data tabs — and state reads must raise.** A tab any
-  watcher DIFFS or BASELINES off of (`_state`, `_meta`, `_wds_seen`, `GFL
-  Air` — its OBJECTID cursor, As-Of liveness marker, and episode-state cell
-  are each its own bare read with no try/except, i.e. they raise by
-  construction too — and every other `<X> Watch` snapshot tab: ROP/MMD/RIDE/
-  PFAS/Public Water Supply PFAS/GFL Info Site/Meeting/MPART Data/
-  Submissions/Violations/Compliance Actions/Evaluations/Permits/Complaints/
-  Public Notices/EGLE Newsroom, plus the private-Sheet `GovQA Archive Watch`/
-  `RRD Documents`) must RAISE on a genuine read failure
-  (429/5xx/network/exhausted-retries), never swallow it to `[]` — a swallowed
-  transient error misreads as "nothing seen yet" and silently re-baselines
-  over real state (the ADR 018/023 "spurious baseline becomes the state"
-  failure). Enforced two ways in the code: `sheet_writer._tab_rows_strict()`
-  (added when PR #135 fixed this across most state/snapshot tabs) for the
-  tabs it covers, and — for tabs with their own reader predating that helper
-  or never built on it (`read_mpart_rows`, `read_govqa_rows`,
-  `read_rrd_docs_rows`, the GFL Air reads named above, and the six
-  nSITE-profile readers for Violations/Compliance Actions/Evaluations/
-  Permits/Complaints/Public Notices) — a bespoke per-tab read with no
+  watcher DIFFS or BASELINES off of (`_state`, `_meta`, `_wds_seen`,
+  `GFL Air` — its OBJECTID cursor read (`gfl_air_cursor`), its two liveness
+  reads (the As-Of-max read and the column-N stale-marker read), and its
+  column-O episode-state read are each their own bare `.get()`/`.execute()`
+  with no try/except, so a TRANSPORT failure (429/5xx/network) on any of them
+  propagates too — though the episode-state read is deliberately,
+  separately fail-SAFE on a CONTENT problem: a missing/blank/unparseable
+  cell or a legacy JSON-array value returns `{}` (empty-episodes) rather
+  than raising, by design, since the risk of mis-parsing old state is
+  silently swallowing a real screening/closeout alert, not a stale baseline
+  — and every other `<X> Watch` snapshot tab: ROP/MMD/RIDE/PFAS/Public Water
+  Supply PFAS/GFL Info Site/Meeting/MPART Data/Submissions/Violations/
+  Compliance Actions/Evaluations/Permits/Complaints/Public Notices/
+  EGLE Newsroom, plus the private-Sheet `GovQA Archive Watch`/
+  `RRD Documents`) must RAISE on a genuine TRANSPORT read failure, never
+  swallow it to `[]` — a swallowed transient error misreads as "nothing seen
+  yet" and silently re-baselines over real state (the ADR 018/023 "spurious
+  baseline becomes the state" failure). Enforced two ways in the code:
+  `sheet_writer._tab_rows_strict()` (added when PR #135 fixed this across
+  most state/snapshot tabs) for the tabs it covers, and — for tabs with
+  their own reader predating that helper or never built on it
+  (`read_mpart_rows`, `read_govqa_rows`, `read_rrd_docs_rows`,
+  `egle_news_seen_urls` (its own docstring states the identical "deliberately
+  does NOT use `_tab_rows`" reasoning), the GFL Air reads named above, and
+  the six nSITE-profile readers for Violations/Compliance Actions/
+  Evaluations/Permits/Complaints/Public Notices — seven of the nSITE PROFILE
+  watchers import `nsite_client` in total, Submissions included, but
+  Submissions' OWN state read does use `_tab_rows_strict`, so it's not one
+  of these six bespoke ones) — a bespoke per-tab read with no
   try/except at all, which raises by construction. The LENIENT `_tab_rows()`
   (returns `[]` on ANY failure, including a genuinely absent tab) is correct
   ONLY for append-only DEDUP-INDEX tabs whose worst-case failure is redundant
@@ -938,15 +955,16 @@ answers "is it live right now."
   `civicclerk_archived_file_ids`, `wds_historical_collections_dumped`,
   `ridgewood_last_event`/`ridgewood_multi_link_flagged_months`). A few tabs
   are HYBRID — simultaneously the run's state (last row per key = current)
-  AND a durable append-only record (every row is also data): `GFL Info Site
-  Watch`, `Ridge Wood Reports`, `RRD Documents`, `EGLE Newsroom Watch` — these
-  get the strict/raising contract above. `Evidence by Risk` and `WDS Evidence
-  by Risk` are a DIFFERENT exception worth naming: they're read back too, but
-  only by `rebuild_risk_register_tab()`/`rebuild_all_evidence_tab()` to
-  recompute two derived ROLL-UP tabs (`Risk Register`, `All Evidence by
-  Risk`) — never to detect what's new — and that read already raises (a bare
-  read for `Evidence by Risk`, `_tab_rows_strict()` for `WDS Evidence by
-  Risk`). Every OTHER tab (New/Historical/Related Documents, Measurements,
+  AND a durable append-only record (every row is also data):
+  `GFL Info Site Watch`, `Ridge Wood Reports`, `RRD Documents`,
+  `EGLE Newsroom Watch` — these get the strict/raising contract above.
+  `Evidence by Risk` and `WDS Evidence by Risk` are a DIFFERENT exception
+  worth naming: they're read back too, but only by
+  `rebuild_risk_register_tab()`/`rebuild_all_evidence_tab()` to recompute two
+  derived ROLL-UP tabs (`Risk Register`, `All Evidence by Risk`) — never to
+  detect what's new — and that read already raises (a bare read for
+  `Evidence by Risk`, `_tab_rows_strict()` for `WDS Evidence by Risk`). Every
+  OTHER tab (New/Historical/Related Documents, Measurements,
   Compliance Deadlines, Risk Register, All Evidence by Risk, Hand-Curated
   Files, WOI Well Summary, Perimeter Action-Level Episodes) is pure DATA,
   never diffed/baselined and never read back as run state.
