@@ -42,8 +42,16 @@ END_MARKER = "<!-- stream-status:end -->"
 
 def find_enabled_flags(node, prefix: str = "") -> list[tuple[str, bool]]:
     """[(dotted.path, value)] for every key literally `enabled` or ending in
-    `_enabled`, at any nesting depth, in config order (PyYAML preserves the
-    source file's key order via plain dicts)."""
+    `_enabled`, at any nesting depth -- including inside list items (a review
+    finding on this script's first draft: a future per-item flag, e.g. one
+    `enabled:` per entry in a `mirrors:` list, would otherwise be silently
+    skipped, exactly the drift class this tool exists to close) -- in config
+    order (PyYAML preserves the source file's key order via plain dicts).
+    `bool(v)` coercion means a QUOTED string value ("false") would read as
+    truthy; no flag in config.yml is quoted today, and this matches the
+    runtime's own truthiness convention (e.g. `gfl_air_hourly_capture.py`'s
+    `if not hc.get("enabled")`), so it's a known, accepted limitation rather
+    than a silent one."""
     out: list[tuple[str, bool]] = []
     if isinstance(node, dict):
         for k, v in node.items():
@@ -51,6 +59,9 @@ def find_enabled_flags(node, prefix: str = "") -> list[tuple[str, bool]]:
             if k == "enabled" or (isinstance(k, str) and k.endswith("_enabled")):
                 out.append((path, bool(v)))
             out.extend(find_enabled_flags(v, path))
+    elif isinstance(node, list):
+        for i, item in enumerate(node):
+            out.extend(find_enabled_flags(item, f"{prefix}[{i}]"))
     return out
 
 

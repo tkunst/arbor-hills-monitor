@@ -14,8 +14,11 @@ _SPEC.loader.exec_module(gss)
 def _committed_table() -> str:
     with open(os.path.join(_REPO, "CLAUDE.md"), encoding="utf-8") as f:
         text = f.read()
+    assert text.count(gss.BEGIN_MARKER) == 1, "stream-status begin marker must appear exactly once"
+    assert text.count(gss.END_MARKER) == 1, "stream-status end marker must appear exactly once"
     start = text.index(gss.BEGIN_MARKER) + len(gss.BEGIN_MARKER)
     end = text.index(gss.END_MARKER, start)
+    assert end > start, "stream-status end marker must come after the begin marker"
     return text[start:end].strip("\n") + "\n"
 
 
@@ -24,12 +27,16 @@ def test_find_enabled_flags_is_a_pure_recursive_walk():
         "a": {"enabled": True, "nested": {"enabled": False}},
         "b": {"foo_enabled": True},
         "c": "not a dict",
-        "d": [1, 2, 3],  # lists are not walked into -- no flags live there today
+        "d": [1, 2, 3],  # non-dict list items contribute no flags
+        # a future per-item flag inside a list -- must not be silently skipped
+        "e": [{"enabled": True}, {"other": 1}, {"enabled": False}],
     }
     assert gss.find_enabled_flags(cfg) == [
         ("a.enabled", True),
         ("a.nested.enabled", False),
         ("b.foo_enabled", True),
+        ("e[0].enabled", True),
+        ("e[2].enabled", False),
     ]
 
 
