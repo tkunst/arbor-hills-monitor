@@ -5,6 +5,13 @@ name: dependabot-auto-merge
 # `needs-review` by dependabot-label.yml, not merged here). `anthropic` and
 # `google-api-python-client` are ALWAYS routed to needs-review regardless of
 # semver level (see the classify step below and dependabot.yml's comment).
+# `github-actions` ecosystem PRs are ALSO always routed to needs-review,
+# regardless of update-type: GITHUB_TOKEN can never be granted the
+# `workflows` permission a push to .github/workflows/ requires (see the
+# classify step's branch check -- this is the same restriction that forced
+# this build's own manual-SSH push for the workflow files in this very PR).
+# In practice, policy 2A's auto-merge is pip-ecosystem only; github-actions
+# bumps always wait for Trisha, patch/minor or not.
 #
 # WHY THIS DOESN'T USE GITHUB'S NATIVE "required status checks" + auto-merge:
 # the obvious design is `gh pr merge --auto` plus a required `pytest` status
@@ -159,8 +166,29 @@ jobs:
         if: steps.gates.outputs.skip == 'false'
         env:
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           set -euo pipefail
+          # The `github-actions` ecosystem ALWAYS edits a file under
+          # .github/workflows/ -- and GITHUB_TOKEN can never be granted the
+          # `workflows` permission needed to push such a change (this is a
+          # hard GitHub restriction, not something any `permissions:` block
+          # can lift; confirmed against the exact "refusing to allow ...
+          # without `workflow` scope" class of error this session's own
+          # earlier HTTPS push hit). So `gh pr merge` would fail here no
+          # matter what the commit metadata says. Dependabot's branch-naming
+          # convention for this ecosystem is `dependabot/github_actions/...`
+          # (confirmed against real PRs, e.g. dependabot/fetch-metadata#730)
+          # -- route straight to needs-review without even checking the
+          # update-type.
+          case "$HEAD_BRANCH" in
+            dependabot/github_actions/*)
+              echo "github-actions ecosystem PR -- GITHUB_TOKEN can never push a .github/workflows/ change, so this can never auto-merge regardless of update-type. Routing to needs-review."
+              echo "result=major-or-other" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
           # Dependabot's `updated-dependencies:` / `update-type:` metadata
           # block lives in the COMMIT MESSAGE of its own commit(s) on the PR
           # -- NOT the PR body, which carries no such block (verified
