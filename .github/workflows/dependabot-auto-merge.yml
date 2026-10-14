@@ -1,0 +1,180 @@
+name: dependabot-auto-merge
+
+# Policy 2A (Trisha, 2026-10-14): a Dependabot PR bumping only patch/minor
+# versions merges itself once tests pass; a major waits for Trisha (labeled
+# `needs-review` by dependabot-label.yml, not merged here).
+#
+# WHY THIS DOESN'T USE GITHUB'S NATIVE "required status checks" + auto-merge:
+# the obvious design is `gh pr merge --auto` plus a required `pytest` status
+# check in branch protection. That's rejected here on purpose. Three
+# workflows already push commits straight to `main` with GITHUB_TOKEN --
+# findings-feed.yml, public-comment.yml, ridgewood-reverify.yml (15
+# github-actions[bot] commits in the last month) -- and branch protection on
+# `main` has `enforce_admins: true`. Adding ANY required status check would
+# make GitHub reject those direct pushes too (GH006: "N of N required status
+# checks are expected"), because a brand-new commit pushed directly can never
+# already have a passing check recorded against its own SHA before the push
+# -- that's only possible for a PR, where the check runs first and the merge
+# commit is created after. Required status checks would break the daily
+# public feed. So: no branch-protection change, no `allow_auto_merge` flip --
+# this workflow gates and performs the merge itself, entirely stateless
+# between runs, triggered only by the already-completed `tests` workflow_run
+# for the exact commit in question. See the handoff's settings-commands
+# section: none are needed for this design.
+#
+# WHY `workflow_run`, NOT `pull_request_target`: `pull_request_target` runs
+# with base-branch privileges against attacker-influenced PR metadata the
+# moment a PR is opened/updated -- its well-known hazard is a job that then
+# checks out and runs the PR's own (untrusted) code with that write token.
+# This workflow sidesteps the whole hazard class: it isn't triggered by a
+# pull_request event at all. It reacts to a SEPARATE event -- the `tests`
+# workflow_run object completing -- well after that run's own checkout step
+# (which used the ordinary, correctly-scoped `pull_request` token) finished.
+# Nothing here ever checks out PR code. The `tests` workflow itself still
+# runs under the normal `pull_request` trigger with its own, separate,
+# read-only-by-default token; this job only re-derives facts about an
+# already-finished run via the API.
+on:
+  workflow_run:
+    workflows: ["tests"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    steps:
+      - name: Resolve the open PR for this commit
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          prs=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/pulls" --jq '[.[] | select(.state=="open")]')
+          count=$(echo "$prs" | jq 'length')
+          if [ "$count" -ne 1 ]; then
+            echo "Expected exactly one open PR for ${HEAD_SHA}, found ${count}. Skipping (not an error -- e.g. the PR may already be closed/merged)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "number=$(echo "$prs" | jq -r '.[0].number')" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Re-verify author, state, and the exact tested commit
+        id: verify
+        if: steps.pr.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          current=$(gh pr view "$PR_NUMBER" --json author,headRefOid,isDraft,state,body)
+          login=$(echo "$current" | jq -r '.author.login')
+          sha=$(echo "$current" | jq -r '.headRefOid')
+          draft=$(echo "$current" | jq -r '.isDraft')
+          state=$(echo "$current" | jq -r '.state')
+
+          if [ "$login" != "dependabot[bot]" ]; then
+            echo "PR #${PR_NUMBER} author is '${login}', not dependabot[bot]. Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$state" != "OPEN" ] || [ "$draft" = "true" ]; then
+            echo "PR #${PR_NUMBER} is not an open, non-draft PR (state=${state} draft=${draft}). Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$sha" != "$TESTED_SHA" ]; then
+            # A newer commit was pushed to this PR after (or while) the tests
+            # run that just completed was testing an older one. Never merge a
+            # commit that wasn't the one actually tested -- the workflow_run
+            # for the newer push's own `tests` completion will re-trigger this
+            # workflow and re-check everything against the new HEAD.
+            echo "PR #${PR_NUMBER} head is now ${sha}, but the tests run that just completed tested ${TESTED_SHA}. Not merging an untested commit; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$current" | jq -r '.body' > pr_body.txt
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Confirm the other PR-blocking gates also passed for this commit
+        id: gates
+        if: steps.verify.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          # pytest's own result is already known (this job only runs when the
+          # triggering `tests` workflow_run succeeded for this exact SHA).
+          # Independently confirm the other PR-blocking gates -- bandit SAST,
+          # gitleaks, data-guard -- also passed for the SAME commit, via the
+          # Checks API (job names, matching `gh pr checks` output), without
+          # touching branch-protection required-checks at all.
+          runs=$(gh api "repos/${REPO}/commits/${SHA}/check-runs" --paginate --jq '.check_runs')
+          for job in bandit gitleaks block-data-files; do
+            concl=$(echo "$runs" | jq -r --arg j "$job" '[.[] | select(.name==$j)] | sort_by(.started_at) | last | .conclusion // "missing"')
+            if [ "$concl" != "success" ]; then
+              echo "Gate '${job}' is '${concl}' for ${SHA}, not success. Not merging."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Classify update-type from the Dependabot PR body
+        id: classify
+        if: steps.gates.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          # Dependabot appends a stable, documented metadata block to every PR
+          # body (inside `<!--dependabot-start--> ... <!--dependabot-end-->`),
+          # one `update-type:` entry per bumped dependency -- the same data
+          # the `dependabot/fetch-metadata` action parses. That action can't
+          # be used here: it only reads `github.event.pull_request`, which
+          # doesn't exist on a `workflow_run` event. pr_body.txt was written
+          # by the "verify" step above via `jq -r`, never interpolated into a
+          # shell string, so nothing here evaluates PR-body content as a
+          # command.
+          types=$(grep -oE 'update-type:[[:space:]]*[^[:space:]]+' pr_body.txt | awk '{print $2}' | sort -u || true)
+          if [ -z "$types" ]; then
+            echo "No update-type found in the PR body; cannot classify. Not auto-merging."
+            echo "result=unknown" >> "$GITHUB_OUTPUT"
+          elif echo "$types" | grep -qvE '^version-update:semver-(patch|minor)$'; then
+            echo "Found a non-patch/minor update-type among: $(echo "$types" | tr '\n' ' ')"
+            echo "result=major-or-other" >> "$GITHUB_OUTPUT"
+          else
+            echo "All bumped dependencies are patch/minor: $(echo "$types" | tr '\n' ' ')"
+            echo "result=patch-or-minor" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Auto-merge (patch/minor, tests + SAST + secret-scan + data-guard all green)
+        if: steps.classify.outputs.result == 'patch-or-minor'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: gh pr merge "$PR_NUMBER" --rebase --delete-branch
+
+      - name: Label for review (major, or an update-type this workflow couldn't read)
+        if: steps.classify.outputs.result == 'major-or-other' || steps.classify.outputs.result == 'unknown'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: gh pr edit "$PR_NUMBER" --add-label needs-review
