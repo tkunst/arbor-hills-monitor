@@ -397,35 +397,44 @@ def process_candidate(drive, cand: dict, tmp_dir: str,
     if file_id is None:
         return {"status": "error_bad_link"}
 
+    # MEDIUM finding, fixed before merge (Step 5 independent review,
+    # 2026-10-14): `local`/`searchable` are now cleaned up in ONE outer
+    # try/finally spanning the WHOLE function body, not just the back half
+    # starting at check_after. Before this fix, a watchdog timeout
+    # (_CandidateTimedOut, a BaseException) interrupting the download,
+    # check_before, or ocr phases propagated straight out of this function
+    # without ever reaching the inline _cleanup(local) calls those phases'
+    # NORMAL-exit paths relied on -- leaking the downloaded temp PDF for
+    # the rest of the run (tmp_dir is scoped to the whole run_apply() call,
+    # not per-candidate, so a leaked file isn't removed until the run ends).
     local = os.path.join(tmp_dir, f"{file_id}.pdf")
-    _set_phase("download")
+    searchable = None
     try:
-        ac.download_file(drive, file_id, local)
-    except Exception as e:  # noqa: BLE001 — recorded, not raised; see module docstring
-        return {"status": "error_download", "note": type(e).__name__}
+        _set_phase("download")
+        try:
+            ac.download_file(drive, file_id, local)
+        except Exception as e:  # noqa: BLE001 — recorded, not raised; see module docstring
+            return {"status": "error_download", "note": type(e).__name__}
 
-    _set_phase("check_before")
-    try:
-        before_pages = ocr_util.image_only_pages(local)
-    except Exception:
-        _cleanup(local)
-        return {"status": "error_malformed"}
+        _set_phase("check_before")
+        try:
+            before_pages = ocr_util.image_only_pages(local)
+        except Exception:
+            return {"status": "error_malformed"}
 
-    if not before_pages:
-        _cleanup(local)
-        return {"status": "skip_has_text"}
+        if not before_pages:
+            return {"status": "skip_has_text"}
 
-    _set_phase("ocr")
-    searchable = ocr_util.ensure_searchable(local)
-    if searchable == local:
-        # ensure_searchable() is fail-open: returning the input path unchanged
-        # means the OCR attempt itself failed (missing binary, timeout,
-        # non-zero exit, or its own output failed validation). The original
-        # scan-only file is untouched in Drive.
-        _cleanup(local)
-        return {"status": "ocr_failed"}
+        _set_phase("ocr")
+        searchable = ocr_util.ensure_searchable(local)
+        if searchable == local:
+            # ensure_searchable() is fail-open: returning the input path
+            # unchanged means the OCR attempt itself failed (missing
+            # binary, timeout, non-zero exit, or its own output failed
+            # validation). The original scan-only file is untouched in
+            # Drive.
+            return {"status": "ocr_failed"}
 
-    try:
         _set_phase("check_after")
         try:
             after_pages = ocr_util.image_only_pages(searchable)
