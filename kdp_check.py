@@ -168,6 +168,10 @@ def check_temperature_claims(text: str, ref: TempReference) -> list[str]:
     return out
 
 
+# Prefix sanitize_measurements() puts on a re-tagged reading's note.
+# review_flags.parsed_flags() matches on it, so keep it one constant.
+RETAG_NOTE = "[implausible wellhead temperature, re-tagged by kdp_check]"
+
 WITHHELD_KDP = ("Automated key data point withheld: it failed a consistency check "
                 "against the monitor's temperature reference values. See the source document.")
 WITHHELD_SUMMARY = ("Automated summary withheld: it failed a consistency check against "
@@ -220,7 +224,7 @@ def sanitize_measurements(measurements: list, ref: TempReference) -> tuple[list,
                 and well_ctx and not _FLARE_CTX_RE.search(note)
                 and not _FLARE_CTX_RE.search(wid)):
             m["basis"] = "unknown"
-            m["note"] = ("[implausible wellhead temperature, re-tagged by kdp_check] "
+            m["note"] = (RETAG_NOTE + " "
                          + (m.get("note") or "")).strip()
             n += 1
         out.append(m)

@@ -55,7 +55,7 @@ TEMP_KINDS = (KIND_WOI_TEMP, KIND_MEASUREMENT_TEMP, KIND_TEXT_TEMP)
 # then one summary flag for the rest.
 MAX_WOI_TEMP_FLAGS_PER_DOC = 25
 
-_RETAG_NOTE = "[implausible wellhead temperature, re-tagged by kdp_check]"
+_RETAG_NOTE = kdp_check.RETAG_NOTE
 
 
 def max_plausible_f(cfg: dict) -> float:
@@ -193,6 +193,22 @@ def review_sheet_id() -> Optional[str]:
     return priv
 
 
+# Tabs only the PUBLIC case file has: a "private" Sheet holding one is the
+# public one (or another public Sheet) by misconfiguration. Same check as
+# govqa_watcher.looks_like_public_sheet. Cached per Sheet id for the run.
+_PUBLIC_TABS = (sw.TAB_NEW, sw.TAB_EVIDENCE, sw.TAB_MEASUREMENTS)
+_public_sheet_cache: dict = {}
+
+
+def _is_public_sheet(service, sheet_id: str) -> bool:
+    if sheet_id not in _public_sheet_cache:
+        meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(
+            num_retries=sw.GOOGLE_API_NUM_RETRIES)
+        titles = {t["properties"]["title"] for t in meta.get("sheets", [])}
+        _public_sheet_cache[sheet_id] = bool(titles & set(_PUBLIC_TABS))
+    return _public_sheet_cache[sheet_id]
+
+
 def log_for_document(service, flags: list[dict], metadata: dict, link: str,
                      flagged_at: str, parsed=None, cfg: Optional[dict] = None) -> int:
     """For the watcher/backfill per-document path: add parsed_flags(parsed,
@@ -207,6 +223,10 @@ def log_for_document(service, flags: list[dict], metadata: dict, link: str,
         sheet_id = review_sheet_id()
         if sheet_id is None:
             print(f"  {len(flags)} review flag(s) not written: no private Sheet configured")
+            return 0
+        if _is_public_sheet(service, sheet_id):
+            print(f"  {len(flags)} review flag(s) not written: GSHEET_ID_PRIVATE holds "
+                  "public case-file tabs")
             return 0
         n = record(service, sheet_id, flags, metadata, link, flagged_at)
         print(f"  {n} review flag(s) logged")

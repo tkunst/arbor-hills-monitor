@@ -116,9 +116,12 @@ def classify(path: str):
     text_pages = 0
     imageonly_pages = 0
     for i in range(check):
-        pg = doc[i]
-        t = len(pg.get_text().strip())
-        imgs = len(pg.get_images(full=False))
+        try:
+            pg = doc[i]
+            t = len(pg.get_text().strip())
+            imgs = len(pg.get_images(full=False))
+        except Exception:  # noqa: BLE001 — a damaged page counts as empty, not fatal
+            t, imgs = 0, 0
         total_chars += t
         if t >= 100:
             text_pages += 1

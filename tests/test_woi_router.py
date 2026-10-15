@@ -229,8 +229,12 @@ def test_reading_above_plausibility_ceiling_never_alerts_and_is_flagged(tmp_path
     flags = []
     routed = woi_router.route_measurements(parsed, pdf, META, cfg, review_flags=flags)
     assert routed is not None
-    temps = [m["value"] for m in parsed.measurements if m["metric"] == "temperature"]
+    temps = [m["value"] for m in parsed.measurements
+             if m["metric"] == "temperature" and m["basis"] == "measured"]
     assert 526.8 not in temps and 140 in temps
+    held = [m for m in parsed.measurements if m["value"] == 526.8]
+    assert [(m["metric"], m["basis"]) for m in held] == [("temperature", "unknown")]
+    assert "plausibility ceiling" in held[0]["note"]
     assert ea.is_urgent(parsed, cfg) is False                    # 140 < 145, 526.8 held out
     assert all(r.temp != 526.8 for r in routed["readings"])     # well_watch never sees it
     assert all(d["max_temp_f"] != 526.8 for d in routed["summary"])

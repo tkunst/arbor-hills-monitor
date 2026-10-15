@@ -76,8 +76,10 @@ row in a new append-only **Parser Review Flags** tab (`review_flags.py`):
   valid reading at or above the watch band as a measured temperature, so a
   shifted column (the 526.8°F case in ADR 005's 2026-10-15 addendum) would have
   fired a same-day URGENT alert and a `well_watch` email. Such readings are now
-  held out of the measurements, the per-well summary, the peak anchor and the
-  readings passed to `well_watch`, and flagged instead.
+  held out of the urgency path, the per-well summary, the peak anchor and the
+  readings passed to `well_watch`, and flagged. Like a re-tagged classifier
+  reading, the as-found value stays in Measurements with `basis: unknown` and a
+  note, so it is on record but never counts as a measured temperature.
 
 The tab holds parser metadata only (document id, link, kind, value, well,
 reading time, pages, a fixed-phrase detail); no classifier prose. It lives on
