@@ -574,3 +574,15 @@ def test_redact_refused_recipients_counts_only():
     import smtplib
     e = smtplib.SMTPRecipientsRefused({"p@q.com": (550, b"x"), "r@s.com": (550, b"y")})
     assert ea.redact_smtp_error(e) == "SMTPRecipientsRefused / 2 recipient(s) refused"
+
+
+def test_digest_procedural_heading_is_deadlines_and_notices():
+    # Trisha 2026-10-15: "Action Items" read as if the reader had been assigned something.
+    from egle_doc_parser import ParsedDoc
+    p = ParsedDoc(summary="s", key_data_point="Response due 11/1", doc_type="procedural",
+                  risks=["R2"], severity="notable", full_text="", ocr_applied=False,
+                  page_count=1, measurements=[])
+    body = ea.format_digest_body([{"parsed": p, "metadata": {"date_filed": "2026-10-15",
+                                   "document_name": "Notice"}, "link": "https://x"}])
+    assert "DEADLINES AND NOTICES:" in body
+    assert "ACTION ITEMS" not in body

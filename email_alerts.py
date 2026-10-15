@@ -159,7 +159,7 @@ def format_urgent_body(parsed, metadata: dict, link: str) -> str:
 
 
 def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None) -> str:
-    """items: [{parsed, metadata, link}]. Procedural action items first.
+    """items: [{parsed, metadata, link}]. Procedural items (deadlines and notices) first.
 
     urgent_recap: same shape, plus each item's metadata carries
     'urgent_sent_at' — a recap of items sent as their own same-day [URGENT]
@@ -202,7 +202,7 @@ def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None
     others = [it for it in remaining if it["parsed"].doc_type != "procedural"]
     lines += [f"Arbor Hills (N2688) digest — {len(items)} new document(s).", ""]
     if procedural:
-        lines.append("ACTION ITEMS (deadlines / notices):")
+        lines.append("DEADLINES AND NOTICES:")
         for it in procedural:
             p, m = it["parsed"], it["metadata"]
             lines.append(f"  - {m.get('date_filed','')}  {m.get('document_name','')}")
