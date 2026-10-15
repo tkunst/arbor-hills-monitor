@@ -213,7 +213,9 @@ def synthesize_pdf(data: bytes, dest_path: str) -> str:
         except Exception as e:  # noqa: BLE001 — OCR failing shouldn't poison a doc whose
             # text pages are still perfectly readable; the image pages just stay
             # un-OCR'd this run (same degrade-gracefully spirit as everywhere else).
-            print(f"[poison-doc-extractor] OCR pass failed for {dest_path}: {e}")
+            # SEC-001 (public Actions logs): class name only -- str(e) of a
+            # TimeoutExpired/RuntimeError embeds the file path and ocrmypdf stderr.
+            print(f"[poison-doc-extractor] OCR pass failed (class={type(e).__name__})")
 
     return dest_path
 
