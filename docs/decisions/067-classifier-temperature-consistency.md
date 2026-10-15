@@ -99,4 +99,8 @@ alerts if any other reading is at or above 145°F. Likewise, a WOI report whose
 gas-table header drifts into an unrecognized form is no longer read with the
 9-column default: its rows are rejected (`rejected_gas_table`) and the report
 falls back to the classifier's windowed sample, so that follow-up should treat
-a rejected table on a detected WOI report as owner-alert material.
+a rejected table on a detected WOI report as owner-alert material. And since
+every page is now searched for the gas-table header, large compilations (e.g.
+a Consent Judgment quarterly report) route too: their classifier temperature,
+oxygen, methane and CO readings are replaced by the table's (other classifier
+metrics are kept), so for them urgency is decided by the gas table alone.
