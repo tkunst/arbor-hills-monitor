@@ -363,9 +363,8 @@ def test_ensure_searchable_kills_whole_group_on_timeout(image_pdf, monkeypatch):
     # just confirms the WIRING -- os.getpgid()/os.killpg() are called with
     # the right pid/signal before the exception propagates.
     killpg_calls = []
-    getpgid_calls = []
     monkeypatch.setattr(ocr_util.os, "getpgid",
-                        lambda pid: getpgid_calls.append(pid) or pid + 1000)
+                        lambda pid: pytest.fail("must not re-look-up the pgid (TOCTOU)"))
     monkeypatch.setattr(ocr_util.os, "killpg",
                         lambda pgid, sig: killpg_calls.append((pgid, sig)))
     first = subprocess.TimeoutExpired(cmd=["ocrmypdf"], timeout=1)
@@ -375,8 +374,42 @@ def test_ensure_searchable_kills_whole_group_on_timeout(image_pdf, monkeypatch):
     with pytest.raises(subprocess.TimeoutExpired):
         ocr_util._run_ocrmypdf(["ocrmypdf", "x"], env={}, timeout=1, capture=False)
 
-    assert getpgid_calls == [4242424]                      # FakePopen's fixed .pid
-    assert killpg_calls == [(4242424 + 1000, ocr_util.signal.SIGKILL)]
+    # start_new_session=True: pgid == pid, so the group is killed by pid directly
+    assert killpg_calls == [(4242424, ocr_util.signal.SIGKILL)]
+
+
+def test_run_ocrmypdf_post_kill_drain_is_bounded(monkeypatch):
+    # Security review 2026-10-14 (PR #143 Step 6): if the post-kill drain
+    # ITSELF times out (a descendant escaped the group and holds the pipes),
+    # _run_ocrmypdf must still raise TimeoutExpired rather than hang, and it
+    # must pass a finite timeout to the second communicate() and the reap.
+    seen = []
+    monkeypatch.setattr(ocr_util.os, "killpg", lambda pgid, sig: None)
+
+    class _P:
+        pid = 4242424
+        returncode = None
+        stdout = None
+        stderr = None
+
+        def __init__(self, *a, **k):
+            pass
+
+        def communicate(self, timeout=None):
+            seen.append(("communicate", timeout))
+            raise subprocess.TimeoutExpired(cmd=["ocrmypdf"], timeout=timeout)
+
+        def wait(self, timeout=None):
+            seen.append(("wait", timeout))
+            return -9
+
+    monkeypatch.setattr(ocr_util.subprocess, "Popen", _P)
+    with pytest.raises(subprocess.TimeoutExpired):
+        ocr_util._run_ocrmypdf(["ocrmypdf"], env={}, timeout=1, capture=True)
+    assert seen[0] == ("communicate", 1)
+    assert seen[1] == ("communicate", ocr_util._POST_KILL_TIMEOUT_S)
+    assert ("wait", ocr_util._POST_KILL_TIMEOUT_S) in seen
+    assert all(t is not None for _, t in seen)
 
 
 def test_run_ocrmypdf_kills_group_on_other_exceptions_too(monkeypatch):
@@ -384,7 +417,6 @@ def test_run_ocrmypdf_kills_group_on_other_exceptions_too(monkeypatch):
     # (e.g. KeyboardInterrupt during communicate()) -- extended to the
     # whole group, same as the timeout path.
     killpg_calls = []
-    monkeypatch.setattr(ocr_util.os, "getpgid", lambda pid: pid)
     monkeypatch.setattr(ocr_util.os, "killpg",
                         lambda pgid, sig: killpg_calls.append((pgid, sig)))
     monkeypatch.setattr(ocr_util.subprocess, "Popen",
@@ -405,7 +437,6 @@ def test_ocr_in_place_raises_timeout_expired_and_kills_group(tmp_path, monkeypat
     with open(pdf_path, "wb") as fh:
         fh.write(b"x")
     killpg_calls = []
-    monkeypatch.setattr(ocr_util.os, "getpgid", lambda pid: pid)
     monkeypatch.setattr(ocr_util.os, "killpg",
                         lambda pgid, sig: killpg_calls.append((pgid, sig)))
     first = subprocess.TimeoutExpired(cmd=["ocrmypdf"], timeout=1)
@@ -496,3 +527,26 @@ def test_ensure_searchable_real_subprocess_kills_grandchild_on_timeout(
         "timeout only kills the DIRECT child; the process-group kill below "
         "it must reach ocrmypdf's own worker processes too."
     )
+
+
+def test_run_ocrmypdf_real_escaped_grandchild_capture_does_not_hang(tmp_path):
+    # The Step 6 scenario end to end, no mocking: capture=True (the
+    # ocr_in_place() path) and a grandchild that calls setsid() -- escaping
+    # the killed group -- while keeping the stdout/stderr pipes open for 30 s.
+    # Before the fix the post-kill communicate() blocked until it exited.
+    script = tmp_path / "fake_ocrmypdf_escape"
+    script.write_text(
+        "#!{python}\n"
+        "import os, time\n"
+        "if os.fork() == 0:\n"
+        "    os.setsid()\n"
+        "    time.sleep(30)\n"
+        "    os._exit(0)\n"
+        "time.sleep(30)\n".format(python=sys.executable)
+    )
+    script.chmod(0o755)
+    t0 = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        ocr_util._run_ocrmypdf([str(script)], env=dict(os.environ), timeout=1, capture=True)
+    elapsed = time.monotonic() - t0
+    assert elapsed < 1 + 2 * ocr_util._POST_KILL_TIMEOUT_S + 3, f"took {elapsed:.1f}s"

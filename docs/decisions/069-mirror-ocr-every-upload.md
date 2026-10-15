@@ -569,7 +569,7 @@ above should have caught — the direct inspection that found the 60s
 timeout default stopped at the timeout and never checked what else
 `build_http()` does.
 
-## Open finding from Step 6 security review — NOT fixed in this PR
+## Step 6 security review finding — FIXED 2026-10-14 (Trisha: "make the fix")
 
 The independent Step 6 security review of this PR (`/security-review`
 could not run cross-repo from the build session; a dedicated review
@@ -614,3 +614,19 @@ equals the leader's own pid by construction — looking it up fresh via
 already been reaped and its pid reused by an unrelated process. This is
 recorded here for whoever picks this up next; it has not been
 independently re-reviewed since it was only ever a sketch.
+
+**Resolution (2026-10-14, on Trisha's go):** fixed with bounded post-kill
+cleanup rather than the temp-file sketch. `_run_ocrmypdf()` now kills the
+group with `os.killpg(proc.pid, SIGKILL)` directly (no `getpgid()` lookup;
+`start_new_session=True` makes pgid == pid, and the child is not reaped
+before the kill, so the pid cannot have been reused). After a kill, every
+wait is capped at `_POST_KILL_TIMEOUT_S` (5 s): `_bounded_drain()` calls
+`communicate(timeout=5)` and, if an escaped descendant still holds the
+pipes, closes our pipe ends and returns no output; `_bounded_wait()` reaps
+the direct child with `wait(timeout=5)`. The non-timeout exception branch
+uses the same bounded reap. Worst case after an OCR timeout is now
+timeout + ~10 s, never unbounded. Tests: a fake-Popen test that the drain
+and reap both get a finite timeout, and a real end-to-end test with a
+grandchild that calls `setsid()` and holds the pipes for 30 s
+(`capture=True`); mutation-checked: restoring the unbounded
+`communicate()` makes that test take 30.2 s and fail.
