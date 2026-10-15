@@ -533,20 +533,27 @@ def test_run_ocrmypdf_real_escaped_grandchild_capture_does_not_hang(tmp_path):
     # The Step 6 scenario end to end, no mocking: capture=True (the
     # ocr_in_place() path) and a grandchild that calls setsid() -- escaping
     # the killed group -- while keeping the stdout/stderr pipes open for 30 s.
-    # Before the fix the post-kill communicate() blocked until it exited.
+    # Before the fix the post-kill communicate() blocked until it exited
+    # (mutation-checked: 30.2 s). The sentinel proves the grandchild really
+    # escaped before the kill; the lower bound proves the bounded drain was
+    # actually exercised (not a fast path that skipped it).
+    escaped = tmp_path / "grandchild_escaped"
     script = tmp_path / "fake_ocrmypdf_escape"
     script.write_text(
         "#!{python}\n"
         "import os, time\n"
         "if os.fork() == 0:\n"
         "    os.setsid()\n"
+        "    open({escaped!r}, 'w').close()\n"
         "    time.sleep(30)\n"
         "    os._exit(0)\n"
-        "time.sleep(30)\n".format(python=sys.executable)
+        "time.sleep(30)\n".format(python=sys.executable, escaped=str(escaped))
     )
     script.chmod(0o755)
     t0 = time.monotonic()
     with pytest.raises(subprocess.TimeoutExpired):
-        ocr_util._run_ocrmypdf([str(script)], env=dict(os.environ), timeout=1, capture=True)
+        ocr_util._run_ocrmypdf([str(script)], env=dict(os.environ), timeout=2, capture=True)
     elapsed = time.monotonic() - t0
-    assert elapsed < 1 + 2 * ocr_util._POST_KILL_TIMEOUT_S + 3, f"took {elapsed:.1f}s"
+    assert escaped.exists(), "test setup broken: the grandchild never escaped the group"
+    assert elapsed >= 2 + ocr_util._POST_KILL_TIMEOUT_S - 0.5, f"drain not exercised ({elapsed:.1f}s)"
+    assert elapsed < 2 + 2 * ocr_util._POST_KILL_TIMEOUT_S + 3, f"took {elapsed:.1f}s"

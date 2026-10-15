@@ -170,8 +170,11 @@ def _kill_process_group(pid: int) -> None:
     this is a last-resort cleanup path -- it must never itself raise)."""
     # start_new_session=True makes the child its own group leader, so its
     # pgid IS its pid: kill by pid directly. (A fresh os.getpgid() lookup is a
-    # TOCTOU risk -- security review 2026-10-14.) The pid can't be reused
-    # here: the child is not reaped until after this call.
+    # TOCTOU risk -- security review 2026-10-14.) On the timeout path the
+    # child is not reaped until after this call, so its pid can't have been
+    # reused. On the other-exception path a reap may already have happened;
+    # killpg then still reaches any live group members (a group id isn't
+    # reusable while a member lives) or hits ProcessLookupError (swallowed).
     try:
         os.killpg(pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
