@@ -205,6 +205,7 @@ def test_review_flags_logged_for_core_docs_only(monkeypatch, mod):
         monkeypatch.delenv(env, raising=False)
     monkeypatch.setattr(mod.sw, "ensure_tab", lambda *a: None)
     monkeypatch.setenv("GSHEET_ID_PRIVATE", "PRIV")
+    monkeypatch.setattr(rf, "_is_public_sheet", lambda svc, sid: False)
 
     def fake_route(parsed, local, d, cfg, **k):
         k["review_flags"].append(rf.flag(rf.KIND_WOI_TEMP, value_f=526.8, well_id="AHWW0402"))

@@ -43,3 +43,22 @@ def test_needs_ocr_gate_fails_open_on_read_error(monkeypatch):
 def test_extract_document_date_survives_damaged_first_page():
     d = _Doc(["", "October 1, 2026"], bad=0)
     assert e.extract_document_date(d, max_pages=2) == ("2026-10-01", "dateline")
+
+
+def test_ocr_classify_survives_a_damaged_early_page(tmp_path, monkeypatch):
+    import fitz
+    import ocr_util
+    path = tmp_path / "d.pdf"
+    doc = fitz.open()
+    for _ in range(3):
+        doc.new_page().insert_text((20, 20), "plenty of text " * 20, fontsize=6)
+    doc.save(str(path))
+    doc.close()
+    real = fitz.Document.__getitem__
+
+    def flaky(self, i):
+        if i == 1:
+            raise RuntimeError("cannot find page 2 in page tree")
+        return real(self, i)
+    monkeypatch.setattr(fitz.Document, "__getitem__", flaky)
+    assert ocr_util.classify(str(path))[0] == "has_text"

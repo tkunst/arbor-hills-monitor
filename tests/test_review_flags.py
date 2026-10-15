@@ -67,6 +67,7 @@ def test_rows_shape():
 
 def test_log_for_document_is_best_effort(capsys, monkeypatch):
     monkeypatch.setenv("GSHEET_ID_PRIVATE", "PRIV")
+    monkeypatch.setattr(rf, "_is_public_sheet", lambda svc, sid: False)
     monkeypatch.setenv("GSHEET_ID", "PUB")
     svc = mock.MagicMock()
     with mock.patch.object(rf.sw, "ensure_tab", side_effect=RuntimeError("boom https://secret")):
@@ -78,6 +79,7 @@ def test_log_for_document_is_best_effort(capsys, monkeypatch):
 
 def test_log_for_document_writes_private_sheet_only(monkeypatch):
     monkeypatch.setenv("GSHEET_ID_PRIVATE", "PRIV")
+    monkeypatch.setattr(rf, "_is_public_sheet", lambda svc, sid: False)
     monkeypatch.setenv("GSHEET_ID", "PUB")
     calls = []
     with mock.patch.object(rf.sw, "ensure_tab", lambda *a: calls.append(("ensure", a[1]))), \
@@ -124,3 +126,25 @@ def test_flags_since_filters_and_is_strict():
     with mock.patch.object(rf.sw, "_tab_rows_strict", side_effect=OSError("transport")):
         with pytest.raises(OSError):
             rf.flags_since(object(), "sid", "2026-10-10")
+
+
+def test_kdp_sanitize_then_parsed_flags_end_to_end():
+    import kdp_check
+    ref = kdp_check.TempReference()
+    ms, n = kdp_check.sanitize_measurements(
+        [{"metric": "temperature", "value": 553, "unit": "F", "basis": "measured",
+          "well_id": "AHW259R4", "note": "H2S column"}], ref)
+    assert n == 1
+    flags = rf.parsed_flags(_parsed(measurements=ms), CFG)
+    assert [f["kind"] for f in flags] == ["measurement_temp_above_ceiling"]
+
+
+def test_log_for_document_refuses_a_sheet_with_public_tabs(monkeypatch, capsys):
+    monkeypatch.setenv("GSHEET_ID_PRIVATE", "PRIV2")
+    monkeypatch.setenv("GSHEET_ID", "PUB")
+    svc = mock.MagicMock()
+    svc.spreadsheets().get().execute.return_value = {
+        "sheets": [{"properties": {"title": rf.sw.TAB_MEASUREMENTS}}]}
+    with mock.patch.object(rf.sw, "append_rows", side_effect=AssertionError("wrote")):
+        assert rf.log_for_document(svc, [rf.flag(rf.KIND_TEXT_TEMP)], {}, "", "t") == 0
+    assert "public case-file tabs" in capsys.readouterr().out

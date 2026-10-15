@@ -221,6 +221,20 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
     # can never stand in for a missing temperature and re-expose the is_urgent
     # free-text fallback. (The old windowed path caught only a few CO readings by
     # luck; this captures the full series.) See ADR 005.
+    # Above-ceiling readings: kept on record the way kdp_check keeps a
+    # re-tagged classifier reading (basis "unknown" + a note), so they stay
+    # visible in Measurements but can never reach is_urgent's measured path.
+    # Added after the anchor guard above, so they can never stand in for it.
+    for r in above:
+        if r.adj:
+            continue
+        for m in wtp.to_measurements(r):
+            if m["metric"] == "temperature":
+                m["basis"] = "unknown"
+                m["note"] = (f"[above the {max_f:g}F plausibility ceiling; held out of "
+                             "alerts by woi_router, logged for review]")
+                measurements.append(m)
+
     co_measurements: list[dict] = []
     for cr in wtp.parse_co_data(pdf_path, alias_map=alias_map):
         co_measurements.extend(wtp.co_to_measurements(cr))

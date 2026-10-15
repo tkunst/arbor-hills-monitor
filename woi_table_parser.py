@@ -199,6 +199,7 @@ _HEADER_BAND_ABOVE = 60.0
 _HEADER_BAND_BELOW = 5.0
 # A real header page has one or two "Well ID" labels; far more is not a table.
 _MAX_ID_WORDS_PER_PAGE = 50
+_MAX_WORDS_PER_HEADER_PAGE = 20000
 
 
 def _center(w) -> tuple[float, float]:
@@ -233,7 +234,8 @@ def _page_header_columns(words: list) -> list[list]:
     found_headers = []
     wells = [w for w in words if w[4].lower() == "well"]
     ids = [w for w in words if w[4] == "ID"]
-    if len(ids) > _MAX_ID_WORDS_PER_PAGE or len(wells) > _MAX_ID_WORDS_PER_PAGE:
+    if (len(ids) > _MAX_ID_WORDS_PER_PAGE or len(wells) > _MAX_ID_WORDS_PER_PAGE
+            or len(words) > _MAX_WORDS_PER_HEADER_PAGE):
         return []  # not a table header page; bounds the pairing work on a hostile page
     for idw in ids:
         frame = None
@@ -252,8 +254,8 @@ def _page_header_columns(words: list) -> list[list]:
             if w[0] <= tid[2]:
                 continue  # left of the Well ID label (incl. its own "Well")
             for col, rx in _LABEL_WORDS.items():
-                if rx.match(w[4]) and col not in found:
-                    found[col] = w[0]
+                if rx.match(w[4]):
+                    found[col] = min(found.get(col, w[0]), w[0])  # leftmost match
         cols = [c for c, _ in sorted(found.items(), key=lambda kv: kv[1])]
         found_headers.append((tid[1], cols))
     return [cols for _, cols in sorted(found_headers, key=lambda t: t[0])]
@@ -442,11 +444,14 @@ def _pdf_read(pdf_path: str) -> tuple[list[tuple[str, int]], list[int], dict]:
             try:
                 page = doc[p]
                 text = page.get_text()
-                if _WELL_ID_TEXT_RE.search(text):
-                    headers[p + 1] = _page_header_columns(page.get_text("words"))
             except Exception:  # noqa: BLE001 — a damaged page; keep the rest
                 skipped.append(p + 1)
                 continue
+            if _WELL_ID_TEXT_RE.search(text):
+                try:
+                    headers[p + 1] = _page_header_columns(page.get_text("words"))
+                except Exception:  # noqa: BLE001 — no geometry: its header reads as unknown
+                    headers[p + 1] = []
             for ln in text.split("\n"):
                 s = ln.strip()
                 if s:
