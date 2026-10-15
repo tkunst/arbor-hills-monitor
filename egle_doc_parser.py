@@ -594,22 +594,41 @@ def _build_system_prompt(risk_register: list[dict]) -> str:
 # closing tag we add is always the only one. Real document text essentially
 # never contains this exact string, so ordinary specimens pass through
 # unchanged.
-# Security review 2026-10-15: a tag-specific regex missed variants a model may
-# still read as a fence ("< /document>", "</document x>", zero-width or
-# fullwidth characters) and left OPENING tags alone. So untrusted text is first
-# NFKC-normalized (fullwidth "＜" -> "<"), stripped of Unicode format characters
-# (zero-width joiners etc.), and then ANY tag-like run naming document/metadata,
-# opening or closing, with or without attributes or spaces, is bracketed.
-_FENCE_TAG_RE = re.compile(r"<\s*/?\s*(?:document|metadata)\b[^<>]{0,200}>", re.IGNORECASE)
-_FORMAT_CHARS_RE = re.compile(
-    "[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]")
+# Security review 2026-10-15 (two rounds): a tag-specific regex missed variants a
+# model may still read as a fence ("< /document>", "</document x>", zero-width,
+# fullwidth or angle-quote characters) and left OPENING tags alone. So, on
+# untrusted text: (1) only the look-alike forms of "<", ">" and "/" are mapped to
+# ASCII (NOT a full NFKC pass, which would rewrite real data such as "10\u00b3"
+# -> "103"); (2) every Unicode format character (category Cf: zero-width,
+# bidi controls, invisible tag characters) is removed; (3) any "<" that opens a
+# document/metadata tag (optionally after spaces, "/" or combining marks) becomes
+# "[". The pattern is a single lookahead with a bounded prefix, so it runs in
+# linear time on any input (round 2 found quadratic backtracking in the first
+# version: "<" followed by a long run of spaces).
+_FENCE_LOOKALIKES = str.maketrans({
+    "\uff1c": "<", "\ufe64": "<", "\u2039": "<", "\u3008": "<", "\u27e8": "<", "\u2329": "<",
+    "\uff1e": ">", "\ufe65": ">", "\u203a": ">", "\u3009": ">", "\u27e9": ">", "\u232a": ">",
+    "\uff0f": "/", "\u2044": "/", "\u2215": "/",
+})
+_FENCE_OPEN_RE = re.compile(r"<(?=[\s/\u0300-\u036f]{0,8}(?:document|metadata)\b)", re.IGNORECASE)
+_FORMAT_CHARS_RE = None
+
+
+def _format_chars_re():
+    """Regex matching every Unicode category-Cf character (built once, lazily)."""
+    global _FORMAT_CHARS_RE
+    if _FORMAT_CHARS_RE is None:
+        import sys as _sys
+        import unicodedata
+        cf = [chr(c) for c in range(_sys.maxunicode + 1) if unicodedata.category(chr(c)) == "Cf"]
+        _FORMAT_CHARS_RE = re.compile("[" + "".join(re.escape(c) for c in cf) + "]")
+    return _FORMAT_CHARS_RE
 
 
 def _neutralize_fences(text: str) -> str:
-    import unicodedata
-    t = unicodedata.normalize("NFKC", text or "")
-    t = _FORMAT_CHARS_RE.sub("", t)
-    return _FENCE_TAG_RE.sub(lambda m: m.group(0).replace("<", "[").replace(">", "]"), t)
+    t = (text or "").translate(_FENCE_LOOKALIKES)
+    t = _format_chars_re().sub("", t)
+    return _FENCE_OPEN_RE.sub("[", t)
 
 
 def _meta_value(value) -> str:
