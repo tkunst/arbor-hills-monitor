@@ -162,3 +162,135 @@ def test_co_to_measurements():
     assert ms[0]["metric"] == "carbon_monoxide" and ms[0]["value"] == 70
     assert ms[0]["unit"] == "ppm" and ms[0]["basis"] == "measured"
     assert ms[0]["as_of_date"] == "2025-06-23"
+
+
+# --- per-table column layout (coder:woi-layout-guard) ---
+
+HDR_FULL = ["Well ID", "Date/Time", "ADJ", "CH4 (%)", "CO2 (%)", "O2 (%)", "Balance", "(%)",
+            "Diff.", "Press. (in. H2O)", "Temp.", "Flow", "(scfm)", "Well", "Pres. (in. H2O)",
+            "Header", "Pres. (in. H2O)", "Comments"]
+HDR_NO_DIFF = ["Well ID", "Date/Time", "ADJ", "CH4 (%)", "CO2 (%)", "O2 (%)", "Balance", "(%)",
+               "Temp.", "Flow", "(scfm)", "Well", "Pres. (in. H2O)", "Header",
+               "Pres. (in. H2O)", "Comments"]
+# The real no-Diff.Press row from the Q3 2023 HOV WOI report (p19): Temp 110.5,
+# Flow 526.8. Read as the 9-number layout it reported 526.8F.
+NO_DIFF_ROW = ["AHWW0402", "8/3/2023 11:18", "41.9", "38.4", "0.6", "19.1", "110.5",
+               "526.8", "-11.43", "-51.62"]
+
+
+def test_detect_layout_from_header_text():
+    assert w.detect_layout(" ".join(HDR_FULL)) == w.LAYOUTS["full"]
+    assert w.detect_layout(" ".join(HDR_NO_DIFF)) == w.LAYOUTS["no_diff_press"]
+    assert w.detect_layout("Well ID Date/Time CH4 CO2 O2 Balance Diff. Press.") is None  # no Temp
+
+
+def test_no_diff_press_table_reads_temp_not_flow():
+    g = w._parse_table_lines(L(*HDR_NO_DIFF, *NO_DIFF_ROW))
+    assert len(g.readings) == 1
+    r = g.readings[0]
+    assert r.temp == 110.5 and r.flow == 526.8 and r.diff_press is None
+    assert r.well_pres == -11.43 and r.header_pres == -51.62
+
+
+def test_layout_carries_forward_until_next_header():
+    lines = L(*HDR_NO_DIFF, *NO_DIFF_ROW, *HDR_FULL, *HOT)
+    rs = w._parse_table_lines(lines).readings
+    assert [r.temp for r in rs] == [110.5, 177.0]
+    assert rs[1].diff_press == 0.5 and rs[1].header_pres == -40.0
+
+
+def test_rows_before_any_header_are_rejected_not_guessed():
+    g = w._parse_table_lines(L(*NO_DIFF_ROW))
+    assert g.readings == []
+    assert len(g.rejected_tables) == 1
+    assert g.rejected_tables[0].reason == "rows before any recognized header"
+
+
+def test_unknown_gas_layout_rejects_whole_table():
+    hdr = ["Well ID", "Date/Time", "ADJ", "CH4 (%)", "CO2 (%)", "O2 (%)", "Balance", "Diff. Press."]
+    rows = ["AH147AR4", "5/19/2023 12:46", "59.9", "40", "0", "0.1", "5", "3", "2"]
+    g = w._parse_table_lines(L(*hdr, *rows, *rows))
+    assert g.readings == []
+    assert g.rejected_tables[0].reason == "column layout not recognized"
+    assert g.rejected_tables[0].n_rows == 2
+
+
+def test_non_gas_table_header_ends_the_gas_table():
+    co_hdr = ["Well ID", "Date", "ppm"]
+    g = w._parse_table_lines(L(*HDR_FULL, *HOT, *co_hdr, *HOT))
+    assert len(g.readings) == 1
+    assert g.rejected_tables[0].reason == "rows under a non-gas table header"
+
+
+def _row(i, flow):
+    return [f"AHW{100 + i}", "3/14/2025 15:40", "50", "40", "0", "10", "0.5", "120",
+            str(flow), "-5", "-40"]
+
+
+def test_negative_flow_signature_rejects_table():
+    lines = list(HDR_FULL)
+    for i in range(30):
+        lines += _row(i, -3.2 if i < 20 else 4.0)   # 67% negative "flow"
+    g = w._parse_table_lines(L(*lines))
+    assert g.readings == []
+    assert "column-shift signature" in g.rejected_tables[0].reason
+
+
+def test_occasional_negative_flow_is_kept():
+    lines = list(HDR_FULL)
+    for i in range(30):
+        lines += _row(i, -0.1 if i < 2 else 4.0)    # 7% negative: a real table
+    g = w._parse_table_lines(L(*lines))
+    assert len(g.readings) == 30 and g.rejected_tables == []
+
+
+def test_page_header_columns_reads_label_x_order():
+    # Wrapped labels ("Balance/(%)", "Diff./Press.") come out of the text
+    # extractor AFTER "Temp.", but their x-positions put them first.
+    def wd(x, y, t):
+        return (x, y, x + 10, y + 5, t)
+    words = [wd(50, 100, "Well"), wd(62, 100, "ID"), wd(100, 100, "CH4"), wd(130, 100, "CO2"),
+             wd(160, 100, "O2"), wd(190, 89, "Balance"), wd(225, 78, "Diff."),
+             wd(260, 100, "Temp."), wd(290, 89, "Flow")]
+    assert w._page_header_columns(words) == [["ch4", "co2", "o2", "balance", "diff_press",
+                                              "temp", "flow"]]
+
+
+def test_page_header_columns_rotated_table():
+    # A table printed rotated on an unrotated page: "Well ID" runs upward.
+    def wd(x, y, t):
+        return (x, y, x + 5, y + 10, t)
+    words = [wd(100, 730, "Well"), wd(100, 718, "ID"), wd(100, 560, "CH4"), wd(100, 535, "CO2"),
+             wd(100, 514, "O2"), wd(94, 477, "Balance"), wd(88, 462, "Diff."),
+             wd(100, 432, "Temp."), wd(94, 411, "Flow"), wd(88, 388, "Well"),
+             wd(88, 356, "Header")]
+    assert w._page_header_columns(words) == [w.LAYOUTS["full"]]
+
+
+def test_unreadable_page_is_skipped(tmp_path, monkeypatch):
+    import fitz
+    path = tmp_path / "r.pdf"
+    doc = fitz.open()
+    for text in ["Well ID Date/Time ADJ CH4 (%) CO2 (%) O2 (%) Balance (%) Diff. Press. "
+                 "Temp. Flow Well Pres. Header Pres.", "filler", "AHW272R4\n3/14/2025 15:40\n"
+                 + "\n".join(HOT[2:])]:
+        doc.new_page().insert_text((20, 20), text, fontsize=6)
+    doc.save(str(path))
+    doc.close()
+
+    real_getitem = fitz.Document.__getitem__
+
+    def flaky(self, i):
+        if i == 1:
+            raise RuntimeError("cannot find page 2 in page tree")
+        return real_getitem(self, i)
+    monkeypatch.setattr(fitz.Document, "__getitem__", flaky)
+    g = w.parse_gas_extraction_report(str(path))
+    assert g.skipped_pages == [2]
+    assert [r.temp for r in g.readings] == [177.0]
+    assert w.parse_gas_extraction(str(path))[0].temp == 177.0    # list API unchanged
+
+
+def test_page_ranges():
+    assert w._page_ranges([71, 72, 73, 80]) == "71-73, 80"
+    assert w._page_ranges([]) == ""

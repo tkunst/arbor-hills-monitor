@@ -56,3 +56,33 @@ deterministic check existed.
 - Not covered: non-temperature claims (CO, methane, PFAS) and the model's severity on
   documents whose text passes. Older Haiku-era backfill rows are not re-classified
   (separate decision).
+
+## Amendment (2026-10-15, coder:woi-layout-guard): flag, don't drop
+
+Point 4's protections stay exactly as they are: a °F number above
+`max_plausible_wellhead_f` (250) never fires an URGENT alert on its own. What
+changes is that such a number is no longer dropped silently. Each one becomes a
+row in a new append-only **Parser Review Flags** tab (`review_flags.py`):
+
+- `measurement_temp_above_ceiling`: a classifier MEASURED reading that
+  `sanitize_measurements` re-tagged `basis: unknown` (still kept in Measurements
+  with its note, as before);
+- `text_temp_above_ceiling`: when `is_urgent` had to fall back to free text
+  (no structured temperature at all), each above-ceiling number that fallback
+  skipped. Flare/combustion context (±150 characters) is not flagged: flare
+  temperatures are real and expected;
+- `woi_temp_above_ceiling`: a valid WOI gas-table reading above the ceiling.
+  This is new protection, not only a new flag: `woi_router` used to emit any
+  valid reading at or above the watch band as a measured temperature, so a
+  shifted column (the 526.8°F case in ADR 005's 2026-10-15 addendum) would have
+  fired a same-day URGENT alert and a `well_watch` email. Such readings are now
+  held out of the measurements, the per-well summary, the peak anchor and the
+  readings passed to `well_watch`, and flagged instead.
+
+The tab holds parser metadata only (document id, link, kind, value, well,
+reading time, pages, a fixed-phrase detail); no classifier prose. It is on the
+case-file Sheet because both the watcher and the backfill workflows can write
+it (the backfill job has no private-Sheet secret). Writes are best-effort and
+never block a document. No email is sent from this path:
+`review_flags.flags_since()` is the read entry point for a later owner-only
+email.

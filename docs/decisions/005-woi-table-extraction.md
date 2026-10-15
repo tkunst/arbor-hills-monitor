@@ -157,3 +157,55 @@ The most important R8 evidence is now fully and verifiably extractable. The
 per-well summary it produces (max temp, concurrent O₂/CH₄, WOI tag) is the
 hand-to-EGLE artifact and the source for the plan's Crisis Comparison Matrix
 baseline cells.
+
+## Addendum (2026-10-15, coder:woi-layout-guard): per-table layout, all-page detection, bad pages
+
+A read-only re-run of every WOI-mentioning filing found three parser defects on
+the live path (none had reached the WOI Well Summary tab):
+
+1. **Column order is now read from each table's own header.** Rows are parsed
+   in order, and the filed reports use six column layouts (`LAYOUTS` in
+   `woi_table_parser.py`), two of them 8 numbers wide. Reading the "no Diff.
+   Press" layout as the 9-number one put each row's flow in the temperature
+   field: the Q3 2023 HOV WOI report (65pp) gave AHWW0402 = 526.8°F on 8/3/2023
+   (the page shows 110.5°F) and 82 readings over 200°F, all passing the
+   sum-to-100 gate. The order comes from each label word's position on the page,
+   in the table's own reading direction (wrapped labels come out of the text
+   extractor out of order, and some tables are printed rotated). A layout is
+   carried forward until the next header. Rows under an unrecognized gas
+   header, under another table's "Well ID" header (CO data), or before any
+   header are never emitted; they are reported as rejected tables. A table
+   whose flow column is negative on more than 25% of rows (the column-shift
+   signature: 94% on the shifted read, 0% on every correctly read table) is
+   rejected whole. `parse_gas_extraction()` keeps its list return;
+   `parse_gas_extraction_report()` also returns the rejected tables and
+   skipped pages.
+2. **The "Gas Extraction Report" header is searched on every page** (it was
+   the first 25). The Q3 2023 Consent Judgment report (1006pp) carries it on
+   p163.
+3. **An unreadable page is skipped**, in every page loop here and in
+   `egle_doc_parser` (text extraction, the urgency-floor scan, the date pass,
+   and the `needs_ocr()` gate, which now fails open on a read error). The Q1
+   2024 HOV WOI report (90pp, 20 pages MuPDF cannot find in its page tree) had
+   failed every attempt; it now parses to 6,178 readings.
+
+Rejected tables, unreadable pages and readings above the 250°F plausibility
+ceiling are logged to the Parser Review Flags tab (ADR 067 amendment).
+
+Verified against 51 real filings (nSITE + the hand-curated copies), comparing
+well, time, ADJ, the four gas columns and temperature with the old parser's
+output: identical for every document except
+
+- the Q3 2023 HOV report (both copies): 4,354 shifted rows now read
+  correctly, 0 readings over 200°F (was 82), max 162.1°F, AHWW0402 on 8/3/2023
+  = 110.5°F as printed;
+- the Q1 2024 HOV report (both copies): 6,178 readings (was 0; pages 71-90
+  skipped);
+- the 465pp Gas Extraction report (both copies): its gas + Temp only table
+  (4,364 rows) was never read before, and one row on p98 that the old parser
+  read as 84.0°F (a number from the next row) now reads 105.9°F.
+
+Tables that still yield no readings now appear as rejected tables instead of
+being silently empty: the 250pp Gas Extraction pair (gas + Diff. Press, no
+Temp column), and the no-Temp tables inside four Gas Extraction subset
+reports (1,374-2,419 rows each, never emitted by either parser).

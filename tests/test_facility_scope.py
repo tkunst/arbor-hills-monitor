@@ -192,3 +192,24 @@ def test_backfill_routes_related_doc_to_related_tab_only(monkeypatch):
     assert sorted(rec["processed"]) == ["core1", "rel1"]
     assert ("route", ALIAS_SENTINEL) in rec["alias_kwargs"]
     assert {v is ALIAS_SENTINEL for _, v in rec["alias_kwargs"]} == {True}
+
+
+# --- review flags reach the log on both paths (coder:woi-layout-guard) ------
+
+@pytest.mark.parametrize("mod", [w, bf])
+def test_review_flags_logged_for_core_docs_only(monkeypatch, mod):
+    import review_flags as rf
+    rec, _ = _wire(monkeypatch, mod, "routine")
+    for env in ("RETRY_POISONED", "RETRY_DOC_IDS", "FORCE_REPROCESS_DOC_IDS",
+                "FORCE_REPROCESS_APPLY"):
+        monkeypatch.delenv(env, raising=False)
+    monkeypatch.setattr(mod.sw, "ensure_tab", lambda *a: None)
+
+    def fake_route(parsed, local, d, cfg, **k):
+        k["review_flags"].append(rf.flag(rf.KIND_WOI_TEMP, value_f=526.8, well_id="AHWW0402"))
+        return None
+    monkeypatch.setattr(mod.woi_router, "route_measurements", fake_route)
+    assert mod.run() == 0
+    flag_rows = [r for tab, rows in rec["append"] if tab == rf.TAB_REVIEW_FLAGS for r in rows]
+    assert [(r[1], r[3], r[4]) for r in flag_rows] == [("core1", rf.KIND_WOI_TEMP, "526.8")]
+    assert sorted(rec["processed"]) == ["core1", "rel1"]

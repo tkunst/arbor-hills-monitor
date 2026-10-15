@@ -250,6 +250,30 @@ class ParsedDoc:
 # ---------------------------------------------------------------------------
 
 
+def _page_text(doc, i: int) -> str:
+    """doc[i].get_text(), or "" for a page MuPDF cannot read (e.g. "cannot
+    find page N in page tree" on a damaged page tree). One bad page must not
+    make the whole document unparseable (coder:woi-layout-guard: the Q1 2024
+    HOV WOI report has 20 such pages and was failing every attempt)."""
+    try:
+        return doc[i].get_text()
+    except Exception:  # noqa: BLE001 — a damaged page reads as empty
+        return ""
+
+
+def _needs_ocr_fail_open(pdf_path: str) -> bool:
+    """needs_ocr(), but a read error on some page (a damaged page tree) means
+    "no OCR", not a parse failure: this check gates the NEW fail-open OCR
+    path (ADR 069), so it must never turn a document that classifies fine
+    into a poison strike either."""
+    try:
+        return needs_ocr(pdf_path)
+    except Exception:  # noqa: BLE001 — class-only log, SEC-001 posture
+        log.warning("parse_document: needs_ocr() could not read every page -- "
+                    "proceeding without OCR (class=needs_ocr_read_error)")
+        return False
+
+
 def extract_text_for_classification(
     doc: "fitz.Document",
     keywords: list[str],
@@ -265,7 +289,7 @@ def extract_text_for_classification(
     """
     n = len(doc)
     if n <= page_threshold:
-        return ("\n".join(doc[i].get_text() for i in range(n)), False)
+        return ("\n".join(_page_text(doc, i) for i in range(n)), False)
 
     kw = [k.lower() for k in keywords]
     selected: list[int] = [0]  # always include the cover / summary page
@@ -274,7 +298,7 @@ def extract_text_for_classification(
             continue
         if len(selected) - 1 >= max_keyword_pages:
             break
-        page_text = doc[i].get_text().lower()
+        page_text = _page_text(doc, i).lower()
         if any(k in page_text for k in kw):
             selected.append(i)
 
@@ -284,7 +308,7 @@ def extract_text_for_classification(
         f"Google Drive folder.]"
     ]
     for i in selected:
-        parts.append(f"\n--- page {i + 1} ---\n{doc[i].get_text()}")
+        parts.append(f"\n--- page {i + 1} ---\n{_page_text(doc, i)}")
     return ("\n".join(parts), True)
 
 
@@ -410,7 +434,7 @@ def extract_document_date(doc: "fitz.Document", max_pages: int = 2) -> tuple[str
     """extract_document_date_from_text() over the first `max_pages` RAW pages
     of an already-open fitz doc."""
     n = min(len(doc), max_pages)
-    return extract_document_date_from_text([doc[i].get_text() for i in range(n)])
+    return extract_document_date_from_text([_page_text(doc, i) for i in range(n)])
 
 
 _MIN_PLAUSIBLE_YEAR = 1990
@@ -954,7 +978,7 @@ def parse_document(
     ocr_applied = False
     if classify_says_ocr:
         ocr_applied = ocr_in_place(pdf_path)
-    elif needs_ocr(pdf_path):
+    elif _needs_ocr_fail_open(pdf_path):
         try:
             ocr_applied = ocr_in_place(pdf_path)
         except Exception:
@@ -984,7 +1008,7 @@ def parse_document(
             if hasattr(_rr_pages, "hard_urgency_signal"):
                 if _windowed:
                     _floor_page_hit = any(
-                        _rr_pages.hard_urgency_signal(doc[i].get_text()) for i in range(page_count))
+                        _rr_pages.hard_urgency_signal(_page_text(doc, i)) for i in range(page_count))
                 else:
                     _floor_page_hit = _rr_pages.hard_urgency_signal(text)
         except ImportError:

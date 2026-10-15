@@ -1,0 +1,209 @@
+"""
+review_flags.py — the "needs human review" log for parser output the monitor
+deliberately did NOT use (coder:woi-layout-guard, ADR 067 + ADR 005 addenda,
+2026-10-15).
+
+Two things used to be dropped silently:
+
+  * a temperature above `temperature_thresholds.max_plausible_wellhead_f`
+    (250°F). ADR 067 made the free-text urgency fallback skip such numbers and
+    kdp_check re-tag such a classifier measurement `basis="unknown"`: both are
+    correct protections (a >250°F number is usually a flare temperature or a
+    misread column, never a reason for an URGENT alert on its own), but nobody
+    was told the number existed. A WOI table reading above the ceiling now
+    gets the same protection in woi_router, plus a flag.
+  * a WOI gas table the parser rejected (unknown column layout, or the
+    column-shift signature) and pages MuPDF could not read.
+
+Each is now one row in the "Parser Review Flags" tab of the case-file Sheet:
+factual parser metadata only (document id, link, kind, value, well, reading
+time, pages, a fixed-phrase detail). No classifier prose, no names. It is a
+DATA tab (append-only, never diffed or baselined by the watcher). It sits on
+the public Sheet because that is the only Sheet both the watcher and the
+backfill workflows can write today (the backfill job has no GSHEET_ID_PRIVATE).
+
+This module never sends email. `flags_since()` is the one read entry point,
+for the owner-only weekly email / same-day alert to call later.
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+import email_alerts as ea
+import kdp_check
+import sheet_writer as sw
+import woi_table_parser as wtp
+
+TAB_REVIEW_FLAGS = "Parser Review Flags"
+REVIEW_FLAG_HEADERS = [
+    "Flagged At", "Doc ID", "Document Name", "Kind", "Value (F)", "Well ID",
+    "Reading", "Pages", "Detail", "Link",
+]
+
+KIND_WOI_TEMP = "woi_temp_above_ceiling"          # WOI table reading > ceiling
+KIND_MEASUREMENT_TEMP = "measurement_temp_above_ceiling"  # classifier reading re-tagged
+KIND_TEXT_TEMP = "text_temp_above_ceiling"        # free-text number the fallback skipped
+KIND_REJECTED_TABLE = "rejected_gas_table"
+KIND_UNREADABLE_PAGES = "unreadable_pages"
+TEMP_KINDS = (KIND_WOI_TEMP, KIND_MEASUREMENT_TEMP, KIND_TEXT_TEMP)
+
+# One document can carry many above-ceiling readings (a shifted table had 82).
+# Keep the log readable: at most this many per-reading WOI flags per document,
+# then one summary flag for the rest.
+MAX_WOI_TEMP_FLAGS_PER_DOC = 25
+
+_RETAG_NOTE = "[implausible wellhead temperature, re-tagged by kdp_check]"
+
+
+def max_plausible_f(cfg: dict) -> float:
+    return float((cfg.get("temperature_thresholds") or {}).get("max_plausible_wellhead_f", 250))
+
+
+def flag(kind: str, *, value_f=None, well_id: str = "", reading: str = "",
+         pages: str = "", detail: str = "") -> dict:
+    return {"kind": kind, "value_f": value_f, "well_id": well_id,
+            "reading": reading, "pages": pages, "detail": detail}
+
+
+def woi_flags(above_ceiling: list, rejected_tables: list, skipped_pages: list,
+              max_f: float) -> list[dict]:
+    """Flags for one WOI report. `above_ceiling` = WOIReading objects whose
+    temperature exceeds max_f (dropped from every alerting path by
+    woi_router); `rejected_tables` = woi_table_parser.RejectedTable;
+    `skipped_pages` = 1-based unreadable pages. Pure."""
+    out = []
+    for r in above_ceiling[:MAX_WOI_TEMP_FLAGS_PER_DOC]:
+        out.append(flag(KIND_WOI_TEMP, value_f=r.temp, well_id=r.well_id,
+                        reading=r.dt + (" ADJ" if r.adj else ""), pages=str(r.page),
+                        detail=f"WOI table temperature above the {max_f:g}F plausibility "
+                               "ceiling; not used for alerts or the summary"))
+    rest = above_ceiling[MAX_WOI_TEMP_FLAGS_PER_DOC:]
+    if rest:
+        out.append(flag(KIND_WOI_TEMP, value_f=max(r.temp for r in rest),
+                        pages=wtp._page_ranges(sorted({r.page for r in rest})),
+                        detail=f"{len(rest)} more WOI table temperatures above the "
+                               f"{max_f:g}F ceiling (max shown)"))
+    for t in rejected_tables:
+        pages = f"{t.first_page}-{t.last_page}" if t.last_page != t.first_page else str(t.first_page)
+        out.append(flag(KIND_REJECTED_TABLE, pages=pages,
+                        detail=f"{t.n_rows} gas rows not used: {t.reason}"))
+    if skipped_pages:
+        out.append(flag(KIND_UNREADABLE_PAGES, pages=wtp._page_ranges(skipped_pages),
+                        detail=f"{len(skipped_pages)} page(s) could not be read; the rest was parsed"))
+    return out
+
+
+# Free-text: a °F number above the ceiling, with the same regex the urgency
+# fallback uses. Flare / combustion context (±150 chars) is skipped: flare
+# temperatures of 1,400°F+ are real and expected, and flagging every flare
+# report would bury the flags that matter.
+_CONTEXT_CHARS = 150
+
+
+def implausible_text_temps(text: str, max_f: float) -> list[int]:
+    """°F values above max_f in free text, outside flare/combustion context,
+    de-duplicated, highest first. Pure."""
+    if not text:
+        return []
+    vals = set()
+    for m in ea._TEMP_RE.finditer(text):
+        v = int(m.group(1))
+        if v <= max_f:
+            continue
+        ctx = text[max(0, m.start() - _CONTEXT_CHARS):m.end() + _CONTEXT_CHARS]
+        if kdp_check._FLARE_CTX_RE.search(ctx):
+            continue
+        vals.add(v)
+    return sorted(vals, reverse=True)
+
+
+def parsed_flags(parsed, cfg: dict) -> list[dict]:
+    """Flags for a classified document (any document, WOI or not):
+
+    * a classifier MEASURED temperature kdp_check re-tagged `basis="unknown"`
+      for being above the ceiling (it stays in Measurements with its note);
+    * when is_urgent had to fall back to free text (no structured temperature
+      at all), each above-ceiling number that fallback skipped.
+
+    Neither can fire an URGENT alert; these flags only make them visible.
+    Pure."""
+    max_f = max_plausible_f(cfg)
+    out = []
+    ms = list(getattr(parsed, "measurements", None) or [])
+    for m in ms:
+        if m.get("metric") == "temperature" and _RETAG_NOTE in (m.get("note") or ""):
+            out.append(flag(KIND_MEASUREMENT_TEMP, value_f=m.get("value"),
+                            well_id=str(m.get("well_id") or ""),
+                            reading=str(m.get("as_of_date") or ""),
+                            detail=f"classifier reading above the {max_f:g}F ceiling; "
+                                   "kept with basis=unknown, not used for alerts"))
+    if not any(m.get("metric") == "temperature" for m in ms):
+        hay = "\n".join(str(getattr(parsed, k, "") or "")
+                        for k in ("key_data_point", "summary", "full_text"))
+        for v in implausible_text_temps(hay, max_f):
+            out.append(flag(KIND_TEXT_TEMP, value_f=v,
+                            detail=f"{v}F in the document text is above the {max_f:g}F "
+                                   "ceiling; skipped by the urgency check"))
+    return out
+
+
+def _cell(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v)
+
+
+def rows(flags: list[dict], metadata: dict, link: str, flagged_at: str) -> list[list]:
+    """Sheet rows for one document's flags. Pure."""
+    return [[flagged_at, metadata.get("doc_id", ""), metadata.get("document_name", ""),
+             f["kind"], _cell(f.get("value_f")), f.get("well_id", ""),
+             f.get("reading", ""), f.get("pages", ""), f.get("detail", ""), link]
+            for f in flags]
+
+
+def record(service, sheet_id: str, flags: list[dict], metadata: dict, link: str,
+           flagged_at: str) -> int:
+    """Append one document's flags. Returns the number written. Callers treat
+    this as best-effort (wrap it; a failure must never block the document)."""
+    if not flags:
+        return 0
+    sw.ensure_tab(service, sheet_id, TAB_REVIEW_FLAGS, REVIEW_FLAG_HEADERS)
+    sw.append_rows(service, sheet_id, TAB_REVIEW_FLAGS, rows(flags, metadata, link, flagged_at))
+    return len(flags)
+
+
+def log_for_document(service, sheet_id: str, flags: list[dict], metadata: dict,
+                     link: str, flagged_at: str) -> int:
+    """record(), best-effort, for the watcher/backfill per-document path: a
+    failure is logged by exception class only (the Actions log is public) and
+    never blocks the document. Returns the number written (0 on failure)."""
+    if not flags:
+        return 0
+    try:
+        n = record(service, sheet_id, flags, metadata, link, flagged_at)
+        print(f"  {n} review flag(s) logged")
+        return n
+    except Exception as fe:  # noqa: BLE001 — the review log is best-effort
+        print(f"  review-flag write skipped (doc still recorded): {type(fe).__name__}")
+        return 0
+
+
+def flags_since(service, sheet_id: str, since_iso: str,
+                kinds: Optional[tuple] = None) -> list[dict]:
+    """Every logged flag with Flagged At >= since_iso (ISO-8601 strings compare
+    in time order), optionally limited to `kinds`. STRICT read: a transport
+    failure raises (a weekly "nothing to review" must never come from a failed
+    read); a never-created tab reads as no flags."""
+    out = []
+    for r in sw._tab_rows_strict(service, sheet_id, TAB_REVIEW_FLAGS, "A2:J"):
+        r = list(r) + [""] * (len(REVIEW_FLAG_HEADERS) - len(r))
+        rec = dict(zip(REVIEW_FLAG_HEADERS, r))
+        if rec["Flagged At"] < since_iso:
+            continue
+        if kinds and rec["Kind"] not in kinds:
+            continue
+        out.append(rec)
+    return out
+
