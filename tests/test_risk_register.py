@@ -208,3 +208,33 @@ def test_real_woi_reports_only_escalate_on_field_sso_comments(pdf):
     assert not rr._CO_SPIKE_RE.search(text), name
     assert not rr._SMOLDER_RE.search(text), name
     assert rr.hard_urgency_signal(text) is (name in _SSO_EVENT_REPORTS), name
+
+
+# --- Enforcement-action title backstop (Trisha, 2026-10-15) ---------------
+# Titles below are verbatim from the live case-file Sheet's nSITE titles.
+
+@_pytest.mark.parametrize("title", [
+    "Violation Notice",
+    "Violation Notice - Request Information",
+    "VN (#4) for continued failure to conduct required stack testing",
+    "Signed VN letter",
+    "8-31-22 Violation Notice and Transmittal Email",
+    "Enforcement Notice",
+    "Administrative Consent Order",
+    "Notice of Violation",
+])
+def test_enforcement_titles_are_urgent(title):
+    assert rr.enforcement_title_signal(title) is True
+
+
+@_pytest.mark.parametrize("title", [
+    "VN Correspondence",
+    "Violation Notice Correspondence",
+    "Response to EGLE Violation Notice",
+    "Quarterly Report - Consent Judgment No. 2020-0593-CE",
+    "nForm Document",
+    "",
+    None,
+])
+def test_non_action_titles_are_not_urgent(title):
+    assert rr.enforcement_title_signal(title) is False

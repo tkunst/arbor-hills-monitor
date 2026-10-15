@@ -446,8 +446,14 @@ _DOC_TYPE_HELP = (
 
 _SEVERITY_HELP = (
     "urgent: an actual MEASURED temperature reading at or above 145F, a CO "
-    "spike, smoldering / subsurface oxidation language, or a Consent Judgment "
-    "violation. NOTE: a permitted ceiling or HOV-waiver limit of 180F is NOT by "
+    "spike, smoldering / subsurface oxidation language, a Consent Judgment "
+    "violation, or an enforcement action ISSUED TO the facility or its operator "
+    "by any authority with enforcement power over it -- federal (EPA), state "
+    "(EGLE), county, or a local utility / sewer authority (e.g. YCUA, WTUA, "
+    "Northville Township): a Violation Notice / Notice of Violation, an "
+    "Administrative Consent Order, a consent order or judgment, a penalty "
+    "assessment, or an enforcement letter. The document must BE the action "
+    "itself, not a later report or letter that merely mentions or cites one. NOTE: a permitted ceiling or HOV-waiver limit of 180F is NOT by "
     "itself urgent — only a measured reading is. "
     "notable: substantive new evidence that isn't an emergency (including a new "
     "HOV waiver request, or measured temps in the 131-145F range). "
@@ -981,13 +987,19 @@ def parse_document(
         try:
             import risk_register as _rr
             _text_floor_hit = _rr.hard_urgency_signal(text)
+            # The regulator's OWN document title (nSITE metadata, raw, read
+            # before any display-name resolution): an enforcement action such
+            # as "Violation Notice" is urgent whatever the model says
+            # (Trisha, 2026-10-15).
+            _text_floor_hit = _text_floor_hit or _rr.enforcement_title_signal(
+                metadata.get("egle_title") or metadata.get("document_name") or "")
         except (ImportError, AttributeError):
             pass  # a non-Arbor-Hills caller (e.g. Decode) has no
                   # risk_register.py -- the text-based half is then a no-op.
         if _temp_floor_hit or _text_floor_hit:
             log.warning(
                 "severity floored to urgent (%s): %s", metadata.get("document_name", "?"),
-                "measured temperature" if _temp_floor_hit else "deterministic text signal")
+                "measured temperature" if _temp_floor_hit else "deterministic text/title signal")
             fields = dict(fields)
             fields["severity"] = "urgent"
 

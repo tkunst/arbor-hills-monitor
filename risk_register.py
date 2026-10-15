@@ -181,6 +181,31 @@ _SMOLDER_RE = re.compile(r"\bsmolder(?:ing)?\b", re.IGNORECASE)
 _FIELD_SSO_RE = re.compile(r"(?:^|,)[ \t]*SSO(?:[ \t]+Well\b|[ \t]*(?:,|$))", re.MULTILINE)
 
 
+# Enforcement-action TITLE backstop (Trisha, 2026-10-15). Reads the regulator's
+# own nSITE document title, never the document body (the body-text version of
+# this -- "EGLE letterhead + violation words" -- was dropped for false positives;
+# see above). Matches a title that STARTS with the action itself, optionally
+# after a date or "Signed": "Violation Notice", "Violation Notice - Request
+# Information", "VN (#4) for continued failure...", "Signed VN letter",
+# "8-31-22 Violation Notice and Transmittal Email", "Enforcement Notice",
+# "Administrative Consent Order", "Notice of Violation". Deliberately NOT:
+# "VN Correspondence" / "Violation Notice Correspondence" (follow-up letters) or
+# "Response to EGLE Violation Notice" (the operator's reply). Titles surveyed
+# from the live case-file Sheet, 2026-10-15.
+_ENFORCEMENT_TITLE_RE = re.compile(
+    r"^\W*(?:\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\s+)?(?:signed\s+)?"
+    r"(?:violation\s+notice|notice\s+of\s+violation|vn\b|enforcement\s+notice|"
+    r"administrative\s+consent\s+order|consent\s+order)"
+    r"(?!\s+correspondence)",
+    re.IGNORECASE)
+
+
+def enforcement_title_signal(title: str) -> bool:
+    """True if `title` (the regulator's own document title from nSITE metadata)
+    names an enforcement action issued to the facility. Pure."""
+    return bool(title and _ENFORCEMENT_TITLE_RE.search(" ".join(str(title).split())))
+
+
 def hard_urgency_signal(text: str) -> bool:
     """True if `text` -- deterministically extracted document text, never the
     model's own output -- contains a hard urgency signal under a rule that

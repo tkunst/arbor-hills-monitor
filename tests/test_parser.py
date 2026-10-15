@@ -480,6 +480,29 @@ def test_floor_skips_when_risk_register_lacks_hard_urgency_signal(monkeypatch, t
     assert parsed.severity == "routine"
 
 
+def test_violation_notice_title_floors_routine_to_urgent(monkeypatch, tmp_path):
+    path = str(tmp_path / "vn.pdf")
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 72), "Dear operator, please see the enclosed notice.")
+    doc.save(path)
+    doc.close()
+    monkeypatch.setattr(
+        p, "_classify_with_claude",
+        lambda *a, **k: _fake_classification(severity="notable", measurements=[],
+                                             key_data_point="No numeric reading."))
+    parsed = p.parse_document(path, {"document_name": "Violation Notice"}, RISK_REGISTER,
+                              signal_keywords=SIGNAL_KEYWORDS)
+    assert parsed.severity == "urgent"
+    parsed = p.parse_document(path, {"document_name": "VN Correspondence"}, RISK_REGISTER,
+                              signal_keywords=SIGNAL_KEYWORDS)
+    assert parsed.severity == "notable"
+
+
+def test_severity_help_names_enforcement_actions_by_any_authority():
+    assert "Administrative Consent Order" in p._SEVERITY_HELP
+    assert "YCUA" in p._SEVERITY_HELP and "BE the action" in p._SEVERITY_HELP
+
+
 @pytest.fixture
 def injected_pdf(tmp_path):
     """A synthetic filing whose text carries a genuine R8 hard-urgency signal
