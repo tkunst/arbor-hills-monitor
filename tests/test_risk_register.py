@@ -227,6 +227,8 @@ def test_real_woi_reports_only_escalate_on_field_sso_comments(pdf):
     "8.31.22 Violation Notice", "Consent Order No. 12-2024", "VN #4",
     "Notice of Violation and Request for Response",
     "Second Violation Notice", "Revised Violation Notice", "EGLE Violation Notice",
+    # security review: a real EGLE action whose title names a missed report
+    "Violation Notice - Failure to Submit Annual Report",
 ])
 def test_enforcement_titles_are_urgent(title):
     assert rr.enforcement_title_signal(title) is True

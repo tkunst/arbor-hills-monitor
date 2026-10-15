@@ -197,22 +197,28 @@ _FIELD_SSO_RE = re.compile(r"(?:^|,)[ \t]*SSO(?:[ \t]+Well\b|[ \t]*(?:,|$))", re
 # "VN Correspondence" / "Violation Notice Correspondence" (follow-up letters) or
 # "Response to EGLE Violation Notice" (the operator's reply). Titles surveyed
 # from the live case-file Sheet, 2026-10-15.
-_ENFORCEMENT_TITLE_RE = re.compile(
+_TITLE_PREFIX = (
     r"^\W*"
     r"(?:(?:\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\s+)?"  # optional date
     r"(?:(?:signed|second|third|revised|amended|final|egle|epa)\s+)*"           # optional qualifiers
-    # "vn" needs something after it: a bare "VN" title says nothing (e.g. "VN (#4) ..." is fine).
-    r"(?:violation\s+notice|notice\s+of\s+violation|vn(?=[\W_]*\w)|enforcement\s+notice|"
-    r"administrative\s+consent\s+order|consent\s+order)\b"
-    # Not a follow-up ABOUT an action, however punctuated or inflected
-    # ("VN - Correspondence", "Violation Notice Responses", "VN Reporting",
-    # "Consent Order Amendment"): checked on the NEXT word ...
+)
+# A follow-up ABOUT an action, checked on the NEXT word, however punctuated or
+# inflected ("VN - Correspondence", "Violation Notice Responses", "VN Reporting").
+_NOT_FOLLOW_UP = (
     r"(?![\W_]*(?:correspond\w*|respons\w*|repl\w*|report\w*|amend\w*|terminat\w*|"
     r"compliance|quarterly|annual|semi-annual|status|list\w*)\b)"
-    # ... and a periodic REPORT anywhere later in the title ("Consent Order No.
-    # 12-2024 Quarterly Report"). "response" is deliberately NOT scanned here, so
-    # "Notice of Violation and Request for Response" (a real action) still matches.
-    r"(?!.*\b(?:quarterly|annual|semi-annual|report\w*)\b)",
+)
+_ENFORCEMENT_TITLE_RE = re.compile(
+    _TITLE_PREFIX + r"(?:"
+    # Violation / enforcement notices: next-word check only, so "Violation Notice
+    # - Failure to Submit Annual Report" (a real EGLE action) still matches.
+    r"(?:violation\s+notice|notice\s+of\s+violation|vn(?=[\W_]*\w)|enforcement\s+notice)\b"
+    + _NOT_FOLLOW_UP + r"|"
+    # Consent orders: also not the operator's periodic report under that order,
+    # wherever it is named ("Consent Order No. 12-2024 Quarterly Report").
+    r"(?:administrative\s+consent\s+order|consent\s+order)\b"
+    + _NOT_FOLLOW_UP + r"(?!.*\b(?:quarterly|annual|semi-annual|report\w*)\b)"
+    r")",
     re.IGNORECASE)
 
 
