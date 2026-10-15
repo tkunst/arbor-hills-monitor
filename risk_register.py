@@ -200,15 +200,19 @@ _FIELD_SSO_RE = re.compile(r"(?:^|,)[ \t]*SSO(?:[ \t]+Well\b|[ \t]*(?:,|$))", re
 _ENFORCEMENT_TITLE_RE = re.compile(
     r"^\W*"
     r"(?:(?:\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\s+)?"  # optional date
-    r"(?:signed\s+)?"
+    r"(?:(?:signed|second|third|revised|amended|final|egle|epa)\s+)*"           # optional qualifiers
     # "vn" needs something after it: a bare "VN" title says nothing (e.g. "VN (#4) ..." is fine).
     r"(?:violation\s+notice|notice\s+of\s+violation|vn(?=[\W_]*\w)|enforcement\s+notice|"
     r"administrative\s+consent\s+order|consent\s+order)\b"
-    # Not a follow-up / response / report ABOUT an action, however punctuated
-    # ("VN - Correspondence", "Violation Notice (Response)", "Consent Order
-    # Amendment", "... quarterly report").
-    r"(?![\W_]*(?:correspondence|response|reply|report|amendment|termination|"
-    r"compliance|quarterly|annual|status|list)\b)",
+    # Not a follow-up ABOUT an action, however punctuated or inflected
+    # ("VN - Correspondence", "Violation Notice Responses", "VN Reporting",
+    # "Consent Order Amendment"): checked on the NEXT word ...
+    r"(?![\W_]*(?:correspond\w*|respons\w*|repl\w*|report\w*|amend\w*|terminat\w*|"
+    r"compliance|quarterly|annual|semi-annual|status|list\w*)\b)"
+    # ... and a periodic REPORT anywhere later in the title ("Consent Order No.
+    # 12-2024 Quarterly Report"). "response" is deliberately NOT scanned here, so
+    # "Notice of Violation and Request for Response" (a real action) still matches.
+    r"(?!.*\b(?:quarterly|annual|semi-annual|report\w*)\b)",
     re.IGNORECASE)
 
 

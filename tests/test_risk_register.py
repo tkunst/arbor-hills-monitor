@@ -223,6 +223,10 @@ def test_real_woi_reports_only_escalate_on_field_sso_comments(pdf):
     "Administrative Consent Order",
     "Notice of Violation",
     "2026-10-15 Violation Notice",
+    # round-2 review probes
+    "8.31.22 Violation Notice", "Consent Order No. 12-2024", "VN #4",
+    "Notice of Violation and Request for Response",
+    "Second Violation Notice", "Revised Violation Notice", "EGLE Violation Notice",
 ])
 def test_enforcement_titles_are_urgent(title):
     assert rr.enforcement_title_signal(title) is True
@@ -239,6 +243,12 @@ def test_enforcement_titles_are_urgent(title):
     "Violation Notices list", "Consent Order Amendment", "Consent Order Termination",
     "Consent Order compliance report Q3", "Administrative Consent Order quarterly report",
     "VN",
+    # round-2 review probes
+    "Violation Notice Responses", "Violation Notice Reports", "VN Reporting",
+    "Consent Order No. 12-2024 Quarterly Report", "Consent Order Status",
+    "Violation Notice/Response", "VN_Response", "VNs", "VN.",
+    # Pending Trisha's call (2026-10-15): currently treated as a follow-up, not the action.
+    "Violation Notice Compliance Schedule",
     "Quarterly Report - Consent Judgment No. 2020-0593-CE",
     "nForm Document",
     "",
