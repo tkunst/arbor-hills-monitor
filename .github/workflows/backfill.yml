@@ -75,6 +75,10 @@ jobs:
           # GDRIVE_FOLDER_ID is vestigial since ADR 006 (state + links no longer
           # use a Drive folder); left unset. State lives in the Sheet's tabs.
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          # Private, service-account-only Sheet: the Parser Review Flags tab
+          # (review_flags.py) lives there, never on the public case file. If
+          # unset, review flags are counted in the log and not written.
+          GSHEET_ID_PRIVATE: ${{ secrets.GSHEET_ID_PRIVATE }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
