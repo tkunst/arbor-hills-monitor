@@ -21,7 +21,7 @@ concurrency:
 jobs:
   ab:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v5
         with:
@@ -50,7 +50,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
-        run: python scripts/classifier_ab.py --old-parser "$RUNNER_TEMP/old/egle_doc_parser.py" --out "$RUNNER_TEMP/classifier-ab.json" --limit 24
+        run: python scripts/classifier_ab.py --old-parser "$RUNNER_TEMP/old/egle_doc_parser.py" --out "$RUNNER_TEMP/classifier-ab.json" --limit 12 --enforcement 6 --repeat 3 --focus "-2136493721019571731,-2935564993291663255,-1616302865726626112"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

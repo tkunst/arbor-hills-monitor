@@ -45,6 +45,27 @@ def _rows(svc, sid, tab):
     return [dict(zip(head, r)) for r in v[1:]]
 
 
+ENFORCEMENT_TITLE_RE = re.compile(
+    r"violation notice|\bVN\b|enforcement notice|consent order|notice of violation", re.IGNORECASE)
+
+
+def pick_enforcement(feed, n_pos, n_neg):
+    """Real nSITE titles: n_pos that the title backstop should catch (newest
+    first) and n_neg look-alikes it must NOT catch (correspondence / responses)."""
+    pos, neg = [], []
+    for r in sorted(feed, key=lambda r: r.get("Date Filed", ""), reverse=True):
+        m = DOC_ID_RE.search(r.get("Link", ""))
+        t = r.get("EGLE Title") or r.get("Document Name", "")
+        if not m or not ENFORCEMENT_TITLE_RE.search(t):
+            continue
+        if rr.enforcement_title_signal(t):
+            if len(pos) < n_pos:
+                pos.append((m.group(1), r))
+        elif len(neg) < n_neg:
+            neg.append((m.group(1), r))
+    return pos + neg
+
+
 def pick_sample(feed, limit):
     """At-risk rows first (WOI/HOV/SSO/CO/smoldering language, newest first),
     then the newest rows overall, then recent urgent ones; deduped by doc id."""
@@ -83,6 +104,9 @@ def main():
     ap.add_argument("--old-parser", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--limit", type=int, default=24)
+    ap.add_argument("--focus", default="", help="comma-separated doc ids to always include")
+    ap.add_argument("--repeat", type=int, default=1, help="classifications per side for focus ids")
+    ap.add_argument("--enforcement", type=int, default=0, help="N enforcement-title docs (+N/2 look-alikes)")
     a = ap.parse_args()
 
     cfg = config_loader.load_config()
@@ -95,6 +119,17 @@ def main():
     sid = os.environ["GSHEET_ID"]
     feed = _rows(svc, sid, "New Documents") + _rows(svc, sid, "Historical Documents")
     sample = pick_sample(feed, a.limit)
+    focus = [x for x in a.focus.split(",") if x]
+    by_id = {}
+    for r in feed:
+        m = DOC_ID_RE.search(r.get("Link", ""))
+        if m:
+            by_id.setdefault(m.group(1), r)
+    extra = [(i, by_id[i]) for i in focus if i in by_id]
+    if a.enforcement:
+        extra += pick_enforcement(feed, a.enforcement, max(1, a.enforcement // 2))
+    seen = {i for i, _ in sample}
+    sample += [(i, r) for i, r in extra if i not in seen and not seen.add(i)]
     print(f"model={model} sample={len(sample)}")
 
     session = nc.make_session()
@@ -113,8 +148,21 @@ def main():
                           page_threshold=cfg["large_doc_page_threshold"],
                           max_keyword_pages=cfg["large_doc_max_keyword_pages"],
                           max_tokens=cfg["classification_max_tokens"])
-                o = old.parse_document(path, dict(meta), RISK_REGISTER, **kw)
-                n = new.parse_document(path, dict(meta), RISK_REGISTER, **kw)
+                reps = a.repeat if doc_id in focus else 1
+                olds = [old.parse_document(path, dict(meta), RISK_REGISTER, **kw) for _ in range(reps)]
+                news = [new.parse_document(path, dict(meta), RISK_REGISTER, **kw) for _ in range(reps)]
+                o, n = olds[0], news[-1]
+                if reps > 1:
+                    rec["old_all"] = [x.severity for x in olds]
+                    rec["new_all"] = [x.severity for x in news]
+                    rec["new_peak_measured_f"] = [
+                        max([m.get("value") for m in (x.measurements or [])
+                             if m.get("metric") == "temperature" and m.get("basis") == "measured"
+                             and isinstance(m.get("value"), (int, float))] or [None],
+                            key=lambda v: -1 if v is None else v)
+                        for x in news]
+                rec["enforcement_title"] = rr.enforcement_title_signal(
+                    row.get("EGLE Title") or row.get("Document Name", ""))
                 text = getattr(n, "full_text", "") or ""
                 rec.update(old=o.severity, new=n.severity,
                            co_spike=bool(text and rr._CO_SPIKE_RE.search(text)),
@@ -124,6 +172,10 @@ def main():
                 rec["error"] = type(e).__name__
             results.append(rec)
             flag = "" if rec.get("old") == rec.get("new") else "  <-- CHANGED"
+            if "old_all" in rec:
+                flag += f"  old_all={rec['old_all']} new_all={rec['new_all']}"
+            if rec.get("enforcement_title"):
+                flag += "  [enforcement-title]"
             print(f"{i:2d} {doc_id} {rec['date_filed']} sheet={rec['sheet_severity']} "
                   f"old={rec.get('old', '-')} new={rec.get('new', '-')}"
                   f"{' err=' + rec['error'] if 'error' in rec else ''}{flag}")
