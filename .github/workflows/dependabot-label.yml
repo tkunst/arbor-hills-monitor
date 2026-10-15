@@ -1,0 +1,58 @@
+name: dependabot-label
+
+# Policy 2A, the "majors wait for review" half: labels a Dependabot PR
+# `needs-review` the moment it's opened, if any bumped dependency is a major
+# version -- independent of whether its tests pass or fail, so a major that
+# breaks CI still gets the label (dependabot-auto-merge.yml, by contrast,
+# only ever runs after `tests` has already completed, so it can't label a
+# major whose own test run never reaches "success"; this workflow covers
+# that gap). The merge decision itself lives entirely in
+# dependabot-auto-merge.yml -- this workflow never merges anything.
+#
+# Trigger is plain `pull_request` (not `pull_request_target`): a Dependabot
+# branch lives in THIS repository, not a fork, so the normal `pull_request`
+# event already carries a GITHUB_TOKEN with the permissions declared below --
+# the fork-PR token restriction that `pull_request_target` exists to work
+# around doesn't apply here. No checkout step; nothing in this job ever
+# touches the PR's file contents, only its GitHub-side metadata.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  pull-requests: write
+  issues: write   # `gh label create`/`gh pr edit --add-label` both need this,
+                  # not pull-requests -- labels are an Issues-API resource
+                  # even when applied to a PR.
+
+jobs:
+  label-major:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Ensure the needs-review label exists
+        # `gh pr edit --add-label` does NOT auto-create a missing label (it
+        # just fails) -- unlike Dependabot's own `labels:` handling in
+        # dependabot.yml, which does. `--force` makes this idempotent: a
+        # no-op update on every run after the first, never an error.
+        if: steps.metadata.outputs.update-type == 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create needs-review --force \
+            --color b60205 \
+            --description "Dependabot bump awaiting manual review" \
+            -R "${{ github.repository }}"
+
+      - name: Label major updates for review
+        if: steps.metadata.outputs.update-type == 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr edit "$PR_URL" --add-label needs-review

@@ -1,0 +1,329 @@
+name: dependabot-auto-merge
+
+# Policy 2A (Trisha, 2026-10-14): a Dependabot PR bumping only patch/minor
+# versions merges itself once tests pass; a major waits for Trisha (labeled
+# `needs-review` by dependabot-label.yml, not merged here). `anthropic` and
+# `google-api-python-client` auto-merge only PATCH bumps; their minor (and
+# major) bumps are routed to needs-review (Trisha, 2026-10-14, option B; see
+# the classify step below and dependabot.yml's comment).
+# `github-actions` ecosystem PRs are ALSO always routed to needs-review,
+# regardless of update-type: GITHUB_TOKEN can never be granted the
+# `workflows` permission a push to .github/workflows/ requires (see the
+# classify step's branch check -- this is the same restriction that forced
+# this build's own manual-SSH push for the workflow files in this very PR).
+# In practice, policy 2A's auto-merge is pip-ecosystem only; github-actions
+# bumps always wait for Trisha, patch/minor or not.
+#
+# WHY THIS DOESN'T USE GITHUB'S NATIVE "required status checks" + auto-merge:
+# the obvious design is `gh pr merge --auto` plus a required `pytest` status
+# check in branch protection. That's rejected here on purpose. Three
+# workflows already push commits straight to `main` with GITHUB_TOKEN --
+# findings-feed.yml, public-comment.yml, ridgewood-reverify.yml (15
+# github-actions[bot] commits in the last month) -- and branch protection on
+# `main` has `enforce_admins: true`. Adding ANY required status check would
+# make GitHub reject those direct pushes too (GH006: "N of N required status
+# checks are expected"), because a brand-new commit pushed directly can never
+# already have a passing check recorded against its own SHA before the push
+# -- that's only possible for a PR, where the check runs first and the merge
+# commit is created after. Required status checks would break the daily
+# public feed. So: no branch-protection change, no `allow_auto_merge` flip --
+# this workflow gates and performs the merge itself, entirely stateless
+# between runs, triggered only by an already-completed workflow_run for the
+# exact commit in question. See the handoff's settings-commands section:
+# none are needed for this design.
+#
+# WHY `workflow_run`, NOT `pull_request_target`: `pull_request_target` runs
+# with base-branch privileges against attacker-influenced PR metadata the
+# moment a PR is opened/updated -- its well-known hazard is a job that then
+# checks out and runs the PR's own (untrusted) code with that write token.
+# This workflow sidesteps the whole hazard class: it isn't triggered by a
+# pull_request event at all. It reacts to a SEPARATE event -- a workflow_run
+# object completing -- well after that run's own checkout step (which used
+# the ordinary, correctly-scoped `pull_request` token) finished. Nothing here
+# ever checks out PR code. The triggering workflows themselves still run
+# under the normal `pull_request` trigger with their own, separate,
+# read-only-by-default token; this job only re-derives facts about an
+# already-finished run via the API. There is also no checkout step in THIS
+# workflow at all -- `GH_REPO` (job env, below) is set explicitly so every
+# `gh pr ...` call below has repo context without one.
+#
+# WHY FOUR `workflows:` ENTRIES, NOT JUST `tests`: `tests`, `sast`, `secrets`,
+# and `data-guard` all run independently on the same PR and finish at
+# different times. Gating on `tests` alone means if `bandit`/`gitleaks`/
+# `block-data-files` is still mid-run when `tests` finishes, the "Confirm the
+# other gates" step below sees it as "missing" and skips (correctly -- it
+# never merges on an incomplete gate) -- but nothing re-triggers this
+# workflow once that slower gate finishes, so the PR would just sit at
+# "STUCK" in the morning-briefing's Check 15 instead of actually merging.
+# Listening to all four means whichever one happens to finish LAST is the one
+# that re-checks everything and performs the merge.
+on:
+  workflow_run:
+    workflows: ["tests", "sast", "secrets", "data-guard"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  issues: write   # `gh label create`/`gh pr edit --add-label` both need this,
+                  # not pull-requests -- labels are an Issues-API resource
+                  # even when applied to a PR.
+
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_REPO: ${{ github.repository }}
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    steps:
+      - name: Resolve the open PR for this commit
+        id: pr
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          prs=$(gh api "repos/${GH_REPO}/commits/${HEAD_SHA}/pulls" --jq '[.[] | select(.state=="open")]')
+          count=$(echo "$prs" | jq 'length')
+          if [ "$count" -ne 1 ]; then
+            echo "Expected exactly one open PR for ${HEAD_SHA}, found ${count}. Skipping (not an error -- e.g. the PR may already be closed/merged, or this is a stale duplicate of another workflow's completion for the same SHA)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "number=$(echo "$prs" | jq -r '.[0].number')" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Re-verify author, state, and the exact tested commit
+        id: verify
+        if: steps.pr.outputs.skip == 'false'
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          # Uses the REST API (`gh api repos/.../pulls/{n}`), NOT `gh pr view
+          # --json author` -- `gh pr view` goes through GraphQL, which
+          # reports a bot author's login as "app/dependabot" (confirmed
+          # directly against a real PR), never "dependabot[bot]". The
+          # classify step's commit-level check already (correctly) uses the
+          # REST "dependabot[bot]" form via `gh api .../pulls/{n}/commits`;
+          # this step was the one place still assuming GraphQL's shape
+          # without having exercised it -- the same class of unverified-
+          # API-shape bug as the original PR-body-vs-commit-message mistake.
+          # REST's `state` is also lowercase ("open"), unlike GraphQL's
+          # "OPEN".
+          current=$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}")
+          login=$(echo "$current" | jq -r '.user.login')
+          sha=$(echo "$current" | jq -r '.head.sha')
+          draft=$(echo "$current" | jq -r '.draft')
+          state=$(echo "$current" | jq -r '.state')
+
+          if [ "$login" != "dependabot[bot]" ]; then
+            echo "PR #${PR_NUMBER} author is '${login}', not dependabot[bot]. Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$state" != "open" ] || [ "$draft" = "true" ]; then
+            echo "PR #${PR_NUMBER} is not an open, non-draft PR (state=${state} draft=${draft}). Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$sha" != "$TESTED_SHA" ]; then
+            # A newer commit was pushed to this PR after (or while) the run
+            # that just completed was testing an older one. Never merge a
+            # commit that wasn't the one actually tested -- the workflow_run
+            # for the newer push's own completion will re-trigger this
+            # workflow and re-check everything against the new HEAD.
+            echo "PR #${PR_NUMBER} head is now ${sha}, but the run that just completed tested ${TESTED_SHA}. Not merging an untested commit; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Confirm the other PR-blocking gates also passed for this commit
+        id: gates
+        if: steps.verify.outputs.skip == 'false'
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          # Independently confirm pytest, bandit SAST, gitleaks, AND
+          # data-guard all passed for the SAME commit, via the Checks API
+          # (job names, matching `gh pr checks` output) -- without touching
+          # branch-protection required-checks at all. Does not assume the
+          # workflow_run that triggered THIS run was `tests` specifically
+          # (see the four-workflow `on:` block above) -- it re-checks all
+          # four every time, so whichever one finishes last is the one that
+          # actually merges.
+          runs=$(gh api "repos/${GH_REPO}/commits/${SHA}/check-runs" --paginate --jq '.check_runs')
+          for job in pytest bandit gitleaks block-data-files; do
+            concl=$(echo "$runs" | jq -r --arg j "$job" '[.[] | select(.name==$j)] | sort_by(.started_at) | last | .conclusion // "missing"')
+            if [ "$concl" != "success" ]; then
+              echo "Gate '${job}' is '${concl}' for ${SHA}, not success. Not merging (yet -- if it's still running, a later workflow_run completion will re-check)."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Classify update-type from the Dependabot commit metadata
+        id: classify
+        if: steps.gates.outputs.skip == 'false'
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          # The `github-actions` ecosystem ALWAYS edits a file under
+          # .github/workflows/ -- and GITHUB_TOKEN can never be granted the
+          # `workflows` permission needed to push such a change (this is a
+          # hard GitHub restriction, not something any `permissions:` block
+          # can lift; confirmed against the exact "refusing to allow ...
+          # without `workflow` scope" class of error this session's own
+          # earlier HTTPS push hit). So `gh pr merge` would fail here no
+          # matter what the commit metadata says. Dependabot's branch-naming
+          # convention for this ecosystem is `dependabot/github_actions/...`
+          # (confirmed against real PRs, e.g. dependabot/fetch-metadata#730)
+          # -- route straight to needs-review without even checking the
+          # update-type.
+          case "$HEAD_BRANCH" in
+            dependabot/github_actions/*)
+              echo "github-actions ecosystem PR -- GITHUB_TOKEN can never push a .github/workflows/ change, so this can never auto-merge regardless of update-type. Routing to needs-review."
+              echo "result=major-or-other" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          # Dependabot's `updated-dependencies:` / `update-type:` metadata
+          # block lives in the COMMIT MESSAGE of its own commit(s) on the PR
+          # -- NOT the PR body, which carries no such block (verified
+          # directly against real Dependabot PRs, e.g.
+          # github.com/dependabot/fetch-metadata/pull/763's commit message).
+          # This is the same data `dependabot/fetch-metadata` parses; that
+          # action can't be used here since it only reads
+          # `github.event.pull_request`, absent on a `workflow_run` event.
+          commits=$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}/commits")
+
+          # Every commit on the PR must pass ALL THREE of: author.login is
+          # dependabot[bot], committer.login is web-flow (GitHub's own
+          # web-based commit identity), AND commit.verification.verified is
+          # true. `author.login` alone is NOT a trust boundary -- it's
+          # derived by matching the commit's author EMAIL against GitHub's
+          # `<id>+<login>@users.noreply.github.com` convention, which
+          # requires no proof of identity (anyone can set `git config
+          # user.email` to that string). A human with push access to this
+          # branch, spoofing only the author email and signing the commit
+          # with their OWN verified key, would still pass a bare
+          # `verified == true` check alone -- but their `committer.login`
+          # would read as their real login, never "web-flow", since only
+          # GitHub's own backend can produce a commit whose committer
+          # identity is web-flow. Verified all three fields hold on three
+          # real, independent Dependabot commits (dependabot/fetch-
+          # metadata PRs #730, #762, #763) before relying on this.
+          non_bot=$(echo "$commits" | jq -r '
+            [.[] | select(
+              .author.login != "dependabot[bot]" or
+              .committer.login != "web-flow" or
+              (.commit.verification.verified != true)
+            )] | length
+          ')
+          if [ "$non_bot" -gt 0 ]; then
+            echo "Found a commit on this PR that is not a verified dependabot[bot]/web-flow commit. Not auto-merging."
+            echo "result=major-or-other" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          entries=$(echo "$commits" | jq -r '[.[].commit.message] | join("\n")' | python3 -c '
+          import json, re, sys
+          text = sys.stdin.read()
+          entries = []
+          cur = None
+          for line in text.splitlines():
+              m = re.match(r"^- dependency-name:\s*\"?([^\"\n]+)\"?\s*$", line)
+              if m:
+                  if cur is not None:
+                      entries.append(cur)
+                  cur = {"name": m.group(1)}
+                  continue
+              m = re.match(r"^\s+update-type:\s*(\S+)\s*$", line)
+              if m and cur is not None:
+                  cur["update_type"] = m.group(1)
+          if cur is not None:
+              entries.append(cur)
+          print(json.dumps(entries))
+          ')
+          n_entries=$(echo "$entries" | jq 'length')
+          if [ "$n_entries" -eq 0 ]; then
+            echo "No dependency entries found in any commit message; cannot classify. Not auto-merging."
+            echo "result=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          missing_type=$(echo "$entries" | jq -r '[.[] | select(.update_type == null)] | length')
+          # Forced needs-review for anything above PATCH (Trisha, 2026-10-14,
+          # option B -- patch auto-merges, minor waits): anthropic and
+          # google-api-python-client have their real SDK calls fully
+          # monkeypatched out of the hermetic test suite (dependabot.yml's
+          # `exclude-patterns` keeps them OUT of the grouped patch/minor PR
+          # so they always surface as their own standalone PR; this is the
+          # second, independent half of that -- never auto-merge one even if
+          # it somehow arrived grouped).
+          forced_review=$(echo "$entries" | jq -r '[.[] | select((.name == "anthropic" or .name == "google-api-python-client") and .update_type != "version-update:semver-patch")] | length')
+          non_patch_minor=$(echo "$entries" | jq -r '[.[] | select(.update_type != null and (.update_type | test("^version-update:semver-(patch|minor)$") | not))] | length')
+
+          if [ "$missing_type" -gt 0 ]; then
+            echo "At least one dependency entry has no update-type. Not auto-merging."
+            echo "result=unknown" >> "$GITHUB_OUTPUT"
+          elif [ "$forced_review" -gt 0 ]; then
+            echo "Includes a non-patch bump of anthropic and/or google-api-python-client -- needs-review (only their patch bumps auto-merge)."
+            echo "result=major-or-other" >> "$GITHUB_OUTPUT"
+          elif [ "$non_patch_minor" -gt 0 ]; then
+            echo "Found a non-patch/minor update-type among this PR's dependencies."
+            echo "result=major-or-other" >> "$GITHUB_OUTPUT"
+          else
+            echo "All bumped dependencies are patch/minor, and any anthropic/google-api-python-client bump is patch-only."
+            echo "result=patch-or-minor" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Auto-merge (patch/minor, tests + SAST + secret-scan + data-guard all green)
+        if: steps.classify.outputs.result == 'patch-or-minor'
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        # --match-head-commit makes the earlier SHA re-verification (the
+        # "Verify" step) actually load-bearing at the moment it matters: GitHub
+        # atomically refuses the merge if the PR's head has moved since
+        # TESTED_SHA was checked, closing the gap between that check and this
+        # call (two more API round-trips: Gates, Classify) during which a new,
+        # never-tested commit could otherwise land and get merged unverified.
+        run: gh pr merge "$PR_NUMBER" --rebase --delete-branch --match-head-commit "$TESTED_SHA"
+
+      - name: Ensure the needs-review label exists
+        # `gh pr edit --add-label` does NOT auto-create a missing label --
+        # `--force` makes this idempotent: a no-op update on every run after
+        # the first, never an error. Duplicated from dependabot-label.yml
+        # rather than factored out: GitHub Actions has no shared-step
+        # mechanism across separate workflow files short of a reusable
+        # workflow, which would be disproportionate for two lines.
+        if: steps.classify.outputs.result == 'major-or-other' || steps.classify.outputs.result == 'unknown'
+        run: |
+          gh label create needs-review --force \
+            --color b60205 \
+            --description "Dependabot bump awaiting manual review" \
+            -R "${{ github.repository }}"
+
+      - name: Label for review (major, a forced-review package, or an update-type this workflow couldn't read)
+        if: steps.classify.outputs.result == 'major-or-other' || steps.classify.outputs.result == 'unknown'
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: gh pr edit "$PR_NUMBER" --add-label needs-review
