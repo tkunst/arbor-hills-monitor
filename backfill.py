@@ -35,6 +35,7 @@ import nsite_client as nc
 import retry_policy as rp
 import well_aliases
 import review_flags as rf
+import owner_notices as on
 import woi_router
 import archiver as av
 import poison_stub
@@ -309,7 +310,9 @@ def run() -> int:
             # Review flags (see watcher.py / review_flags.py): best-effort, after
             # the document row, never an email. Related-scope docs get none.
             if not related:
-                rf.log_for_document(sheets, flags, d, link, _now(), parsed=parsed, cfg=cfg)
+                flags = rf.collect(flags, parsed, cfg)
+                rf.log_for_document(sheets, flags, d, link, _now())
+                on.alert_review_flags(sheets, flags, d, link, cfg, _now())
             payload = {
                 "document_name": d["document_name"],
                 "date_filed": d["date_filed"],
@@ -346,7 +349,7 @@ def run() -> int:
             # dropping it: stub feed row + 'skipped' (shared with watcher.py —
             # see poison_stub / issue #82).
             poison_stub.stub_if_poisoned(sheets, sheet_id, state, d, cnt, e, _now(),
-                                         title_overrides=title_overrides)
+                                         title_overrides=title_overrides, cfg=cfg)
         finally:
             if os.path.exists(local):
                 os.remove(local)

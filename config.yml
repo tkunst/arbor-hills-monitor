@@ -1919,6 +1919,22 @@ temperature_thresholds:
   # 2026-10-15), as is a WOI table reading above it (woi_router).
   max_plausible_wellhead_f: 250
 
+# --- Owner-only "For Trisha only" channel (owner_notices.py, coder:owner-weekly-email) ---
+# A Sunday email to the OWNER addresses only (unsubscribe.owner_addresses +
+# MONITOR_OWNER_EMAILS; never alert_recipients, the digest list or any watch
+# list): filings the monitor could not read, hand-curated rows nobody routed,
+# alert emails that failed to send, and parser review flags. Plus a same-day
+# owner-only email when an unreadable filing has an enforcement title, or a
+# parse produced a temperature above max_plausible_wellhead_f. Both ship off.
+owner_weekly:
+  enabled: false
+  # Same-day owner alerts (unreadable enforcement notice; above-ceiling
+  # temperature). Separate switch so the weekly can run without them.
+  enforcement_alert_enabled: false
+  # Hand-curated rows added before this date are never listed (the backlog
+  # predates the routing log).
+  hand_curated_since: "2026-10-15"
+
 # --- CAN-SPAM unsubscribe for the multi-recipient alert emails (ADR 040) ---
 # Applied at the single send choke point (email_alerts.send_email), so ALL
 # multi-recipient streams inherit it: the same-day [URGENT] alerts, the Sunday

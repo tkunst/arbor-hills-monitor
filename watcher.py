@@ -41,6 +41,7 @@ import email_alerts as ea
 import retry_policy as rp
 import well_aliases
 import review_flags as rf
+import owner_notices as on
 import woi_router
 import well_watch
 import archiver as av
@@ -130,6 +131,8 @@ def _route_urgent_or_digest(parsed, d: dict, link: str, cfg: dict, state: dict,
         except Exception as ae:  # noqa: BLE001 — notification is best-effort
             print(f"  URGENT ALERT FAILED to send (doc still recorded): "
                   f"{d['document_name'][:50]}: {ae}")
+            on.record_send_failure(sheets, "urgent alert", f"raised {type(ae).__name__}",
+                                   d, link, sent_at)
             return
         if not sent:
             # send_email() no-op'd (SMTP not configured / no recipients) --
@@ -137,6 +140,8 @@ def _route_urgent_or_digest(parsed, d: dict, link: str, cfg: dict, state: dict,
             # nothing to recap (see email_alerts.send_email's docstring).
             print(f"  URGENT ALERT skipped, SMTP not configured (doc still "
                   f"recorded): {d['document_name'][:50]}")
+            on.record_send_failure(sheets, "urgent alert", "not sent (SMTP or recipients)",
+                                   d, link, sent_at)
             return
         state["pending_urgent_recap"].append(
             _urgent_recap_record(parsed, d, link, sent_at))
@@ -337,7 +342,9 @@ def run() -> int:
             # Parser Review Flags tab instead of vanishing. Best-effort, after
             # the document row and the alert (a slow private Sheet must never
             # delay an URGENT email); it never sends email (review_flags.py).
-            rf.log_for_document(sheets, flags, d, link, _now(), parsed=parsed, cfg=cfg)
+            flags = rf.collect(flags, parsed, cfg)
+            rf.log_for_document(sheets, flags, d, link, _now())
+            on.alert_review_flags(sheets, flags, d, link, cfg, _now())
 
             payload = _processed_payload(parsed, d)
             state["processed"][did] = payload
@@ -361,7 +368,8 @@ def run() -> int:
             # Without this a doc whose 3rd strike came from the watcher was
             # silently parked by both jobs' poison gates (issue #82).
             poison_stub.stub_if_poisoned(sheets, sheet_id, state, d, cnt, e, _now(),
-                                         feed_tab=sw.TAB_NEW, title_overrides=title_overrides)
+                                         feed_tab=sw.TAB_NEW, title_overrides=title_overrides,
+                                         cfg=cfg)
         finally:
             if os.path.exists(local):
                 os.remove(local)
@@ -427,7 +435,17 @@ def run() -> int:
         if state["pending_digest"] or state["pending_urgent_recap"]:
             items = [_record_to_item(r) for r in state["pending_digest"]]
             recap_items = [_record_to_item(r) for r in state["pending_urgent_recap"]]
-            ea.send_digest(items, cfg, urgent_recap=recap_items)
+            try:
+                digest_sent = ea.send_digest(items, cfg, urgent_recap=recap_items)
+            except Exception as de:
+                # Record it for the owner weekly email, then fail the run as
+                # before (the queue is kept and retried next Sunday).
+                on.record_send_failure(sheets, "Sunday digest", f"raised {type(de).__name__}",
+                                       {}, "", _now())
+                raise
+            if digest_sent is False:
+                on.record_send_failure(sheets, "Sunday digest", "not sent (SMTP or recipients)",
+                                       {}, "", _now())
             state["pending_digest"] = []
             state["pending_urgent_recap"] = []
             sw.write_meta(sheets, sheet_id, state)
@@ -454,6 +472,17 @@ def run() -> int:
                     print("[watcher] sent upcoming-activities section (scoped).")
         except Exception as e:  # noqa: BLE001 — the digest must never break on this
             print(f"[watcher] upcoming-activities section skipped: {e}")
+
+        # (3) The owner-only weekly housekeeping email (owner_notices.py):
+        # unreadable filings, unrouted hand-curated rows, failed sends, parser
+        # review flags. Owner addresses only, never a list. Gated on
+        # owner_weekly.enabled; isolated so it can never fail the run (class
+        # only in the public log).
+        try:
+            outcome = on.send_weekly(sheets, sheet_id, state, cfg, today, _now())
+            print(f"[watcher] owner weekly email: {outcome}")
+        except Exception as e:  # noqa: BLE001 — isolated, retried next Sunday
+            print(f"[watcher] owner weekly email skipped: {type(e).__name__}")
 
     try:
         sw.rebuild_risk_register_tab(sheets, sheet_id, RISK_REGISTER)

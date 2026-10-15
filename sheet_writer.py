@@ -679,6 +679,9 @@ _META_DEFAULTS = {
     "wds_seen": {},
     "wds_snapshot_hashes": {},
     "last_run": "",
+    # owner_notices.py: when the owner-only weekly email last went out (its
+    # window start). Blank until the first send.
+    "last_owner_weekly": "",
 }
 
 # write_meta overwrites this many _meta rows every time (live keys first, blanks
@@ -1201,6 +1204,23 @@ def read_state(service, sheet_id: str) -> dict:
 
     state.update(read_meta(service, sheet_id))
     return state
+
+
+def state_events_since(service, sheet_id: str, status: str, since: str) -> list[tuple]:
+    """[(doc_id, logged_at, payload)] for every _state event of `status`
+    logged at/after `since` (ISO strings compare in time order), excluding a
+    doc whose LATER event is 'processed' (a skipped doc that was later
+    retried successfully). STRICT read: a transport failure raises."""
+    rows = _tab_rows_strict(service, sheet_id, TAB_STATE, "A2:E")
+    later_processed = {r[0] for r in rows if len(r) > 1 and r[1] == "processed"}
+    out = []
+    for r in rows:
+        if len(r) < 4 or r[1] != status or r[3] < since:
+            continue
+        if status != "processed" and r[0] in later_processed:
+            continue
+        out.append((r[0], r[3], _load_json(r[4] if len(r) > 4 else "", {})))
+    return out
 
 
 def mark_processed(service, sheet_id: str, doc_id: str, payload: dict, processed_at: str) -> None:
