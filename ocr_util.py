@@ -168,10 +168,48 @@ def _kill_process_group(pid: int) -> None:
     timeout firing and this call) and PermissionError (shouldn't happen
     under start_new_session=True, since we're the group's own ancestor, but
     this is a last-resort cleanup path -- it must never itself raise)."""
+    # start_new_session=True makes the child its own group leader, so its
+    # pgid IS its pid: kill by pid directly. (A fresh os.getpgid() lookup is a
+    # TOCTOU risk -- security review 2026-10-14.) The pid can't be reused
+    # here: the child is not reaped until after this call.
     try:
-        os.killpg(os.getpgid(pid), signal.SIGKILL)
+        os.killpg(pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         pass
+
+
+# Post-kill cleanup must itself be BOUNDED (security review 2026-10-14, PR
+# #143 Step 6 MEDIUM): an unbounded second communicate() blocks forever if a
+# descendant escaped the killed group (its own setsid()) and still holds the
+# pipe's write end. Never wait on anything after a kill without a ceiling.
+_POST_KILL_TIMEOUT_S = 5
+
+
+def _bounded_wait(proc) -> None:
+    """Reap the (already SIGKILLed) direct child, never blocking > ceiling."""
+    try:
+        proc.wait(timeout=_POST_KILL_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _bounded_drain(proc):
+    """After a kill: collect whatever output is left, but give up after the
+    ceiling (an escaped descendant may hold the pipes open forever). On give-
+    up, close our ends of the pipes and return (None, None) -- callers only
+    ever use the captured text for an error message."""
+    try:
+        stdout, stderr = proc.communicate(timeout=_POST_KILL_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        for f in (getattr(proc, "stdout", None), getattr(proc, "stderr", None)):
+            try:
+                if f is not None:
+                    f.close()
+            except OSError:
+                pass
+        stdout = stderr = None
+    _bounded_wait(proc)
+    return stdout, stderr
 
 
 def _run_ocrmypdf(cmd: list[str], *, env: dict, timeout: int,
@@ -205,17 +243,17 @@ def _run_ocrmypdf(cmd: list[str], *, env: dict, timeout: int,
         stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         _kill_process_group(proc.pid)
-        # The whole group is dead now -- this drains/reaps without the
-        # never-EOFs-because-a-grandchild-still-holds-the-pipe risk a bare
-        # proc.wait() would carry if stdout/stderr were still PIPEs.
-        stdout, stderr = proc.communicate()
+        # Bounded (security review 2026-10-14): a descendant that escaped the
+        # group with its own setsid() can hold the pipes open forever, so an
+        # unbounded second communicate() could hang. See _bounded_drain().
+        stdout, stderr = _bounded_drain(proc)
         raise subprocess.TimeoutExpired(cmd, timeout, output=stdout, stderr=stderr)
     except BaseException:
         # e.g. KeyboardInterrupt during communicate() -- same cleanup, then
         # let the original exception propagate (mirrors subprocess.run()'s
         # own `except: process.kill(); raise` branch, extended to the group).
         _kill_process_group(proc.pid)
-        proc.wait()
+        _bounded_wait(proc)
         raise
     return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
