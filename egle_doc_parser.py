@@ -606,11 +606,13 @@ def _build_system_prompt(risk_register: list[dict]) -> str:
 # linear time on any input (round 2 found quadratic backtracking in the first
 # version: "<" followed by a long run of spaces).
 _FENCE_LOOKALIKES = str.maketrans({
-    "\uff1c": "<", "\ufe64": "<", "\u2039": "<", "\u3008": "<", "\u27e8": "<", "\u2329": "<",
-    "\uff1e": ">", "\ufe65": ">", "\u203a": ">", "\u3009": ">", "\u27e9": ">", "\u232a": ">",
+    "\uff1c": "<", "\ufe64": "<", "\u02c2": "<", "\u00ab": "<", "\u2039": "<", "\u3008": "<", "\u27e8": "<", "\u2329": "<",
+    "\uff1e": ">", "\ufe65": ">", "\u02c3": ">", "\u00bb": ">", "\u203a": ">", "\u3009": ">", "\u27e9": ">", "\u232a": ">",
     "\uff0f": "/", "\u2044": "/", "\u2215": "/",
 })
-_FENCE_OPEN_RE = re.compile(r"<(?=[\s/\u0300-\u036f]{0,8}(?:document|metadata)\b)", re.IGNORECASE)
+_FENCE_OPEN_RE = re.compile(
+    r"<(?=[\s/\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe00-\ufe0f\ufe20-\ufe2f]{0,64}"
+    r"(?:document|metadata)\b)", re.IGNORECASE)
 _FORMAT_CHARS_RE = None
 
 
