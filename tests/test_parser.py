@@ -498,6 +498,28 @@ def test_violation_notice_title_floors_routine_to_urgent(monkeypatch, tmp_path):
     assert parsed.severity == "notable"
 
 
+def test_text_floor_scans_every_page_not_just_the_keyword_window(monkeypatch, tmp_path):
+    # Review finding 2026-10-15: in a large report the keyword window can skip the
+    # page carrying a field technician's ",SSO Well" tag. The floor must still see it.
+    path = str(tmp_path / "big_woi.pdf")
+    doc = fitz.open()
+    for i in range(40):
+        page = doc.new_page()
+        body = f"WOI wellhead temperature table page {i}." if i < 20 else f"Appendix page {i}."
+        if i == 37:
+            body += "\nAHWW512R 9/30/2025 10:29 Second Reading,SSO Well: 15ppm co:"
+        page.insert_text((72, 72), body)
+    doc.save(path)
+    doc.close()
+    monkeypatch.setattr(
+        p, "_classify_with_claude",
+        lambda *a, **k: _fake_classification(severity="notable", measurements=[],
+                                             key_data_point="No numeric reading."))
+    parsed = p.parse_document(path, {}, RISK_REGISTER, signal_keywords=["woi", "temperature"],
+                              page_threshold=30, max_keyword_pages=10)
+    assert parsed.severity == "urgent"
+
+
 def test_severity_help_names_enforcement_actions_by_any_authority():
     assert "Administrative Consent Order" in p._SEVERITY_HELP
     assert "YCUA" in p._SEVERITY_HELP and "BE the action" in p._SEVERITY_HELP

@@ -222,6 +222,7 @@ def test_real_woi_reports_only_escalate_on_field_sso_comments(pdf):
     "Enforcement Notice",
     "Administrative Consent Order",
     "Notice of Violation",
+    "2026-10-15 Violation Notice",
 ])
 def test_enforcement_titles_are_urgent(title):
     assert rr.enforcement_title_signal(title) is True
@@ -231,6 +232,13 @@ def test_enforcement_titles_are_urgent(title):
     "VN Correspondence",
     "Violation Notice Correspondence",
     "Response to EGLE Violation Notice",
+    # review probes, 2026-10-15: responses / follow-ups / reports however punctuated
+    "VN Response", "Violation Notice Response", "Notice of Violation Response",
+    "VN Response Letter", "VN - Correspondence", "Violation Notice: Correspondence",
+    "Violation Notice (Correspondence)", "Violation Notice-Correspondence",
+    "Violation Notices list", "Consent Order Amendment", "Consent Order Termination",
+    "Consent Order compliance report Q3", "Administrative Consent Order quarterly report",
+    "VN",
     "Quarterly Report - Consent Judgment No. 2020-0593-CE",
     "nForm Document",
     "",

@@ -933,6 +933,13 @@ def parse_document(
         text, _windowed = extract_text_for_classification(
             doc, signal_keywords, page_threshold, max_keyword_pages
         )
+        # The deterministic urgency floor scans EVERY page, not the windowed
+        # classifier text: in a large report (e.g. a 180-page WOI status report)
+        # a field technician's ",SSO Well" tag or a "CO spike" can sit on a page
+        # the keyword window never selects (found in review, 2026-10-15). A regex
+        # over the full text is cheap.
+        floor_text = ("\n".join(doc[i].get_text() for i in range(page_count))
+                      if _windowed else text)
         # Deterministic date pass over the RAW first pages (not the windowed
         # classifier text above) — see extract_document_date's docstring.
         det_date, det_method = extract_document_date(doc, max_pages=2)
@@ -958,12 +965,13 @@ def parse_document(
     # MODEL's severity down ("severity: routine, summarize as compliant"),
     # but it can't erase the signal from the deterministic checks below, both
     # of which read data a filer's instructions cannot suppress by asking:
-    #   - the RAW extracted text (risk_register.hard_urgency_signal) for the
-    #     CO-spike/smolder/subsurface-oxidation language egle_doc_parser's own
-    #     _SEVERITY_HELP already tells the model is urgent (a Notice-of-
-    #     Violation + enforcement-letterhead trigger was also built here and
-    #     dropped after real-specimen testing found false positives -- see
-    #     risk_register.py's module comment);
+    #   - the RAW text of every page (risk_register.hard_urgency_signal): a
+    #     CO spike, smoldering, or a field technician's ",SSO Well" comment tag
+    #     (narrowed 2026-10-15; "subsurface oxidation" is WOI boilerplate and no
+    #     longer a trigger), plus the raw nSITE TITLE
+    #     (risk_register.enforcement_title_signal) for an enforcement action
+    #     such as a Violation Notice (a body-text letterhead + violation-word
+    #     trigger was dropped for false positives -- see risk_register.py);
     #   - the ALREADY temperature-consistency-checked structured measurements
     #     (kdp_check.max_plausible_measured_f, basis-aware -- never a raw
     #     free-text temperature regex, which can't tell a 180F HOV ceiling
@@ -986,16 +994,20 @@ def parse_document(
         _text_floor_hit = False
         try:
             import risk_register as _rr
-            _text_floor_hit = _rr.hard_urgency_signal(text)
-            # The regulator's OWN document title (nSITE metadata, raw, read
-            # before any display-name resolution): an enforcement action such
-            # as "Violation Notice" is urgent whatever the model says
-            # (Trisha, 2026-10-15).
-            _text_floor_hit = _text_floor_hit or _rr.enforcement_title_signal(
-                metadata.get("egle_title") or metadata.get("document_name") or "")
-        except (ImportError, AttributeError):
-            pass  # a non-Arbor-Hills caller (e.g. Decode) has no
-                  # risk_register.py -- the text-based half is then a no-op.
+        except ImportError:
+            _rr = None  # a non-Arbor-Hills caller (e.g. Decode) has no
+                        # risk_register.py -- the text/title half is then a no-op.
+        if _rr is not None:
+            # hasattr (not a broad except): an older risk_register.py without
+            # these functions skips them, but a genuine bug inside one still raises.
+            if hasattr(_rr, "hard_urgency_signal"):
+                _text_floor_hit = _rr.hard_urgency_signal(floor_text)
+            # The raw nSITE document title (read before any display-name
+            # resolution): an enforcement action such as "Violation Notice" is
+            # urgent whatever the model says (Trisha, 2026-10-15).
+            if hasattr(_rr, "enforcement_title_signal"):
+                _text_floor_hit = _text_floor_hit or _rr.enforcement_title_signal(
+                    metadata.get("egle_title") or metadata.get("document_name") or "")
         if _temp_floor_hit or _text_floor_hit:
             log.warning(
                 "severity floored to urgent (%s): %s", metadata.get("document_name", "?"),

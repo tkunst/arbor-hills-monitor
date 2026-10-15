@@ -126,7 +126,7 @@ VALID_RISK_IDS = set(RISK_NAMES)
 # words "smoldering" from the PDF's own extracted text. This pattern reads
 # that raw, deterministic text directly and enforces a rule that ALREADY
 # EXISTS, never a new one: "a CO spike" / "smoldering" (narrowed 2026-10-14,
-# see below) is from from egle_doc_parser._SEVERITY_HELP's own urgent-tier
+# see below) is from egle_doc_parser._SEVERITY_HELP's own urgent-tier
 # definition (the model's own instructions already call these urgent).
 #
 # Two OTHER candidate triggers were built and then DROPPED after real-
@@ -148,9 +148,14 @@ VALID_RISK_IDS = set(RISK_NAMES)
 #     parser._SEVERITY_HELP's actual urgent-tier definition does not include
 #     "any Notice of Violation" by itself, only one that also reports a
 #     measured 145F+ reading, a CO spike, smoldering, or a genuine CJ
-#     violation. Treating "VN = urgent" here would have been inventing new
-#     urgency semantics, not enforcing an existing one -- see the PR for the
-#     full false-positive list.
+#     violation. Treating "VN = urgent" from BODY text would have been
+#     inventing new urgency semantics, not enforcing an existing one -- see
+#     the PR for the full false-positive list.
+#     UPDATE 2026-10-15 (Trisha): enforcement actions ARE now urgent, by
+#     definition (_SEVERITY_HELP), and the deterministic backstop for them
+#     reads the regulator's own document TITLE (enforcement_title_signal,
+#     below), never body text -- which is what avoids the false positives
+#     listed above.
 # Deliberately NOT a bare SIGNAL_KEYWORDS hit either: most of those terms
 # (temperature, HOV, higher operating value, leachate, pfas, exceedance,
 # mact, woi, consent judgment) are page-selection keywords only, and
@@ -193,10 +198,17 @@ _FIELD_SSO_RE = re.compile(r"(?:^|,)[ \t]*SSO(?:[ \t]+Well\b|[ \t]*(?:,|$))", re
 # "Response to EGLE Violation Notice" (the operator's reply). Titles surveyed
 # from the live case-file Sheet, 2026-10-15.
 _ENFORCEMENT_TITLE_RE = re.compile(
-    r"^\W*(?:\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\s+)?(?:signed\s+)?"
-    r"(?:violation\s+notice|notice\s+of\s+violation|vn\b|enforcement\s+notice|"
-    r"administrative\s+consent\s+order|consent\s+order)"
-    r"(?!\s+correspondence)",
+    r"^\W*"
+    r"(?:(?:\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\s+)?"  # optional date
+    r"(?:signed\s+)?"
+    # "vn" needs something after it: a bare "VN" title says nothing (e.g. "VN (#4) ..." is fine).
+    r"(?:violation\s+notice|notice\s+of\s+violation|vn(?=[\W_]*\w)|enforcement\s+notice|"
+    r"administrative\s+consent\s+order|consent\s+order)\b"
+    # Not a follow-up / response / report ABOUT an action, however punctuated
+    # ("VN - Correspondence", "Violation Notice (Response)", "Consent Order
+    # Amendment", "... quarterly report").
+    r"(?![\W_]*(?:correspondence|response|reply|report|amendment|termination|"
+    r"compliance|quarterly|annual|status|list)\b)",
     re.IGNORECASE)
 
 
