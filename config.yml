@@ -1890,7 +1890,9 @@ urgent:
   # Urgency fires only on a MEASURED temperature at/above this (deg F). A
   # permitted ceiling / HOV-waiver limit at this value does NOT fire — that
   # conflation would discredit the artifact. See docs/decisions/004.
-  measured_temp_urgent_f: 145    # MACT limit
+  # Same number as temperature_thresholds.mact_f below, via a YAML anchor, so
+  # the two can never drift apart (classifier-untrusted-input follow-up, 2026-10-14).
+  measured_temp_urgent_f: &mact_limit_f 145    # MACT limit
   # Lower watch threshold: EPA gas-well operating limit. Tracked for trend
   # comparison and (future) a Watch tier; does not fire an urgent alert today.
   measured_temp_watch_f: 131
@@ -1898,7 +1900,7 @@ urgent:
 # Temperature reference thresholds (deg F), for downstream trend/tier logic.
 temperature_thresholds:
   epa_gas_operating_f: 131       # EPA gas-well operating limit (watch)
-  mact_f: 145                    # MACT limit (urgent)
+  mact_f: *mact_limit_f          # MACT limit (urgent); anchored to urgent.measured_temp_urgent_f
   # Well-specific Higher Operating Values EGLE has approved at Arbor Hills
   # (2024-04-30 grant: 150/160/170; 2024-07-10 replacement wells; 2023 grants
   # at 155; AHW272R4 at 180 on 2025-02-19, the only 180; AHW263R5 at 170 on

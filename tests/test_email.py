@@ -361,7 +361,7 @@ def test_send_email_returns_true_after_a_real_send(monkeypatch):
         def __exit__(self, *a):
             return False
 
-        def starttls(self):
+        def starttls(self, context=None):
             pass
 
         def login(self, user, password):
@@ -381,6 +381,53 @@ def test_send_urgent_alert_propagates_send_email_bool(monkeypatch):
 
     monkeypatch.setattr(ea, "send_email", lambda subj, body, c, recipients=None: True)
     assert ea.send_urgent_alert(_doc(severity="urgent"), {"document_name": "x"}, "http://x", _DIGEST_CFG) is True
+
+
+# --- SEC-003: a CR/LF in document_name must not lose the urgent alert ------
+# (classifier-untrusted-input, 2026-10-14). document_name is a raw nSITE
+# filing title -- filer-controlled -- and send_urgent_alert's f-string builds
+# the Subject header straight from it. EmailMessage (email.policy.default)
+# raises ValueError the instant a header value contains an embedded CR/LF; the
+# only handler in send_email's SMTP block is `except OSError`, which does NOT
+# catch ValueError, so the alert is lost (and, pre-fix, so is everyone else in
+# the same recipient loop -- see the next test below for that half of SEC-003).
+
+class _FakeSmtpServer:
+    """Mirrors test_send_email_returns_true_after_a_real_send's fake, kept
+    local here so this section reads standalone."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def starttls(self, context=None):
+        pass
+
+    def login(self, user, password):
+        pass
+
+    def send_message(self, msg):
+        pass
+
+
+def _smtp_configured(monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("SMTP_USER", "user")
+    monkeypatch.setenv("SMTP_PASSWORD", "pw")
+
+
+def test_newline_in_document_name_does_not_crash_urgent_alert(monkeypatch):
+    import smtplib
+    _smtp_configured(monkeypatch)
+    monkeypatch.setattr(smtplib, "SMTP", lambda host, port, timeout=30: _FakeSmtpServer())
+    metadata = {"document_name": "Schedule - Compliance Letter\nBcc: attacker@evil.com"}
+    # Before the fix, EmailMessage's header-folding check raises ValueError
+    # while building the Subject header, uncaught by send_email's
+    # `except OSError`, and the urgent alert for a REAL document is lost.
+    sent = ea.send_urgent_alert(_doc(severity="urgent"), metadata, "http://x", _DIGEST_CFG)
+    assert sent is True
 
 
 # --- route_hand_curated_urgent_or_digest (added 2026-09-20) -----------------
@@ -484,7 +531,7 @@ class _RefusingServer:
     def __exit__(self, *a):
         return False
 
-    def starttls(self):
+    def starttls(self, context=None):
         pass
 
     def login(self, user, password):
@@ -558,7 +605,32 @@ def test_partial_send_reports_count_and_stays_redacted(monkeypatch):
     assert "after 1 sent" in str(ei.value) and "b@y.com" not in str(ei.value)
 
 
-def test_non_smtp_errors_pass_through_unwrapped(monkeypatch):
+def test_header_value_error_skips_only_that_recipient(monkeypatch, capsys):
+    # SEC-003 (classifier-untrusted-input, 2026-10-14): this used to assert
+    # that a CR/LF-bearing "To" address raised ValueError and aborted the
+    # WHOLE batch ("header injection guard") -- exactly the SEC-003 failure
+    # mode (one bad header drops every other recipient too), just reached via
+    # a malformed address instead of a malformed Subject. The fix is
+    # per-message: skip the one bad recipient, keep sending to the rest, and
+    # log a count only (never the address/header value).
+    import smtplib
+    _smtp_env(monkeypatch)
+    sent_to = []
+
+    class _Ok(_RefusingServer):
+        def send_message(self, msg):
+            sent_to.append(msg["To"])
+    monkeypatch.setattr(smtplib, "SMTP", lambda host, port, timeout=30: _Ok())
+    result = ea.send_email(
+        "subj", "body", {}, recipients=["a@x.com\r\nBcc: z@z.com", "good@x.com"])
+    assert result is True                      # the good recipient still went out
+    assert sent_to == ["good@x.com"]            # the bad one was never sent
+    out = capsys.readouterr().out
+    assert "1 recipient(s) SKIPPED" in out
+    assert "a@x.com" not in out and "Bcc" not in out and "z@z.com" not in out
+
+
+def test_header_value_error_on_every_recipient_returns_false(monkeypatch, capsys):
     import smtplib
     _smtp_env(monkeypatch)
 
@@ -566,8 +638,11 @@ def test_non_smtp_errors_pass_through_unwrapped(monkeypatch):
         def send_message(self, msg):
             pass
     monkeypatch.setattr(smtplib, "SMTP", lambda host, port, timeout=30: _Ok())
-    with pytest.raises(ValueError):                                    # header injection guard
-        ea.send_email("subj", "body", {}, recipients=["a@x.com\r\nBcc: z@z.com"])
+    result = ea.send_email("subj", "body", {}, recipients=["a@x.com\r\nBcc: z@z.com"])
+    assert result is False                      # nothing was actually sent
+    out = capsys.readouterr().out
+    assert "1 recipient(s) SKIPPED" in out
+    assert "a@x.com" not in out and "Bcc" not in out
 
 
 def test_redact_refused_recipients_counts_only():
