@@ -427,7 +427,8 @@ def redact_smtp_error(e: BaseException) -> str:
     return " / ".join(parts)
 
 
-def send_email(subject: str, body: str, cfg: dict, recipients: list | None = None) -> bool:
+def send_email(subject: str, body: str, cfg: dict, recipients: list | None = None,
+               log_subject: bool = True) -> bool:
     """Send to all configured recipients via SMTP (TLS). No-op with a warning if
     SMTP env vars are missing (so a dry/local run doesn't crash) — returns False
     in that case, True once at least one message was actually handed to the SMTP
@@ -467,7 +468,12 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
         list from leaking to the coalition list.
       * The URGENT path always includes an owner (arbor-hills@…), so suppression
         and the fail-safe can never empty it → never a spurious False → never a
-        silently-unsent-and-unrecapped urgent doc."""
+        silently-unsent-and-unrecapped urgent doc.
+
+    `log_subject=False` keeps the subject out of this function's own log lines
+    (the Actions log is public): the owner-only emails (owner_notices.py)
+    carry document titles that their constraint keeps out of the log."""
+    shown = subject if log_subject else "(owner-only email)"
     scoped = bool(recipients)
     recipients = list(recipients) if scoped else resolve_recipients(cfg)
 
@@ -491,7 +497,7 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
         # An emptied SCOPED list lands here (recipients falsy) and returns False —
         # it does NOT fall through to resolve_recipients (that only happens above,
         # and only when `scoped` is False). This is the private-list-leak guard.
-        print(f"[email_alerts] SMTP not configured / no recipients — would send: {subject!r}")
+        print(f"[email_alerts] SMTP not configured / no recipients — would send: {shown!r}")
         return False
 
     mailto, postal = _unsubscribe_settings(cfg)
@@ -573,14 +579,14 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
         # world-readable (CWE-532/CWE-359). If addresses are ever needed for
         # triage, route them to a private sink, not this log line.
         print(f"[email_alerts] {len(dropped)} non-owner recipient(s) NOT sent "
-              f"{subject!r} — unsubscribe apparatus not armed. Set "
+              f"{shown!r} — unsubscribe apparatus not armed. Set "
               f"unsubscribe.mailto to send them. Held: {len(dropped)} recipient(s)")
     if skipped_headers:
         # SEC-001/SEC-003: count only, never the address or header value.
         print(f"[email_alerts] {skipped_headers} recipient(s) SKIPPED for "
-              f"{subject!r} — a malformed header value (never logged here); "
+              f"{shown!r} — a malformed header value (never logged here); "
               f"other recipients were still sent.")
-    print(f"[email_alerts] sent {subject!r} to {sent} recipient(s)")
+    print(f"[email_alerts] sent {shown!r} to {sent} recipient(s)")
     return sent > 0
 
 
@@ -688,7 +694,7 @@ def route_hand_curated_urgent_or_digest(
     return sent
 
 
-def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = None) -> None:
+def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = None) -> bool:
     """The weekly digest goes to resolve_recipients(cfg) PLUS anyone in
     DIGEST_RECIPIENTS_EXTRA (comma/semicolon-separated env, private — not
     committed to this PUBLIC repo's config.yml). This is a DIGEST-ONLY
@@ -701,10 +707,13 @@ def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = 
     urgent_recap: items already sent as their own same-day [URGENT] email,
     recapped here under their own labeled section. Kept out of the subject
     line on purpose — the header still reads as "N new documents"; the recap
-    section inside the body is what surfaces the urgent items."""
+    section inside the body is what surfaces the urgent items.
+
+    Returns send_email's result (False = nothing handed to SMTP), so the
+    watcher can record a skipped digest for the owner weekly email."""
     subject = f"Arbor Hills N2688 digest — {len(items)} new document(s)"
     recipients = merge_extra_recipients(resolve_recipients(cfg), "DIGEST_RECIPIENTS_EXTRA")
-    send_email(subject, format_digest_body(items, urgent_recap), cfg, recipients=recipients)
+    return send_email(subject, format_digest_body(items, urgent_recap), cfg, recipients=recipients)
 
 
 def send_upcoming(upcoming_block: str, cfg: dict) -> None:

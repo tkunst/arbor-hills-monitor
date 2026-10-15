@@ -211,6 +211,30 @@ def _is_public_sheet(service, sheet_id: str) -> bool:
     return _public_sheet_cache[sheet_id]
 
 
+def private_sheet_for_write(service) -> tuple[Optional[str], str]:
+    """(sheet_id, "") when the private Sheet is configured and is not a public
+    case-file Sheet; else (None, reason) with a fixed-phrase reason. The ONE
+    check every owner-only/review write goes through (also owner_notices.py)."""
+    sheet_id = review_sheet_id()
+    if sheet_id is None:
+        return None, "no private Sheet configured"
+    if _is_public_sheet(service, sheet_id):
+        return None, "GSHEET_ID_PRIVATE holds public case-file tabs"
+    return sheet_id, ""
+
+
+def collect(flags: list[dict], parsed=None, cfg: Optional[dict] = None) -> list[dict]:
+    """`flags` plus parsed_flags(parsed, cfg); never raises (a failing scan of
+    the parsed document is logged by class and the router's flags are kept)."""
+    out = list(flags)
+    if parsed is not None:
+        try:
+            out += parsed_flags(parsed, cfg or {})
+        except Exception as pe:  # noqa: BLE001 — keep the router's flags regardless
+            print(f"  review-flag scan of the parsed document skipped: {type(pe).__name__}")
+    return out
+
+
 def log_for_document(service, flags: list[dict], metadata: dict, link: str,
                      flagged_at: str, parsed=None, cfg: Optional[dict] = None) -> int:
     """For the watcher/backfill per-document path: add parsed_flags(parsed,
@@ -218,22 +242,13 @@ def log_for_document(service, flags: list[dict], metadata: dict, link: str,
     best-effort: any failure (including computing the flags) is logged by
     exception class only (the Actions log is public) and never blocks the
     document. Returns the number written (0 on failure or no private Sheet)."""
-    flags = list(flags)
-    if parsed is not None:
-        try:
-            flags += parsed_flags(parsed, cfg or {})
-        except Exception as pe:  # noqa: BLE001 — keep the router's flags regardless
-            print(f"  review-flag scan of the parsed document skipped: {type(pe).__name__}")
+    flags = collect(flags, parsed, cfg)
     try:
         if not flags:
             return 0
-        sheet_id = review_sheet_id()
+        sheet_id, why = private_sheet_for_write(service)
         if sheet_id is None:
-            print(f"  {len(flags)} review flag(s) not written: no private Sheet configured")
-            return 0
-        if _is_public_sheet(service, sheet_id):
-            print(f"  {len(flags)} review flag(s) not written: GSHEET_ID_PRIVATE holds "
-                  "public case-file tabs")
+            print(f"  {len(flags)} review flag(s) not written: {why}")
             return 0
         n = record(service, sheet_id, flags, metadata, link, flagged_at)
         print(f"  {n} review flag(s) logged")

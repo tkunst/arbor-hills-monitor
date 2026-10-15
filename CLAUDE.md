@@ -871,6 +871,8 @@ answers "is it live right now."
 | `pfas_pws.enabled` | yes |
 | `govqa.enabled` | yes |
 | `mpart.enabled` | yes |
+| `owner_weekly.enabled` | no |
+| `owner_weekly.enforcement_alert_enabled` | no |
 | `egle_newsroom.enabled` | yes |
 <!-- stream-status:end -->
 

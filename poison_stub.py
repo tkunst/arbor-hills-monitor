@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import sheet_writer as sw
 import nsite_client as nc
+import owner_notices
 
 MAX_ERRORS_PER_DOC = 3  # give up on a poison doc after this many failures
 
@@ -26,7 +27,8 @@ MAX_ERRORS_PER_DOC = 3  # give up on a poison doc after this many failures
 def stub_if_poisoned(sheets, sheet_id: str, state: dict, d: dict, cnt: int,
                      exc: BaseException, now: str,
                      feed_tab: str = sw.TAB_HISTORICAL,
-                     title_overrides: dict | None = None) -> bool:
+                     title_overrides: dict | None = None,
+                     cfg: dict | None = None) -> bool:
     """If `cnt` (the doc's running error count) has reached MAX_ERRORS_PER_DOC
     and the doc isn't already skipped, write its stub feed row to `feed_tab`,
     append a 'skipped' state event, and update the in-memory `state` (skipped
@@ -54,7 +56,15 @@ def stub_if_poisoned(sheets, sheet_id: str, state: dict, d: dict, cnt: int,
     display_title resolution that has no override).
 
     Returns True iff the doc was stubbed. Never raises: a write failure is
-    logged and the doc stays at its strike count."""
+    logged and the doc stays at its strike count.
+
+    coder:owner-weekly-email: once the stub row AND the skipped state are
+    written, a document whose regulator title reads as an enforcement action
+    gets a same-day OWNER-ONLY email (owner_notices.alert_unreadable_enforcement,
+    gated on owner_weekly.enforcement_alert_enabled via `cfg`). Order: stub
+    row, state, then email; a failed send is recorded for the weekly email and
+    never undoes or blocks the stub. Not added to pending_urgent_recap (the
+    commissioners see that on Sunday)."""
     did = d["doc_id"]
     if cnt < MAX_ERRORS_PER_DOC or did in state["skipped"]:
         return False
@@ -71,13 +81,22 @@ def stub_if_poisoned(sheets, sheet_id: str, state: dict, d: dict, cnt: int,
         sw.write_stub_row(sheets, sheet_id, stub_meta, link, reason, feed_tab=feed_tab)
         sw.mark_skipped(sheets, sheet_id, did,
                         {"document_name": stub_meta["document_name"],
-                         "date_filed": d["date_filed"], "reason": reason},
+                         "date_filed": d["date_filed"], "reason": reason,
+                         # for the owner weekly email (owner_notices.py)
+                         "egle_title": egle_title,
+                         "facility": d.get("facility_name") or d.get("facility_srn", ""),
+                         "error_class": type(exc).__name__},
                         now)
         state["skipped"][did] = {"reason": reason}
         state["errors"].pop(did, None)
         print(f"  ->  stubbed + skipped (now visible in feed): "
               f"{stub_meta['document_name'][:50]}")
-        return True
     except Exception as e2:  # noqa: BLE001
         print(f"  ->  stub/skip write failed: {e2}")
         return False
+    # Section C (after the stub row and the state): never raises.
+    try:
+        owner_notices.alert_unreadable_enforcement(sheets, stub_meta, link, cfg, now, cnt)
+    except Exception as e3:  # noqa: BLE001 — belt and braces: stubbing already done
+        print(f"  ->  owner enforcement alert skipped: {type(e3).__name__}")
+    return True
