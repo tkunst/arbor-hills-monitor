@@ -73,6 +73,22 @@ external users but no sensitive data). Public repo.
   passes `title_is_generic=True`; still domain-agnostic — this module has no
   opinion on what makes a title generic). `classify()`/`ocr_in_place()` moved
   to `ocr_util.py` (ADR 069); both names stay importable here unchanged.
+  **Untrusted input + urgency floor (PR #142, 2026-10-15):** document text goes
+  to the model inside `<document>…</document>` and filer metadata (nSITE name,
+  date, type) inside `<metadata>…</metadata>`, both run through
+  `_neutralize_fences` (look-alike `<>/` mapped, Unicode Cf stripped, any
+  document/metadata tag opener bracketed; linear-time, never alters numbers).
+  After classification a deterministic floor can only RAISE severity to urgent:
+  a measured reading >= the MACT value (`urgent.measured_temp_urgent_f`, the
+  same YAML anchor as `temperature_thresholds.mact_f`), "CO spike"/"smoldering"
+  or a field technician's `,SSO Well`/`,SSO` comment tag on ANY page
+  (`risk_register.hard_urgency_signal`, scanned page by page), or an
+  enforcement-action title (`risk_register.enforcement_title_signal`: Violation
+  Notice / NOV / VN (#n) / Enforcement Notice / (Administrative) Consent Order,
+  not correspondence, responses or reports). "Subsurface oxidation" and a bare
+  "SSO" are deliberately NOT triggers (WOI-report boilerplate).
+  `_SEVERITY_HELP` makes an enforcement action by ANY authority (EPA, EGLE,
+  county, YCUA/WTUA/township) urgent when the document IS the action.
   `parse_document()`'s OCR gate now checks BOTH `classify()` (unchanged
   verdict) and the new `needs_ocr()`: a `classify()`-triggered case keeps the
   exact old raise-on-failure behavior, while a case ONLY `needs_ocr()` catches
