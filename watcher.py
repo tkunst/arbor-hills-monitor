@@ -330,13 +330,14 @@ def run() -> int:
                 except Exception as ww:  # noqa: BLE001 — alert is best-effort
                     print(f"  well_watch skipped (doc still recorded): {ww}")
 
+            _route_urgent_or_digest(parsed, d, link, cfg, state, sheets, sheet_id)
+
             # Values the monitor deliberately did not use (an above-ceiling
             # temperature, a rejected WOI table, unreadable pages) go to the
             # Parser Review Flags tab instead of vanishing. Best-effort, after
-            # the document row; it never sends email (see review_flags.py).
+            # the document row and the alert (a slow private Sheet must never
+            # delay an URGENT email); it never sends email (review_flags.py).
             rf.log_for_document(sheets, flags, d, link, _now(), parsed=parsed, cfg=cfg)
-
-            _route_urgent_or_digest(parsed, d, link, cfg, state, sheets, sheet_id)
 
             payload = _processed_payload(parsed, d)
             state["processed"][did] = payload

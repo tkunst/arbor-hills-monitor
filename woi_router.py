@@ -58,6 +58,9 @@ _MIN_VALID_READINGS = 50
 # is_urgent get the alert- and watch-band evidence at ~hundreds/low-thousands of
 # rows, not the full ~14k dump (which stays reproducible via scripts/woi_summary.py).
 _DEFAULT_WATCH_F = 131.0
+# The metrics route_measurements() emits from the gas and CO tables; only
+# these replace the classifier's own (windowed) measurements.
+_ROUTED_METRICS = {"temperature", "oxygen", "methane", "carbon_monoxide"}
 
 
 def _auto_route_enabled(cfg: dict) -> bool:
@@ -247,7 +250,14 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
         [r.raw_well_id for r in readings], alias_map,
         context=f"WOI report {metadata.get('doc_id', '?')}")
     summary = wtp.per_well_summary(valid, woi_set=woi_set)
-    parsed.measurements = measurements
+    # Replace only the metrics this router re-derives exhaustively from the
+    # tables; any other classifier measurement (H2S, a permitted limit, ...)
+    # is kept. With the header now searched on every page, large compilations
+    # (e.g. a Consent Judgment quarterly report) route too, and their
+    # narrative measurements must not be lost from the record.
+    kept = [m for m in (getattr(parsed, "measurements", None) or [])
+            if not (isinstance(m, dict) and m.get("metric") in _ROUTED_METRICS)]
+    parsed.measurements = kept + measurements
 
     validity = 100.0 * len(valid) / max(1, len(readings))
     n_hot = sum(1 for r in asfound if r.temp >= watch_f)

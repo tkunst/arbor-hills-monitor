@@ -51,7 +51,7 @@ COLUMNS = ["ch4", "co2", "o2", "balance", "diff_press", "temp", "flow",
 # ---------------------------------------------------------------------------
 #
 # The numbers in a row are read in ORDER, so the parser must know which columns
-# the table actually prints. Three layouts exist in the filed reports, and two
+# the table actually prints. Six layouts exist in the filed reports, and two
 # of them have 8 numbers per row:
 #
 #   with Diff. Press, with Header Pres (9)  -- e.g. the 2025 H1 report
@@ -197,8 +197,10 @@ _LABEL_WORDS = {"ch4": re.compile(r"^CH4"), "co2": re.compile(r"^CO2"),
 # Header labels sit on, or wrap upward from, the "Well ID" baseline.
 _HEADER_BAND_ABOVE = 60.0
 _HEADER_BAND_BELOW = 5.0
-# A real header page has one or two "Well ID" labels; far more is not a table.
-_MAX_ID_WORDS_PER_PAGE = 50
+# A real header page has one or two "Well ID" labels; more is not a table header page.
+_MAX_ID_WORDS_PER_PAGE = 4
+# "Well" also appears in comments ("well flooded"), so it gets a looser cap.
+_MAX_WELL_WORDS_PER_PAGE = 500
 _MAX_WORDS_PER_HEADER_PAGE = 20000
 
 
@@ -234,7 +236,7 @@ def _page_header_columns(words: list) -> list[list]:
     found_headers = []
     wells = [w for w in words if w[4].lower() == "well"]
     ids = [w for w in words if w[4] == "ID"]
-    if (len(ids) > _MAX_ID_WORDS_PER_PAGE or len(wells) > _MAX_ID_WORDS_PER_PAGE
+    if (len(ids) > _MAX_ID_WORDS_PER_PAGE or len(wells) > _MAX_WELL_WORDS_PER_PAGE
             or len(words) > _MAX_WORDS_PER_HEADER_PAGE):
         return []  # not a table header page; bounds the pairing work on a hostile page
     for idw in ids:
@@ -317,6 +319,10 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
     supplies the column order; without it the header text order is used."""
     out = GasExtractionParse()
     seen_on_page: dict = {}
+    text_headers: dict = {}
+    for t, pg in lines:
+        if _HEADER_START_RE.match(t):
+            text_headers[pg] = text_headers.get(pg, 0) + 1
     layout = list(initial_layout) if initial_layout else None
     header = ""
     header_cols = None
@@ -353,7 +359,12 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
             if _looks_like_gas_header(htext):
                 if page_headers is not None:
                     cols_on_page = page_headers.get(page) or []
-                    cols = cols_on_page[k] if k < len(cols_on_page) else []
+                    # Pair the k-th "Well ID" text header with the k-th one
+                    # found by position only when both sides see the same
+                    # number of headers on the page; otherwise the pairing
+                    # is unknowable and the table is not read.
+                    cols = (cols_on_page[k] if len(cols_on_page) == text_headers.get(page, 0)
+                            else [])
                     # The positions give the ORDER. Every column this header's
                     # own text names must be among them, or the text header was
                     # paired with another header's words (two on one page).

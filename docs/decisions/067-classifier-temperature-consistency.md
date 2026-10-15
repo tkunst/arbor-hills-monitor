@@ -95,4 +95,8 @@ point for a later owner-only email.
 250°F (e.g. a subsurface-fire excursion) is now held out of the URGENT path,
 `well_watch` and the WOI summary, and is visible only in the review tab until
 the owner-only email (`coder:owner-weekly-email`) surfaces it. The report still
-alerts if any other reading is at or above 145°F.
+alerts if any other reading is at or above 145°F. Likewise, a WOI report whose
+gas-table header drifts into an unrecognized form is no longer read with the
+9-column default: its rows are rejected (`rejected_gas_table`) and the report
+falls back to the classifier's windowed sample, so that follow-up should treat
+a rejected table on a detected WOI report as owner-alert material.

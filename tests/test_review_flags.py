@@ -148,3 +148,15 @@ def test_log_for_document_refuses_a_sheet_with_public_tabs(monkeypatch, capsys):
     with mock.patch.object(rf.sw, "append_rows", side_effect=AssertionError("wrote")):
         assert rf.log_for_document(svc, [rf.flag(rf.KIND_TEXT_TEMP)], {}, "", "t") == 0
     assert "public case-file tabs" in capsys.readouterr().out
+
+
+def test_router_flags_survive_a_bad_parsed_object(monkeypatch):
+    monkeypatch.setenv("GSHEET_ID_PRIVATE", "PRIV")
+    monkeypatch.setattr(rf, "_is_public_sheet", lambda svc, sid: False)
+    bad = SimpleNamespace(measurements=["not-a-dict"], key_data_point="", summary="", full_text="")
+    written = []
+    with mock.patch.object(rf.sw, "ensure_tab", lambda *a: None), \
+            mock.patch.object(rf.sw, "append_rows", lambda svc, sid, tab, rows: written.extend(rows)):
+        n = rf.log_for_document(object(), [rf.flag(rf.KIND_REJECTED_TABLE)], {}, "", "t",
+                                parsed=bad, cfg=CFG)
+    assert n == 1 and written[0][3] == rf.KIND_REJECTED_TABLE

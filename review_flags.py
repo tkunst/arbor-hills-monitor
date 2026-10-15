@@ -18,11 +18,13 @@ Two things used to be dropped silently:
 Each is now one row in the "Parser Review Flags" tab of the PRIVATE Sheet
 (GSHEET_ID_PRIVATE, shared only with the service account and Trisha):
 document id, link, kind, value, well, reading time, pages, a fixed-phrase
-detail. It is never written to the public case-file Sheet: an above-ceiling
-value next to a well id is an UNVERIFIED number the pipeline itself judged
-implausible, and must not read as a measured value there. With no private
-Sheet configured the flags are counted in the log and not written. It is a
-DATA tab (append-only, never diffed or baselined by the watcher).
+detail. The review list itself is never written to the public case-file
+Sheet. (The above-ceiling VALUES are still on public record the established
+way: a classifier reading kdp_check re-tagged, and a WOI as-found reading
+woi_router held out, both stay in Measurements with basis "unknown" and a
+note, which is what keeps them from reading as measured values there.) With
+no private Sheet configured the flags are counted in the log and not
+written. It is a DATA tab (append-only, never diffed or baselined).
 
 This module never sends email. `flags_since()` is the one read entry point,
 for the owner-only weekly email / same-day alert to call later.
@@ -216,8 +218,13 @@ def log_for_document(service, flags: list[dict], metadata: dict, link: str,
     best-effort: any failure (including computing the flags) is logged by
     exception class only (the Actions log is public) and never blocks the
     document. Returns the number written (0 on failure or no private Sheet)."""
+    flags = list(flags)
+    if parsed is not None:
+        try:
+            flags += parsed_flags(parsed, cfg or {})
+        except Exception as pe:  # noqa: BLE001 — keep the router's flags regardless
+            print(f"  review-flag scan of the parsed document skipped: {type(pe).__name__}")
     try:
-        flags = list(flags) + (parsed_flags(parsed, cfg or {}) if parsed is not None else [])
         if not flags:
             return 0
         sheet_id = review_sheet_id()
