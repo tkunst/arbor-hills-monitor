@@ -125,8 +125,8 @@ VALID_RISK_IDS = set(RISK_NAMES)
 # compliant") can talk the MODEL's severity down -- but it can't remove the
 # words "smoldering" from the PDF's own extracted text. This pattern reads
 # that raw, deterministic text directly and enforces a rule that ALREADY
-# EXISTS, never a new one: "a CO spike" / "smoldering / subsurface oxidation
-# language" is verbatim from egle_doc_parser._SEVERITY_HELP's own urgent-tier
+# EXISTS, never a new one: "a CO spike" / "smoldering" (narrowed 2026-10-14,
+# see below) is from from egle_doc_parser._SEVERITY_HELP's own urgent-tier
 # definition (the model's own instructions already call these urgent).
 #
 # Two OTHER candidate triggers were built and then DROPPED after real-
@@ -158,8 +158,27 @@ VALID_RISK_IDS = set(RISK_NAMES)
 # limit... is NOT by itself urgent."
 # ---------------------------------------------------------------------------
 
+# Narrowed 2026-10-14 (Trisha, option (b)): "subsurface oxidation" is NOT a
+# trigger, and neither is a bare "SSO". The operator's routine Wells-of-Interest
+# status reports carry both as boilerplate -- "Drager Tube CO Readings taken to
+# prove absence of SSO" in every CO table, a standing history paragraph about a
+# 2019 "near-surface subsurface oxidation event", and "a chemical reaction is
+# occurring as opposed to a subsurface oxidation (SSO) event" -- so either term
+# would have floored every routine WOI report to urgent.
 _CO_SPIKE_RE = re.compile(r"\bco\s*spike\b|carbon\s+monoxide\s+spike", re.IGNORECASE)
-_SMOLDER_RE = re.compile(r"\bsmolder(?:ing)?\b|subsurface\s+oxidation", re.IGNORECASE)
+_SMOLDER_RE = re.compile(r"\bsmolder(?:ing)?\b", re.IGNORECASE)
+
+# The ONE narrow "SSO" form that IS a trigger (Trisha, 2026-10-14): a FIELD
+# TECHNICIAN's comment tag on a wellhead reading. In the WOI reports' per-reading
+# Comments column, technician codes are comma-separated tokens, e.g.
+#   "Opened Valve 1/2 turn or less,SSO Well: :"
+#   "Second Reading,SSO Well: 15ppm co:"
+#   "1/2 turn or less,Air off,SSO"
+# So: an UPPERCASE "SSO" that is a whole comma-delimited token (start of line or
+# after a comma), either "SSO Well" or "SSO" ending the token. Case-sensitive
+# (OCR noise in boring logs reads as lowercase "sso"), and it never matches the
+# prose boilerplate above ("absence of SSO.", "(SSO) event", "an SSO.").
+_FIELD_SSO_RE = re.compile(r"(?:^|,)[ \t]*SSO(?:[ \t]+Well\b|[ \t]*(?:,|$))", re.MULTILINE)
 
 
 def hard_urgency_signal(text: str) -> bool:
@@ -173,4 +192,5 @@ def hard_urgency_signal(text: str) -> bool:
     reported."""
     if not text:
         return False
-    return bool(_CO_SPIKE_RE.search(text) or _SMOLDER_RE.search(text))
+    return bool(_CO_SPIKE_RE.search(text) or _SMOLDER_RE.search(text)
+                or _FIELD_SSO_RE.search(text))

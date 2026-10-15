@@ -1,0 +1,59 @@
+name: classifier-ab
+
+# ONE-OFF, PR #142 only (classifier-untrusted-input): live A/B of main's
+# egle_doc_parser vs this branch's on ~24 real nSITE documents, production
+# model. READ-ONLY: no Sheet writes, no Drive, no email. Runs on push to this
+# branch only. DELETE this workflow and scripts/classifier_ab.py before merging.
+on:
+  push:
+    branches: [classifier-untrusted-input]
+    paths:
+      - ".github/workflows/classifier-ab.yml"
+      - "scripts/classifier_ab.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: classifier-ab
+  cancel-in-progress: false
+
+jobs:
+  ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install system OCR tooling
+        continue-on-error: true
+        run: sudo apt-get update && sudo apt-get install -y ocrmypdf
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+      - name: Main's parser as OLD
+        run: |
+          mkdir -p "$RUNNER_TEMP/old"
+          git show origin/main:egle_doc_parser.py > "$RUNNER_TEMP/old/egle_doc_parser.py"
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: A/B (read-only)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+        run: python scripts/classifier_ab.py --old-parser "$RUNNER_TEMP/old/egle_doc_parser.py" --out "$RUNNER_TEMP/classifier-ab.json" --limit 24
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: classifier-ab
+          path: ${{ runner.temp }}/classifier-ab.json
+          retention-days: 3

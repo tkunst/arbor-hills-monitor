@@ -189,3 +189,12 @@ def test_sanitize_leaves_flare_ids_alone():
            "well_id": "TE391", "note": "waste temperature at peak"}]
     out, n = kc.sanitize_measurements(ms, REF)
     assert n == 0 and all(m["basis"] == "measured" for m in out)
+
+
+def test_mact_limit_is_one_number_in_config():
+    # urgent.measured_temp_urgent_f and temperature_thresholds.mact_f are tied
+    # by a YAML anchor so they can never drift apart.
+    import yaml
+    from pathlib import Path
+    cfg = yaml.safe_load((Path(__file__).resolve().parent.parent / "config.yml").read_text())
+    assert cfg["urgent"]["measured_temp_urgent_f"] == cfg["temperature_thresholds"]["mact_f"] == 145

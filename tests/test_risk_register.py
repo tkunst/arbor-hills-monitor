@@ -33,20 +33,64 @@ def test_smoldering_is_true():
     assert rr.hard_urgency_signal("Field crew observed smoldering at the surface near Cell 5C.") is True
 
 
-def test_subsurface_oxidation_is_true():
-    assert rr.hard_urgency_signal("Subsurface oxidation was confirmed by thermal probe data.") is True
+# --- Narrowed 2026-10-14 (Trisha, option (b)): "subsurface oxidation" and a
+# --- bare "SSO" are NOT triggers -- both are boilerplate in routine WOI reports.
+
+def test_subsurface_oxidation_alone_is_false():
+    assert rr.hard_urgency_signal("Subsurface oxidation was confirmed by thermal probe data.") is False
 
 
-def test_real_urgent_specimen_phrasing_is_true():
-    # The actual phrasing from a real N2688 "nForm Document" the live
-    # classifier already rates urgent (2026-10-14 verification sample) --
-    # ground truth that this trigger reads a genuine R8 signal, not a
-    # synthetic one.
+def test_woi_history_paragraph_boilerplate_is_false():
+    # Standing history paragraph repeated in routine WOI status reports.
     assert rr.hard_urgency_signal(
         "subsidence observed in March 2019 were ultimately attributed to a "
         "near-surface subsurface oxidation event, unrelated to the ongoing "
         "monitoring for the WOI."
+    ) is False
+
+
+def test_woi_co_table_boilerplate_is_false():
+    # Printed under every Attachment 2 CO table in the 2022-2024 WOI reports.
+    assert rr.hard_urgency_signal(
+        "Scale of Carbon Monoxide Tubes: 5 - 700 ppm\n"
+        "Note: Drager Tube CO Readings taken to prove absence of SSO. "
+        "Scale of the CO tubes are 5-700 ppm"
+    ) is False
+
+
+def test_operator_denial_of_sso_is_false():
+    assert rr.hard_urgency_signal(
+        "Arbor Hills believes that a chemical reaction is occurring as opposed to "
+        "a subsurface oxidation (SSO) event. ... nor are there any burning smells "
+        "that are typical indicators of an SSO."
+    ) is False
+
+
+def test_lowercase_ocr_noise_sso_is_false():
+    # OCR of hand-written boring logs produces lowercase "sso" fragments.
+    assert rr.hard_urgency_signal("10- Sandy Clay- Some Silt- Trace sso\n sso 7") is False
+
+
+# --- The one narrow SSO trigger: a field technician's comment tag ----------
+
+def test_field_comment_sso_well_tag_is_true():
+    # Verbatim comment-column tokens from the 2025 H2 WOI status report.
+    assert rr.hard_urgency_signal(
+        "AHWW512R AHWW512R 9/30/2025 10:29 56.3 43.7 0 0 0.42 116.1 18.1 -1.74 "
+        "Second Reading,SSO Well: 15ppm co:"
     ) is True
+    assert rr.hard_urgency_signal("Opened Valve 1/2 turn or less,SSO Well: :") is True
+
+
+def test_field_comment_sso_trailing_token_is_true():
+    # Verbatim from the 2024 H2 / 2025 1H WOI reports' comment column.
+    assert rr.hard_urgency_signal("1/2 turn or less,Air off,SSO") is True
+    assert rr.hard_urgency_signal("No Change,Third Reading,SSO\nAHW259R5 ...") is True
+
+
+def test_field_comment_sso_at_line_start_is_true():
+    # When text extraction wraps the comment cell, the token can start a line.
+    assert rr.hard_urgency_signal("readings below\nSSO Well: 30 ppm co:") is True
 
 
 def test_bare_temperature_mention_is_false():
@@ -129,3 +173,38 @@ def test_dropped_inspection_report_non_compliance_heading_is_false():
         "inspection AQD identified and verified with GFL that they did not "
         "conduct the required testing."
     ) is False
+
+
+# --- Real-specimen regression (local only; PDFs are never committed) --------
+# Runs the operator's real WOI status reports through hard_urgency_signal when
+# the specimen folder is present (Trisha's Mac); skipped in CI. Requirement
+# (Trisha, 2026-10-14): WOI boilerplate must NOT escalate a report through the
+# TEXT floor. Only the three reports covering the 2024-25 SSO event escalate
+# here, via the field-technician "SSO" comment tag. (Separately, and by design,
+# a WOI report with a MEASURED reading >= 145F escalates through the
+# measured-temperature half of the floor in egle_doc_parser.parse_document;
+# that half reads the model-extracted measurements, not this text check.)
+import glob as _glob
+import os as _os
+
+import pytest as _pytest
+
+_WOI_DIR = _os.environ.get(
+    "WOI_SPECIMEN_DIR",
+    "/Volumes/Samsung-Pro-2TB/Lotext/documents/arbor-hills/draft/"
+    "arbor-hills-wellfield-data-2026-10-09/source-docs")
+_WOI_PDFS = sorted(_glob.glob(_os.path.join(_WOI_DIR, "WOI-status-report-*.pdf")))
+_SSO_EVENT_REPORTS = {"WOI-status-report-2024-H2.pdf", "WOI-status-report-2025-1H.pdf",
+                      "WOI-status-report-2025-H2.pdf"}
+
+
+@_pytest.mark.skipif(not _WOI_PDFS, reason="real WOI specimens not present (local-only check)")
+@_pytest.mark.parametrize("pdf", _WOI_PDFS, ids=_os.path.basename)
+def test_real_woi_reports_only_escalate_on_field_sso_comments(pdf):
+    import fitz
+    with fitz.open(pdf) as d:
+        text = "\n".join(page.get_text() for page in d)
+    name = _os.path.basename(pdf)
+    assert not rr._CO_SPIKE_RE.search(text), name
+    assert not rr._SMOLDER_RE.search(text), name
+    assert rr.hard_urgency_signal(text) is (name in _SSO_EVENT_REPORTS), name
