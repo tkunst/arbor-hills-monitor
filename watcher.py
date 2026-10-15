@@ -40,6 +40,7 @@ import nsite_client as nc
 import email_alerts as ea
 import retry_policy as rp
 import well_aliases
+import review_flags as rf
 import woi_router
 import well_watch
 import archiver as av
@@ -286,9 +287,10 @@ def run() -> int:
             # readings, not the windowed soup, land in Measurements). Routing is
             # best-effort: any failure degrades to the generic parse (logged),
             # never drops the filing. See woi_router / ADR 005.
+            flags: list = []
             try:
                 routed = woi_router.route_measurements(
-                    parsed, local, d, cfg, alias_map=well_alias_map)
+                    parsed, local, d, cfg, alias_map=well_alias_map, review_flags=flags)
             except Exception as we:  # noqa: BLE001 — degrade to the generic parse
                 print(f"  WOI routing failed, using generic parse: {we}")
                 routed = None
@@ -327,6 +329,12 @@ def run() -> int:
                     well_watch.check_and_alert(routed.get("readings") or [], d, link, cfg)
                 except Exception as ww:  # noqa: BLE001 — alert is best-effort
                     print(f"  well_watch skipped (doc still recorded): {ww}")
+
+            # Values the monitor deliberately did not use (an above-ceiling
+            # temperature, a rejected WOI table, unreadable pages) go to the
+            # Parser Review Flags tab instead of vanishing. Best-effort, after
+            # the document row; it never sends email (see review_flags.py).
+            rf.log_for_document(sheets, sheet_id, flags + rf.parsed_flags(parsed, cfg), d, link, _now())
 
             _route_urgent_or_digest(parsed, d, link, cfg, state, sheets, sheet_id)
 

@@ -28,7 +28,8 @@ def _max_temperature_f(text: str, max_f: int = 250) -> Optional[int]:
     or None. Values above max_f (temperature_thresholds.max_plausible_wellhead_f,
     ADR 067) are skipped: on this fallback path they are flare/combustion
     temperatures or a misread non-temperature column (e.g. H2S ppm), never a
-    wellhead reading that should fire an urgent alert."""
+    wellhead reading that should fire an urgent alert. They are not lost:
+    review_flags.parsed_flags() logs them for review (ADR 067 amendment)."""
     if not text:
         return None
     best = None

@@ -34,6 +34,7 @@ import sheet_writer as sw
 import nsite_client as nc
 import retry_policy as rp
 import well_aliases
+import review_flags as rf
 import woi_router
 import archiver as av
 import poison_stub
@@ -274,9 +275,10 @@ def run() -> int:
             # extracting historical reports through this path fires no stale
             # alerts. Best-effort: a routing failure degrades to the generic
             # parse (logged), never drops the filing.
+            flags: list = []
             try:
                 routed = None if related else woi_router.route_measurements(
-                    parsed, local, d, cfg, alias_map=well_alias_map)
+                    parsed, local, d, cfg, alias_map=well_alias_map, review_flags=flags)
             except Exception as we:  # noqa: BLE001 — degrade to the generic parse
                 print(f"  WOI routing failed, using generic parse: {we}")
                 routed = None
@@ -304,6 +306,10 @@ def run() -> int:
                     sw.write_woi_summary(sheets, sheet_id, routed["summary"], d, link)
                 except Exception as we:  # noqa: BLE001 — summary tab is best-effort
                     print(f"  WOI summary-tab write skipped (doc still recorded): {we}")
+            # Review flags (see watcher.py / review_flags.py): best-effort, after
+            # the document row, never an email. Related-scope docs get none.
+            if not related:
+                rf.log_for_document(sheets, sheet_id, flags + rf.parsed_flags(parsed, cfg), d, link, _now())
             payload = {
                 "document_name": d["document_name"],
                 "date_filed": d["date_filed"],

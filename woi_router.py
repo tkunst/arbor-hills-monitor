@@ -35,15 +35,18 @@ from typing import Optional
 
 import fitz  # pymupdf
 
+import review_flags as rf
 import well_aliases
 import woi_table_parser as wtp
 
 # Attachment-1 header ("Gas Extraction Report"); tolerate whitespace/case drift.
 _HEADER_RE = re.compile(r"gas\s+extraction\s+report", re.I)
-# How many front pages to scan for the header. It's on ~p8 of the real reports;
-# bounding the scan keeps detection cheap on a large NON-WOI doc (which would
-# otherwise have its full text extracted looking for a header that isn't there).
-_HEADER_SCAN_PAGES = 25
+# The header is searched on EVERY page (coder:woi-layout-guard, 2026-10-15).
+# It used to be bounded to the first 25 pages to keep detection cheap, but the
+# Q3 2023 Consent Judgment report carries its gas table from p163 and was never
+# detected. A full scan is cheap (a 1,045-page report reads in ~3 s), and the
+# file the watcher/backfill hands in has already been through parse_document's
+# OCR step, so a scanned header page is searched as text too.
 # Minimum VALID gas-extraction readings for a detected doc to actually route. A
 # real WOI report has ~14,000; a misdetected narrative doc that merely mentions
 # the phrase yields ~0. Well below any real report, well above any false positive.
@@ -73,8 +76,8 @@ def _watch_f(cfg: dict) -> float:
 
 def is_woi_report(pdf_path: str, metadata: dict, page_threshold: int = 30) -> bool:
     """True iff this looks like a WOI Status Report: over the large-doc page
-    threshold AND carrying the Attachment-1 "Gas Extraction Report" header in its
-    front pages. Deliberately NOT gated on the nSITE name — the real reports are
+    threshold AND carrying the Attachment-1 "Gas Extraction Report" header on
+    any page. Deliberately NOT gated on the nSITE name — the real reports are
     filed as "nForm Document"/"Site". Conservative via the specific header; made
     safe against a false positive by the valid-reading guard in
     route_measurements(). Logs the decision so an under-trigger (a silently
@@ -88,8 +91,12 @@ def is_woi_report(pdf_path: str, metadata: dict, page_threshold: int = 30) -> bo
         n = len(doc)
         if n <= page_threshold:
             return False
-        for p in range(min(n, _HEADER_SCAN_PAGES)):
-            if _HEADER_RE.search(doc[p].get_text()):
+        for p in range(n):
+            try:
+                text = doc[p].get_text()
+            except Exception:  # noqa: BLE001 — one damaged page; keep scanning
+                continue
+            if _HEADER_RE.search(text):
                 print(f"[woi_router] WOI-shaped: {n}pp, 'Gas Extraction Report' on "
                       f"p{p + 1} — {metadata.get('document_name')!r} "
                       f"(nSITE type={metadata.get('type_name')!r})")
@@ -99,8 +106,13 @@ def is_woi_report(pdf_path: str, metadata: dict, page_threshold: int = 30) -> bo
         doc.close()
 
 
+def _max_plausible_f(cfg: dict) -> float:
+    return float((cfg.get("temperature_thresholds") or {}).get("max_plausible_wellhead_f", 250))
+
+
 def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
-                       alias_map: Optional[dict] = None) -> Optional[dict]:
+                       alias_map: Optional[dict] = None,
+                       review_flags: Optional[list] = None) -> Optional[dict]:
     """If woi.auto_route is on and this is a WOI report, exhaustively parse it and
     REPLACE parsed.measurements with the non-ADJ, valid, >= watch-band readings —
     plus the single peak as-found reading, always — then return a summary payload
@@ -137,6 +149,24 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
       limit — the exact measured-vs-permitted conflation ADR 004 forbids. Keeping
       the peak guarantees >= 1 measured temperature, so urgency is always decided
       from structured data (correctly False when the peak is < the MACT limit).
+
+    And from coder:woi-layout-guard (2026-10-15):
+
+    * PER-TABLE LAYOUT. woi_table_parser reads each gas table's own header to
+      learn its column order, rejects a table it can't place (unknown layout,
+      or the negative-flow column-shift signature), and skips unreadable
+      pages instead of failing the whole report.
+
+    * PLAUSIBILITY CEILING. A valid reading whose temperature is above
+      temperature_thresholds.max_plausible_wellhead_f (250F, ADR 067) is
+      removed BEFORE every alerting path: the emitted measurements, the
+      per-well summary, the peak anchor and the readings handed to
+      well_watch. It is never an URGENT on its own (usually a flare or a
+      misread column), but it is no longer dropped silently either.
+
+    `review_flags`, if a list is passed, receives one review_flags.flag()
+    dict per above-ceiling reading, rejected table and unreadable-page run,
+    whether or not the report ends up routed. The caller logs them.
     """
     if not _auto_route_enabled(cfg):
         return None
@@ -144,8 +174,18 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
     if not is_woi_report(pdf_path, metadata, page_threshold):
         return None
 
-    readings = wtp.parse_gas_extraction(pdf_path, alias_map=alias_map)
-    valid = [r for r in readings if r.valid]
+    gp = wtp.parse_gas_extraction_report(pdf_path, alias_map=alias_map)
+    readings = gp.readings
+    max_f = _max_plausible_f(cfg)
+    valid_all = [r for r in readings if r.valid]
+    above = [r for r in valid_all if r.temp is not None and r.temp > max_f]
+    valid = [r for r in valid_all if not (r.temp is not None and r.temp > max_f)]
+    if above:
+        print(f"[woi_router] {len(above)} valid reading(s) above the {max_f:g}F "
+              f"plausibility ceiling held out of alerting and the summary "
+              f"(logged for review)")
+    if review_flags is not None:
+        review_flags.extend(rf.woi_flags(above, gp.rejected_tables, gp.skipped_pages, max_f))
     if len(valid) < _MIN_VALID_READINGS:
         print(f"[woi_router] WARNING: detected a WOI report but only {len(valid)} "
               f"valid readings (< {_MIN_VALID_READINGS}) — NOT replacing "
