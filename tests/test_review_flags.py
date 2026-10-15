@@ -65,19 +65,52 @@ def test_rows_shape():
     assert len(row) == len(rf.REVIEW_FLAG_HEADERS)
 
 
-def test_log_for_document_is_best_effort(capsys):
+def test_log_for_document_is_best_effort(capsys, monkeypatch):
+    monkeypatch.setenv("GSHEET_ID_PRIVATE", "PRIV")
+    monkeypatch.setenv("GSHEET_ID", "PUB")
     svc = mock.MagicMock()
     with mock.patch.object(rf.sw, "ensure_tab", side_effect=RuntimeError("boom https://secret")):
-        n = rf.log_for_document(svc, "sid", [rf.flag(rf.KIND_TEXT_TEMP)], {}, "", "t")
+        n = rf.log_for_document(svc, [rf.flag(rf.KIND_TEXT_TEMP)], {}, "", "t")
     assert n == 0
     out = capsys.readouterr().out
     assert "RuntimeError" in out and "secret" not in out
 
 
+def test_log_for_document_writes_private_sheet_only(monkeypatch):
+    monkeypatch.setenv("GSHEET_ID_PRIVATE", "PRIV")
+    monkeypatch.setenv("GSHEET_ID", "PUB")
+    calls = []
+    with mock.patch.object(rf.sw, "ensure_tab", lambda *a: calls.append(("ensure", a[1]))), \
+            mock.patch.object(rf.sw, "append_rows", lambda *a: calls.append(("append", a[1]))):
+        assert rf.log_for_document(object(), [rf.flag(rf.KIND_TEXT_TEMP)], {}, "", "t") == 1
+    assert {sid for _, sid in calls} == {"PRIV"}
+
+
+@pytest.mark.parametrize("priv", ["", "PUB"])
+def test_log_for_document_never_falls_back_to_public_sheet(monkeypatch, capsys, priv):
+    monkeypatch.setenv("GSHEET_ID_PRIVATE", priv)
+    monkeypatch.setenv("GSHEET_ID", "PUB")
+    with mock.patch.object(rf.sw, "append_rows", side_effect=AssertionError("wrote")):
+        assert rf.log_for_document(object(), [rf.flag(rf.KIND_TEXT_TEMP)], {}, "", "t") == 0
+    assert "no private Sheet" in capsys.readouterr().out
+
+
+def test_log_for_document_survives_a_bad_parsed_object(monkeypatch, capsys):
+    monkeypatch.setenv("GSHEET_ID_PRIVATE", "PRIV")
+    bad = SimpleNamespace(measurements=["not-a-dict"], key_data_point="", summary="", full_text="")
+    assert rf.log_for_document(object(), [], {}, "", "t", parsed=bad, cfg=CFG) == 0
+    assert "AttributeError" in capsys.readouterr().out
+
+
 def test_log_for_document_no_flags_touches_nothing():
     svc = mock.MagicMock()
-    assert rf.log_for_document(svc, "sid", [], {}, "", "t") == 0
+    assert rf.log_for_document(svc, [], {}, "", "t") == 0
     svc.assert_not_called()
+
+
+def test_thousands_separator_is_read_whole():
+    assert rf.implausible_text_temps("Well AHW1 reached 1,500 F.", 250) == [1500]
+    assert rf.implausible_text_temps("Well AHW1 read 120 F.", 250) == []
 
 
 def test_flags_since_filters_and_is_strict():

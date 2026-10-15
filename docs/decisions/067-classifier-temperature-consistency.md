@@ -80,9 +80,17 @@ row in a new append-only **Parser Review Flags** tab (`review_flags.py`):
   readings passed to `well_watch`, and flagged instead.
 
 The tab holds parser metadata only (document id, link, kind, value, well,
-reading time, pages, a fixed-phrase detail); no classifier prose. It is on the
-case-file Sheet because both the watcher and the backfill workflows can write
-it (the backfill job has no private-Sheet secret). Writes are best-effort and
-never block a document. No email is sent from this path:
-`review_flags.flags_since()` is the read entry point for a later owner-only
-email.
+reading time, pages, a fixed-phrase detail); no classifier prose. It lives on
+the PRIVATE Sheet (`GSHEET_ID_PRIVATE`, now also passed to the backfill
+workflow), never the public case file: an above-ceiling value next to a well
+id is an unverified number the pipeline itself judged implausible, and must not
+read as a measured value there. With no private Sheet configured the flags are
+only counted in the run log. Writes are best-effort and never block a document.
+No email is sent from this path: `review_flags.flags_since()` is the read entry
+point for a later owner-only email.
+
+**Residual risk (accepted, follow-up queued):** a REAL wellhead reading above
+250°F (e.g. a subsurface-fire excursion) is now held out of the URGENT path,
+`well_watch` and the WOI summary, and is visible only in the review tab until
+the owner-only email (`coder:owner-weekly-email`) surfaces it. The report still
+alerts if any other reading is at or above 145°F.

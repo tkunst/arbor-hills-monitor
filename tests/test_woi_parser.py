@@ -294,3 +294,17 @@ def test_unreadable_page_is_skipped(tmp_path, monkeypatch):
 def test_page_ranges():
     assert w._page_ranges([71, 72, 73, 80]) == "71-73, 80"
     assert w._page_ranges([]) == ""
+
+
+def test_header_text_must_agree_with_paired_word_columns():
+    # A text header naming Diff. Press paired (by position) with words that
+    # lack it must not be read with the words' columns.
+    hdr = list(HDR_FULL)
+    lines = [(t, 1) for t in hdr + NO_DIFF_ROW]
+    g = w._parse_table_lines(lines, page_headers={1: [w.LAYOUTS["no_diff_press"]]})
+    assert g.readings == [] and g.rejected_tables[0].reason == "column layout not recognized"
+
+
+def test_page_header_columns_ignores_pages_with_too_many_id_words():
+    words = [(10 * i, 0, 10 * i + 5, 5, "ID") for i in range(60)] + [(0, 0, 5, 5, "Well")]
+    assert w._page_header_columns(words) == []

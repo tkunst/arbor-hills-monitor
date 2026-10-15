@@ -15,21 +15,24 @@ Two things used to be dropped silently:
   * a WOI gas table the parser rejected (unknown column layout, or the
     column-shift signature) and pages MuPDF could not read.
 
-Each is now one row in the "Parser Review Flags" tab of the case-file Sheet:
-factual parser metadata only (document id, link, kind, value, well, reading
-time, pages, a fixed-phrase detail). No classifier prose, no names. It is a
-DATA tab (append-only, never diffed or baselined by the watcher). It sits on
-the public Sheet because that is the only Sheet both the watcher and the
-backfill workflows can write today (the backfill job has no GSHEET_ID_PRIVATE).
+Each is now one row in the "Parser Review Flags" tab of the PRIVATE Sheet
+(GSHEET_ID_PRIVATE, shared only with the service account and Trisha):
+document id, link, kind, value, well, reading time, pages, a fixed-phrase
+detail. It is never written to the public case-file Sheet: an above-ceiling
+value next to a well id is an UNVERIFIED number the pipeline itself judged
+implausible, and must not read as a measured value there. With no private
+Sheet configured the flags are counted in the log and not written. It is a
+DATA tab (append-only, never diffed or baselined by the watcher).
 
 This module never sends email. `flags_since()` is the one read entry point,
 for the owner-only weekly email / same-day alert to call later.
 """
 from __future__ import annotations
 
+import os
+import re
 from typing import Optional
 
-import email_alerts as ea
 import kdp_check
 import sheet_writer as sw
 import woi_table_parser as wtp
@@ -100,14 +103,20 @@ def woi_flags(above_ceiling: list, rejected_tables: list, skipped_pages: list,
 _CONTEXT_CHARS = 150
 
 
+# The urgency fallback's own pattern (email_alerts._TEMP_RE), but reading a
+# thousands separator, so "1,500°F" is 1500, not 500.
+_TEMP_RE = re.compile(r"(?<![\d,])(\d{1,3}(?:,\d{3})+|\d{2,4})\s*(?:°|deg(?:rees)?\.?\s*)?\s*f\b",
+                      re.IGNORECASE)
+
+
 def implausible_text_temps(text: str, max_f: float) -> list[int]:
     """°F values above max_f in free text, outside flare/combustion context,
     de-duplicated, highest first. Pure."""
     if not text:
         return []
     vals = set()
-    for m in ea._TEMP_RE.finditer(text):
-        v = int(m.group(1))
+    for m in _TEMP_RE.finditer(text):
+        v = int(m.group(1).replace(",", ""))
         if v <= max_f:
             continue
         ctx = text[max(0, m.start() - _CONTEXT_CHARS):m.end() + _CONTEXT_CHARS]
@@ -174,14 +183,31 @@ def record(service, sheet_id: str, flags: list[dict], metadata: dict, link: str,
     return len(flags)
 
 
-def log_for_document(service, sheet_id: str, flags: list[dict], metadata: dict,
-                     link: str, flagged_at: str) -> int:
-    """record(), best-effort, for the watcher/backfill per-document path: a
-    failure is logged by exception class only (the Actions log is public) and
-    never blocks the document. Returns the number written (0 on failure)."""
-    if not flags:
-        return 0
+def review_sheet_id() -> Optional[str]:
+    """The PRIVATE Sheet id the review log lives on, or None: unset, or equal
+    to the public GSHEET_ID (both jobs that write flags receive GSHEET_ID, so
+    this check is effective in CI too)."""
+    priv = (os.environ.get("GSHEET_ID_PRIVATE") or "").strip()
+    if not priv or priv == (os.environ.get("GSHEET_ID") or "").strip():
+        return None
+    return priv
+
+
+def log_for_document(service, flags: list[dict], metadata: dict, link: str,
+                     flagged_at: str, parsed=None, cfg: Optional[dict] = None) -> int:
+    """For the watcher/backfill per-document path: add parsed_flags(parsed,
+    cfg) to `flags` and record() them on the private Sheet. Entirely
+    best-effort: any failure (including computing the flags) is logged by
+    exception class only (the Actions log is public) and never blocks the
+    document. Returns the number written (0 on failure or no private Sheet)."""
     try:
+        flags = list(flags) + (parsed_flags(parsed, cfg or {}) if parsed is not None else [])
+        if not flags:
+            return 0
+        sheet_id = review_sheet_id()
+        if sheet_id is None:
+            print(f"  {len(flags)} review flag(s) not written: no private Sheet configured")
+            return 0
         n = record(service, sheet_id, flags, metadata, link, flagged_at)
         print(f"  {n} review flag(s) logged")
         return n

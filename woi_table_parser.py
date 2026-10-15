@@ -197,6 +197,8 @@ _LABEL_WORDS = {"ch4": re.compile(r"^CH4"), "co2": re.compile(r"^CO2"),
 # Header labels sit on, or wrap upward from, the "Well ID" baseline.
 _HEADER_BAND_ABOVE = 60.0
 _HEADER_BAND_BELOW = 5.0
+# A real header page has one or two "Well ID" labels; far more is not a table.
+_MAX_ID_WORDS_PER_PAGE = 50
 
 
 def _center(w) -> tuple[float, float]:
@@ -230,7 +232,10 @@ def _page_header_columns(words: list) -> list[list]:
     page.get_text("words") output. Pure."""
     found_headers = []
     wells = [w for w in words if w[4].lower() == "well"]
-    for idw in (w for w in words if w[4] == "ID"):
+    ids = [w for w in words if w[4] == "ID"]
+    if len(ids) > _MAX_ID_WORDS_PER_PAGE or len(wells) > _MAX_ID_WORDS_PER_PAGE:
+        return []  # not a table header page; bounds the pairing work on a hostile page
+    for idw in ids:
         frame = None
         for ww in wells:
             frame = _reading_frame(ww, idw)
@@ -347,6 +352,13 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
                 if page_headers is not None:
                     cols_on_page = page_headers.get(page) or []
                     cols = cols_on_page[k] if k < len(cols_on_page) else []
+                    # The positions give the ORDER. Every column this header's
+                    # own text names must be among them, or the text header was
+                    # paired with another header's words (two on one page).
+                    # (The text can name FEWER: a wrapped label is sometimes
+                    # extracted after the first data row.)
+                    if not set(_text_columns(htext)) <= set(cols):
+                        cols = []
                 else:
                     cols = _text_columns(htext)
                 new_layout = layout_for_columns(cols)

@@ -309,7 +309,7 @@ def run() -> int:
             # Review flags (see watcher.py / review_flags.py): best-effort, after
             # the document row, never an email. Related-scope docs get none.
             if not related:
-                rf.log_for_document(sheets, sheet_id, flags + rf.parsed_flags(parsed, cfg), d, link, _now())
+                rf.log_for_document(sheets, flags, d, link, _now(), parsed=parsed, cfg=cfg)
             payload = {
                 "document_name": d["document_name"],
                 "date_filed": d["date_filed"],

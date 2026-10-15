@@ -334,7 +334,7 @@ def run() -> int:
             # temperature, a rejected WOI table, unreadable pages) go to the
             # Parser Review Flags tab instead of vanishing. Best-effort, after
             # the document row; it never sends email (see review_flags.py).
-            rf.log_for_document(sheets, sheet_id, flags + rf.parsed_flags(parsed, cfg), d, link, _now())
+            rf.log_for_document(sheets, flags, d, link, _now(), parsed=parsed, cfg=cfg)
 
             _route_urgent_or_digest(parsed, d, link, cfg, state, sheets, sheet_id)
 
