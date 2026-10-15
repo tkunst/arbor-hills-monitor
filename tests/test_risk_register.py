@@ -229,6 +229,8 @@ def test_real_woi_reports_only_escalate_on_field_sso_comments(pdf):
     "Second Violation Notice", "Revised Violation Notice", "EGLE Violation Notice",
     # security review: a real EGLE action whose title names a missed report
     "Violation Notice - Failure to Submit Annual Report",
+    # Trisha 2026-10-15: a VN compliance schedule counts as the action (urgent)
+    "Violation Notice Compliance Schedule", "Violation Notice: Compliance Required",
 ])
 def test_enforcement_titles_are_urgent(title):
     assert rr.enforcement_title_signal(title) is True
@@ -249,8 +251,6 @@ def test_enforcement_titles_are_urgent(title):
     "Violation Notice Responses", "Violation Notice Reports", "VN Reporting",
     "Consent Order No. 12-2024 Quarterly Report", "Consent Order Status",
     "Violation Notice/Response", "VN_Response", "VNs", "VN.",
-    # Pending Trisha's call (2026-10-15): currently treated as a follow-up, not the action.
-    "Violation Notice Compliance Schedule",
     "Quarterly Report - Consent Judgment No. 2020-0593-CE",
     "nForm Document",
     "",

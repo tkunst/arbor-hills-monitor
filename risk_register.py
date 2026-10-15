@@ -204,9 +204,11 @@ _TITLE_PREFIX = (
 )
 # A follow-up ABOUT an action, checked on the NEXT word, however punctuated or
 # inflected ("VN - Correspondence", "Violation Notice Responses", "VN Reporting").
+# "compliance" is NOT excluded: "Violation Notice Compliance Schedule" is urgent
+# (Trisha, 2026-10-15).
 _NOT_FOLLOW_UP = (
     r"(?![\W_]*(?:correspond\w*|respons\w*|repl\w*|report\w*|amend\w*|terminat\w*|"
-    r"compliance|quarterly|annual|semi-annual|status|list\w*)\b)"
+    r"quarterly|annual|semi-annual|status|list\w*)\b)"
 )
 _ENFORCEMENT_TITLE_RE = re.compile(
     _TITLE_PREFIX + r"(?:"
