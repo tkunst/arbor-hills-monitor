@@ -173,9 +173,9 @@ Worked example, because this distinction is the whole credibility model.
 - `watcher.py:218-223`
 - policy
 
-### AR-3 — Digest lists procedural action-items first
+### AR-3 — Digest lists procedural deadlines and notices first
 
-- **Given** a digest containing procedural notices (deadlines) and evidence docs; **When** the body is composed; **Then** procedural items are listed first under "ACTION ITEMS (deadlines / notices)", followed by "OTHER NEW DOCUMENTS".
+- **Given** a digest containing procedural notices (deadlines) and evidence docs; **When** the body is composed; **Then** procedural items are listed first under "DEADLINES AND NOTICES" (renamed from "ACTION ITEMS" 2026-10-15 so readers do not feel assigned a task), followed by "OTHER NEW DOCUMENTS".
 - `email_alerts.py:103-129`
 - policy
 
