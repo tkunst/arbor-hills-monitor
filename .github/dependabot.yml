@@ -7,7 +7,11 @@ version: 2
 # only governs routine VERSION updates.
 #
 # Auto-merge policy 2A (Trisha, 2026-10-14): patch/minor merge themselves once
-# tests pass; majors wait for review. See
+# tests pass; majors wait for review. Refined the same day (option B): for
+# anthropic and google-api-python-client only PATCH auto-merges, minor waits;
+# github-actions bumps always wait. Python packages also get a 7-day cooldown
+# (below) so a broken release is usually pulled or fixed before Dependabot
+# proposes it; cooldown does not delay SECURITY updates. See
 # .github/workflows/dependabot-auto-merge.yml and
 # .github/workflows/dependabot-label.yml for the enforcement side of this.
 
@@ -37,6 +41,10 @@ updates:
   # than CI tests against.
   - package-ecosystem: "pip"
     directory: "/"
+    # Wait 7 days after a release before proposing it (Trisha, 2026-10-14).
+    # Applies to version updates only; security updates are not delayed.
+    cooldown:
+      default-days: 7
     schedule:
       interval: "weekly"
       day: "monday"
@@ -83,11 +91,12 @@ updates:
           # this is a structural precaution, not a response to a known
           # incident. `exclude-patterns` (NOT `ignore`) is deliberate: these
           # two must still get a routine patch/minor PR opened every time
-          # (so Trisha sees every bump promptly) -- they're just excluded
+          # (a patch one then auto-merges on green; a minor one waits for
+          # Trisha, option B 2026-10-14) -- they're just excluded
           # from this GROUP so they never ride along inside the weekly
           # grouped PR; dependabot-auto-merge.yml's classify step
-          # independently forces `needs-review` for either package by name,
-          # regardless of what update-type the commit message reports, so
+          # independently forces `needs-review` for any non-PATCH bump of
+          # either package by name, so
           # the exclusion here and the force-review there are two
           # independent guards against the same mistake. PyMuPDF is NOT
           # excluded: its real `fitz.open()` / text-extraction calls run for

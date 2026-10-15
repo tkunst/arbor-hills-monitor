@@ -3,8 +3,9 @@ name: dependabot-auto-merge
 # Policy 2A (Trisha, 2026-10-14): a Dependabot PR bumping only patch/minor
 # versions merges itself once tests pass; a major waits for Trisha (labeled
 # `needs-review` by dependabot-label.yml, not merged here). `anthropic` and
-# `google-api-python-client` are ALWAYS routed to needs-review regardless of
-# semver level (see the classify step below and dependabot.yml's comment).
+# `google-api-python-client` auto-merge only PATCH bumps; their minor (and
+# major) bumps are routed to needs-review (Trisha, 2026-10-14, option B; see
+# the classify step below and dependabot.yml's comment).
 # `github-actions` ecosystem PRs are ALSO always routed to needs-review,
 # regardless of update-type: GITHUB_TOKEN can never be granted the
 # `workflows` permission a push to .github/workflows/ requires (see the
@@ -269,27 +270,28 @@ jobs:
           fi
 
           missing_type=$(echo "$entries" | jq -r '[.[] | select(.update_type == null)] | length')
-          # Forced needs-review regardless of semver level: anthropic and
+          # Forced needs-review for anything above PATCH (Trisha, 2026-10-14,
+          # option B -- patch auto-merges, minor waits): anthropic and
           # google-api-python-client have their real SDK calls fully
           # monkeypatched out of the hermetic test suite (dependabot.yml's
           # `exclude-patterns` keeps them OUT of the grouped patch/minor PR
           # so they always surface as their own standalone PR; this is the
           # second, independent half of that -- never auto-merge one even if
           # it somehow arrived grouped).
-          forced_review=$(echo "$entries" | jq -r '[.[] | select(.name == "anthropic" or .name == "google-api-python-client")] | length')
+          forced_review=$(echo "$entries" | jq -r '[.[] | select((.name == "anthropic" or .name == "google-api-python-client") and .update_type != "version-update:semver-patch")] | length')
           non_patch_minor=$(echo "$entries" | jq -r '[.[] | select(.update_type != null and (.update_type | test("^version-update:semver-(patch|minor)$") | not))] | length')
 
           if [ "$missing_type" -gt 0 ]; then
             echo "At least one dependency entry has no update-type. Not auto-merging."
             echo "result=unknown" >> "$GITHUB_OUTPUT"
           elif [ "$forced_review" -gt 0 ]; then
-            echo "Includes anthropic and/or google-api-python-client -- always needs-review regardless of semver level."
+            echo "Includes a non-patch bump of anthropic and/or google-api-python-client -- needs-review (only their patch bumps auto-merge)."
             echo "result=major-or-other" >> "$GITHUB_OUTPUT"
           elif [ "$non_patch_minor" -gt 0 ]; then
             echo "Found a non-patch/minor update-type among this PR's dependencies."
             echo "result=major-or-other" >> "$GITHUB_OUTPUT"
           else
-            echo "All bumped dependencies are patch/minor, and none are the forced-review packages."
+            echo "All bumped dependencies are patch/minor, and any anthropic/google-api-python-client bump is patch-only."
             echo "result=patch-or-minor" >> "$GITHUB_OUTPUT"
           fi
 
