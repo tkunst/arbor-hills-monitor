@@ -306,5 +306,13 @@ def test_header_text_must_agree_with_paired_word_columns():
 
 
 def test_page_header_columns_ignores_pages_with_too_many_id_words():
-    words = [(10 * i, 0, 10 * i + 5, 5, "ID") for i in range(60)] + [(0, 0, 5, 5, "Well")]
+    words = [(10 * i, 0, 10 * i + 5, 5, "ID") for i in range(6)] + [(0, 0, 5, 5, "Well")]
     assert w._page_header_columns(words) == []
+
+
+def test_header_count_mismatch_on_a_page_is_not_guessed():
+    # Two "Well ID" text headers but only one found by position: pairing is
+    # unknowable, so neither table is read with borrowed columns.
+    lines = [(t, 1) for t in HDR_NO_DIFF + NO_DIFF_ROW + HDR_FULL + HOT]
+    g = w._parse_table_lines(lines, page_headers={1: [w.LAYOUTS["full"]]})
+    assert g.readings == []
