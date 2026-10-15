@@ -256,7 +256,7 @@ def test_rejected_table_is_flagged_even_when_not_routed(tmp_path):
 def test_route_keeps_classifier_measurements_it_does_not_rederive(tmp_path):
     reads = _many(54, temp=90) + [("AHW272R4", 177)]
     pdf = _build_pdf(tmp_path / "keep.pdf", reads)
-    h2s = {"metric": "h2s", "value": 12, "unit": "ppb", "basis": "measured"}
+    h2s = {"metric": "hydrogen_sulfide", "value": 12, "unit": "ppb", "basis": "measured"}
     parsed = _parsed(measurements=[h2s, {"metric": "temperature", "value": 999,
                                          "unit": "F", "basis": "measured"}])
     woi_router.route_measurements(parsed, pdf, META, CFG)
