@@ -1,20 +1,5 @@
 # Topology map
 
-> **STALE (as of the 2026-10-14 claude-md-drift pass).** `extract_topology.py`'s
-> hardcoded `DOMAIN` module map covers 35 of the 67 root `*.py` modules that
-> exist today — it was last fully updated for Stream E (see the Snapshot below)
-> and was never extended through Streams F–V or several later standalone jobs,
-> for example (verified against `DOMAIN` directly, not assumed)
-> `egle_newsroom_watcher.py`, `gfl_feed_snapshot.py`,
-> `gfl_air_hourly_capture.py`, `public_comment_feed.py`, `kdp_check.py`, and
-> `well_watch.py` — 32 modules in total are missing. The interactive
-> **`TOPOLOGY.html`** viewer and the `.mmd` diagrams below describe that older,
-> partial system, not the current one. Either classify the missing 32 modules
-> into `DOMAIN` (and re-run both scripts + the plugin re-inject step) or treat
-> this banner as the standing caveat until someone does — don't trust the
-> viewer for anything added after Stream E without checking the module lists
-> in the repo's own `CLAUDE.md` first.
-
 Dependency & topology map of the monitor — the picture an engineer wants before
 touching anything. Generated, not hand-maintained: re-run the two scripts here
 after any structural change.
@@ -58,19 +43,18 @@ facts from analyst judgement:
 
 ## Snapshot
 
-Regenerated 2026-07-14 — adds Stream E, GFL perimeter air (`gfl_air_watcher` /
-`gfl_air_client`, ADR 014), on top of the WOI auto-routing wire-in (`woi_router`,
-ADR 005), Mirror D (`mmpc_archiver` / `mmpc_client`), the PFAS page-watch
-(`pfas_watcher` / `pfas_client`), poison-doc extraction (`poison_doc_extractor`),
-and the retired MMPC minutes reminder (ADR 013).
+Regenerated 2026-10-16 — every root and `scripts/` module is now classified in
+`DOMAIN` (the extractor raises a `KeyError` on an unclassified module, so a new
+module can't silently land in the wrong domain again). Adds Streams F–V, the
+standalone jobs (EGLE newsroom, GFL hourly capture + monthly snapshot, Ridge Wood
+re-verification), `doc_pipeline`, `nsite_watch_common`, the `gfl_air_*` split,
+`owner_notices` / `review_flags`, the publishing scripts, and a new **Public Site
+Publishing** domain. Entry points now also come from `python X.py` lines inside a
+`run: |` block.
 
-31 modules (24 runtime + 7 ops jobs) · 10 logical data stores · 83 edges ·
-5 persona flows. `watcher.py` is the orchestration hub (star topology, daily
-SPOF); the case-file Google Sheet is the single read+write data spine. Full
-architect notes render in the viewer's **Observations** panel (and in a
-regenerated `topology.json` → `observations`).
-
-> **Note:** `extract_topology.py`, `topology.json`, and the `.mmd` diagrams here
-> are current with Stream E. The self-contained **`TOPOLOGY.html`** viewer carries
-> an *inline* snapshot injected by the `/modernize-map` plugin command; re-inject
-> it (per the Regenerate step) to refresh the interactive viewer with Stream E.
+96 modules · 23 logical data stores · 345 edges · 5 persona flows · 65 entry
+points. Hubs: `drive_client` / `config_loader` (42 importers each) and
+`sheet_writer` (41); `doc_pipeline` is the one per-document path behind
+`watcher` and `backfill`. The only dead-end candidate is `neshap_table_parser`
+(a dataset tool imported only by tests). Full architect notes render in the
+viewer's **Observations** panel.
