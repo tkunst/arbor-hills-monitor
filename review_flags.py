@@ -32,9 +32,9 @@ for the owner-only weekly email / same-day alert to call later.
 from __future__ import annotations
 
 import os
-import re
 from typing import Optional
 
+import email_alerts as ea
 import kdp_check
 import sheet_writer as sw
 import woi_table_parser as wtp
@@ -105,10 +105,8 @@ def woi_flags(above_ceiling: list, rejected_tables: list, skipped_pages: list,
 _CONTEXT_CHARS = 150
 
 
-# The urgency fallback's own pattern (email_alerts._TEMP_RE), but reading a
-# thousands separator, so "1,500°F" is 1500, not 500.
-_TEMP_RE = re.compile(r"(?<![\d,])(\d{1,3}(?:,\d{3})+|\d{2,4})\s*(?:°|deg(?:rees)?\.?\s*)?\s*f\b",
-                      re.IGNORECASE)
+# The urgency fallback's own pattern: one regex for both (it reads "1,500°F" as 1500).
+_TEMP_RE = ea._TEMP_RE
 
 
 def implausible_text_temps(text: str, max_f: float) -> list[int]:

@@ -199,8 +199,12 @@ output: identical for every document except
 - the Q3 2023 HOV report (both copies): 4,354 shifted rows now read
   correctly, 0 readings over 200°F (was 82), max 162.1°F, AHWW0402 on 8/3/2023
   = 110.5°F as printed. Its two tables overlap: 234 well/time readings appear
-  in both (p14 and p49), so a routed copy of this report would list them twice
-  in Measurements (follow-up: de-duplicate across tables);
+  in both (p14 and p49). Since 2026-10-16 `woi_router` collapses such a
+  cross-table repeat (same reading, consistent columns, different pages) to its
+  most complete copy before Measurements, the summary and well_watch
+  (`woi_table_parser.merge_cross_table_duplicates`; the parser's own output is
+  unchanged): 816 -> 672 measurements for this report, every other specimen
+  unchanged;
 - the Q1 2024 HOV report (both copies): 6,178 readings (was 0; pages 71-90
   skipped);
 - the 465pp Gas Extraction report (both copies): its gas + Temp only table

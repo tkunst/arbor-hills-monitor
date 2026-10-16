@@ -180,7 +180,9 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
     gp = wtp.parse_gas_extraction_report(pdf_path, alias_map=alias_map)
     readings = gp.readings
     max_f = _max_plausible_f(cfg)
-    valid_all = [r for r in readings if r.valid]
+    # A reading printed in two tables of the same report reaches Measurements,
+    # the summary and well_watch once (woi_table_parser.merge_cross_table_duplicates).
+    valid_all = wtp.merge_cross_table_duplicates([r for r in readings if r.valid])
     above = [r for r in valid_all if r.temp is not None and r.temp > max_f]
     valid = [r for r in valid_all if not (r.temp is not None and r.temp > max_f)]
     if above:

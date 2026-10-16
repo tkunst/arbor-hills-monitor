@@ -19,8 +19,11 @@ from email.message import EmailMessage
 from email.utils import parseaddr
 from typing import Optional
 
-# Matches "180F", "180 F", "180°F", "180 degrees F", "180 deg F"
-_TEMP_RE = re.compile(r"(\d{2,4})\s*(?:°|deg(?:rees)?\.?\s*)?\s*f\b", re.IGNORECASE)
+# Matches "180F", "180 F", "180°F", "180 degrees F", "180 deg F", and reads a
+# thousands separator whole: "2,145°F" is 2145 (a flare value the plausibility
+# ceiling then skips), never 145 (which would false-fire an URGENT alert).
+_TEMP_RE = re.compile(r"(?<![\d,])(\d{1,3}(?:,\d{3})+|\d{2,4})\s*(?:°|deg(?:rees)?\.?\s*)?\s*f\b",
+                      re.IGNORECASE)
 
 
 def _max_temperature_f(text: str, max_f: int = 250) -> Optional[int]:
@@ -35,7 +38,7 @@ def _max_temperature_f(text: str, max_f: int = 250) -> Optional[int]:
         return None
     best = None
     for m in _TEMP_RE.finditer(text):
-        val = int(m.group(1))
+        val = int(m.group(1).replace(",", ""))
         if 50 <= val <= max_f:  # ignore stray years / tiny numbers / non-wellhead values
             best = val if best is None else max(best, val)
     return best

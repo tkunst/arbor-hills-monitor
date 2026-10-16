@@ -254,6 +254,33 @@ external users but no sensitive data). Public repo.
   `MAX_ERRORS_PER_DOC`-th failure, write a stub feed row + mark it `skipped`.
   Called from BOTH watcher.py's and backfill.py's per-doc except handlers, so
   the doc is stubbed whichever job caused the last strike (issue #82).
+- `review_flags.py` — **ADR 067 amendment (2026-10-15)**: the "needs human
+  review" log for parser output the monitor deliberately did NOT use: a
+  temperature above `max_plausible_wellhead_f` (a WOI table reading, a
+  classifier reading kdp_check re-tagged, or a number the free-text urgency
+  fallback skipped; flare context excluded), a rejected WOI gas table, and
+  unreadable pages. One row each in the append-only **Parser Review Flags**
+  tab on the PRIVATE Sheet only (`private_sheet_for_write`: `GSHEET_ID_PRIVATE`
+  set, different from `GSHEET_ID`, and holding no public case-file tab),
+  best-effort, after the document row. `flags_since()` is the strict read.
+- `owner_notices.py` — **ADR 070 (2026-10-15)**: the owner-only channel. A
+  Sunday "For Trisha only" email (unreadable filings, unrouted hand-curated
+  rows, failed alert sends, parser review flags) and same-day owner alerts (an
+  unreadable filing with an enforcement title, from `poison_stub`; an
+  above-ceiling temperature flag, watcher only). Recipients are
+  `load_owner_emails` ONLY, never a list or a fallback. Gated on
+  `owner_weekly.enabled` / `owner_weekly.enforcement_alert_enabled` (both ship
+  false). State: `_meta.last_owner_weekly`, plus two PRIVATE-Sheet tabs, the
+  **Owner Notices** log and the **Hand-Curated Routing Log** (written by
+  `scripts/route_hand_curated.py` before `write_meta`).
+- `doc_pipeline.py` — consolidation PR 3 (2026-10-16): `process_one_doc()`,
+  the ONE per-document pipeline behind `watcher.run` and `backfill.run`
+  (download, parse, ADR 065 chokepoint, inline `archiver.mirror_one_now()`,
+  related-scope shortcut, WOI routing, Sheet row, WOI summary, review flags,
+  `processed` state LAST, shared strike / poison-stub handling). A `Job` holds
+  only where the two jobs differ (feed tab, payload, the watcher's deadlines /
+  well_watch / urgent-digest / owner review-flag email, the backfill's FORCE
+  purge and error-count clearing). A cross-cutting change is wired ONCE, here.
 - `watcher.py` — daily new-doc check + alerts (+ WDS Stream C when enabled).
   Stream C (`wds_watcher.py` + `wds_client.py`) polls eight WDS collections for
   site 475946: applications/qmr/annual/evaluations/compliance_actions plus
@@ -318,6 +345,13 @@ external users but no sensitive data). Public repo.
   H2S 72-24hr-avg) is untouched. Episode state committed like the cursor; emails
   best-effort (no retry, matching the exceedance email). See ADR 039 (+ ADR 014's
   2026-07-21 addendum, now folded in).
+- `gfl_air_episodes.py` / `gfl_air_emails.py` / `gfl_air_liveness.py` — the
+  pure halves of Stream E, split out of `gfl_air_watcher.py` on 2026-10-16
+  (pure moves, AST-identical): the per-(station, gas) episode state machine +
+  America/Detroit time helpers + monitor rows; every email's rendering; the
+  liveness decision + body. `gfl_air_watcher.py` keeps the orchestration
+  (run, capture, measurements, the liveness wrapper) and re-exports every
+  moved name, so `gfl_air_watcher.<name>` still works.
 - `gfl_air_hourly_capture.py` — ADR 026 addendum (2026-10-06): a SEPARATE
   hourly durable-capture job alongside the daily Stream E poll above, shrinking
   the window in which a reading could sit in GFL's feed (and be silently
@@ -939,6 +973,10 @@ answers "is it live right now."
   digest's "Upcoming" tab, read by `upcoming.py`) is a **separate Sheet shared
   ONLY with the service account and Trisha** — never share it with the operator.
   Keep strategy-flavored key dates on the private Sheet, never the public one.
+  It also holds the GovQA / RRD Documents watch tabs and the owner-review tabs
+  (Parser Review Flags, Owner Notices, Hand-Curated Routing Log), so
+  `daily.yml`, `backfill.yml` and `route-hand-curated.yml` all receive
+  `GSHEET_ID_PRIVATE`.
 - **State tabs vs. data tabs — and state reads must raise.** A tab any
   watcher DIFFS or BASELINES off of (`_state`, `_meta`, `_wds_seen`,
   `GFL Air` — its OBJECTID cursor read (`gfl_air_cursor`), its two liveness
@@ -986,7 +1024,11 @@ answers "is it live right now."
   `rebuild_risk_register_tab()`/`rebuild_all_evidence_tab()` to recompute two
   derived ROLL-UP tabs (`Risk Register`, `All Evidence by Risk`) — never to
   detect what's new — and that read already raises (a bare read for
-  `Evidence by Risk`, `_tab_rows_strict()` for `WDS Evidence by Risk`). Every
+  `Evidence by Risk`, `_tab_rows_strict()` for `WDS Evidence by Risk`). The
+  private-Sheet owner-review tabs (Parser Review Flags, Owner Notices,
+  Hand-Curated Routing Log) are append-only DATA tabs, never diffed or
+  baselined; the owner weekly email reads them with `_tab_rows_strict()` so a
+  failed read skips the email instead of reporting a false all-clear. Every
   OTHER tab (New/Historical/Related Documents, Measurements,
   Compliance Deadlines, Risk Register, All Evidence by Risk, Hand-Curated
   Files, WOI Well Summary, Perimeter Action-Level Episodes,

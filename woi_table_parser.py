@@ -694,6 +694,38 @@ _MONTH_ORDER = {m: i for i, m in enumerate(
      "July", "August", "September", "October", "November", "December"])}
 
 
+_SECONDARY_COLS = ("diff_press", "flow", "well_pres", "header_pres")
+
+
+def merge_cross_table_duplicates(readings: list[WOIReading]) -> list[WOIReading]:
+    """Collapse a reading a report prints in TWO tables (on different pages):
+    same well, time, ADJ flag, gas columns and temperature, and no secondary
+    column (diff press, flow, pressures) that disagrees. The most complete
+    copy is kept, in first-seen order. The Q3 2023 HOV WOI report prints 232
+    readings in both its no-Diff.Press table and its full table, which would
+    otherwise reach Measurements twice. Readings repeated on the SAME page, or
+    whose secondary columns differ, are distinct records and are all kept.
+    Pure; the parser's own output (parse_gas_extraction) is not changed."""
+    groups: dict = {}
+    order: list = []
+    for r in readings:
+        k = (r.well_id, r.dt, r.adj, r.ch4, r.co2, r.o2, r.balance, r.temp)
+        if k not in groups:
+            groups[k] = []
+            order.append(k)
+        groups[k].append(r)
+    out: list = []
+    for k in order:
+        g = groups[k]
+        if len(g) == 1 or len({r.page for r in g}) != len(g) or any(
+                len({getattr(r, c) for r in g if getattr(r, c) is not None}) > 1
+                for c in _SECONDARY_COLS):
+            out.extend(g)
+            continue
+        out.append(max(g, key=lambda r: sum(getattr(r, c) is not None for c in _SECONDARY_COLS)))
+    return out
+
+
 def per_well_co_summary(co_readings: list[COReading]) -> list[dict]:
     """One row per well: the monthly CO series (chronological), max ppm, and the
     rise from the well's first to last reported month (trend signal)."""
