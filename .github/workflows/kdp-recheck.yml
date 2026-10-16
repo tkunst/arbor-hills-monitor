@@ -20,8 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install system OCR tooling
@@ -50,7 +50,7 @@ jobs:
           # field in the artifact is name-redacted (same secret as findings-feed.yml)
           REDACT_NAMES: ${{ secrets.REDACT_NAMES }}
         run: python scripts/recheck_key_data_points.py --run-llm --counts-only --out-dir "$RUNNER_TEMP/kdp-recheck"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: kdp-recheck-proposals
           path: ${{ runner.temp }}/kdp-recheck/kdp-recheck-proposals.json

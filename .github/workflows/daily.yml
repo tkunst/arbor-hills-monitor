@@ -32,8 +32,8 @@ jobs:
     # 600s per doc within max_new_docs_per_run's cap. See ADR 069's residual risks.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: "pip"
