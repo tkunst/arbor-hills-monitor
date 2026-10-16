@@ -67,11 +67,15 @@ DOMAIN = {
     "ride_watcher": "orchestration",   # daily RIDE / Part 201 + UST status watch — Stream J (ADR 019)
     "gfl_info_site_watcher": "orchestration", # daily GFL info-site change-watch — Stream S (ADR 041)
     "pfas_pws_watcher": "orchestration", # daily Public Water Supply PFAS watch — Stream R (ADR 042)
+    "doc_pipeline": "orchestration",   # the one per-document pipeline behind watcher + backfill (consolidation PR 3)
     # Ingestion — one client per external source (nSITE, WDS, MMPC, PFAS, GFL air, Ridge Wood, RIDE, GFL info site)
     "nsite_client": "ingestion", "mmpc_client": "ingestion",
     "wds_watcher": "ingestion", "wds_client": "ingestion",
     "pfas_client": "ingestion",        # PFAS page fetch + content-hash normalize (ADR 012)
     "gfl_air_client": "ingestion",     # GFL ArcGIS FeatureServer fetch + ADR-004 mapping (ADR 014)
+    "gfl_air_episodes": "processing",  # Stream E episode state machine + ET time helpers (ADR 039)
+    "gfl_air_emails": "processing",    # Stream E exceedance / SCREENING / CLOSEOUT email rendering
+    "gfl_air_liveness": "processing",  # Stream E liveness decision + body (ADR 014 addendum)
     "gfl_info_site_client": "ingestion",  # GFL info-site fetch + <main> normalize (ADR 041)
     "pfas_pws_client": "ingestion",    # EGLE PWS PFAS ArcGIS fetch + classify (ADR 042)
     "ridgewood_client": "ingestion",   # Ridge Wood H2S report scrape + fail-safe extract (ADR 016)
@@ -81,12 +85,14 @@ DOMAIN = {
     "retry_policy": "processing", "woi_table_parser": "processing",
     "woi_router": "processing",         # routes WOI Status Reports to woi_table_parser (ADR 005)
     "well_aliases": "processing",       # curated well-ID alias map loader + exact-match rule (ADR 068)
+    "review_flags": "processing",       # Parser Review Flags log, private Sheet (ADR 067 amendment)
     "backfill_well_aliases": "ops",     # one-shot dry-run-default Measurements relabel (ADR 068)
     "poison_doc_extractor": "processing",  # .msg/.docx -> synthesized PDF (ADR 011)
     "backfill_metric_taxonomy": "processing",  # one-shot `other`-bucket reclassify — ADR 034
     # Persistence & notification
     "sheet_writer": "persistence", "drive_client": "persistence",
     "archive_client": "persistence", "email_alerts": "persistence",
+    "owner_notices": "persistence",    # owner-only weekly email + same-day owner alerts (ADR 070)
     # Config
     "config_loader": "config",
     # Ops / manual jobs (scripts/)

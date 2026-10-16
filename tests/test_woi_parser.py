@@ -316,3 +316,22 @@ def test_header_count_mismatch_on_a_page_is_not_guessed():
     lines = [(t, 1) for t in HDR_NO_DIFF + NO_DIFF_ROW + HDR_FULL + HOT]
     g = w._parse_table_lines(lines, page_headers={1: [w.LAYOUTS["full"]]})
     assert g.readings == []
+
+
+# --- cross-table duplicates (2026-10-16) ---
+
+def _rd(page, diff=None, flow=10.0, temp=120.0, dt="8/3/2023 11:29"):
+    return WOIReading(well_id="AHW1", raw_well_id="AHW1", dt=dt, adj=False, page=page, ch4=50.0,
+                      co2=40.0, o2=0.0, balance=10.0, diff_press=diff, temp=temp, flow=flow,
+                      well_pres=-5.0, header_pres=-40.0)
+
+
+def test_cross_table_duplicate_collapses_to_the_most_complete_copy():
+    out = w.merge_cross_table_duplicates([_rd(15), _rd(51, diff=0.5)])
+    assert len(out) == 1 and out[0].page == 51 and out[0].diff_press == 0.5
+
+
+def test_same_page_repeats_and_conflicting_copies_are_all_kept():
+    assert len(w.merge_cross_table_duplicates([_rd(15), _rd(15)])) == 2          # same page
+    assert len(w.merge_cross_table_duplicates([_rd(15, flow=10.0), _rd(51, flow=12.0)])) == 2
+    assert len(w.merge_cross_table_duplicates([_rd(15), _rd(51, temp=121.0)])) == 2

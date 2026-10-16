@@ -661,3 +661,10 @@ def test_digest_procedural_heading_is_deadlines_and_notices():
                                    "document_name": "Notice"}, "link": "https://x"}])
     assert "DEADLINES AND NOTICES:" in body
     assert "ACTION ITEMS" not in body
+
+
+def test_thousands_separator_is_never_read_as_a_wellhead_temperature():
+    import email_alerts as ea
+    assert ea._max_temperature_f("Flare outlet 2,145 F; well AHW1 140 F") == 140
+    assert ea._max_temperature_f("Flare outlet 2,145 F") is None
+    assert ea._max_temperature_f("1,500°F flare") is None
