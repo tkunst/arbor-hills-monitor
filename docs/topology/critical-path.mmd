@@ -1,13 +1,13 @@
 flowchart TD
-  %% A new EGLE Air filing is caught and triaged — persona: N2688 monitor reader
-  %% The monitor spots a new Air permit filing for the landfill, classifies its risk, and alerts the advocate.
+  %% A new EGLE filing is caught and triaged — persona: N2688 monitor reader
+  %% The monitor spots a new EGLE filing for the landfill, classifies its risk, and alerts the advocate.
   %% (no telemetry wired yet — annotate p50/p99 here once available)
   s1["1. The daily monitor wakes at 6am<br/><small>watcher, config_loader</small>"]
   s1_ds[("config.yml (risk register + settings)")]
   s1 -. touches .-> s1_ds
-  s2["2. Check EGLE nSITE for new Air filings<br/><small>watcher, nsite_client</small>"]
+  s2["2. Check EGLE nSITE for new filings and hand each to the per-document pipeline<br/><small>watcher, nsite_client, doc_pipeline</small>"]
   s1 --> s2
-  s2_ds[("EGLE nSITE Portal (Air)")]
+  s2_ds[("EGLE nSITE / MiEnviro (documents + 7 profiles)")]
   s2 -. touches .-> s2_ds
   s3["3. Read each new PDF and classify it against the risk register with Claude<br/><small>egle_doc_parser, risk_register</small>"]
   s2 --> s3
