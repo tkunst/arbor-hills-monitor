@@ -353,3 +353,22 @@ def test_fetch_event_retries_then_succeeds(monkeypatch):
     ev = mc.fetch_event(sess, 3953)
     assert ev["id"] == 3953
     assert len(sess.calls) == 2
+
+
+# --- SEC-007: only integer fileIds reach URLs, temp paths and Drive names ------
+
+def test_fetch_mmpc_files_skips_a_non_integer_file_id(monkeypatch):
+    monkeypatch.setattr(mc, "_GET_BACKOFF_BASE", 0.0)
+    body = {"value": [_event(4000, "2026-02-11T10:00:00Z",
+                             [_file(9000, "Agenda"), _file("../../etc/x", "Minutes"),
+                              _file(True, "Minutes"), _file(9001, "Minutes")])]}
+    files = mc.fetch_mmpc_files(_ScriptedSession([_Resp(body)]), category_id=72)
+    assert [f["file_id"] for f in files] == [9000, 9001]
+
+
+@pytest.mark.parametrize("bad", ["../x", "9107,plainText=true", "", True, None, "1e5"])
+def test_download_refuses_a_non_integer_file_id(bad):
+    sess = _ScriptedSession([])
+    with pytest.raises(mc.MMPCFetchError, match="non-integer"):
+        mc.download_file_bytes(sess, bad)
+    assert sess.calls == []  # nothing fetched

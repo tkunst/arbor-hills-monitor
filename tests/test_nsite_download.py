@@ -322,3 +322,38 @@ def test_empty_doc_url_still_reaches_native_extraction_fallback(tmp_path, monkey
     assert f"{nc.DOWNLOAD_FILE_BASE}/12345" in sess.calls
     with open(dest, "rb") as f:
         assert f.read().startswith(b"%PDF")
+
+
+# --- SEC-006 / SEC-007: nSITE record links and ids ----------------------------
+
+def _raw(doc_id, url):
+    return {"docMgmtDocMgmtId": doc_id, "docMgmtDocurl": f'<a href="{url}">Download</a>',
+            "docMgmtDocDescr": "x", "docMgmtDocRvcdCreatedDate": "2026-10-01"}
+
+
+@pytest.mark.parametrize("url,expected", [
+    (f"{nc.NSITE_BASE}/ncore/downloadfile/-12345", f"{nc.NSITE_BASE}/ncore/downloadfile/-12345"),
+    ("/ncore/downloadfile/-12345", f"{nc.NSITE_BASE}/ncore/downloadfile/-12345"),
+    ("https://evil.test/x.pdf", f"{nc.DOWNLOAD_BASE}/-12345"),
+    ("http://mienviro.michigan.gov/ncore/downloadpdf/-12345", f"{nc.DOWNLOAD_BASE}/-12345"),
+    ("http://169.254.169.254/latest/meta-data/", f"{nc.DOWNLOAD_BASE}/-12345"),
+    ("https://mienviro.michigan.gov.evil.test/x", f"{nc.DOWNLOAD_BASE}/-12345"),
+])
+def test_normalize_keeps_only_https_nsite_links(url, expected):
+    assert nc._normalize(_raw("-12345", url))["doc_url"] == expected
+
+
+def test_fetch_site_documents_drops_a_non_integer_document_id():
+    class _JsonSess:
+        def get(self, url, headers=None, timeout=None):
+            class R:
+                def json(self_inner):
+                    return {"queryResults": [
+                        _raw("-2136493721019571731", "/ncore/downloadpdf/-2136493721019571731"),
+                        _raw("../../tmp/x", "/ncore/downloadpdf/1"),
+                        _raw("12a", "/ncore/downloadpdf/1"),
+                        _raw("", "/ncore/downloadpdf/1"),
+                        _raw("6580825892883407154", "/ncore/downloadpdf/6580825892883407154")]}
+            return R()
+    docs = nc.fetch_site_documents(_JsonSess(), "123")
+    assert [d["doc_id"] for d in docs] == ["-2136493721019571731", "6580825892883407154"]

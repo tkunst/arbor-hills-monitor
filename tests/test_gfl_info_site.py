@@ -88,9 +88,10 @@ def cfemail_hex(email, key=0x42):
 
 
 class FakeResp:
-    def __init__(self, status, text):
+    def __init__(self, status, text, headers=None):
         self.status_code = status
         self.text = text
+        self.headers = headers or {}
 
 
 class Router:
@@ -121,7 +122,7 @@ class Router:
         return (f'<?xml version="1.0"?><sitemapindex><sitemap>'
                 f'<loc>{self.base}/page-sitemap.xml</loc></sitemap></sitemapindex>')
 
-    def get(self, url, headers=None, timeout=None):
+    def get(self, url, headers=None, timeout=None, **_kw):
         if url == f"{self.base}/sitemap.xml":
             return FakeResp(200 if self.sitemap_ok else 503,
                             self._index() if self.sitemap_ok else "err")
@@ -188,7 +189,7 @@ def test_discovery_never_fetches_cross_host_child_sitemap(monkeypatch):
     child = ('<?xml version="1.0"?><urlset>'
              '<url><loc>http://site.test/faq</loc></url></urlset>')
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, headers=None, timeout=None, **_kw):
         fetched.append(url)
         if url == f"{base}/sitemap.xml":
             return FakeResp(200, index)
@@ -848,3 +849,54 @@ def test_new_email_contact_surfaced_in_change(monkeypatch):
     body = sent[0][1]
     assert "NEW EMAIL CONTACT" in body
     assert "info@gfl.example" in body
+
+
+# --- SEC-005: redirects are followed by hand, same host only -----------------
+
+def _redirecting_get(table, fetched):
+    def get(url, headers=None, timeout=None, allow_redirects=True):
+        assert allow_redirects is False  # requests must never follow on its own
+        fetched.append(url)
+        return table[url]
+    return get
+
+
+def test_fetch_page_follows_a_same_host_redirect(monkeypatch):
+    body = "<main id=SiteContent>" + "x" * 600 + "</main>"
+    fetched = []
+    monkeypatch.setattr(gc.requests, "get", _redirecting_get({
+        "https://site.test/faq": FakeResp(301, "", {"Location": "/faq/"}),
+        "https://site.test/faq/": FakeResp(200, body)}, fetched))
+    assert gc.fetch_page("https://site.test/faq") == body
+    assert fetched == ["https://site.test/faq", "https://site.test/faq/"]
+
+
+@pytest.mark.parametrize("location", [
+    "http://169.254.169.254/latest/meta-data/",   # off-host (metadata endpoint)
+    "https://evil.test/faq",                       # off-host
+    "http://site.test/faq",                        # https -> http downgrade
+    "file:///etc/passwd",
+])
+def test_fetch_page_refuses_an_off_host_or_downgrading_redirect(monkeypatch, location):
+    fetched = []
+    monkeypatch.setattr(gc.requests, "get", _redirecting_get({
+        "https://site.test/faq": FakeResp(302, "", {"Location": location})}, fetched))
+    with pytest.raises(gc.GFLInfoSiteFetchError):
+        gc.fetch_page("https://site.test/faq")
+    assert fetched == ["https://site.test/faq"]  # the redirect target is never fetched
+
+
+def test_fetch_page_gives_up_after_too_many_redirects(monkeypatch):
+    monkeypatch.setattr(gc.requests, "get", lambda url, **k: FakeResp(
+        302, "", {"Location": url + "x"}))
+    with pytest.raises(gc.GFLInfoSiteFetchError):
+        gc.fetch_page("https://site.test/a")
+
+
+def test_discovery_fetch_refuses_an_off_host_redirect(monkeypatch):
+    fetched = []
+    monkeypatch.setattr(gc.requests, "get", _redirecting_get({
+        "https://site.test/sitemap.xml": FakeResp(301, "", {"Location": "http://10.0.0.1/s.xml"})},
+        fetched))
+    assert gc._fetch_text_or_none("https://site.test/sitemap.xml", 5) is None
+    assert fetched == ["https://site.test/sitemap.xml"]

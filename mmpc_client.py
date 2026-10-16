@@ -25,6 +25,7 @@ and uploading to Drive is mmpc_archiver.py.
 """
 from __future__ import annotations
 
+import re
 import time
 import urllib.parse
 from typing import Iterator
@@ -131,7 +132,11 @@ def fetch_mmpc_files(session: requests.Session, category_id: int = 72) -> list[d
             event_name = ev.get("eventName", "")
             for f in ev.get("publishedFiles") or []:
                 file_id = f.get("fileId")
-                if file_id is None:
+                # SEC-007 (CWE-22): the id goes into temp paths, Drive names and
+                # the download URL, so only a real integer id is kept.
+                if isinstance(file_id, bool) or not isinstance(file_id, int):
+                    if file_id is not None:
+                        print("[civicclerk] skipped a published file with a non-integer fileId")
                     continue
                 out.append({
                     "file_id": file_id,
@@ -228,6 +233,10 @@ def download_file_bytes(session: requests.Session, file_id, timeout: int = 60) -
     body downstream. Used by the keyword-scan feature (ADR 015 addendum), which
     only needs the text layer, never a Drive upload — mmpc_archiver.py's Mirror D
     keeps using download_file() below, unchanged."""
+    # SEC-007: the id is interpolated into the URL (and, by callers, temp paths
+    # and Drive names): refuse anything that isn't an integer.
+    if isinstance(file_id, bool) or not re.fullmatch(r"\d{1,12}", str(file_id)):
+        raise MMPCFetchError("download refused: non-integer fileId")
     url = f"{_BASE}/Meetings/GetMeetingFileStream(fileId={file_id},plainText=false)"
     try:
         r = session.get(url, timeout=timeout)
