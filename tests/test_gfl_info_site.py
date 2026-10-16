@@ -854,7 +854,7 @@ def test_new_email_contact_surfaced_in_change(monkeypatch):
 # --- SEC-005: redirects are followed by hand, same host only -----------------
 
 def _redirecting_get(table, fetched):
-    def get(url, headers=None, timeout=None, allow_redirects=True):
+    def get(url, headers=None, timeout=None, allow_redirects=True, **_kw):
         assert allow_redirects is False  # requests must never follow on its own
         fetched.append(url)
         return table[url]
@@ -876,6 +876,11 @@ def test_fetch_page_follows_a_same_host_redirect(monkeypatch):
     "https://evil.test/faq",                       # off-host
     "http://site.test/faq",                        # https -> http downgrade
     "file:///etc/passwd",
+    "https://site.test:8443/faq",                  # different port
+    "https://site.test@evil.test/faq",             # userinfo trick
+    "https://site.test./faq",                      # trailing dot
+    "https://site.test.evil.test/faq",             # sibling host
+    "//evil.test/faq",                             # protocol-relative
 ])
 def test_fetch_page_refuses_an_off_host_or_downgrading_redirect(monkeypatch, location):
     fetched = []
@@ -900,3 +905,21 @@ def test_discovery_fetch_refuses_an_off_host_redirect(monkeypatch):
         fetched))
     assert gc._fetch_text_or_none("https://site.test/sitemap.xml", 5) is None
     assert fetched == ["https://site.test/sitemap.xml"]
+
+
+def test_fetch_page_carries_cookies_across_a_same_host_redirect(monkeypatch):
+    body = "<main id=SiteContent>" + "x" * 600 + "</main>"
+    seen = []
+
+    class _R(FakeResp):
+        pass
+
+    first = _R(301, "", {"Location": "/faq/"})
+    first.cookies = gc.requests.cookies.cookiejar_from_dict({"cf_clearance": "v"})
+
+    def get(url, headers=None, timeout=None, allow_redirects=True, cookies=None):
+        seen.append(dict(cookies or {}))
+        return first if url.endswith("/faq") else FakeResp(200, body)
+    monkeypatch.setattr(gc.requests, "get", get)
+    assert gc.fetch_page("https://site.test/faq") == body
+    assert seen == [{}, {"cf_clearance": "v"}]

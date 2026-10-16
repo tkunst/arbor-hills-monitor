@@ -183,10 +183,14 @@ def _get_same_host(url: str, timeout: int):
     GFLInfoSiteFetchError on an off-host redirect, a missing Location, or too
     many hops; otherwise returns the final response."""
     current = url
+    jar = requests.cookies.RequestsCookieJar()  # carried across hops, as requests would
     for _ in range(_MAX_REDIRECTS + 1):
-        r = requests.get(current, headers=_HEADERS, timeout=timeout, allow_redirects=False)
+        r = requests.get(current, headers=_HEADERS, timeout=timeout, allow_redirects=False,
+                         cookies=jar)
         if r.status_code not in _REDIRECT_CODES:
             return r
+        if getattr(r, "cookies", None):
+            jar.update(r.cookies)
         loc = (getattr(r, "headers", None) or {}).get("Location")
         if not loc:
             raise GFLInfoSiteFetchError(f"GET {current} returned HTTP {r.status_code} "

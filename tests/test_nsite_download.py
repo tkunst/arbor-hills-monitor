@@ -338,6 +338,11 @@ def _raw(doc_id, url):
     ("http://mienviro.michigan.gov/ncore/downloadpdf/-12345", f"{nc.DOWNLOAD_BASE}/-12345"),
     ("http://169.254.169.254/latest/meta-data/", f"{nc.DOWNLOAD_BASE}/-12345"),
     ("https://mienviro.michigan.gov.evil.test/x", f"{nc.DOWNLOAD_BASE}/-12345"),
+    ("https://mienviro.michigan.gov:8443/x", f"{nc.DOWNLOAD_BASE}/-12345"),
+    ("https://mienviro.michigan.gov@evil.test/x", f"{nc.DOWNLOAD_BASE}/-12345"),
+    ("https://mienviro.michigan.gov./x", f"{nc.DOWNLOAD_BASE}/-12345"),
+    # a protocol-relative link gets the nSITE base prepended, so it stays on nSITE
+    ("//evil.test/x", f"{nc.NSITE_BASE}//evil.test/x"),
 ])
 def test_normalize_keeps_only_https_nsite_links(url, expected):
     assert nc._normalize(_raw("-12345", url))["doc_url"] == expected
