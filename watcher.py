@@ -38,17 +38,15 @@ import drive_client as dc
 import sheet_writer as sw
 import nsite_client as nc
 import email_alerts as ea
-import retry_policy as rp
 import well_aliases
-import review_flags as rf
 import owner_notices as on
 import woi_router
 import well_watch
 import archiver as av
 import poison_stub
-import document_titles as dt
+import doc_pipeline as dp
 from egle_doc_parser import parse_document
-from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
+from risk_register import RISK_REGISTER, RISK_NAMES
 from config_loader import load_config
 
 MAX_ERRORS_PER_DOC = poison_stub.MAX_ERRORS_PER_DOC  # give up on a poison doc after this many failures (cf. backfill)
@@ -181,10 +179,7 @@ def run() -> int:
     # ADR 065: generic-title detection + the doc_id -> display-name override
     # map. An empty/missing block is a safe no-op (every doc's title_is_generic
     # is False, so the Document Name column renders exactly as before).
-    title_cfg = cfg.get("document_titles") or {}
-    generic_exact = title_cfg.get("generic_exact") or []
-    generic_prefixes = title_cfg.get("generic_prefixes") or []
-    title_overrides = title_cfg.get("overrides") or {}
+    generic_exact, generic_prefixes, title_overrides = dp.title_config(cfg)
     # ADR 068: the curated well-ID alias map, loaded ONCE here — outside the
     # per-doc try — so a missing/malformed map fails the run red instead of
     # becoming per-doc poison strikes or a silent WOI-routing fallback.
@@ -225,154 +220,23 @@ def run() -> int:
         new_docs = []
     else:
         print(f"[watcher] {len(new_docs)} new document(s).")
+    ctx = dp.RunContext(
+        cfg=cfg, sheets=sheets, sheet_id=sheet_id, session=session, model=model,
+        well_alias_map=well_alias_map, parse=parse_document, now=_now,
+        generic_exact=generic_exact, generic_prefixes=generic_prefixes,
+        title_overrides=title_overrides)
+    # The watcher's half of the shared per-document pipeline (doc_pipeline.py):
+    # New Documents feed, compliance deadlines, well_watch, and the same-day
+    # urgent alert / digest queue.
+    job = dp.Job(
+        name="watcher", feed_tab=sw.TAB_NEW, stub_feed_tab=sw.TAB_NEW,
+        payload=_processed_payload, write_deadlines=True, well_watch=True,
+        related_log_tag=True, review_flag_alert=True,
+        alert=lambda parsed, d, link: _route_urgent_or_digest(
+            parsed, d, link, cfg, state, sheets, sheet_id))
     tmp = tempfile.gettempdir()
-    # Reused across every doc this run so the OAuth handshake + Archived PDFs
-    # index read happen at most once — see archiver.mirror_one_now().
-    drive_state = {}
-
     for d in new_docs:
-        did = d["doc_id"]
-        local = os.path.join(tmp, f"{d.get('facility_srn', 'N2688')}_{did}.pdf")
-        try:
-            nc.download_pdf(session, d, local)
-            is_generic = dt.title_is_generic(
-                d["document_name"], generic_exact, generic_prefixes)
-            parsed = parse_document(
-                local, d, RISK_REGISTER, model=model,
-                signal_keywords=SIGNAL_KEYWORDS,
-                page_threshold=cfg["large_doc_page_threshold"],
-                max_keyword_pages=cfg["large_doc_max_keyword_pages"],
-                max_tokens=cfg["classification_max_tokens"],
-                title_is_generic=is_generic,
-                well_alias_map=well_alias_map,
-            )
-            # ADR 065 chokepoint: resolve the displayed name/date ONCE, right
-            # after parsing and before anything downstream reads `d` — the
-            # Drive mirror row, the Sheet row, the digest/urgent record, and
-            # the _state payload below all inherit it for free. `egle_title`
-            # preserves the raw nSITE title (for the EGLE Title column)
-            # BEFORE document_name is overwritten with the resolved name. A
-            # model-proposed display_title is sanitized against name_check
-            # before it can ever reach the public Sheet; if it can't be made
-            # clean, sanitize_display_title() returns "" and
-            # resolve_display_name() falls back to the plain nSITE title.
-            clean_display_title = (
-                dt.sanitize_display_title(parsed.display_title) if is_generic else "")
-            d["egle_title"] = d["document_name"]
-            d["document_name"] = dt.resolve_display_name(
-                did, d["egle_title"], clean_display_title, title_overrides)
-            d["document_date"] = parsed.document_date
-            d["title_was_generic"] = is_generic
-            # Mirror to Drive inline (best-effort; falls back to the nSITE link
-            # on any failure — see archiver.mirror_one_now()) so the Sheet row
-            # and any alert below link somewhere that survives a Google-referer
-            # click-through (Gmail, a Sheets cell) without the ~21h lag of
-            # waiting for archive.yml's own nightly catch-up run.
-            link = av.mirror_one_now(
-                session, sheets, sheet_id, d, drive_state, local_path=local)
-
-            # A related-scope facility (a neighboring / watershed site, not a GFL
-            # filing — ADR 064) gets its Related Documents row and nothing else:
-            # no Evidence/Measurements/Deadlines, no WOI routing, no urgent alert,
-            # no digest entry. Same row-then-state order as below.
-            if sw.is_related(d):
-                sw.write_related_document(sheets, sheet_id, parsed, d, link)
-                payload = _processed_payload(parsed, d)
-                state["processed"][did] = payload
-                sw.mark_processed(sheets, sheet_id, did, payload, _now())
-                print(f"  ok  {d['date_filed']}  [related]  {d['document_name'][:50]}")
-                continue
-
-            # WOI Status Reports (180-320pp gas-extraction tables) are keyword-
-            # windowed by the generic parser (<5% of ~14k readings; a >=145F well
-            # buried past the window emits no measurement, so is_urgent never
-            # fires). Route them to the exhaustive woi_table_parser and REPLACE
-            # parsed.measurements BEFORE is_urgent (so a page-140 exceedance
-            # actually alerts) and before write_document (so the ranked ADR-004
-            # readings, not the windowed soup, land in Measurements). Routing is
-            # best-effort: any failure degrades to the generic parse (logged),
-            # never drops the filing. See woi_router / ADR 005.
-            flags: list = []
-            try:
-                routed = woi_router.route_measurements(
-                    parsed, local, d, cfg, alias_map=well_alias_map, review_flags=flags)
-            except Exception as we:  # noqa: BLE001 — degrade to the generic parse
-                print(f"  WOI routing failed, using generic parse: {we}")
-                routed = None
-
-            # Crash-safe order: durable Sheet row first, the 'processed' state
-            # event last (a crash before it re-processes the doc next run — a
-            # duplicate row, never a silent drop; see ADR 006). The alert/digest
-            # sits between them and is BEST-EFFORT: the Sheet is the system of
-            # record, so a failed email must not block marking the doc done nor
-            # trigger a daily reprocess. send_email() already no-ops when SMTP is
-            # unconfigured; here we also swallow a configured-but-failing send.
-            sw.write_document(sheets, sheet_id, parsed, d, link, RISK_NAMES, feed_tab=sw.TAB_NEW)
-
-            # Structured compliance deadlines (ADR 025) — durable, machine-joinable
-            # home for the dated obligations the classifier extracted, instead of
-            # leaving them only in the mutable feed cell. Best-effort: must not
-            # block marking the doc processed or alerting.
-            deadlines = getattr(parsed, "deadlines", None)
-            if deadlines:
-                try:
-                    sw.write_compliance_deadlines(
-                        sheets, sheet_id, deadlines, "nSITE",
-                        d.get("facility_name", ""), link, _now())
-                except Exception as de:  # noqa: BLE001 — deadline tab is best-effort
-                    print(f"  compliance-deadline write skipped (doc still recorded): {de}")
-
-            if routed is not None:
-                try:
-                    sw.ensure_woi_tabs(sheets, sheet_id)
-                    sw.write_woi_summary(sheets, sheet_id, routed["summary"], d, link)
-                except Exception as we:  # noqa: BLE001 — summary tab is best-effort
-                    print(f"  WOI summary-tab write skipped (doc still recorded): {we}")
-                # Named single-well trip-wires (ADR 058). Best-effort, like the
-                # summary tab: never blocks recording the doc.
-                try:
-                    well_watch.check_and_alert(routed.get("readings") or [], d, link, cfg)
-                except Exception as ww:  # noqa: BLE001 — alert is best-effort
-                    print(f"  well_watch skipped (doc still recorded): {ww}")
-
-            _route_urgent_or_digest(parsed, d, link, cfg, state, sheets, sheet_id)
-
-            # Values the monitor deliberately did not use (an above-ceiling
-            # temperature, a rejected WOI table, unreadable pages) go to the
-            # Parser Review Flags tab instead of vanishing. Best-effort, after
-            # the document row and the alert (a slow private Sheet must never
-            # delay an URGENT email); it never sends email (review_flags.py).
-            flags = rf.collect(flags, parsed, cfg)
-            rf.log_for_document(sheets, flags, d, link, _now())
-            on.alert_review_flags(sheets, flags, d, link, cfg, _now())
-
-            payload = _processed_payload(parsed, d)
-            state["processed"][did] = payload
-            sw.mark_processed(sheets, sheet_id, did, payload, _now())
-            print(f"  ok  {d['date_filed']}  [{parsed.doc_type}/{parsed.severity}]  "
-                  f"{d['document_name'][:50]}")
-        except Exception as e:  # noqa: BLE001
-            if rp.is_transient(e):
-                # Infrastructure/quota error (API cap, 429, 5xx, network) — not the
-                # document's fault. Retry next run WITHOUT a poison strike, so a
-                # capped or outage window can't silently skip a real filing (the
-                # 2026-07-07 false-poison incident). The doc stays unprocessed.
-                print(f"  RETRY (transient, no strike) {d['document_name'][:50]}: {e}")
-                continue
-            cnt = state["errors"].get(did, 0) + 1
-            state["errors"][did] = cnt
-            sw.mark_error(sheets, sheet_id, did, cnt, _now())
-            print(f"  ERR {d['document_name'][:50]}: {e} "
-                  f"(attempt {cnt}/{MAX_ERRORS_PER_DOC})")
-            # Terminal failure → stub feed row + 'skipped', same as backfill.py.
-            # Without this a doc whose 3rd strike came from the watcher was
-            # silently parked by both jobs' poison gates (issue #82).
-            poison_stub.stub_if_poisoned(sheets, sheet_id, state, d, cnt, e, _now(),
-                                         feed_tab=sw.TAB_NEW, title_overrides=title_overrides,
-                                         cfg=cfg)
-        finally:
-            if os.path.exists(local):
-                os.remove(local)
+        dp.process_one_doc(ctx, state, d, job, dp.local_path(tmp, d))
 
     # MMPC meeting documents are archived by Mirror D (mmpc-archive.yml) on its
     # own schedule — the watcher no longer polls for or emails MMPC minutes (the
