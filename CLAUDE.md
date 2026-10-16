@@ -279,8 +279,10 @@ external users but no sensitive data). Public repo.
   related-scope shortcut, WOI routing, Sheet row, WOI summary, review flags,
   `processed` state LAST, shared strike / poison-stub handling). A `Job` holds
   only where the two jobs differ (feed tab, payload, the watcher's deadlines /
-  well_watch / urgent-digest / owner review-flag email, the backfill's FORCE
-  purge and error-count clearing). A cross-cutting change is wired ONCE, here.
+  well_watch / urgent-digest / owner review-flag email, the backfill's
+  error-count clearing); the backfill's FORCE purge is the `purge_first=`
+  argument to `process_one_doc()`, not a `Job` field. A cross-cutting change
+  is wired ONCE, here.
 - `watcher.py` — daily new-doc check + alerts (+ WDS Stream C when enabled).
   Stream C (`wds_watcher.py` + `wds_client.py`) polls eight WDS collections for
   site 475946: applications/qmr/annual/evaluations/compliance_actions plus
@@ -347,7 +349,7 @@ external users but no sensitive data). Public repo.
   2026-07-21 addendum, now folded in).
 - `gfl_air_episodes.py` / `gfl_air_emails.py` / `gfl_air_liveness.py` — the
   pure halves of Stream E, split out of `gfl_air_watcher.py` on 2026-10-16
-  (pure moves, AST-identical): the per-(station, gas) episode state machine +
+  (pure moves; one duplicate `_ET` later removed): the per-(station, gas) episode state machine +
   America/Detroit time helpers + monitor rows; every email's rendering; the
   liveness decision + body. `gfl_air_watcher.py` keeps the orchestration
   (run, capture, measurements, the liveness wrapper) and re-exports every

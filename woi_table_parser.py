@@ -701,9 +701,10 @@ def merge_cross_table_duplicates(readings: list[WOIReading]) -> list[WOIReading]
     """Collapse a reading a report prints in TWO tables (on different pages):
     same well, time, ADJ flag, gas columns and temperature, and no secondary
     column (diff press, flow, pressures) that disagrees. The most complete
-    copy is kept, in first-seen order. The Q3 2023 HOV WOI report prints 232
-    readings in both its no-Diff.Press table and its full table, which would
-    otherwise reach Measurements twice. Readings repeated on the SAME page, or
+    copy is kept, in first-seen order. In the Q3 2023 HOV WOI report, 234
+    well/time readings appear in both its no-Diff.Press table and its full
+    table; 232 of the 234 are such exact repeats, which would otherwise reach
+    Measurements twice. Readings repeated on the SAME page, or
     whose secondary columns differ, are distinct records and are all kept.
     Pure; the parser's own output (parse_gas_extraction) is not changed."""
     groups: dict = {}

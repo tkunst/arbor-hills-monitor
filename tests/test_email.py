@@ -668,3 +668,11 @@ def test_thousands_separator_is_never_read_as_a_wellhead_temperature():
     assert ea._max_temperature_f("Flare outlet 2,145 F; well AHW1 140 F") == 140
     assert ea._max_temperature_f("Flare outlet 2,145 F") is None
     assert ea._max_temperature_f("1,500°F flare") is None
+
+
+def test_temperature_after_a_comma_is_still_read():
+    import email_alerts as ea
+    # "131°F,145°F": the comma is a list separator, not a thousands separator.
+    assert ea._max_temperature_f("131°F,145°F") == 145
+    # A real thousands separator is still read as one number, never as "145".
+    assert [m.group(1) for m in ea._TEMP_RE.finditer("2,145°F")] == ["2,145"]

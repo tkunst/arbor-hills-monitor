@@ -182,7 +182,9 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
     max_f = _max_plausible_f(cfg)
     # A reading printed in two tables of the same report reaches Measurements,
     # the summary and well_watch once (woi_table_parser.merge_cross_table_duplicates).
-    valid_all = wtp.merge_cross_table_duplicates([r for r in readings if r.valid])
+    valid_raw = [r for r in readings if r.valid]
+    valid_all = wtp.merge_cross_table_duplicates(valid_raw)
+    n_merged = len(valid_raw) - len(valid_all)  # validity_pct stays a pre-merge ratio
     above = [r for r in valid_all if r.temp is not None and r.temp > max_f]
     valid = [r for r in valid_all if not (r.temp is not None and r.temp > max_f)]
     if above:
@@ -261,7 +263,7 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
             if not (isinstance(m, dict) and m.get("metric") in _ROUTED_METRICS)]
     parsed.measurements = kept + measurements
 
-    validity = 100.0 * len(valid) / max(1, len(readings))
+    validity = 100.0 * (len(valid) + n_merged) / max(1, len(readings))
     n_hot = sum(1 for r in asfound if r.temp >= watch_f)
     n_hot_wells = sum(1 for d in summary if (d["max_temp_f"] or 0) >= watch_f)
     print(f"[woi_router] ROUTED {metadata.get('document_name')!r}: {len(readings)} "
