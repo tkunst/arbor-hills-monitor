@@ -181,6 +181,9 @@ def unreadable_enforcement_email(meta: dict, link: str, attempts: int) -> tuple[
         f"  Facility:    {meta.get('facility_name') or meta.get('facility_srn', '')}",
         f"  Download:    {link}",
         "",
+        "(nSITE refuses links clicked from Gmail; if it fails, paste the URL into",
+        "the browser's address bar.)",
+        "",
         "Sent to the monitor owner only. Not part of the Sunday digest or its",
         "urgent recap.",
     ])

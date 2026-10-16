@@ -65,7 +65,14 @@ def run() -> int:
             state=state,
             sent_at=_now(),
         )
-        routed_rows.append([d["link"], d["document_name"], d["severity"], _now()])
+        if d["severity"] == "urgent" and not sent:
+            # The urgent email did not go out (and it is in neither queue): do
+            # NOT log the row as routed, so the owner weekly email keeps listing
+            # it, and record the failed send for that email's section 3.
+            on.record_send_failure(sheets, "hand-curated urgent alert", "not sent",
+                                   d, d["link"], _now())
+        else:
+            routed_rows.append([d["link"], d["document_name"], d["severity"], _now()])
         label = "URGENT — SENT" if sent else "queued for the Sunday digest"
         print(f"  {label}: {d['document_name']} ({d['date_filed']})")
 

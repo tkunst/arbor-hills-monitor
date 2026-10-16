@@ -63,7 +63,10 @@ means no send.
   email: a reminder, never a lost alert. Severity triage stays off the
   operator-visible Sheet.
 - **While both switches are off,** `record_notice` is a no-op: no new tab and no extra
-  API calls (ships disabled).
+  API calls (ships disabled). The routing log is the exception, deliberately: it runs
+  regardless, so the log is complete by the time the weekly email is switched on. A
+  hand-curated URGENT whose email did not go out is never logged as routed, and its
+  failed send is recorded instead.
 
 Every read the weekly email depends on is strict (`_tab_rows_strict` /
 `sw.state_events_since`). A failed read skips the weekly; it never produces a false
