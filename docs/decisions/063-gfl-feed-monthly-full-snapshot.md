@@ -106,3 +106,21 @@ from the local check.
   next monthly run, the change is not detected. The newest snapshot is still the record.
 - Residual: only the readings layer is compared. The wind, station and label layers are
   saved in every snapshot but not diffed.
+
+## Addendum 2026-10-16: CSV cells stay verbatim (SEC-011, decided)
+
+The 2026-10-14 modernization assessment flagged SEC-011 (CWE-1236, CSV formula
+injection): `rows_to_csv` writes each value exactly as the feed returned it, so a
+cell beginning with `=`, `+`, `-` or `@` could be read as a formula if someone
+opens the CSV in a spreadsheet.
+
+**Decision (Trisha, 2026-10-16): leave it as is.** The snapshot is a verbatim
+evidence archive. Each file's SHA-256 is recorded in the manifest, and the
+deleted/edited-reading comparison depends on the stored bytes matching the source.
+Prefixing or escaping cells would change the record and break that comparison.
+
+Do not add formula neutralization to `rows_to_csv`. Anyone who opens a snapshot
+CSV in Excel, Sheets or Numbers should import it as plain text rather than open it
+directly. (Sheets writes elsewhere in the repo already use `RAW`, and the
+`scripts/backfill_document_dates_titles.py` review CSV, which is not evidence,
+does neutralize.)

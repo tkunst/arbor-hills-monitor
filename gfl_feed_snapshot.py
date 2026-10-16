@@ -149,6 +149,9 @@ def csv_columns(rows: list[dict], meta_fields: list[str]) -> list[str]:
 
 
 def rows_to_csv(rows: list[dict], meta_fields: list[str]) -> str:
+    """Values are written VERBATIM, with no formula-character neutralization
+    (SEC-011, decided 2026-10-16: an evidence archive must match its source and
+    its manifest SHA-256; see ADR 063 addendum)."""
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=csv_columns(rows, meta_fields), lineterminator="\n")
     w.writeheader()
