@@ -33,8 +33,8 @@ import drive_client as dc
 import sheet_writer as sw
 import nsite_client as nc
 import well_aliases
-import woi_router
-import archiver as av
+import woi_router  # noqa: F401 — tests patch through this module name
+import archiver as av  # noqa: F401 — tests patch through this module name
 import poison_stub
 import doc_pipeline as dp
 from egle_doc_parser import parse_document
@@ -183,8 +183,8 @@ def run() -> int:
     sheet_id = os.environ["GSHEET_ID"]
     model = cfg["anthropic_model"]
     batch_size = cfg["backfill_batch_size"]
-    page_threshold = cfg["large_doc_page_threshold"]
-    max_kw_pages = cfg["large_doc_max_keyword_pages"]
+    # Fail fast on a missing key (doc_pipeline reads these per document).
+    cfg["large_doc_page_threshold"], cfg["large_doc_max_keyword_pages"]
     # ADR 065: see watcher.py's identical block for the no-op-when-empty note.
     generic_exact, generic_prefixes, title_overrides = dp.title_config(cfg)
     # ADR 068: the curated well-ID alias map, loaded ONCE here — outside the

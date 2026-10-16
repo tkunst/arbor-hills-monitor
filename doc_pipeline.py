@@ -135,7 +135,9 @@ def process_one_doc(ctx: RunContext, state: dict, d: dict, job: Job, local: str,
                     purge_first: bool = False) -> str:
     """Run one document through the pipeline. Returns 'processed', 'retry'
     (transient failure: no strike) or 'error' (a strike; stubbed on the
-    MAX_ERRORS_PER_DOC-th). Never raises for a per-document failure."""
+    MAX_ERRORS_PER_DOC-th). A per-document failure is handled here; a failure
+    inside that handling (e.g. mark_error hitting an exhausted 429) propagates
+    and fails the run, exactly as before the consolidation."""
     did = d["doc_id"]
     try:
         parsed, link = _parse_and_resolve(ctx, d, local)
