@@ -923,8 +923,8 @@ answers "is it live right now."
 | `pfas_pws.enabled` | yes |
 | `govqa.enabled` | yes |
 | `mpart.enabled` | yes |
-| `owner_weekly.enabled` | no |
-| `owner_weekly.enforcement_alert_enabled` | no |
+| `owner_weekly.enabled` | yes |
+| `owner_weekly.enforcement_alert_enabled` | yes |
 | `egle_newsroom.enabled` | yes |
 <!-- stream-status:end -->
 
