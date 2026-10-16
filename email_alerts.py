@@ -22,7 +22,7 @@ from typing import Optional
 # Matches "180F", "180 F", "180°F", "180 degrees F", "180 deg F", and reads a
 # thousands separator whole: "2,145°F" is 2145 (a flare value the plausibility
 # ceiling then skips), never 145 (which would false-fire an URGENT alert).
-_TEMP_RE = re.compile(r"(?<![\d,])(\d{1,3}(?:,\d{3})+|\d{2,4})\s*(?:°|deg(?:rees)?\.?\s*)?\s*f\b",
+_TEMP_RE = re.compile(r"(?<!\d)(?<!\d,)(\d{1,3}(?:,\d{3})+|\d{2,4})\s*(?:°|deg(?:rees)?\.?\s*)?\s*f\b",
                       re.IGNORECASE)
 
 

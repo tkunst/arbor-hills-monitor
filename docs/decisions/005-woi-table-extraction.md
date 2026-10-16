@@ -203,8 +203,16 @@ output: identical for every document except
   cross-table repeat (same reading, consistent columns, different pages) to its
   most complete copy before Measurements, the summary and well_watch
   (`woi_table_parser.merge_cross_table_duplicates`; the parser's own output is
-  unchanged): 816 -> 672 measurements for this report, every other specimen
-  unchanged;
+  unchanged): 816 -> 672 measurements for this report. The merge also
+  removes exact cross-table repeats from five other reports in the specimen
+  set (measurements before -> after; nSITE doc ids, both copies where two):
+  the 58pp report `-2136493721019571731` / `8700874927542414020` 767 -> 650;
+  the 73pp 2022-11-15 report `3838978899799471728` / `6318109379845527354`
+  895 -> 847; the 77pp report `6899614001871945975` / `8586108705270421879`
+  729 -> 657; the hand-curated Drive copies of the 73pp 2022-05-12 report
+  1846 -> 1681 and the 119pp 2024-07-09 report 1379 -> 1316. In every one,
+  peaks, the per-well summary and urgency are unchanged; only exact repeats
+  are removed;
 - the Q1 2024 HOV report (both copies): 6,178 readings (was 0; pages 71-90
   skipped);
 - the 465pp Gas Extraction report (both copies): its gas + Temp only table
