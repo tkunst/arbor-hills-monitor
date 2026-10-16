@@ -53,6 +53,7 @@ def run() -> int:
     routed_rows = []
 
     for d in docs:
+        queued_before = len(state.get("pending_digest") or []) + len(state.get("pending_urgent_recap") or [])
         sent = ea.route_hand_curated_urgent_or_digest(
             document_name=d["document_name"],
             date_filed=d["date_filed"],
@@ -65,10 +66,12 @@ def run() -> int:
             state=state,
             sent_at=_now(),
         )
-        if d["severity"] == "urgent" and not sent:
-            # The urgent email did not go out (and it is in neither queue): do
-            # NOT log the row as routed, so the owner weekly email keeps listing
-            # it, and record the failed send for that email's section 3.
+        queued = len(state["pending_digest"]) + len(state["pending_urgent_recap"]) > queued_before
+        if not queued:
+            # It landed in NEITHER queue: an urgent email that did not go out
+            # (however urgency was decided). Do NOT log the row as routed, so
+            # the owner weekly email keeps listing it, and record the failed
+            # send for that email's section 3.
             on.record_send_failure(sheets, "hand-curated urgent alert", "not sent",
                                    d, d["link"], _now())
         else:
