@@ -8,12 +8,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-try:
-    from zoneinfo import ZoneInfo
-    _ET = ZoneInfo("America/Detroit")
-except Exception:  # pragma: no cover
-    _ET = None
-
 
 
 # ---------------------------------------------------------------------------
