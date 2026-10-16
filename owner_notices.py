@@ -25,7 +25,7 @@ never the alert / digest / watch lists and never a fallback to them:
 Durable state: `last_owner_weekly` in `_meta` (the weekly window), the
 append-only "Owner Notices" tab on the PRIVATE Sheet (each owner alert attempt
 and each failed send: a permanent record, and section 3's source), and the
-"Hand-Curated Routing Log" tab on the case-file Sheet (written by
+"Hand-Curated Routing Log" tab, also on the PRIVATE Sheet (written by
 scripts/route_hand_curated.py; section 2's source). Every read the weekly
 email depends on is STRICT (a failed read raises; the weekly is then skipped
 and retried next Sunday, never sent as a false "all clear").

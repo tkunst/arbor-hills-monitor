@@ -309,7 +309,8 @@ def _rhc(monkeypatch, order):
     monkeypatch.setattr(rhc.dc, "sheets_service", lambda: None)
     monkeypatch.setattr(rhc.sw, "read_meta", lambda svc, sid: {"pending_digest": [],
                                                               "pending_urgent_recap": []})
-    monkeypatch.setattr(rhc.ea, "route_hand_curated_urgent_or_digest", lambda **k: False)
+    monkeypatch.setattr(rhc.ea, "route_hand_curated_urgent_or_digest",
+                        lambda **k: k["state"]["pending_digest"].append({}) or False)  # queued for digest
     monkeypatch.setattr(rhc.sw, "write_meta", lambda *a: order.append("meta"))
     return rhc
 
@@ -379,7 +380,7 @@ def test_failed_hand_curated_urgent_is_not_logged_as_routed(monkeypatch):
         "document_name": "VN", "date_filed": "2026-10-16", "doc_type": "enforcement",
         "severity": "urgent", "risks": [], "key_data_point": "k",
         "link": "https://drive.google.com/file/d/U/view"}]))
-    monkeypatch.setattr(rhc.ea, "route_hand_curated_urgent_or_digest", lambda **k: False)
+    monkeypatch.setattr(rhc.ea, "route_hand_curated_urgent_or_digest", lambda **k: False)  # queued nowhere
     failures = []
     monkeypatch.setattr(on, "record_send_failure",
                         lambda svc, what, outcome, meta, link, now: failures.append(what))
