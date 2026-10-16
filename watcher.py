@@ -40,9 +40,9 @@ import nsite_client as nc
 import email_alerts as ea
 import well_aliases
 import owner_notices as on
-import woi_router
-import well_watch
-import archiver as av
+import woi_router  # noqa: F401 — tests patch through this module name
+import well_watch  # noqa: F401 — tests patch through this module name
+import archiver as av  # noqa: F401 — tests patch through this module name
 import poison_stub
 import doc_pipeline as dp
 from egle_doc_parser import parse_document
