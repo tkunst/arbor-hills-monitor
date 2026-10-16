@@ -41,8 +41,8 @@ jobs:
     # cancel/timeout too, so a cut-off run loses at most the file in flight.
     timeout-minutes: 345
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install system OCR tooling
@@ -55,7 +55,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install --require-hashes -r requirements.txt
       - name: Restore resume state
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: local-state/backfill-mirror-ocr-state.json
           key: backfill-mirror-ocr-state-${{ github.run_id }}
@@ -84,7 +84,7 @@ jobs:
           fi
       - name: Save resume state
         if: always() && inputs.apply
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: local-state/backfill-mirror-ocr-state.json
           key: backfill-mirror-ocr-state-${{ github.run_id }}

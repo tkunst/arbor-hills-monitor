@@ -20,7 +20,7 @@ jobs:
   lychee:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       # Markdown: internal + external links (unchanged behaviour).
       - name: Markdown links
