@@ -32,15 +32,13 @@ from datetime import datetime
 import drive_client as dc
 import sheet_writer as sw
 import nsite_client as nc
-import retry_policy as rp
 import well_aliases
-import review_flags as rf
 import woi_router
 import archiver as av
 import poison_stub
-import document_titles as dt
+import doc_pipeline as dp
 from egle_doc_parser import parse_document
-from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
+from risk_register import RISK_REGISTER
 from config_loader import load_config
 
 MAX_ERRORS_PER_DOC = poison_stub.MAX_ERRORS_PER_DOC  # give up on a poison doc after this many failures
@@ -162,6 +160,24 @@ def count_remaining(docs: list, state: dict) -> int:
     )
 
 
+def _backfill_payload(parsed, d: dict) -> dict:
+    """The backfill's _state payload (adds ocr_applied/page_count to the
+    watcher's fields)."""
+    return {
+        "document_name": d["document_name"],
+        "date_filed": d["date_filed"],
+        "doc_type": parsed.doc_type,
+        "severity": parsed.severity,
+        "risks": parsed.risks,
+        "ocr_applied": parsed.ocr_applied,
+        "page_count": parsed.page_count,
+        # ADR 065 — see watcher.py's _processed_payload for why these
+        # are carried (archiver.py's nightly catch-up run needs them).
+        "document_date": d.get("document_date", ""),
+        "egle_title": d.get("egle_title") or d["document_name"],
+    }
+
+
 def run() -> int:
     cfg = load_config()
     sheet_id = os.environ["GSHEET_ID"]
@@ -170,10 +186,7 @@ def run() -> int:
     page_threshold = cfg["large_doc_page_threshold"]
     max_kw_pages = cfg["large_doc_max_keyword_pages"]
     # ADR 065: see watcher.py's identical block for the no-op-when-empty note.
-    title_cfg = cfg.get("document_titles") or {}
-    generic_exact = title_cfg.get("generic_exact") or []
-    generic_prefixes = title_cfg.get("generic_prefixes") or []
-    title_overrides = title_cfg.get("overrides") or {}
+    generic_exact, generic_prefixes, title_overrides = dp.title_config(cfg)
     # ADR 068: the curated well-ID alias map, loaded ONCE here — outside the
     # per-doc try — so a missing/malformed map fails the run red instead of
     # becoming per-doc poison strikes or a silent WOI-routing fallback.
@@ -212,13 +225,19 @@ def run() -> int:
     batch = todo[:batch_size]
     tmp = tempfile.gettempdir()
     processed_this_run = 0
-    # Reused across every doc this run so the OAuth handshake + Archived PDFs
-    # index read happen at most once — see archiver.mirror_one_now().
-    drive_state = {}
+    ctx = dp.RunContext(
+        cfg=cfg, sheets=sheets, sheet_id=sheet_id, session=session, model=model,
+        well_alias_map=well_alias_map, parse=parse_document, now=_now,
+        generic_exact=generic_exact, generic_prefixes=generic_prefixes,
+        title_overrides=title_overrides)
+    # The backfill's half of the shared per-document pipeline (doc_pipeline.py):
+    # Historical Documents feed, no alerts (backfill never calls is_urgent, so
+    # re-extracting history fires nothing stale), error count cleared on success.
+    job = dp.Job(name="backfill", feed_tab=sw.TAB_HISTORICAL, payload=_backfill_payload,
+                 clear_errors_on_success=True)
 
     for d in batch:
         did = d["doc_id"]
-        local = os.path.join(tmp, f"{d.get('facility_srn', 'N2688')}_{did}.pdf")
         is_force = did in force_ids
         if is_force and not force_apply:
             # DRY RUN: preview which rows a purge would remove, then re-extract.
@@ -235,123 +254,9 @@ def run() -> int:
                   "(it indexes the unchanged Drive-mirrored PDF). "
                   "Set FORCE_REPROCESS_APPLY=1 to execute.")
             continue
-        try:
-            nc.download_pdf(session, d, local)
-
-            is_generic = dt.title_is_generic(
-                d["document_name"], generic_exact, generic_prefixes)
-            parsed = parse_document(
-                local, d, RISK_REGISTER,
-                model=model, signal_keywords=SIGNAL_KEYWORDS,
-                page_threshold=page_threshold, max_keyword_pages=max_kw_pages,
-                max_tokens=cfg["classification_max_tokens"],
-                title_is_generic=is_generic,
-                well_alias_map=well_alias_map,
-            )
-
-            # ADR 065 chokepoint — see watcher.py's identical block.
-            clean_display_title = (
-                dt.sanitize_display_title(parsed.display_title) if is_generic else "")
-            d["egle_title"] = d["document_name"]
-            d["document_name"] = dt.resolve_display_name(
-                did, d["egle_title"], clean_display_title, title_overrides)
-            d["document_date"] = parsed.document_date
-            d["title_was_generic"] = is_generic
-
-            # Mirror to Drive inline (best-effort; falls back to the nSITE link
-            # on any failure — see archiver.mirror_one_now()) so the Sheet row
-            # links somewhere that survives a Google-referer click-through
-            # (Gmail, a Sheets cell), same as watcher.py's new-doc path.
-            link = av.mirror_one_now(
-                session, sheets, sheet_id, d, drive_state, local_path=local)
-
-            # Related-scope facility (ADR 064): Related Documents row only — no
-            # Evidence/Measurements, no WOI routing. Row first, then state.
-            related = sw.is_related(d)
-
-            # Route WOI Status Reports to the exhaustive woi_table_parser and
-            # REPLACE parsed.measurements before write_document (see woi_router /
-            # ADR 005). Backfill deliberately never calls is_urgent, so re-
-            # extracting historical reports through this path fires no stale
-            # alerts. Best-effort: a routing failure degrades to the generic
-            # parse (logged), never drops the filing.
-            flags: list = []
-            try:
-                routed = None if related else woi_router.route_measurements(
-                    parsed, local, d, cfg, alias_map=well_alias_map, review_flags=flags)
-            except Exception as we:  # noqa: BLE001 — degrade to the generic parse
-                print(f"  WOI routing failed, using generic parse: {we}")
-                routed = None
-
-            # FORCE_REPROCESS (apply): remove this doc's stale rows BEFORE writing
-            # the fresh ones, so the re-extract is clean, not additive. Done only
-            # after a successful download+parse+route above — a fetch/parse failure
-            # lands in the except block with nothing purged, leaving rows intact.
-            if is_force:
-                purged = sw.purge_doc_rows(sheets, sheet_id, did)
-                print(f"  [FORCE] purged {sum(purged.values())} stale row(s) {purged} "
-                      f"for {did} before re-extract")
-
-            # Sheet row FIRST, then state — order matters for crash-safety.
-            if related:
-                sw.write_related_document(sheets, sheet_id, parsed, d, link)
-            else:
-                sw.write_document(
-                    sheets, sheet_id, parsed, d, link, RISK_NAMES,
-                    feed_tab=sw.TAB_HISTORICAL,
-                )
-            if routed is not None:
-                try:
-                    sw.ensure_woi_tabs(sheets, sheet_id)
-                    sw.write_woi_summary(sheets, sheet_id, routed["summary"], d, link)
-                except Exception as we:  # noqa: BLE001 — summary tab is best-effort
-                    print(f"  WOI summary-tab write skipped (doc still recorded): {we}")
-            # Review flags (see watcher.py / review_flags.py): best-effort, after
-            # the document row. No same-day owner email from backfill: it
-            # re-reads history and never alerts on it. Related-scope docs get none.
-            if not related:
-                flags = rf.collect(flags, parsed, cfg)
-                rf.log_for_document(sheets, flags, d, link, _now())
-            payload = {
-                "document_name": d["document_name"],
-                "date_filed": d["date_filed"],
-                "doc_type": parsed.doc_type,
-                "severity": parsed.severity,
-                "risks": parsed.risks,
-                "ocr_applied": parsed.ocr_applied,
-                "page_count": parsed.page_count,
-                # ADR 065 — see watcher.py's _processed_payload for why these
-                # are carried (archiver.py's nightly catch-up run needs them).
-                "document_date": d.get("document_date", ""),
-                "egle_title": d.get("egle_title") or d["document_name"],
-            }
-            state["processed"][did] = payload
-            state["errors"].pop(did, None)
-            sw.mark_processed(sheets, sheet_id, did, payload, _now())
+        if dp.process_one_doc(ctx, state, d, job, dp.local_path(tmp, d),
+                              purge_first=is_force) == "processed":
             processed_this_run += 1
-            print(f"  ok  {d['date_filed']}  [{parsed.doc_type}/{parsed.severity}]  "
-                  f"{d['document_name'][:50]}")
-        except Exception as e:  # noqa: BLE001
-            if rp.is_transient(e):
-                # Infrastructure/quota error (API cap, 429, 5xx, network) — not the
-                # document's fault. Retry on a later run WITHOUT a poison strike, so
-                # a capped or outage window can't falsely stub+skip a real filing
-                # (the 2026-07-07 incident). The doc stays in `todo`.
-                print(f"  RETRY (transient, no strike) {d['document_name'][:50]}: {e}")
-                continue
-            cnt = state["errors"].get(did, 0) + 1
-            state["errors"][did] = cnt
-            sw.mark_error(sheets, sheet_id, did, cnt, _now())
-            print(f"  ERR {d['document_name'][:50]}: {e} "
-                  f"(attempt {cnt}/{MAX_ERRORS_PER_DOC})")
-            # On the terminal failure, make the doc VISIBLE instead of silently
-            # dropping it: stub feed row + 'skipped' (shared with watcher.py —
-            # see poison_stub / issue #82).
-            poison_stub.stub_if_poisoned(sheets, sheet_id, state, d, cnt, e, _now(),
-                                         title_overrides=title_overrides, cfg=cfg)
-        finally:
-            if os.path.exists(local):
-                os.remove(local)
 
     # A pure FORCE_REPROCESS dry run mutates NOTHING — skip the derived-tab
     # rebuilds below and return. (A force run's todo is only the named docs, which
