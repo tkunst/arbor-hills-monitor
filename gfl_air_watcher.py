@@ -44,11 +44,7 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 
-try:
-    from zoneinfo import ZoneInfo
-    _ET = ZoneInfo("America/Detroit")
-except Exception:  # pragma: no cover
-    _ET = None
+from gfl_air_episodes import _ET  # one America/Detroit zone for the whole stream
 
 import archive_client as ac
 import drive_client as dc
