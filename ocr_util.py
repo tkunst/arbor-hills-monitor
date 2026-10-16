@@ -150,8 +150,8 @@ def _ocrmypdf_bin() -> str:
 def _minimal_ocr_env() -> dict:
     """The environment for the ensure_searchable() subprocess call ONLY —
     found by security review, 2026-10-13: passing the full os.environ (the
-    original behavior, still used by ocr_in_place() above, UNCHANGED per
-    this module's own docstring) hands every workflow secret (GOAUTH_*,
+    original behavior, also used by ocr_in_place() until 2026-10-16, SEC-008)
+    hands every workflow secret (GOAUTH_*,
     GDRIVE_SA_KEY, etc.) to ocrmypdf and its child processes (Tesseract,
     ghostscript, qpdf), which parse PDFs submitted by regulated third
     parties (nSITE filings, CivicClerk, GovQA, RRD) — this is now the
@@ -269,7 +269,7 @@ def ocr_in_place(pdf_path: str, timeout: int = 600) -> bool:
     version. Returns True on success. Raises on failure so the caller can
     decide whether to proceed with the un-OCR'd text."""
     binpath = _ocrmypdf_bin()
-    env = dict(os.environ, PATH="/opt/homebrew/bin:" + os.environ.get("PATH", ""))
+    env = _minimal_ocr_env()  # SEC-008: no workflow secrets to the PDF toolchain
     tmp = pdf_path + ".ocr_tmp.pdf"
     try:
         r = _run_ocrmypdf(

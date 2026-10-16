@@ -557,3 +557,19 @@ def test_run_ocrmypdf_real_escaped_grandchild_capture_does_not_hang(tmp_path):
     assert escaped.exists(), "test setup broken: the grandchild never escaped the group"
     assert elapsed >= 2 + ocr_util._POST_KILL_TIMEOUT_S - 0.5, f"drain not exercised ({elapsed:.1f}s)"
     assert elapsed < 2 + 2 * ocr_util._POST_KILL_TIMEOUT_S + 3, f"took {elapsed:.1f}s"
+
+
+def test_ocr_in_place_passes_a_minimal_env_not_the_full_environment(image_pdf, monkeypatch):
+    # SEC-008: ocr_in_place() (the parse_document OCR path) now uses the same
+    # minimal environment as ensure_searchable(): no workflow secrets reach
+    # ocrmypdf and the PDF toolchain it runs on untrusted filings.
+    monkeypatch.setenv("GOAUTH_CLIENT_SECRET", "super-secret-value")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    instances = []
+    monkeypatch.setattr(ocr_util.subprocess, "Popen",
+                        fake_popen_factory([_writes_text("text")], instances=instances))
+    assert ocr_util.ocr_in_place(image_pdf) is True
+    assert len(instances) == 1
+    assert "GOAUTH_CLIENT_SECRET" not in instances[0].env
+    assert "ANTHROPIC_API_KEY" not in instances[0].env
+    assert "PATH" in instances[0].env

@@ -155,6 +155,22 @@ def _parse_doc_url(html_anchor: str) -> str:
     return m.group(1) if m else (html_anchor or "")
 
 
+_NSITE_HOST = urllib.parse.urlparse(NSITE_BASE).netloc
+_DOC_ID_RE = re.compile(r"-?\d{1,25}")
+
+
+def _is_nsite_url(url: str) -> bool:
+    p = urllib.parse.urlparse(url)
+    return p.scheme == "https" and p.netloc.lower() == _NSITE_HOST
+
+
+def _valid_doc_id(raw: dict) -> bool:
+    """SEC-007 (CWE-22): nSITE document ids are signed integers. The id goes
+    into temp-file paths, Drive file names and download URLs, so a record whose
+    id is anything else is dropped rather than used."""
+    return bool(_DOC_ID_RE.fullmatch(str(raw.get("docMgmtDocMgmtId") or "")))
+
+
 def _normalize(raw: dict) -> dict:
     """Convert a raw nSITE document dict into the fields the pipeline uses."""
     descr = raw.get("docMgmtDocDescr", "")
@@ -180,6 +196,13 @@ def _normalize(raw: dict) -> dict:
     doc_url = raw_url or f"{DOWNLOAD_BASE}/{doc_id}"
     if doc_url.startswith("/"):
         doc_url = NSITE_BASE + doc_url
+    if not _is_nsite_url(doc_url):
+        # SEC-006 (CWE-918): the record's own link is fetched by download_pdf()
+        # and published in the Sheet/feed, so only an https link on nSITE's own
+        # host is used; anything else falls back to the render endpoint. Every
+        # live link checked 2026-10-16 (1,920 records, all facilities) was on
+        # https://mienviro.michigan.gov, so this changes no real record.
+        doc_url = f"{DOWNLOAD_BASE}/{doc_id}"
 
     return {
         "doc_id": doc_id,
@@ -215,7 +238,11 @@ def fetch_site_documents(session: requests.Session, nsite_id: str) -> list[dict]
             )
             data = r.json()
             raw_docs = data.get("queryResults", [])
-            return [_normalize(d) for d in raw_docs if d.get("docMgmtDocMgmtId")]
+            kept = [d for d in raw_docs if _valid_doc_id(d)]
+            dropped = sum(1 for d in raw_docs if d.get("docMgmtDocMgmtId")) - len(kept)
+            if dropped:
+                print(f"[nsite] dropped {dropped} record(s) with a non-integer document id")
+            return [_normalize(d) for d in kept]
         except Exception:
             if attempt == 2:
                 return []
