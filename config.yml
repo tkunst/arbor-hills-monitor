@@ -1927,10 +1927,10 @@ temperature_thresholds:
 # owner-only email when an unreadable filing has an enforcement title, or a
 # parse produced a temperature above max_plausible_wellhead_f. Both ship off.
 owner_weekly:
-  enabled: false
+  enabled: true  # activated 2026-10-16 (Trisha)
   # Same-day owner alerts (unreadable enforcement notice; above-ceiling
   # temperature). Separate switch so the weekly can run without them.
-  enforcement_alert_enabled: false
+  enforcement_alert_enabled: true  # activated 2026-10-16 (Trisha)
   # Hand-curated rows added before this date are never listed (the backlog
   # predates the routing log).
   hand_curated_since: "2026-10-15"
