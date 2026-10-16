@@ -388,3 +388,31 @@ def test_failed_hand_curated_urgent_is_not_logged_as_routed(monkeypatch):
     assert rhc.run() == 0
     assert failures == ["hand-curated urgent alert"]
     assert order == [("routing", 0), "meta"]
+
+
+# --- final lows (2026-10-16) ----------------------------------------------------
+
+def test_annotation_of_a_mirror_copy_or_repeated_link_is_not_listed():
+    mirror = "https://drive.google.com/file/d/MIRRORFILE0000000000000/view"
+    rows = [_hc("AnnotMirror", "2026-10-16", link=mirror),
+            _hc("First", "2026-10-16", link="https://drive.google.com/file/d/SHARED00000000000000000/view"),
+            _hc("Repeat", "2026-10-17", link="https://drive.google.com/file/d/SHARED00000000000000000/view?usp=x")]
+    out = on.unrouted_hand_curated(rows, [], "2026-10-15",
+                                   {"https://drive.google.com/file/d/MIRRORFILE0000000000000/view?usp=drivesdk"})
+    assert [r[1] for r in out] == ["First"]
+
+
+def test_row_with_no_added_at_is_listed_not_skipped():
+    out = on.unrouted_hand_curated([_hc("Undated", "")], [], "2026-10-15")
+    assert [r[1] for r in out] == ["Undated"]
+    assert "(no date)" in on.build_weekly_body([], out, [], [], "2026-10-11")
+
+
+def test_review_flag_alert_not_resent_after_a_reprocess(owners, sends, notices, monkeypatch):
+    flags = [rf.flag(rf.KIND_WOI_TEMP, value_f=300.0, well_id="AHW1", detail="d")]
+    monkeypatch.setattr(on, "notices_since", lambda svc, sid, since, kinds=None: [
+        {"Doc ID": "123", "Detail": "sent (1 value(s))", "Kind": on.KIND_REVIEW_ALERT}])
+    assert on.alert_review_flags(None, flags, META, "L", CFG_ON, "t") is None
+    assert sends == []
+    monkeypatch.setattr(on, "notices_since", mock.Mock(side_effect=OSError("429")))
+    assert on.alert_review_flags(None, flags, META, "L", CFG_ON, "t") is True  # unreadable log: send

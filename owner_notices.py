@@ -36,6 +36,7 @@ title, link or address — counts and exception classes only.
 """
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 from typing import Optional
 
@@ -255,6 +256,9 @@ def alert_review_flags(service, flags: list[dict], meta: dict, link: str,
     temps = [f for f in flags if f.get("kind") in rf.TEMP_KINDS]
     if not temps or not alerts_enabled(cfg):
         return None
+    if _already_alerted(service, KIND_REVIEW_ALERT, meta.get("doc_id", "")):
+        print("  owner review-flag alert already sent for this document; not re-sent")
+        return None
     try:
         subject, body = review_flag_email(temps, meta, link, rf.max_plausible_f(cfg))
         sent = send_owner_email(subject, body, cfg)
@@ -269,6 +273,22 @@ def alert_review_flags(service, flags: list[dict], meta: dict, link: str,
         record_send_failure(service, "review-flag alert", "not sent (SMTP or owner list)",
                             meta, link, now)
     return sent
+
+
+def _already_alerted(service, kind: str, doc_id: str) -> bool:
+    """True if Owner Notices already records a sent `kind` alert for doc_id
+    (a document reprocessed after a transient failure must not email twice).
+    Fails toward sending: an unreadable log reads as "not sent yet"."""
+    if not doc_id:
+        return False
+    try:
+        sheet_id, _why = rf.private_sheet_for_write(service)
+        if sheet_id is None:
+            return False
+        return any(n["Doc ID"] == doc_id and n["Detail"].startswith("sent")
+                   for n in notices_since(service, sheet_id, "", kinds=(kind,)))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -294,17 +314,38 @@ def is_annotation_row(row: list) -> bool:
             or link == _col(row, "origin_url").strip())
 
 
-def unrouted_hand_curated(hc_rows: list, routing_rows: list, since: str) -> list[list]:
-    """Hand-Curated Files rows added on/after `since` (date prefix compare)
-    that have no Routing Log row, matched by Drive link (fallback: the
-    curated filename vs the routed document name; never the title, which can
-    be generic). Pure."""
+def _drive_file_id(link: str) -> str:
+    m = re.search(r"/d/([A-Za-z0-9_-]{20,})|[?&]id=([A-Za-z0-9_-]{20,})", link or "")
+    return (m[1] or m[2]) if m else ""
+
+
+def unrouted_hand_curated(hc_rows: list, routing_rows: list, since: str,
+                          mirror_links: Optional[set] = None) -> list[list]:
+    """Hand-Curated Files rows added on/after `since` (date prefix compare; a
+    row with NO added_at is listed, never silently skipped) that have no
+    Routing Log row, matched by Drive link (fallback: the curated filename vs
+    the routed document name; never the title, which can be generic).
+
+    ANNOTATION rows are excluded: a non-Drive link (is_annotation_row), a
+    Drive link that is an existing nSITE mirror copy (`mirror_links`, the
+    Archived PDFs tab's Archive Link column), or a Drive link an earlier row
+    already carries -- an annotation of a record that was already public in
+    the case-file tree has no new file to route. Pure."""
     routed_links = {(r[0] if r else "").strip() for r in routing_rows}
     routed_names = {(r[1] if len(r) > 1 else "").strip().lower() for r in routing_rows}
     routed_names.discard("")
+    mirror_ids = {_drive_file_id(x) for x in (mirror_links or ())} - {""}
+    seen_ids: set = set()
     out = []
     for row in hc_rows:
-        if _col(row, "added_at")[:10] < since[:10] or is_annotation_row(row):
+        fid = _drive_file_id(_col(row, "drive_link"))
+        repeat = bool(fid) and fid in seen_ids
+        if fid:
+            seen_ids.add(fid)
+        added = _col(row, "added_at").strip()
+        if (added and added[:10] < since[:10]) or is_annotation_row(row):
+            continue
+        if repeat or (fid and fid in mirror_ids):
             continue
         if _col(row, "drive_link").strip() in routed_links:
             continue
@@ -348,7 +389,7 @@ def build_weekly_body(skipped: list, unrouted: list, failed: Optional[list],
                  "routing recorded for these. Routing an urgent one needs your OK."]
         for row in unrouted:
             lines += [f"  - {_col(row, 'title') or _col(row, 'curated_filename')}",
-                      f"      added {_col(row, 'added_at')[:10]} | {_col(row, 'drive_link')}"]
+                      f"      added {_col(row, 'added_at')[:10] or '(no date)'} | {_col(row, 'drive_link')}"]
         lines += ["", "  Route with:", "    " + _route_command_hint(unrouted)]
         sections.append("\n".join(lines))
     if failed:
@@ -394,7 +435,8 @@ def gather_weekly(service, sheet_id: str, cfg: dict, since: str) -> tuple:
         routing = sw._tab_rows_strict(service, priv, TAB_ROUTING_LOG, "A2:D")
         failed = notices_since(service, priv, since, kinds=(KIND_SEND_FAILED,))
         flags = rf.flags_since(service, priv, since)
-    unrouted = unrouted_hand_curated(hc_rows, routing, hc_since)
+    mirror = {r[0] for r in sw._tab_rows_strict(service, sheet_id, sw.TAB_ARCHIVE, "F2:F") if r}
+    unrouted = unrouted_hand_curated(hc_rows, routing, hc_since, mirror)
     return skipped, unrouted, failed, flags
 
 
