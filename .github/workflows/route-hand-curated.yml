@@ -44,6 +44,8 @@ jobs:
       - name: Route hand-curated document(s)
         env:
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          # The Hand-Curated Routing Log lives on the PRIVATE Sheet (owner_notices.py).
+          GSHEET_ID_PRIVATE: ${{ secrets.GSHEET_ID_PRIVATE }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}

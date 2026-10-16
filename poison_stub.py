@@ -92,7 +92,7 @@ def stub_if_poisoned(sheets, sheet_id: str, state: dict, d: dict, cnt: int,
         print(f"  ->  stubbed + skipped (now visible in feed): "
               f"{stub_meta['document_name'][:50]}")
     except Exception as e2:  # noqa: BLE001
-        print(f"  ->  stub/skip write failed: {e2}")
+        print(f"  ->  stub/skip write failed: {type(e2).__name__}")
         return False
     # Section C (after the stub row and the state): never raises.
     try:

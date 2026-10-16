@@ -35,7 +35,6 @@ import nsite_client as nc
 import retry_policy as rp
 import well_aliases
 import review_flags as rf
-import owner_notices as on
 import woi_router
 import archiver as av
 import poison_stub
@@ -308,11 +307,11 @@ def run() -> int:
                 except Exception as we:  # noqa: BLE001 — summary tab is best-effort
                     print(f"  WOI summary-tab write skipped (doc still recorded): {we}")
             # Review flags (see watcher.py / review_flags.py): best-effort, after
-            # the document row, never an email. Related-scope docs get none.
+            # the document row. No same-day owner email from backfill: it
+            # re-reads history and never alerts on it. Related-scope docs get none.
             if not related:
                 flags = rf.collect(flags, parsed, cfg)
                 rf.log_for_document(sheets, flags, d, link, _now())
-                on.alert_review_flags(sheets, flags, d, link, cfg, _now())
             payload = {
                 "document_name": d["document_name"],
                 "date_filed": d["date_filed"],

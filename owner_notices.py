@@ -58,6 +58,16 @@ WEEKLY_SUBJECT = "[Arbor Hills monitor] Weekly housekeeping (for Trisha only)"
 DEFAULT_HAND_CURATED_SINCE = "2026-10-15"
 
 
+def _CFG_FOR_GATE() -> dict:
+    """config.yml, for record_notice's on/off gate (callers on the failure
+    paths don't all hold cfg). Unreadable config = gate off."""
+    try:
+        from config_loader import load_config
+        return load_config()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _ow(cfg: Optional[dict]) -> dict:
     return (cfg or {}).get("owner_weekly") or {}
 
@@ -98,7 +108,10 @@ def notice_row(kind: str, metadata: dict, detail: str, link: str, now: str) -> l
 def record_notice(service, kind: str, metadata: dict, detail: str, link: str,
                   now: str) -> bool:
     """Append one Owner Notices row on the private Sheet. Best-effort: never
-    raises; logs the exception class only."""
+    raises; logs the exception class only. A no-op while both owner_weekly
+    switches are off (ships disabled: no new tab, no extra API calls)."""
+    if not (weekly_enabled(_CFG_FOR_GATE()) or alerts_enabled(_CFG_FOR_GATE())):
+        return False
     try:
         sheet_id, why = rf.private_sheet_for_write(service)
         if sheet_id is None:
@@ -110,6 +123,24 @@ def record_notice(service, kind: str, metadata: dict, detail: str, link: str,
         return True
     except Exception as e:  # noqa: BLE001 — a notice must never block the caller
         print(f"[owner_notices] notice not recorded: {type(e).__name__}")
+        return False
+
+
+def record_routing(service, rows: list) -> bool:
+    """Append Hand-Curated Routing Log rows ([drive link, document name,
+    severity, routed at]) on the PRIVATE Sheet. Best-effort, never raises."""
+    if not rows:
+        return True
+    try:
+        sheet_id, why = rf.private_sheet_for_write(service)
+        if sheet_id is None:
+            print(f"[owner_notices] routing log not written: {why}")
+            return False
+        sw.ensure_tab(service, sheet_id, TAB_ROUTING_LOG, ROUTING_LOG_HEADERS)
+        sw.append_rows(service, sheet_id, TAB_ROUTING_LOG, rows)
+        return True
+    except Exception as e:  # noqa: BLE001 — never cost the caller's _meta write
+        print(f"[owner_notices] routing log not written: {type(e).__name__}")
         return False
 
 
@@ -262,8 +293,9 @@ def is_annotation_row(row: list) -> bool:
 
 def unrouted_hand_curated(hc_rows: list, routing_rows: list, since: str) -> list[list]:
     """Hand-Curated Files rows added on/after `since` (date prefix compare)
-    that have no Routing Log row, matched by Drive link (fallback: curated
-    filename or title vs the routed document name). Pure."""
+    that have no Routing Log row, matched by Drive link (fallback: the
+    curated filename vs the routed document name; never the title, which can
+    be generic). Pure."""
     routed_links = {(r[0] if r else "").strip() for r in routing_rows}
     routed_names = {(r[1] if len(r) > 1 else "").strip().lower() for r in routing_rows}
     routed_names.discard("")
@@ -273,8 +305,7 @@ def unrouted_hand_curated(hc_rows: list, routing_rows: list, since: str) -> list
             continue
         if _col(row, "drive_link").strip() in routed_links:
             continue
-        if {_col(row, "curated_filename").strip().lower(),
-                _col(row, "title").strip().lower()} & routed_names:
+        if _col(row, "curated_filename").strip().lower() in routed_names:
             continue
         out.append(row)
     return out
@@ -335,6 +366,10 @@ def build_weekly_body(skipped: list, unrouted: list, failed: Optional[list],
         sections.append("\n".join(lines))
     if not sections:
         return None
+    if failed is None and flags is None:
+        sections.append("(Failed sends and parser review flags could not be listed: no "
+                        "usable private Sheet. Hand-curated routing is not recorded "
+                        "either, so section 2 may list rows that were routed.)")
     head = (f"Monitor housekeeping since {since[:10]}. Sent to the monitor owner only; "
             "none of this is in the Sunday digest.\n")
     return head + "\n\n".join([""] + sections) + "\n"
@@ -349,13 +384,14 @@ def gather_weekly(service, sheet_id: str, cfg: dict, since: str) -> tuple:
     skipped = sw.state_events_since(service, sheet_id, "skipped", since)
     hc_since = str(_ow(cfg).get("hand_curated_since") or DEFAULT_HAND_CURATED_SINCE)
     hc_rows = sw._tab_rows_strict(service, sheet_id, sw.TAB_HANDCURATED, "A2:M")
-    routing = sw._tab_rows_strict(service, sheet_id, TAB_ROUTING_LOG, "A2:D")
-    unrouted = unrouted_hand_curated(hc_rows, routing, hc_since)
     priv, _why = rf.private_sheet_for_write(service)
     failed = flags = None
+    routing: list = []
     if priv is not None:
+        routing = sw._tab_rows_strict(service, priv, TAB_ROUTING_LOG, "A2:D")
         failed = notices_since(service, priv, since, kinds=(KIND_SEND_FAILED,))
         flags = rf.flags_since(service, priv, since)
+    unrouted = unrouted_hand_curated(hc_rows, routing, hc_since)
     return skipped, unrouted, failed, flags
 
 

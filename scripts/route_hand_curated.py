@@ -50,10 +50,7 @@ def run() -> int:
     sheet_id = os.environ["GSHEET_ID"]
     sheets = dc.sheets_service()
     state = sw.read_meta(sheets, sheet_id)
-    # Hand-Curated Routing Log (owner_notices.py): one row per routed document,
-    # written BEFORE write_meta (Sheet row before state). The owner weekly email
-    # lists Hand-Curated Files rows that have no row here.
-    sw.ensure_tab(sheets, sheet_id, on.TAB_ROUTING_LOG, on.ROUTING_LOG_HEADERS)
+    routed_rows = []
 
     for d in docs:
         sent = ea.route_hand_curated_urgent_or_digest(
@@ -68,11 +65,16 @@ def run() -> int:
             state=state,
             sent_at=_now(),
         )
-        sw.append_rows(sheets, sheet_id, on.TAB_ROUTING_LOG,
-                       [[d["link"], d["document_name"], d["severity"], _now()]])
+        routed_rows.append([d["link"], d["document_name"], d["severity"], _now()])
         label = "URGENT — SENT" if sent else "queued for the Sunday digest"
         print(f"  {label}: {d['document_name']} ({d['date_filed']})")
 
+    # Hand-Curated Routing Log (owner_notices.py, PRIVATE Sheet): one row per
+    # routed document, written BEFORE write_meta (row before state). Best-effort:
+    # a failed log write must never cost the _meta write after an urgent email
+    # already went out; the row then just shows as unrouted in the owner
+    # weekly email (a reminder, never a lost alert).
+    on.record_routing(sheets, routed_rows)
     sw.write_meta(sheets, sheet_id, state)
     print(f"[route_hand_curated] {len(docs)} document(s) routed; _meta persisted.")
     return 0

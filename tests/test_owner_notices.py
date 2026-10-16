@@ -39,6 +39,7 @@ def sends(monkeypatch):
 @pytest.fixture
 def notices(monkeypatch):
     rows = []
+    monkeypatch.setattr(on, "_CFG_FOR_GATE", lambda: CFG_ON)
     monkeypatch.setattr(rf, "private_sheet_for_write", lambda svc: ("PRIV", ""))
     monkeypatch.setattr(on.sw, "ensure_tab", lambda *a: None)
     monkeypatch.setattr(on.sw, "append_rows",
@@ -168,11 +169,13 @@ def test_unrouted_respects_cutoff_annotation_and_routing_log():
             _hc("Annot", "2026-10-16T00:00:00", link="https://egle.example/x"),  # annotation
             _hc("Same", "2026-10-16T00:00:00", link="https://s", origin="https://s"),
             _hc("ByName", "2026-10-16T00:00:00", link="https://drive.google.com/file/d/N/view"),
+            _hc("Violation Notice", "2026-10-16T00:00:00", link="https://drive.google.com/file/d/V/view"),
             _hc("Open", "2026-10-17 09:00")]
     routing = [["https://drive.google.com/file/d/R/view", "Routed", "routine", "t"],
-               ["https://elsewhere", "byname", "routine", "t"]]
+               ["https://elsewhere", "byname.pdf", "routine", "t"],
+               ["https://elsewhere2", "Violation Notice", "routine", "t"]]  # a generic title never matches
     out = on.unrouted_hand_curated(rows, routing, "2026-10-15")
-    assert [r[1] for r in out] == ["Open"]
+    assert [r[1] for r in out] == ["Violation Notice", "Open"]
 
 
 def test_weekly_body_sections_and_omission():
@@ -218,7 +221,7 @@ def _wire_weekly(monkeypatch, skipped=(), hc=(), routing=(), failed=(), flags=()
 SKIP = [("123", "2026-10-16T01:00:00Z", {"document_name": "VN", "date_filed": "2026-10-10"})]
 
 
-def test_weekly_sends_and_advances_window(monkeypatch, owners, sends):
+def test_weekly_sends_and_advances_window(monkeypatch, owners, sends, notices):
     metas = _wire_weekly(monkeypatch, skipped=SKIP)
     state = {"last_owner_weekly": "2026-10-11T00:00:00Z"}
     assert on.send_weekly(None, "SID", state, CFG_ON, date(2026, 10, 18), "NOW") == "sent"
@@ -276,6 +279,7 @@ def test_state_events_since_skipped_excludes_later_processed(monkeypatch):
 # --- record_notice ------------------------------------------------------------
 
 def test_record_notice_refuses_without_private_sheet(monkeypatch, capsys):
+    monkeypatch.setattr(on, "_CFG_FOR_GATE", lambda: CFG_ON)
     monkeypatch.setattr(rf, "private_sheet_for_write", lambda svc: (None, "no private Sheet configured"))
     monkeypatch.setattr(on.sw, "append_rows", mock.Mock(side_effect=AssertionError))
     assert on.record_notice(None, on.KIND_SEND_FAILED, META, "x", "L", "t") is False
@@ -283,6 +287,7 @@ def test_record_notice_refuses_without_private_sheet(monkeypatch, capsys):
 
 
 def test_record_notice_never_raises(monkeypatch, capsys):
+    monkeypatch.setattr(on, "_CFG_FOR_GATE", lambda: CFG_ON)
     monkeypatch.setattr(rf, "private_sheet_for_write", mock.Mock(side_effect=OSError("x https://s")))
     assert on.record_notice(None, on.KIND_SEND_FAILED, META, "x", "L", "t") is False
     out = capsys.readouterr().out
@@ -291,11 +296,10 @@ def test_record_notice_never_raises(monkeypatch, capsys):
 
 # --- route_hand_curated writes the routing log before write_meta --------------
 
-def test_route_hand_curated_writes_routing_log_before_meta(monkeypatch):
+def _rhc(monkeypatch, order):
     import json
     import importlib
     rhc = importlib.import_module("scripts.route_hand_curated")
-    order = []
     monkeypatch.setenv("HAND_CURATED_ROUTE_JSON", json.dumps([{
         "document_name": "Doc", "date_filed": "2026-10-16", "doc_type": "evidence",
         "severity": "routine", "risks": [], "key_data_point": "k",
@@ -306,13 +310,47 @@ def test_route_hand_curated_writes_routing_log_before_meta(monkeypatch):
     monkeypatch.setattr(rhc.sw, "read_meta", lambda svc, sid: {"pending_digest": [],
                                                               "pending_urgent_recap": []})
     monkeypatch.setattr(rhc.ea, "route_hand_curated_urgent_or_digest", lambda **k: False)
-    monkeypatch.setattr(rhc.sw, "ensure_tab", lambda *a: order.append("ensure"))
-    monkeypatch.setattr(rhc.sw, "append_rows",
-                        lambda svc, sid, tab, rows: order.append(("row", tab, rows[0][0], rows[0][2])))
     monkeypatch.setattr(rhc.sw, "write_meta", lambda *a: order.append("meta"))
+    return rhc
+
+
+def test_route_hand_curated_writes_routing_log_before_meta_on_private_sheet(monkeypatch):
+    order = []
+    rhc = _rhc(monkeypatch, order)
+    monkeypatch.setattr(rf, "private_sheet_for_write", lambda svc: ("PRIV", ""))
+    monkeypatch.setattr(on.sw, "ensure_tab", lambda svc, sid, tab, h: order.append(("ensure", sid)))
+    monkeypatch.setattr(on.sw, "append_rows",
+                        lambda svc, sid, tab, rows: order.append(("row", sid, tab, rows[0][0], rows[0][2])))
     assert rhc.run() == 0
-    assert order == ["ensure", ("row", on.TAB_ROUTING_LOG,
-                                "https://drive.google.com/file/d/Z/view", "routine"), "meta"]
+    assert order == [("ensure", "PRIV"), ("row", "PRIV", on.TAB_ROUTING_LOG,
+                                          "https://drive.google.com/file/d/Z/view", "routine"), "meta"]
+
+
+def test_route_hand_curated_meta_survives_a_failed_log_write(monkeypatch):
+    order = []
+    rhc = _rhc(monkeypatch, order)
+    monkeypatch.setattr(rf, "private_sheet_for_write", lambda svc: ("PRIV", ""))
+    monkeypatch.setattr(on.sw, "ensure_tab", mock.Mock(side_effect=OSError("429")))
+    assert rhc.run() == 0 and order == ["meta"]
+
+
+def test_record_notice_is_a_no_op_while_the_feature_is_off(monkeypatch):
+    monkeypatch.setattr(on, "_CFG_FOR_GATE", lambda: CFG_OFF)
+    monkeypatch.setattr(rf, "private_sheet_for_write", mock.Mock(side_effect=AssertionError))
+    assert on.record_notice(None, on.KIND_SEND_FAILED, META, "x", "L", "t") is False
+
+
+def test_state_events_since_respects_event_order(monkeypatch):
+    rows = [["d", "processed", 0, "2026-09-01T00:00:00Z", "{}"],
+            ["d", "skipped", 0, "2026-10-16T00:00:00Z", '{"document_name": "D"}']]
+    monkeypatch.setattr(sw, "_tab_rows_strict", lambda *a: rows)
+    assert [x[0] for x in sw.state_events_since(None, "SID", "skipped", "2026-10-11")] == ["d"]
+
+
+def test_weekly_body_notes_missing_private_sheet():
+    skipped = [("1", "2026-10-16T00:00:00Z", {"document_name": "X"})]
+    body = on.build_weekly_body(skipped, [], None, None, "2026-10-11")
+    assert "no usable private Sheet" in body
 
 
 # --- watcher records a failed urgent send for the weekly email -----------------

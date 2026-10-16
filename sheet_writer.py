@@ -1212,12 +1212,15 @@ def state_events_since(service, sheet_id: str, status: str, since: str) -> list[
     doc whose LATER event is 'processed' (a skipped doc that was later
     retried successfully). STRICT read: a transport failure raises."""
     rows = _tab_rows_strict(service, sheet_id, TAB_STATE, "A2:E")
-    later_processed = {r[0] for r in rows if len(r) > 1 and r[1] == "processed"}
+    last_processed: dict = {}
+    for r in rows:
+        if len(r) > 3 and r[1] == "processed":
+            last_processed[r[0]] = max(last_processed.get(r[0], ""), r[3])
     out = []
     for r in rows:
         if len(r) < 4 or r[1] != status or r[3] < since:
             continue
-        if status != "processed" and r[0] in later_processed:
+        if status != "processed" and last_processed.get(r[0], "") > r[3]:
             continue
         out.append((r[0], r[3], _load_json(r[4] if len(r) > 4 else "", {})))
     return out

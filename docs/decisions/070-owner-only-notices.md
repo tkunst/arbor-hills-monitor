@@ -39,8 +39,11 @@ means no send.
     state are written, a document whose regulator title passes
     `risk_register.enforcement_title_signal` gets
     `[URGENT, Trisha only] Enforcement notice filed but unreadable: <title>`.
-  - Under the same gate, a document whose parse produced an above-ceiling
-    temperature flag gets `[Trisha only] Needs review: value above 250F in <doc>`.
+  - Under the same gate, a document the WATCHER parses whose parse produced an
+    above-ceiling temperature flag gets
+    `[Trisha only] Needs review: value above 250F in <doc>`. Backfill does not send
+    this one: it re-reads history and never alerts on it. Its flags still reach the
+    weekly email.
   - Neither is added to `pending_urgent_recap`.
   - A failed send never blocks stubbing or the document.
 
@@ -53,10 +56,14 @@ means no send.
   attempt and each failed send, and is the permanent record. It goes through the same
   private-Sheet guard as the review flags: `GSHEET_ID_PRIVATE` must be set, must differ
   from `GSHEET_ID`, and must have no public case-file tabs.
-- **Hand-Curated Routing Log, on the case-file Sheet.** `scripts/route_hand_curated.py`
-  writes it before `write_meta`, and that workflow only has `GSHEET_ID`. It holds a
-  document name, a Drive link and a severity: the same facts the public digest already
-  carries.
+- **Hand-Curated Routing Log, on the PRIVATE Sheet.** `scripts/route_hand_curated.py`
+  writes it before `write_meta`, best-effort, so a failed log write can never cost the
+  `_meta` write after an urgent email has gone out. `route-hand-curated.yml` now passes
+  `GSHEET_ID_PRIVATE`. A row whose log write failed shows as unrouted in the weekly
+  email: a reminder, never a lost alert. Severity triage stays off the
+  operator-visible Sheet.
+- **While both switches are off,** `record_notice` is a no-op: no new tab and no extra
+  API calls (ships disabled).
 
 Every read the weekly email depends on is strict (`_tab_rows_strict` /
 `sw.state_events_since`). A failed read skips the weekly; it never produces a false
