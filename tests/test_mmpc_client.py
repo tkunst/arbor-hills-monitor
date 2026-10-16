@@ -372,3 +372,9 @@ def test_download_refuses_a_non_integer_file_id(bad):
     with pytest.raises(mc.MMPCFetchError, match="non-integer"):
         mc.download_file_bytes(sess, bad)
     assert sess.calls == []  # nothing fetched
+
+
+def test_download_accepts_a_digit_string_file_id():
+    # civicclerk_watcher snapshots round-trip ids through the Sheet as strings.
+    sess = _ScriptedSession([_Resp(content=b"%PDF-1.4 " + b"x" * 200)])
+    assert mc.download_file_bytes(sess, "9107").startswith(b"%PDF")
