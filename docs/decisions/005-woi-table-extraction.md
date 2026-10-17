@@ -223,3 +223,24 @@ Tables that still yield no readings now appear as rejected tables instead of
 being silently empty: the 250pp Gas Extraction pair (gas + Diff. Press, no
 Temp column), and the no-Temp tables inside four Gas Extraction subset
 reports (1,374-2,419 rows each, never emitted by either parser).
+
+## Addendum (2026-10-17): the gas-sum check is a measured one-sided window
+
+`WOIReading.valid` used to require CH4+CO2+O2+Balance within 100 ± 1.5. That
+dropped real readings. In the 2026-10-08 report (nSITE `-6975595422894935530`),
+AHWW0279's 5/31/2024 readings sum to 97.5 and 97.8. The reading on p. 31 is
+154.2°F and the one on p. 103 is 154.4°F, and both were discarded. The well's
+reported maximum fell to 153.3°F.
+
+Measured across 32 locally held WOI-format reports (217,384 parsed rows), every
+row's sum lies between 96.2 and 100.2. The values form a continuous tail below
+100, with no gap that would separate a misread row. The old window dropped 258
+of these real rows. At least five were at or above 145°F, including AHW263R5 at
+160.1°F (6/27/2025).
+
+The check is now `GAS_SUM_MIN` (95.0) ≤ sum ≤ `GAS_SUM_MAX` (101.5). A shifted
+read still fails it: a pressure or temperature value in a gas slot gives sums
+like 40 or 78. With the new window the 32-report scan drops 0 rows, and the
+parsed rows and rejected tables are unchanged. The 2026-10-08 report now routes
+AHWW0279's 5/31/2024 rows, and its maximum is 154.4°F. Reports processed
+before this change keep their old summaries until they are re-extracted.

@@ -335,3 +335,56 @@ def test_same_page_repeats_and_conflicting_copies_are_all_kept():
     assert len(w.merge_cross_table_duplicates([_rd(15), _rd(15)])) == 2          # same page
     assert len(w.merge_cross_table_duplicates([_rd(15, flow=10.0), _rd(51, flow=12.0)])) == 2
     assert len(w.merge_cross_table_duplicates([_rd(15), _rd(51, temp=121.0)])) == 2
+
+
+# --- gas-sum window (2026-10-17) ---
+# The exact row shape of the 2026-10-08 report's AHWW0279 5/31/2024 readings
+# (p. 31 and p. 103): gases sum to 97.5 and 97.8, each row followed by its
+# comment and an ADJ repeat. The old 100 +/- 1.5 gate dropped all of them.
+AHWW0279_531 = [
+    "AHWW0279", "5/31/2024 10:43", "58.7", "17.9", "0.3", "20.6", "1.91", "154.2", "36.4",
+    "-1.87", "-37.94", "No Change: :",
+    "AHWW0279", "5/31/2024 10:43", "ADJ", "58.7", "17.9", "0.3", "20.6", "1.91", "154.2",
+    "36.4", "-1.87", "-37.94",
+    "AHWW0279", "5/31/2024 10:45", "60.9", "18.1", "0.2", "18.6", "1.81", "154.4", "35.4",
+    "-1.85", "-38.48", "No Change,Second Reading: :",
+    "AHWW0279", "5/31/2024 10:45", "ADJ", "60.9", "18.1", "0.2", "18.6", "1.81", "154.4",
+    "35.4", "-1.85", "-38.48",
+]
+
+
+def test_rows_summing_short_of_100_are_valid():
+    rs = w._parse_lines(L(*AHWW0279_531))
+    assert [(r.dt, r.adj, r.temp) for r in rs] == [
+        ("5/31/2024 10:43", False, 154.2), ("5/31/2024 10:43", True, 154.2),
+        ("5/31/2024 10:45", False, 154.4), ("5/31/2024 10:45", True, 154.4)]
+    assert all(r.valid for r in rs)
+    summ = w.per_well_summary(rs)
+    assert summ[0]["well"] == "AHWW0279" and summ[0]["max_temp_f"] == 154.4
+
+
+def test_short_sum_rows_survive_the_pdf_path(tmp_path):
+    import fitz
+    path = tmp_path / "r.pdf"
+    doc = fitz.open()
+    hdr = ("Well ID Date/Time ADJ CH4 (%) CO2 (%) O2 (%) Balance (%) Diff. Press. "
+           "Temp. Flow Well Pres. Header Pres. Comments")
+    doc.new_page().insert_text((20, 20), "Gas Extraction Report\n" + hdr + "\n"
+                               + "\n".join(AHWW0279_531), fontsize=5)
+    doc.save(str(path))
+    doc.close()
+    g = w.parse_gas_extraction_report(str(path))
+    assert g.rejected_tables == []
+    valid = [r for r in g.readings if r.valid]
+    assert len(valid) == 4 and max(r.temp for r in valid if not r.adj) == 154.4
+
+
+def test_gas_sum_window_still_rejects_shifted_and_overfull_rows():
+    # Diff. Press. read into the Balance slot: 58.7+17.9+0.3+1.91 = 78.8.
+    shifted = ["AHWW0279", "5/31/2024 10:43", "58.7", "17.9", "0.3", "1.91", "154.2",
+               "36.4", "-1.87", "-37.94", "0"]
+    assert w._parse_lines(L(*shifted))[0].valid is False
+    over = ["AHW1", "1/1/2025 10:00", "50", "40", "2", "10", "0.5", "120", "5", "-1", "-2"]
+    assert w._parse_lines(L(*over))[0].valid is False        # 102.0 > GAS_SUM_MAX
+    edge_lo = ["AHW1", "1/1/2025 10:00", "50", "40", "0", "4.9", "0.5", "120", "5", "-1", "-2"]
+    assert w._parse_lines(L(*edge_lo))[0].valid is False     # 94.9 < GAS_SUM_MIN
