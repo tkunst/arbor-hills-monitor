@@ -303,8 +303,8 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
 # Shown in place of a routed report's summary when it fails the check below.
 WITHHELD_WOI_SUMMARY = (
     "Automated summary withheld: it stated a wellhead temperature higher than "
-    "any reading in this report's Gas Extraction tables. The key data point "
-    "above is taken from those tables.")
+    "any reading in this report's Gas Extraction tables. This document's key "
+    "data point is taken from those tables.")
 
 # A summary value up to this many degrees over the routed peak still passes
 # (the model rounding 158.6 up to 159, say).

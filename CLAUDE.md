@@ -242,7 +242,7 @@ external users but no sensitive data). Public repo.
   **coder:keydatapoint-guard (2026-10-17):** `is_urgent()` is now the bool of
   one `_urgency_decision()`, whose reasons `urgency_reason()` joins, so the two
   can't drift. `format_urgent_body(..., cfg)` prints "Urgent because: …" next
-  to "Classifier severity: …" (an `[URGENT]` subject over a routine-severity
+  to "Severity (as recorded): …" (an `[URGENT]` subject over a routine-severity
   body now says which path fired), plus HOV approved-ceiling context per
   alerted well from `hov_ceiling_for()` / `temperature_thresholds.hov_ceilings`
   (exact well id, effective dates; seeded with AHW272R4 → 180°F only; "No

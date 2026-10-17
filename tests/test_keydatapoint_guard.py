@@ -201,7 +201,7 @@ def test_urgent_body_states_urgency_reason():
     body = ea.format_urgent_body(parsed, {"document_name": "D", "date_filed": "x"}, "L", CFG)
     assert "Urgent because: measured temperature 158.3°F at AHWW312R" in body
     assert "145°F" in body
-    assert "Classifier severity: routine" in body
+    assert "Severity (as recorded): routine" in body
     # The bare "Severity:" label is gone: the body never shows a severity
     # without saying whose it is.
     assert "   Severity:" not in body
@@ -255,6 +255,9 @@ def test_severity_urgent_short_circuits_before_reading_measurements():
     parsed = _doc_m([{"metric": "temperature", "basis": "measured", "value": 150, "unit": 5}],
                     severity="urgent")
     assert ea.is_urgent(parsed, CFG) is True
+    # ...and the body built for it doesn't raise either (the alert still goes).
+    body = ea.format_urgent_body(parsed, {}, "L", CFG)
+    assert "Urgent because: (reason unavailable)." in body
 
 
 def test_urgency_reason_empty_when_not_urgent():
@@ -331,7 +334,7 @@ def test_no_ceiling_on_record_label():
 def test_format_urgent_body_without_cfg_still_works():
     # Old two-arg-plus-link callers keep working (defaults, no HOV lines).
     body = ea.format_urgent_body(_doc_m([_temp(150)]), {"document_name": "D"}, "L")
-    assert "Urgent because:" in body and "Classifier severity: routine" in body
+    assert "Urgent because:" in body and "Severity (as recorded): routine" in body
 
 
 def test_config_roster_agrees_with_top_hov_wells():

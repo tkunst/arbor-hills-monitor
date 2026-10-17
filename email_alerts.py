@@ -92,7 +92,7 @@ def _urgency_decision(parsed, cfg: dict) -> tuple[bool, list[str]]:
     """THE urgency decision: (fires, reasons). is_urgent() returns the bool and
     urgency_reason() joins the reasons, so the two can never drift apart. Every
     branch that fires is listed (severity AND a measured reading, when both),
-    so an [URGENT] subject over a body saying "Classifier severity: routine"
+    so an [URGENT] subject over a body saying "Severity (as recorded): routine"
     always says which path fired (the 2026-10-08 email that didn't)."""
     urgent_cfg = cfg.get("urgent", {})
     threshold = urgent_cfg.get("measured_temp_urgent_f", 145)
@@ -191,7 +191,7 @@ def hov_ceiling_for(well_id: str, as_of_date: Optional[str], cfg: dict) -> Optio
             # A hand-edited roster entry with no/garbled ceiling: label the
             # well as having none on record rather than break the alert.
             print(f"[email_alerts] hov_ceilings entry for {wid} has no usable ceiling_f; ignored")
-            return None
+            continue
     return None
 
 
@@ -302,7 +302,11 @@ def format_urgent_body(parsed, metadata: dict, link: str, cfg: dict | None = Non
     body never disagree silently, and labels each alerted reading with its HOV
     ceiling (context only). `cfg` None = built-in defaults, no HOV roster."""
     cfg = cfg or {}
-    reason = urgency_reason(parsed, cfg) or "(no urgency trigger matched)"
+    try:
+        reason = urgency_reason(parsed, cfg) or "(no urgency trigger matched)"
+    except Exception as e:  # noqa: BLE001 — the reason must never cost the alert
+        print(f"[email_alerts] urgency reason unavailable: {type(e).__name__}")
+        reason = "(reason unavailable)"
     try:
         hov = hov_context_lines(parsed, cfg)
     except Exception as e:  # noqa: BLE001 — context must never cost the alert
@@ -317,7 +321,7 @@ def format_urgent_body(parsed, metadata: dict, link: str, cfg: dict | None = Non
         f"Type: {parsed.doc_type}\n"
         f"Risks: {', '.join(parsed.risks) or '(none tagged)'}\n\n"
         f"Urgent because: {reason}.\n"
-        f"Classifier severity: {parsed.severity}.\n\n"
+        f"Severity (as recorded): {parsed.severity}.\n\n"
         f"{hov_block}"
         f"Key data point:\n  {parsed.key_data_point}\n\n"
         f"Summary:\n  {parsed.summary}\n\n"
