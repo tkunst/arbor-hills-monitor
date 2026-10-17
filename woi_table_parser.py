@@ -13,7 +13,9 @@ Attachment 1 ("Gas Extraction Report") rows linearize as:
     Well ID
     Date/Time            (M/D/YYYY HH:MM  — the TIME distinguishes these from the
                           date-only CO rows in Attachment 2, which are skipped)
-    [ADJ]                (optional: the post-valve-adjustment reading)
+    [ADJ]                (optional: the post-valve-adjustment reading; a
+                          table whose header has no ADJ column prints no token,
+                          see _ADJ_LABEL_RE)
     CH4% CO2% O2% Balance% Diff.Press Temp Flow Well-Pres Header-Pres   (9 numbers)
     <comment lines, may themselves contain numbers like "581821: 0">
 
@@ -104,6 +106,16 @@ _LABEL_RES = [
     ("header_pres", re.compile(r"\bHeader\s+Pres", re.I)),
 ]
 NON_GAS_HEADER = "(non-gas table)"
+# Does a gas table's header print an ADJ column? (ADR 005 addendum 2026-10-17.)
+# Attachment 1 of the 2026-10-08 N2688 report has no ADJ column, yet GFL still
+# prints each adjusted well as an as-found row, a comment line, then the
+# after-adjustment row under the SAME well + timestamp; the labeled back table
+# (p103) prints the literal "ADJ" token on that second row. In a header with no
+# ADJ label, a row is therefore read as ADJ when the row right before it in the
+# same table has the same printed well and timestamp and is not itself ADJ.
+# That gives as-found, ADJ, as-found, ADJ for a pair printed twice, exactly
+# what the labeled table prints. Tables that label ADJ are read as before.
+_ADJ_LABEL_RE = re.compile(r"\bADJ\b")
 _HEADER_START_RE = re.compile(r"^Well\s*ID\b", re.I)
 # How far past "Well ID" a header can run before its first data row (the 2025
 # reports carry ~40 label lines of pump-count / depth columns).
@@ -328,7 +340,10 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
     RejectedTable), never guessed. Each table (a run of rows under one layout)
     then gets the negative-flow column-shift check. `page_headers` ({page:
     [columns per "Well ID" header, top to bottom]}, from the word positions)
-    supplies the column order; without it the header text order is used."""
+    supplies the column order; without it the header text order is used.
+    Under a gas header with no ADJ label, the second of two consecutive rows
+    with the same well + timestamp is marked ADJ (_ADJ_LABEL_RE). With no
+    header at all (`initial_layout`), only the literal ADJ token counts."""
     out = GasExtractionParse()
     seen_on_page: dict = {}
     text_headers: dict = {}
@@ -338,6 +353,7 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
     layout = list(initial_layout) if initial_layout else None
     header = ""
     header_cols = None
+    adj_labeled = True  # no header read yet: only a literal ADJ token marks ADJ
     # the table currently being collected
     cur_rows: list = []
     cur_rejected = {"n": 0, "first": None, "last": None, "reason": ""}
@@ -387,18 +403,22 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
                 else:
                     cols = _text_columns(htext)
                 new_layout = layout_for_columns(cols)
+                new_adj_labeled = bool(_ADJ_LABEL_RE.search(htext))
                 # A repeated header (one per page) continues the same table;
                 # so does a repeat of the same unrecognized column set, so one
                 # unknown table is reported once, not once per page.
-                if new_layout != layout or (new_layout is None and cols != header_cols):
+                if (new_layout != layout or new_adj_labeled != adj_labeled
+                        or (new_layout is None and cols != header_cols)):
                     flush()
                     layout, header, header_cols = new_layout, htext[:200], cols
+                    adj_labeled = new_adj_labeled
                 i = j
                 continue
             # Another table that also starts "Well ID" (CO data, liquid
             # levels): the gas table has ended. Its rows are not gas readings.
             flush()
             layout, header, header_cols = None, NON_GAS_HEADER, None
+            adj_labeled = True
             i = j
             continue
         if not _is_row_start(lines, i):
@@ -411,6 +431,11 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
         if j < n and lines[j][0] == "ADJ":
             adj = True
             j += 1
+        elif not adj_labeled and cur_rows:
+            # Unlabeled ADJ: see _ADJ_LABEL_RE.
+            prev = cur_rows[-1]
+            adj = (not prev.adj and prev.dt == dt
+                   and prev.raw_well_id.rstrip("*") == raw_well.rstrip("*"))
         width = len(layout) if layout else len(COLUMNS)
         nums: list[float] = []
         while j < n and len(nums) < width and FLOAT_RE.match(lines[j][0]):

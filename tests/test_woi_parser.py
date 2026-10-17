@@ -388,3 +388,91 @@ def test_gas_sum_window_still_rejects_shifted_and_overfull_rows():
     assert w._parse_lines(L(*over))[0].valid is False        # 102.0 > GAS_SUM_MAX
     edge_lo = ["AHW1", "1/1/2025 10:00", "50", "40", "0", "4.9", "0.5", "120", "5", "-1", "-2"]
     assert w._parse_lines(L(*edge_lo))[0].valid is False     # 94.9 < GAS_SUM_MIN
+
+
+# --- unlabeled ADJ rows (2026-10-17) ---
+# Attachment 1 of the 2026-10-08 N2688 report (pp8-80) prints no ADJ column:
+# the as-found row, a comment, then the after-adjustment row under the SAME
+# well + timestamp. The p43 rows below are AHWW0533's: the as-found read is
+# 132.7F, the after-adjustment one 133.8F, which used to count as as-found.
+HDR_FULL_NO_ADJ = [h for h in HDR_FULL if h != "ADJ"]
+AHWW0533_501 = [
+    "AHWW0533", "5/1/2024 15:23", "54.8", "44.7", "0", "0.5", "0.17", "132.7", "28.9",
+    "0.27", "-4.23", "Opened Valve 1/2 turn to 1 turn:", "95607:",
+    "AHWW0533", "5/1/2024 15:23", "54.8", "44.7", "0", "0.5", "0.21", "133.8", "32.1",
+    "-0.04", "-2.59",
+    "AHWW0533", "5/1/2024 15:26", "54.7", "45.3", "0", "0", "0.12", "133.7", "23.9",
+    "-0.32", "-3.3", "Second Reading,Reduced", "Vacuum: :",
+    "AHWW0533", "5/1/2024 15:26", "54.7", "45.3", "0", "0", "0.12", "133.7", "23.9",
+    "-0.32", "-3.3",
+]
+
+
+def test_unlabeled_header_marks_second_same_time_row_adj():
+    rs = w._parse_table_lines(L(*HDR_FULL_NO_ADJ, *AHWW0533_501)).readings
+    assert [(r.dt, r.adj, r.temp) for r in rs] == [
+        ("5/1/2024 15:23", False, 132.7), ("5/1/2024 15:23", True, 133.8),
+        ("5/1/2024 15:26", False, 133.7), ("5/1/2024 15:26", True, 133.7)]
+    assert w.per_well_summary(rs)[0]["max_temp_f"] == 133.7
+
+
+def test_unlabeled_header_alternates_and_leaves_singletons_as_found():
+    a = ["AHW1", "1/1/2025 10:00", "50", "40", "0", "10", "0.5", "120", "5", "-1", "-2"]
+    b = ["AHW2", "1/1/2025 10:00", "50", "40", "0", "10", "0.5", "121", "5", "-1", "-2"]
+    # A pair printed twice reads as-found, ADJ, as-found, ADJ (how the labeled
+    # table prints it); a different well at the same time is not a pair.
+    rs = w._parse_table_lines(L(*HDR_FULL_NO_ADJ, *a, *a, *a, *a, *b, *a)).readings
+    assert [r.adj for r in rs] == [False, True, False, True, False, False]
+
+
+def test_unlabeled_pair_straddles_a_page_break():
+    lines = [(s, 1) for s in HDR_FULL_NO_ADJ + AHWW0533_501[:13]]
+    lines += [(s, 2) for s in AHWW0533_501[13:24]]
+    rs = w._parse_table_lines(lines).readings
+    assert [(r.page, r.adj) for r in rs] == [(1, False), (2, True)]
+
+
+def test_labeled_header_never_infers_adj():
+    rows = [x for x in AHWW0533_501]  # no ADJ tokens, under a header that has ADJ
+    rs = w._parse_table_lines(L(*HDR_FULL, *rows)).readings
+    assert [r.adj for r in rs] == [False, False, False, False]
+    # and the header-less fragment path only trusts the literal token
+    assert [r.adj for r in w._parse_lines(L(*rows))] == [False, False, False, False]
+
+
+def test_adj_rule_resets_on_header_change():
+    a = ["AHW1", "1/1/2025 10:00", "50", "40", "0", "10", "0.5", "120", "5", "-1", "-2"]
+    # labeled table then unlabeled: the unlabeled table's first row has no
+    # predecessor in its own table, so it is as-found.
+    rs = w._parse_table_lines(L(*HDR_FULL, *a, *HDR_FULL_NO_ADJ, *a, *a)).readings
+    assert [r.adj for r in rs] == [False, False, True]
+
+
+def test_unlabeled_adj_lets_cross_table_twins_merge():
+    # Attachment 1 (no ADJ column) and the labeled back table print the same
+    # pair; with the second Attachment-1 row read as ADJ each row merges with
+    # its labeled twin instead of both copies reaching Measurements.
+    pair_labeled = AHWW0533_501[:13] + AHWW0533_501[13:15] + ["ADJ"] + AHWW0533_501[15:24]
+    lines = [(s, 1) for s in HDR_FULL_NO_ADJ + AHWW0533_501[:24]]
+    lines += [(s, 2) for s in HDR_FULL + pair_labeled]
+    rs = [r for r in w._parse_table_lines(lines).readings if r.valid]
+    assert [(r.page, r.adj) for r in rs] == [(1, False), (1, True), (2, False), (2, True)]
+    merged = w.merge_cross_table_duplicates(rs)
+    assert [(r.adj, r.temp) for r in merged] == [(False, 132.7), (True, 133.8)]
+
+
+def test_unlabeled_adj_through_the_pdf_path(tmp_path):
+    import fitz
+    path = tmp_path / "r.pdf"
+    doc = fitz.open()
+    hdr = ("Well ID Date/Time CH4 (%) CO2 (%) O2 (%) Balance (%) Diff. Press. "
+           "Temp. Flow Well Pres. Header Pres. Comments")
+    doc.new_page().insert_text((20, 20), "Gas Extraction Report\n" + hdr + "\n"
+                               + "\n".join(AHWW0533_501), fontsize=5)
+    doc.save(str(path))
+    doc.close()
+    g = w.parse_gas_extraction_report(str(path))
+    assert g.rejected_tables == []
+    assert [(r.adj, r.temp) for r in g.readings] == [
+        (False, 132.7), (True, 133.8), (False, 133.7), (True, 133.7)]
+    assert w.per_well_summary(g.readings)[0]["max_temp_f"] == 133.7
