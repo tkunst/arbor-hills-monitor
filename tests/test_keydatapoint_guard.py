@@ -212,12 +212,13 @@ def test_urgency_reason_names_both_triggers():
     reason = ea.urgency_reason(parsed, CFG)
     assert "measured temperature 150°F at AHW272R4" in reason
     assert 'severity is "urgent"' in reason and "deterministic urgency floor" in reason
+    assert "hand-curator" in reason
 
 
 def test_urgency_reason_classifier_only():
     parsed = _doc_m([_temp(120)], severity="urgent")
     reason = ea.urgency_reason(parsed, CFG)
-    assert reason.startswith('the document\'s severity is "urgent"')
+    assert reason.startswith('the document\'s recorded severity is "urgent"')
     assert "measured" not in reason
 
 
