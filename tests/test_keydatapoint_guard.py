@@ -90,6 +90,27 @@ def test_headline_kept_when_not_contradicting_the_tables(tmp_path, kdp):
     assert parsed.key_data_point == kdp
 
 
+@pytest.mark.parametrize("kdp", ["AHW331 reached 160°F.", "AHW331 hit the 145°F MACT limit.",
+                                 "AHW272R4 at its 180°F HOV ceiling."])
+def test_headline_citing_a_reference_value_above_the_peak_is_replaced(tmp_path, kdp):
+    # Owner ruling 2026-10-17: no reference-value exemption for headlines.
+    # Table peak here is 140F, so 145/160/180 are all unsupported.
+    pdf = _build_pdf(tmp_path / "cool.pdf", _many(54, temp=90) + [("AHWW312R", 140.0)])
+    parsed = _parsed(kdp=kdp, summary="ok")
+    routed = woi_router.route_measurements(parsed, pdf, META, CFG)
+    woi_router.apply_deterministic_headline(parsed, routed, CFG)
+    assert parsed.key_data_point.startswith("AHWW312R: max measured 140°F")
+
+
+def test_summary_keeps_the_reference_value_exemption(tmp_path):
+    pdf = _build_pdf(tmp_path / "cool.pdf", _many(54, temp=90) + [("AHWW312R", 140.0)])
+    summary = "No well reached the 145°F MACT limit."
+    parsed = _parsed(kdp="", summary=summary)
+    routed = woi_router.route_measurements(parsed, pdf, META, CFG)
+    woi_router.apply_deterministic_headline(parsed, routed, CFG)
+    assert parsed.summary == summary
+
+
 def test_empty_headline_is_filled_from_the_tables(tmp_path):
     parsed = _parsed(kdp="", summary="ok")
     routed = woi_router.route_measurements(parsed, _page59_pdf(tmp_path), META, CFG)

@@ -343,20 +343,24 @@ def _reference_values_f(cfg: dict) -> set:
     return {float(v) for v in vals if v is not None}
 
 
-def text_contradicts_routed(text: str, routed: dict, cfg: dict) -> list:
+def text_contradicts_routed(text: str, routed: dict, cfg: dict,
+                            exempt_reference_values: bool = True) -> list:
     """°F values in `text` (a summary or key data point) that no reading in
     the routed report supports:
     inside the wellhead band (watch_f .. max_plausible_wellhead_f), more than
-    _SUMMARY_SLACK_F above the highest valid reading (as-found and ADJ), and
-    not a regulatory/HOV reference value. Deliberately narrow: a rounded,
-    averaged or prior-report figure at or below the peak passes. Pure."""
+    _SUMMARY_SLACK_F above the highest valid reading (as-found and ADJ), and,
+    when `exempt_reference_values`, not a regulatory/HOV reference value (a
+    summary naming "the 145°F MACT limit" is not claiming a reading). Pass
+    False for the headline (owner ruling 2026-10-17): a headline citing 160°F
+    with a 140°F table peak is replaced. Deliberately narrow otherwise: a
+    rounded, averaged or prior-report figure at or below the peak passes. Pure."""
     readings = (routed or {}).get("readings") or []
     temps = [r.temp for r in readings if getattr(r, "temp", None) is not None]
     if not text or not temps:
         return []
     peak = max(temps)
     lo, hi = _watch_f(cfg), _max_plausible_f(cfg)
-    refs = _reference_values_f(cfg)
+    refs = _reference_values_f(cfg) if exempt_reference_values else set()
     out = []
     for m in _SUMMARY_TEMP_RE.finditer(text):
         v = float(m.group(1).replace(",", ""))
@@ -368,14 +372,16 @@ def text_contradicts_routed(text: str, routed: dict, cfg: dict) -> list:
 def apply_deterministic_headline(parsed, routed: dict, cfg: dict) -> None:
     """For a routed report: replace parsed.key_data_point with the table-
     derived headline when the model's states a temperature the tables don't
-    support (or is empty), and withhold parsed.summary on the same test. A
+    support (or is empty; reference values like 145/HOV get no exemption in
+    the headline), and withhold parsed.summary on the same test (where they
+    do). A
     headline that isn't about temperature (a deadline or an enforcement action
     in a Consent Judgment compilation) is kept (owner ruling, 2026-10-17).
     Called by doc_pipeline right after route_measurements() and BEFORE the
     Sheet row is written, so the row, the alert, the digest and the _state
     payload all carry the corrected text."""
     current = getattr(parsed, "key_data_point", "") or ""
-    bad_kdp = text_contradicts_routed(current, routed, cfg)
+    bad_kdp = text_contradicts_routed(current, routed, cfg, exempt_reference_values=False)
     if bad_kdp or not current.strip():
         kdp = build_key_data_point(routed, parsed, cfg)
         if kdp:
