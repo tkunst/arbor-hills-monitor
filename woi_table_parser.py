@@ -118,6 +118,16 @@ _HEADER_MAX_LINES = 150
 NEGATIVE_FLOW_REJECT_SHARE = 0.25
 _NEGATIVE_FLOW_MIN_ROWS = 20
 
+# Row-level misalignment check: a reading whose CH4+CO2+O2+Balance falls
+# outside this window is not used. Measured 2026-10-17 on 32 filed reports
+# (217,384 parsed rows): every row's sum lies between 96.2 and 100.2, in a
+# continuous tail below 100. The earlier symmetric 100 +/- 1.5 window dropped
+# 258 of those real rows, among them AHWW0279's 154.4 F reading of 5/31/2024
+# (sum 97.8). A shifted read puts a pressure or temperature column into a gas
+# slot and lands far outside either bound (e.g. 40 or 78).
+GAS_SUM_MIN = 95.0
+GAS_SUM_MAX = 101.5
+
 
 @dataclass
 class WOIReading:
@@ -138,10 +148,12 @@ class WOIReading:
 
     @property
     def valid(self) -> bool:
-        """CH4+CO2+O2+Balance ~ 100 — guards against column misalignment."""
+        """CH4+CO2+O2+Balance close to 100 — guards against column misalignment.
+        The window is one-sided (GAS_SUM_MIN/GAS_SUM_MAX): filed rows run short
+        of 100, never over it."""
         if None in (self.ch4, self.co2, self.o2, self.balance):
             return False
-        return abs(self.ch4 + self.co2 + self.o2 + self.balance - 100) <= 1.5
+        return GAS_SUM_MIN <= self.ch4 + self.co2 + self.o2 + self.balance <= GAS_SUM_MAX
 
 
 @dataclass
