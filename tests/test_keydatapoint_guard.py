@@ -163,6 +163,7 @@ _GUARD_CFG = {**CFG, "temperature_thresholds": {
     "A flare ran at 1,500°F.",                      # above the plausibility ceiling
     "Ambient air was 85°F.",                        # below the watch band
     "No temperatures stated.",
+    "AHWW312R peaked at 158.3 degrees Fahrenheit.",
 ])
 def test_summary_guard_keeps_consistent_summaries(summary):
     assert woi_router.summary_contradicts_routed(summary, _routed([158.3, 150.0, 90]),
@@ -172,6 +173,13 @@ def test_summary_guard_keeps_consistent_summaries(summary):
 def test_summary_guard_flags_a_value_above_every_reading():
     assert woi_router.summary_contradicts_routed(
         FABRICATED_SUMMARY, _routed([158.3, 150.0, 90]), _GUARD_CFG) == [202.0]
+
+
+@pytest.mark.parametrize("summary", ["AHW331 hit 202 degrees Fahrenheit.", "AHW331 hit 202º F.",
+                                     "AHW331 hit 202˚F.", "AHW331 hit 202 deg F."])
+def test_summary_guard_reads_other_degree_spellings(summary):
+    assert woi_router.summary_contradicts_routed(
+        summary, _routed([158.3]), _GUARD_CFG) == [202.0]
 
 
 # --- 2. urgency_reason --------------------------------------------------------
@@ -203,13 +211,13 @@ def test_urgency_reason_names_both_triggers():
     parsed = _doc_m([_temp(150, well="AHW272R4")], severity="urgent")
     reason = ea.urgency_reason(parsed, CFG)
     assert "measured temperature 150°F at AHW272R4" in reason
-    assert "classifier marked the document urgent" in reason
+    assert 'severity is "urgent"' in reason and "deterministic urgency floor" in reason
 
 
 def test_urgency_reason_classifier_only():
     parsed = _doc_m([_temp(120)], severity="urgent")
     reason = ea.urgency_reason(parsed, CFG)
-    assert reason.startswith("the classifier marked the document urgent")
+    assert reason.startswith('the document\'s severity is "urgent"')
     assert "measured" not in reason
 
 
@@ -227,6 +235,26 @@ def test_urgency_reason_shows_rounding_it_used():
     parsed = _doc_m([_temp(144.6)])
     assert ea.is_urgent(parsed, CFG) is True
     assert "144.6°F (rounds to 145°F)" in ea.urgency_reason(parsed, CFG)
+
+
+def test_reason_names_the_highest_reading_on_a_rounding_tie():
+    parsed = _doc_m([_temp(150.3, well="A"), _temp(150.4, well="B")])
+    assert "150.4°F at B" in ea.urgency_reason(parsed, CFG)
+
+
+def test_mact_label_only_when_threshold_is_the_mact_value():
+    parsed = _doc_m([_temp(150)])
+    assert "(MACT limit)" in ea.urgency_reason(parsed, CFG)
+    other = {"urgent": {"measured_temp_urgent_f": 140}}
+    assert "(MACT limit)" not in ea.urgency_reason(parsed, other)
+
+
+def test_severity_urgent_short_circuits_before_reading_measurements():
+    # As before this change: an urgent-severity doc fires without its
+    # measurements being read, so a malformed entry can't make it raise.
+    parsed = _doc_m([{"metric": "temperature", "basis": "measured", "value": 150, "unit": 5}],
+                    severity="urgent")
+    assert ea.is_urgent(parsed, CFG) is True
 
 
 def test_urgency_reason_empty_when_not_urgent():
@@ -255,6 +283,26 @@ def test_hov_ceiling_lookup_exact_id_and_dates():
     assert ea.hov_ceiling_for("AHW272R3", "2025-03-01", HOV_CFG) is None   # a redrill isn't it
     assert ea.hov_ceiling_for("AHW272", "2025-03-01", HOV_CFG) is None
     assert ea.hov_ceiling_for("AHW272R4", "2025-03-01", CFG) is None       # no roster at all
+
+
+@pytest.mark.parametrize("entry", [{"well_id": "AHW272R4"},
+                                   {"well_id": "AHW272R4", "ceiling_f": "180F"},
+                                   {"well_id": "AHW272R4", "ceiling_f": None}])
+def test_malformed_roster_entry_never_breaks_the_alert(entry):
+    cfg = {**CFG, "temperature_thresholds": {"hov_ceilings": [entry]}}
+    assert ea.hov_ceiling_for("AHW272R4", "2025-03-01", cfg) is None
+    parsed = _doc_m([_temp(150, well="AHW272R4", date="2025-03-01")])
+    assert ea.is_urgent(parsed, cfg) is True
+    body = ea.format_urgent_body(parsed, {}, "L", cfg)
+    assert "No approved ceiling on record for AHW272R4." in body
+
+
+def test_non_iso_reading_date_is_treated_as_undated():
+    cfg = {**CFG, "temperature_thresholds": {"hov_ceilings": [
+        {"well_id": "AHW272R4", "ceiling_f": 180, "effective_start": "2025-02-19",
+         "effective_end": "2025-12-31"}]}}
+    assert ea.hov_ceiling_for("AHW272R4", "8/29/2023", cfg) == 180
+    assert ea.hov_ceiling_for("AHW272R4", "2026-03-01", cfg) is None
 
 
 @pytest.mark.parametrize("value", [154.4, 185.5])
