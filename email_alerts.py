@@ -103,8 +103,9 @@ def _urgency_decision(parsed, cfg: dict) -> tuple[bool, list[str]]:
         # Not "the classifier": parse_document's deterministic floor (a
         # measured reading >= MACT, an SSO/CO-spike/smoldering tag, an
         # enforcement title) also sets severity, and ParsedDoc doesn't say which.
-        reasons.append("the document's severity is \"urgent\" (set by the classifier "
-                       "or by parse_document's deterministic urgency floor)")
+        reasons.append("the document's recorded severity is \"urgent\" (set by the "
+                       "classifier, parse_document's deterministic urgency floor, or a "
+                       "hand-curator)")
 
     # Prefer structured measurements (correctly excludes permitted ceilings).
     measured = max_measured_temp_f(parsed)
