@@ -547,6 +547,8 @@ def test_violation_notice_title_floors_routine_to_urgent(monkeypatch, tmp_path):
     parsed = p.parse_document(path, {"document_name": "Violation Notice"}, RISK_REGISTER,
                               signal_keywords=SIGNAL_KEYWORDS)
     assert parsed.severity == "urgent"
+    assert parsed.severity_floor == ["text_signal"]
+    assert parsed.severity_before_floor == "notable"
     parsed = p.parse_document(path, {"document_name": "VN Correspondence"}, RISK_REGISTER,
                               signal_keywords=SIGNAL_KEYWORDS)
     assert parsed.severity == "notable"
@@ -654,6 +656,7 @@ def test_floor_never_lowers_an_already_urgent_severity(monkeypatch, text_pdf):
             key_data_point="No specific numeric reading reported."))
     parsed = p.parse_document(text_pdf, {}, RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
     assert parsed.severity == "urgent"
+    assert parsed.severity_floor == []          # the model said urgent itself
 
 
 def test_measured_temp_floor_raises_routine_to_urgent(monkeypatch, text_pdf):
@@ -669,6 +672,10 @@ def test_measured_temp_floor_raises_routine_to_urgent(monkeypatch, text_pdf):
                            "basis": "measured", "well_id": "AHW999"}]))
     parsed = p.parse_document(text_pdf, {}, RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
     assert parsed.severity == "urgent"
+    # Recorded so woi_router can undo it if the table parse drops that reading
+    # (coder:keydatapoint-guard, owner ruling 2026-10-17).
+    assert parsed.severity_floor == ["measured_temperature"]
+    assert parsed.severity_before_floor == "routine"
 
 
 def test_permitted_ceiling_alone_does_not_trip_the_measured_temp_floor(monkeypatch, text_pdf):
