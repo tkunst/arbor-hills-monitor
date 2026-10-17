@@ -185,9 +185,12 @@ Owner rulings, PR #160:
   all sorts last.
 - **Hand-Curated Files: the entry date is the Date Filed, for every rule.** A hand-curated
   row's `added_at` (when it was entered into the tab) is its equivalent of EGLE's Date Filed:
-  the ordering fallback, the `(filed …)` annotation, and anything else keyed on Date Filed.
-  Its human-entered `doc_date` is its Document Date, subject to the same rules as a parsed one
-  (a future date is blanked). Before this decision `doc_date` was used as the filed date and
+  the ordering fallback, the date annotation, and anything else keyed on Date Filed. On the
+  public page that annotation reads `(added …)`, not `(filed …)`, because it is the day the
+  row was entered, not an EGLE filing (owner ruling 2026-10-17, after review). A malformed
+  `added_at` is treated as blank. Its human-entered `doc_date` is its Document Date, subject
+  to the same rules as a parsed one (a future date is blanked, including a partial `YYYY` or
+  `YYYY-MM` one). Before this decision `doc_date` was used as the filed date and
   the Document Date was always blank, so an undated hand-curated row sorted to the very end.
 - A Document Date later than the run/build date is an error, not a date: the parser records it
   blank with method `future_date_rejected` and does not fall back to the model's guess, and

@@ -301,10 +301,11 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
 # wellhead-range temperature above every reading the parse found is withheld.
 
 # Shown in place of a routed report's summary when it fails the check below.
+# Wording: owner ruling 2026-10-17 (PR #160 checklist).
 WITHHELD_WOI_SUMMARY = (
-    "Automated summary withheld: it stated a wellhead temperature higher than "
-    "any reading the monitor could parse from this report's Gas Extraction "
-    "tables. This document's key data point is taken from those readings.")
+    "Automated summary withheld because it did not match this report's own "
+    "temperature tables. See the key data point, taken from those tables, and "
+    "the source document.")
 
 # A summary value up to this many degrees over the routed peak still passes
 # (the model rounding 158.6 up to 159, say).

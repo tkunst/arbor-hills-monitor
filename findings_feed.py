@@ -187,11 +187,28 @@ def is_suspicious_shrink(previous_total: int | None, new_total: int) -> bool:
     return previous_total is not None and previous_total > 0 and new_total < previous_total * SHRINK_GUARD_RATIO
 
 
+_PARTIAL_ISO_RE = re.compile(r"^(\d{4})(?:-(\d{2}))?$")
+_ISO_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+def _iso_day(value: str) -> str:
+    """The YYYY-MM-DD prefix of an ISO date or timestamp, else ""."""
+    m = _ISO_DAY_RE.match(value or "")
+    return m.group(0) if m else ""
+
+
 def _future_date(value: str, today: _date) -> bool:
-    """True iff `value` starts with an ISO date later than `today`. A
-    malformed or partial value is not judged here (False)."""
+    """True iff `value` starts with an ISO date later than `today`, or is a
+    partial ISO date (YYYY or YYYY-MM, as hand-curated rows allow) whose year
+    or month is later than today's. A malformed value is not judged here
+    (False)."""
+    v = (value or "").strip()
+    m = _PARTIAL_ISO_RE.match(v)
+    if m:
+        year, month = int(m.group(1)), int(m.group(2) or 0)
+        return (year, month) > (today.year, today.month) if month else year > today.year
     try:
-        return _date.fromisoformat((value or "")[:10]) > today
+        return _date.fromisoformat(v[:10]) > today
     except ValueError:
         return False
 
@@ -299,7 +316,9 @@ def parse_handcurated_rows(raw_rows: list[list], today: _date | None = None) -> 
             doc_date = ""
         out.append({
             # added_at is an ISO timestamp; its date part is the entry date.
-            "date_filed": (hc["added_at"] or "").strip()[:10],
+            # A malformed added_at (e.g. "9/2/2026 0:51") is blanked rather
+            # than sorted lexically to the top of the list.
+            "date_filed": _iso_day((hc["added_at"] or "").strip()),
             "document_name": hc["title"],
             "type": hc["doc_type"],
             "risks": hc["risks"],
@@ -449,7 +468,12 @@ def display_date(row: dict) -> str:
     differ by more than _FILED_GAP_DAYS, appends "(filed <date_filed>)" so
     the EGLE-filing lag is visible without making it the headline date; a gap
     of 7 days or less is close enough that the plain document_date alone is
-    sufficient. The browse list is ordered by the same date
+    sufficient. A partial document_date (YYYY or YYYY-MM, hand-curated rows)
+    gets the note whenever date_filed falls outside that year or month. A
+    hand-curated row's date_filed is the day the row was entered, not an EGLE
+    filing, so it reads "(added ...)" instead (owner ruling 2026-10-17); a
+    hand-curated row is recognized by its "source" key, the same signal
+    render_entry uses. The browse list is ordered by the same date
     (_sort_newest_first, owner ruling 2026-10-17)."""
     date_filed = row.get("date_filed") or ""
     document_date = row.get("document_date") or ""
@@ -457,12 +481,17 @@ def display_date(row: dict) -> str:
         return date_filed
     if not date_filed or document_date == date_filed:
         return document_date
+    label = "added" if "source" in row else "filed"
+    if _PARTIAL_ISO_RE.match(document_date):
+        if date_filed.startswith(document_date):
+            return document_date
+        return f"{document_date} ({label} {date_filed})"
     try:
         gap = abs((_date.fromisoformat(document_date[:10]) - _date.fromisoformat(date_filed[:10])).days)
     except ValueError:
         return document_date  # a malformed date on either side -- show document_date plain, don't crash
     if gap > _FILED_GAP_DAYS:
-        return f"{document_date} (filed {date_filed})"
+        return f"{document_date} ({label} {date_filed})"
     return document_date
 
 

@@ -91,7 +91,10 @@ def test_headline_kept_when_not_contradicting_the_tables(tmp_path, kdp):
 
 
 @pytest.mark.parametrize("kdp", ["AHW331 reached 160°F.", "AHW331 hit the 145°F MACT limit.",
-                                 "AHW272R4 at its 180°F HOV ceiling."])
+                                 "AHW272R4 at its 180°F HOV ceiling.",
+                                 # Accurate reading plus a reference value: still
+                                 # replaced (the ruling's accepted cost, pinned).
+                                 "AHWW312R at 140°F, under the 145°F MACT limit."])
 def test_headline_citing_a_reference_value_above_the_peak_is_replaced(tmp_path, kdp):
     # Owner ruling 2026-10-17: no reference-value exemption for headlines.
     # Table peak here is 140F, so 145/160/180 are all unsupported.
