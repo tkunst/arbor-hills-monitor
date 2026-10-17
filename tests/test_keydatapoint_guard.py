@@ -474,7 +474,7 @@ def test_hov_label_never_makes_a_below_threshold_reading_fire():
     assert ea.is_urgent(parsed, HOV_CFG) is False
 
 
-def test_no_ceiling_on_record_label():
+def test_not_in_roster_label():
     parsed = _doc_m([_temp(158.3, well="AHWW312R")])
     body = ea.format_urgent_body(parsed, {}, "L", HOV_CFG)
     assert "Approved ceiling for AHWW312R not in this monitor's roster." in body
@@ -495,3 +495,27 @@ def test_config_roster_agrees_with_top_hov_wells():
     top = max(tt["hov_values_f"])
     holders = {e["well_id"] for e in tt["hov_ceilings"] if e["ceiling_f"] == top}
     assert holders == set(tt["top_hov_wells"])
+
+
+def test_config_roster_matches_the_egle_letters():
+    # The filled roster (2026-10-17), pinned against the HOV letters: the
+    # 4/7/2026 16-well renewal values, the superseded 2024 wells ending on that
+    # grant's 5/1/2026 term, and AHW263R5 ending on its last confirmed date.
+    from config_loader import load_config
+    cfg = load_config()
+    renewal = {"AHWW258R": 150, "AHW259R5": 170, "AHW272R4": 180, "AHWW0279": 160,
+               "AHW285R3": 170, "AHWW287R": 150, "AHWW290R": 170, "AHWW0300": 160,
+               "AHWW301R": 160, "AHWW302R": 160, "AHW311R2": 150, "AHW312R2": 160,
+               "AHWW0313": 160, "AHWW0315": 150, "AHWWTS01": 150, "AHWTS01R": 150}
+    for well, ceiling in renewal.items():
+        assert ea.hov_ceiling_for(well, "2027-06-01", cfg) == ceiling, well
+        assert ea.hov_ceiling_for(well, "2028-05-02", cfg) is None, well
+    for well in ("AHW259R4", "AHW285R2", "AHWW311R", "AHWW312R", "AHW263R5"):
+        assert ea.hov_ceiling_for(well, "2026-05-02", cfg) is None, well
+    assert ea.hov_ceiling_for("AHW263R5", "2025-08-01", cfg) == 170
+    assert ea.hov_ceiling_for("AHW263R5", "2025-07-22", cfg) is None
+    assert ea.hov_ceiling_for("AHWW312R", "2024-06-01", cfg) == 160
+    assert ea.hov_ceiling_for("AHW312R2", "2024-06-01", cfg) is None  # before its 7/10/2024 grant
+    assert ea.hov_ceiling_for("AHWW0279", "2024-04-29", cfg) is None  # 2019-2023 letters not on file
+    ids = [e["well_id"] for e in cfg["temperature_thresholds"]["hov_ceilings"]]
+    assert len(ids) == len(set(ids)) == 21
