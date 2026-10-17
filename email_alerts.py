@@ -64,16 +64,56 @@ def max_measured_temp_f(parsed) -> Optional[int]:
     return best
 
 
-def is_urgent(parsed, cfg: dict) -> bool:
+def _peak_measured(parsed) -> Optional[dict]:
+    """The measurement max_measured_temp_f() picked (same filter, same
+    rounding, first one wins on a tie), with its value in deg F as `value_f`.
+    For naming the well in the urgent body; never used to decide."""
+    best, best_i = None, None
+    for m in getattr(parsed, "measurements", []) or []:
+        if m.get("metric") != "temperature" or m.get("basis") != "measured":
+            continue
+        try:
+            val = float(m.get("value"))
+        except (TypeError, ValueError):
+            continue
+        if (m.get("unit") or "F").lower().startswith("c"):
+            val = val * 9 / 5 + 32
+        ival = int(round(val))
+        if best_i is None or ival > best_i:
+            best, best_i = {**m, "value_f": val}, ival
+    return best
+
+
+def _fmt_f(v: float) -> str:
+    return f"{round(float(v), 1):g}°F"
+
+
+def _urgency_decision(parsed, cfg: dict) -> tuple[bool, list[str]]:
+    """THE urgency decision: (fires, reasons). is_urgent() returns the bool and
+    urgency_reason() joins the reasons, so the two can never drift apart. Every
+    branch that fires is listed (severity AND a measured reading, when both),
+    so an [URGENT] subject over a body saying "Classifier severity: routine"
+    always says which path fired (the 2026-10-08 email that didn't)."""
     urgent_cfg = cfg.get("urgent", {})
-    if urgent_cfg.get("severity_is_urgent", True) and parsed.severity == "urgent":
-        return True
     threshold = urgent_cfg.get("measured_temp_urgent_f", 145)
+    reasons: list[str] = []
+    if urgent_cfg.get("severity_is_urgent", True) and parsed.severity == "urgent":
+        reasons.append("the classifier marked the document urgent")
 
     # Prefer structured measurements (correctly excludes permitted ceilings).
     measured = max_measured_temp_f(parsed)
     if measured is not None:
-        return measured >= threshold
+        if measured >= threshold:
+            peak = _peak_measured(parsed) or {}
+            val = peak.get("value_f", measured)
+            shown = _fmt_f(val)
+            if float(val) < threshold:  # only the rounding made it cross
+                shown += f" (rounds to {measured}°F)"
+            well = peak.get("well_id")
+            reasons.append(f"measured temperature {shown}"
+                           + (f" at {well}" if well else "")
+                           + f", at or above the {threshold}°F threshold (MACT limit)")
+        return bool(reasons), reasons
 
     # If the parser extracted ANY temperature reading at all (even a permitted
     # ceiling or unknown-basis one), trust the structured path and do NOT regex
@@ -84,14 +124,94 @@ def is_urgent(parsed, cfg: dict) -> bool:
         for m in (getattr(parsed, "measurements", []) or [])
     )
     if has_any_temp:
-        return False
+        return bool(reasons), reasons
 
     # Last resort, ONLY when the parser produced no structured temperature at
     # all: scan free text. Less safe (can't tell measured from permitted).
     hay = f"{parsed.key_data_point}\n{parsed.summary}\n{parsed.full_text}"
     max_f = int((cfg.get("temperature_thresholds") or {}).get("max_plausible_wellhead_f", 250))
     temp = _max_temperature_f(hay, max_f)
-    return temp is not None and temp >= threshold
+    if temp is not None and temp >= threshold:
+        reasons.append(f"a {temp}°F temperature in the document text, at or above the "
+                       f"{threshold}°F threshold (free-text fallback: no structured "
+                       f"temperature was extracted, so this may not be a measured reading)")
+    return bool(reasons), reasons
+
+
+def is_urgent(parsed, cfg: dict) -> bool:
+    return _urgency_decision(parsed, cfg)[0]
+
+
+def urgency_reason(parsed, cfg: dict) -> str:
+    """Why is_urgent() fires, in one line ("" when it doesn't). Presentation
+    only: it never changes whether an alert fires."""
+    return "; and ".join(_urgency_decision(parsed, cfg)[1])
+
+
+def hov_ceiling_for(well_id: str, as_of_date: Optional[str], cfg: dict) -> Optional[float]:
+    """The well's EGLE-approved HOV (Higher Operating Value) ceiling in deg F,
+    from temperature_thresholds.hov_ceilings, or None. Exact well-id match
+    (case and trailing '*' ignored), never by well number: a redrill (R3 vs
+    R4) is a different well with its own ceiling, if any. A reading dated
+    outside an entry's effective_start..effective_end window doesn't match;
+    an undated reading matches any window. CONTEXT ONLY: never a trigger or
+    a suppressor (is_urgent never reads it)."""
+    wid = (well_id or "").strip().rstrip("*").upper()
+    if not wid:
+        return None
+    date = (as_of_date or "")[:10]
+    for e in (cfg.get("temperature_thresholds") or {}).get("hov_ceilings") or []:
+        if str(e.get("well_id") or "").strip().rstrip("*").upper() != wid:
+            continue
+        start, end = str(e.get("effective_start") or ""), str(e.get("effective_end") or "")
+        if date and ((start and date < start) or (end and date > end)):
+            continue
+        return float(e["ceiling_f"])
+    return None
+
+
+# Cap on HOV context lines in one urgent body (a hot WOI report can carry
+# dozens of wells at/above 145F).
+_HOV_LINES_MAX = 10
+
+
+def hov_context_lines(parsed, cfg: dict) -> list[str]:
+    """One line per well with a MEASURED reading at/above the urgent threshold
+    (its highest such reading), labeled with its approved HOV ceiling or
+    "No approved ceiling on record". Additive context; pure."""
+    threshold = (cfg.get("urgent") or {}).get("measured_temp_urgent_f", 145)
+    by_well: dict = {}
+    for m in getattr(parsed, "measurements", []) or []:
+        if m.get("metric") != "temperature" or m.get("basis") != "measured":
+            continue
+        try:
+            val = float(m.get("value"))
+        except (TypeError, ValueError):
+            continue
+        if (m.get("unit") or "F").lower().startswith("c"):
+            val = val * 9 / 5 + 32
+        if int(round(val)) < threshold:
+            continue
+        well = m.get("well_id") or ""
+        if well not in by_well or val > by_well[well][0]:
+            by_well[well] = (val, m.get("as_of_date"))
+    lines = []
+    for well, (val, date) in sorted(by_well.items(), key=lambda kv: -kv[1][0]):
+        if not well:
+            lines.append(f"Measured {_fmt_f(val)} with no well named; no ceiling lookup possible.")
+            continue
+        ceiling = hov_ceiling_for(well, date, cfg)
+        if ceiling is None:
+            lines.append(f"No approved ceiling on record for {well}. Measured: {_fmt_f(val)}.")
+        else:
+            rel = "below ceiling" if val < ceiling else ("at ceiling" if val == ceiling
+                                                         else "above ceiling")
+            lines.append(f"HOV approved ceiling for {well}: {ceiling:g}°F. "
+                         f"Measured: {_fmt_f(val)} ({rel}).")
+    if len(lines) > _HOV_LINES_MAX:
+        more = len(lines) - _HOV_LINES_MAX
+        lines = lines[:_HOV_LINES_MAX] + [f"(+{more} more well(s) at or above {threshold}°F)"]
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -151,13 +271,25 @@ def is_correspondence_letter(full_text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def format_urgent_body(parsed, metadata: dict, link: str) -> str:
+def format_urgent_body(parsed, metadata: dict, link: str, cfg: dict | None = None) -> str:
+    """The [URGENT] email body. States WHY it fired (urgency_reason) next to
+    the classifier's own severity, so the hardcoded [URGENT] subject and the
+    body never disagree silently, and labels each alerted reading with its HOV
+    ceiling (context only). `cfg` None = built-in defaults, no HOV roster."""
+    cfg = cfg or {}
+    reason = urgency_reason(parsed, cfg) or "(no urgency trigger matched)"
+    hov = hov_context_lines(parsed, cfg)
+    hov_block = ("Approved-ceiling context (does not affect whether this alert fires):\n"
+                 + "".join(f"  {line}\n" for line in hov) + "\n") if hov else ""
     return (
         f"URGENT — Arbor Hills (N2688) document flagged.\n\n"
         f"Document: {metadata.get('document_name', '(unknown)')}\n"
         f"Date filed: {metadata.get('date_filed', '(unknown)')}\n"
-        f"Type: {parsed.doc_type}   Severity: {parsed.severity}\n"
+        f"Type: {parsed.doc_type}\n"
         f"Risks: {', '.join(parsed.risks) or '(none tagged)'}\n\n"
+        f"Urgent because: {reason}.\n"
+        f"Classifier severity: {parsed.severity}.\n\n"
+        f"{hov_block}"
         f"Key data point:\n  {parsed.key_data_point}\n\n"
         f"Summary:\n  {parsed.summary}\n\n"
         f"Document: {link}\n"
@@ -612,7 +744,7 @@ def send_urgent_alert(parsed, metadata: dict, link: str, cfg: dict) -> bool:
     alert as sent, and recapping it in the Sunday digest, when it never
     actually went out."""
     subject = f"[URGENT] Arbor Hills N2688: {metadata.get('document_name', 'new document')}"
-    return send_email(subject, format_urgent_body(parsed, metadata, link), cfg)
+    return send_email(subject, format_urgent_body(parsed, metadata, link, cfg), cfg)
 
 
 def route_hand_curated_urgent_or_digest(
