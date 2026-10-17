@@ -263,10 +263,14 @@ HANDCURATED_FIELDS = [
 ]
 
 
-def parse_handcurated_rows(raw_rows: list[list]) -> list[dict]:
+def parse_handcurated_rows(raw_rows: list[list], today: _date | None = None) -> list[dict]:
     """Hand-Curated Files rows -> the same FEED_FIELDS-shaped dicts
     parse_feed_rows() produces for the auto tabs, so both merge into one
-    sortable/renderable list. Mapping: doc_date -> date_filed, title ->
+    sortable/renderable list. Mapping: added_at (the day the row was entered)
+    -> date_filed, doc_date -> document_date (owner decision 2026-10-17: the
+    entry date is the hand-curated equivalent of EGLE's Date Filed for every
+    rule -- ordering fallback, the "(filed ...)" annotation -- and doc_date is
+    the Document Date, blanked like any other if it is in the future), title ->
     document_name, doc_type -> type, risks -> risks, drive_link -> link,
     facility -> facility, source_public -> source. severity, key_data_point and
     summary have no published Hand-Curated equivalent -- left blank (the title
@@ -283,14 +287,19 @@ def parse_handcurated_rows(raw_rows: list[list]) -> list[dict]:
     surfaces `source` (i.e. source_public) as a "Source: ..." tag, or
     "Source: not stated" when source_public is blank; auto/EGLE rows carry no
     `source` key at all, so nothing changes for them."""
+    today = today or _date.today()
     out = []
     for r in raw_rows:
         if not r:
             continue
         padded = list(r) + [""] * (len(HANDCURATED_FIELDS) - len(r))
         hc = dict(zip(HANDCURATED_FIELDS, padded))
+        doc_date = (hc["doc_date"] or "").strip()
+        if _future_date(doc_date, today):
+            doc_date = ""
         out.append({
-            "date_filed": hc["doc_date"],
+            # added_at is an ISO timestamp; its date part is the entry date.
+            "date_filed": (hc["added_at"] or "").strip()[:10],
             "document_name": hc["title"],
             "type": hc["doc_type"],
             "risks": hc["risks"],
@@ -300,10 +309,10 @@ def parse_handcurated_rows(raw_rows: list[list]) -> list[dict]:
             "link": hc["drive_link"],
             "facility": hc["facility"],
             "source": hc["source_public"],
-            # Hand-Curated rows carry no separate "document printed its own
-            # date" / "raw filing-system title" concept (doc_date/title above
-            # ARE the human-entered single date/title) -- blank, never a guess.
-            "document_date": "",
+            # The human-entered date of the document itself (may be partial,
+            # e.g. "2022-03", or blank). No raw filing-system title exists for
+            # a hand-curated row -- egle_title stays blank, never a guess.
+            "document_date": doc_date,
             "egle_title": "",
         })
     return out

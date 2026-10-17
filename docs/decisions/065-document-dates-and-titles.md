@@ -181,8 +181,14 @@ apply step writes the two new columns to the live Sheet only after Trisha's expl
 Owner rulings, PR #160:
 
 - The public-records browse list is ordered newest **Document Date** first, falling back to
-  Date Filed when the Document Date is blank (`findings_feed._sort_key`). Hand-Curated rows
-  order by their one human-entered `doc_date`. A row with no date at all sorts last.
+  Date Filed when the Document Date is blank (`findings_feed._sort_key`). A row with no date at
+  all sorts last.
+- **Hand-Curated Files: the entry date is the Date Filed, for every rule.** A hand-curated
+  row's `added_at` (when it was entered into the tab) is its equivalent of EGLE's Date Filed:
+  the ordering fallback, the `(filed …)` annotation, and anything else keyed on Date Filed.
+  Its human-entered `doc_date` is its Document Date, subject to the same rules as a parsed one
+  (a future date is blanked). Before this decision `doc_date` was used as the filed date and
+  the Document Date was always blank, so an undated hand-curated row sorted to the very end.
 - A Document Date later than the run/build date is an error, not a date: the parser records it
   blank with method `future_date_rejected` and does not fall back to the model's guess, and
   `findings_feed.parse_feed_rows` blanks one already in the Sheet at build time (the
