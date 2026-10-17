@@ -3,6 +3,8 @@ handling, sort order, link passthrough, archive-link resolution, title
 date-stripping."""
 import json
 
+import pytest
+
 import findings_feed as ff
 import sheet_writer as sw
 
@@ -1160,9 +1162,47 @@ def test_handcurated_entry_date_is_its_filed_date_for_every_rule():
     assert rows[0]["document_date"] == "" and ff.display_date(rows[0]) == "2026-09-10"
     # A future doc_date is blanked like any other Document Date.
     assert rows[1]["document_date"] == "" and ff.display_date(rows[1]) == "2026-09-05"
-    # The "(filed ...)" annotation applies to the entry date too.
+    # The entry date is annotated too, labeled "added" (not an EGLE filing).
     old = ff.parse_handcurated_rows([_hc_row(doc_date="2019-04-02")], today=today)[0]
-    assert ff.display_date(old) == "2019-04-02 (filed 2026-09-02)"
+    assert ff.display_date(old) == "2019-04-02 (added 2026-09-02)"
     combined = ff.merge_handcurated(
         ff.merge_and_sort([_row(date="2026-09-07", name="Auto")], []), [undated])
     assert [r["document_name"] for r in combined] == ["Undated", "Auto"]
+
+
+@pytest.mark.parametrize("value,future", [
+    ("2031", True), ("2031-10", True), ("2026-11", True), ("2026-10", False),
+    ("2026", False), ("2022-03", False), ("2026-10-18", True), ("2026-10-17", False),
+    ("garbled", False), ("", False)])
+def test_partial_future_handcurated_date_is_blanked(value, future):
+    # A partial hand-curated doc_date in the future (a data-entry slip) must not
+    # stick to the top of page 1 (security review low, 2026-10-17).
+    from datetime import date
+    today = date(2026, 10, 17)
+    assert ff._future_date(value, today) is future
+    row = ff.parse_handcurated_rows([_hc_row(doc_date=value)], today=today)[0]
+    assert row["document_date"] == ("" if future else value)
+
+
+def test_handcurated_partial_date_gets_the_added_note():
+    from datetime import date
+    today = date(2026, 10, 17)
+    row = ff.parse_handcurated_rows([_hc_row(doc_date="2022-03")], today=today)[0]
+    assert ff.display_date(row) == "2022-03 (added 2026-09-02)"
+    same_month = ff.parse_handcurated_rows([_hc_row(doc_date="2026-09")], today=today)[0]
+    assert ff.display_date(same_month) == "2026-09"
+
+
+def test_auto_rows_keep_the_filed_label():
+    row = {"document_date": "2019-12-23", "date_filed": "2020-03-23"}
+    assert ff.display_date(row) == "2019-12-23 (filed 2020-03-23)"
+
+
+@pytest.mark.parametrize("added_at", ["9/2/2026 0:51", "garbled", ""])
+def test_malformed_added_at_is_blanked_not_sorted_to_the_top(added_at):
+    rows = ff.parse_handcurated_rows([_hc_row(doc_date="", added_at=added_at, title="Bad")])
+    assert rows[0]["date_filed"] == ""
+    combined = ff.merge_handcurated(
+        ff.merge_and_sort([_row(date="2026-09-07", name="Auto")], []),
+        [_hc_row(doc_date="", added_at=added_at, title="Bad")])
+    assert [r["document_name"] for r in combined] == ["Auto", "Bad"]

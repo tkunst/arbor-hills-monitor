@@ -275,7 +275,8 @@ external users but no sensitive data). Public repo.
   `severity_before_floor`, so an invented 202°F the tables discard no longer
   fires `[URGENT]` (owner ruling 2026-10-17, a deliberate firing change for
   this case only). The model's own urgent, a text/title floor and a real
-  surviving ≥145°F reading all still fire. `doc_pipeline` calls both right
+  surviving reading at/above `mact_f` (or one that rounds up to
+  `measured_temp_urgent_f`) all still fire. `doc_pipeline` calls both right
   after routing and BEFORE the Sheet row is written, so the row, alert,
   digest and `_state` payload all carry them (each best-effort). This
   is the second layer after `kdp_check` (ADR 067): kdp_check catches an
