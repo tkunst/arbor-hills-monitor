@@ -244,3 +244,54 @@ like 40 or 78. With the new window the 32-report scan drops 0 rows, and the
 parsed rows and rejected tables are unchanged. The 2026-10-08 report now routes
 AHWW0279's 5/31/2024 rows, and its maximum is 154.4°F. Reports processed
 before this change keep their old summaries until they are re-extracted.
+
+## Addendum (2026-10-17): unlabeled ADJ rows
+
+Attachment 1 of the 2026-10-08 report (nSITE `-6975595422894935530`, pp. 8–80)
+has no ADJ column. Its header reads Well ID, Date/Time, CH4, CO2, O2, Balance,
+Diff. Press, Temp, Flow, Well Pres, Header Pres. GFL still prints each adjusted
+well as three lines: the as-found row, a comment line (e.g. "Opened Valve 1/2
+turn to 1 turn:"), and then the after-adjustment row under the SAME well and
+timestamp. The labeled back table (pp. 96–103) prints the literal `ADJ` token on
+that second row. The parser only looked for the token, so it recorded both rows
+as as-found. In this report 1,481 of 4,035 such pairs differ, and 30 wells' max
+temperature was overstated by 0.1–0.3°F (AHWW0533: 133.8 vs. 133.7). The site
+max was unchanged.
+
+**Rule.** Each gas table's header is checked for an `ADJ` label
+(`_ADJ_LABEL_RE`). If the header has one, rows are read as before: only the
+token marks ADJ. If it doesn't, a row is ADJ when the row right before it in
+the same table has the same printed well (stars stripped) and timestamp and is
+not itself ADJ. A pair printed twice therefore reads as-found, ADJ, as-found,
+ADJ, which is how the labeled table prints the same thing. A pair may straddle
+a page break. The rule restarts with each table (a change in ADJ labeling is a
+new table). The header-less fragment path (`_parse_lines`) only trusts the
+token.
+
+**Checked against the report's own labels.** All 195 well/timestamp keys that
+appear in both Attachment 1 and the labeled back table get the identical
+(ADJ, temp, CH4) sequence in both.
+
+**Side effect: cross-table twins now merge.** `merge_cross_table_duplicates`
+keys on the ADJ flag. Before, an Attachment-1 pair with identical values plus
+its back-table twin formed one group with two rows on the same page, which the
+same-page guard keeps whole, so all three reached Measurements. Now each
+Attachment-1 row merges with its labeled twin.
+
+`well_watch` already scans ADJ rows (it labels them), so its trip-wires are
+unchanged; only the label in the email changes. Reports processed before this
+change keep their old rows until they are re-extracted.
+
+**Measured effect (router run before and after, 2026-10-17).** Across the 32
+locally held WOI-format reports, only the 2026-10-08 report has a gas table
+with no ADJ label (one other unlabeled header exists but has no data rows
+under it). The other 31 reports produce identical rows, flags, summaries and
+measurements. In the 2026-10-08 report:
+- 4,082 Attachment-1 rows are now ADJ (pp. 8–80); every row's values are
+  unchanged.
+- Readings merged across tables went from 79 to 390.
+- Emitted measurements dropped from 1,388 to 884. As-found ≥ 131°F temperature
+  readings went from 452 to 284: 121 were after-adjustment rows and 47 were
+  back-table twins that now merge. The 32 CO rows are unchanged.
+- 31 wells' max temperature fell by 0.1–0.7°F. The site peak (158.3°F) is
+  unchanged.
