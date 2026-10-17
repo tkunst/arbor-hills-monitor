@@ -286,6 +286,7 @@ locally held WOI-format reports, only the 2026-10-08 report has a gas table
 with no ADJ label (one other unlabeled header exists but has no data rows
 under it). The other 31 reports produce identical rows, flags, summaries and
 measurements. In the 2026-10-08 report:
+
 - 4,082 Attachment-1 rows are now ADJ (pp. 8–80); every row's values are
   unchanged.
 - Readings merged across tables went from 79 to 390.
