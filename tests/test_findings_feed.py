@@ -35,6 +35,21 @@ def test_parse_feed_rows_pads_short_rows():
     }]
 
 
+def test_parse_feed_rows_blanks_a_future_document_date():
+    # Owner rule 2026-10-17: a Document Date after the build date is an error
+    # (the 2031-10-13 row on the live page); it falls back to Date Filed.
+    from datetime import date
+    fields = ff.FEED_FIELDS
+    raw = [""] * len(fields)
+    raw[fields.index("date_filed")] = "2026-10-13"
+    raw[fields.index("document_date")] = "2031-10-13"
+    ok = list(raw)
+    ok[fields.index("document_date")] = "2019-10-01"
+    rows = ff.parse_feed_rows([raw, ok], today=date(2026, 10, 17))
+    assert rows[0]["document_date"] == "" and ff.display_date(rows[0]) == "2026-10-13"
+    assert rows[1]["document_date"] == "2019-10-01"
+
+
 def test_parse_feed_rows_skips_blank_rows():
     assert ff.parse_feed_rows([[], _row()]) == ff.parse_feed_rows([_row()])
 

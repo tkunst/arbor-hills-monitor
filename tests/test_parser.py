@@ -1,5 +1,7 @@
 """Parser tests: text-layer detection, keyword windowing, and end-to-end
 assembly with the Claude call mocked (no API key needed)."""
+from datetime import date
+
 import fitz
 import pytest
 
@@ -249,6 +251,33 @@ def test_extract_document_date_no_date_anywhere_is_blank():
     assert p.extract_document_date_from_text(["No date-shaped text here at all."]) == ("", "")
 
 
+def test_extract_document_date_future_date_is_rejected():
+    # Owner rule 2026-10-17: a date after today is an error (the 2031-10-13
+    # permit expiration that reached the public page), never the document's.
+    page = "Permit expires\nOctober 13, 2031\nAuthorized by the Department."
+    today = date(2026, 10, 17)
+    assert p.extract_document_date_from_text([page], today=today) == ("", p.FUTURE_DATE_REJECTED)
+    # Today itself, and anything earlier, still pass.
+    assert p.extract_document_date_from_text(["October 17, 2026"], today=today) == (
+        "2026-10-17", "dateline")
+
+
+def test_extract_document_date_future_on_the_winning_page_blanks_the_date():
+    # A later page's date overrides an earlier one (unchanged); if that
+    # winning date is in the future, the document date is blank -- not the
+    # earlier page's date, not a guess.
+    pages = ["August 27, 2026\nDear Sir:", "October 13, 2031"]
+    assert p.extract_document_date_from_text(pages, today=date(2026, 10, 17)) == (
+        "", p.FUTURE_DATE_REJECTED)
+
+
+def test_is_plausible_iso_date_rejects_any_future_date():
+    today = date(2026, 10, 17)
+    assert p._is_plausible_iso_date("2026-10-17", today=today) is True
+    assert p._is_plausible_iso_date("2026-10-18", today=today) is False   # tomorrow
+    assert p._is_plausible_iso_date("2027-01-15", today=today) is False   # was allowed (next year)
+
+
 def test_is_plausible_iso_date():
     assert p._is_plausible_iso_date("2026-08-27") is True
     assert p._is_plausible_iso_date("2099-01-01") is False  # implausibly far future
@@ -302,6 +331,20 @@ def test_parse_document_implausible_llm_date_is_rejected(monkeypatch, text_pdf):
     parsed = p.parse_document(text_pdf, {}, RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
     assert parsed.document_date == ""
     assert parsed.document_date_method == ""
+
+
+def test_parse_document_future_date_is_blank_and_never_the_llm_guess(monkeypatch, tmp_path):
+    path = str(tmp_path / "future.pdf")
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 72), "October 13, 2031\nPermit expiration notice.")
+    doc.save(path)
+    doc.close()
+    monkeypatch.setattr(
+        p, "_classify_with_claude",
+        lambda *a, **k: _fake_classification(document_date="2020-01-01"))
+    parsed = p.parse_document(path, {}, RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
+    assert parsed.document_date == ""
+    assert parsed.document_date_method == p.FUTURE_DATE_REJECTED
 
 
 def test_parse_document_no_date_anywhere_is_blank(monkeypatch, text_pdf):

@@ -211,7 +211,9 @@ class ParsedDoc:
     # read one), validated as a plausible ISO date before being trusted.
     document_date: str = ""
     # Which pass produced document_date: "dateline" | "date_label" |
-    # "email_sent_header" | "llm" | "" (nothing found). Lets a reviewer tell a
+    # "email_sent_header" | "llm" | "" (nothing found) |
+    # "future_date_rejected" (a date after the run date was found: an error,
+    # so document_date is blank). Lets a reviewer tell a
     # confident deterministic read from a model guess.
     document_date_method: str = ""
     # A proposed real display title for a document whose nSITE filing-system
@@ -420,7 +422,16 @@ def _page_dateline_candidate(text: str) -> Optional[tuple[str, str]]:
     return None
 
 
-def extract_document_date_from_text(pages: list[str]) -> tuple[str, str]:
+# Method recorded when the date found is later than today: an error (a permit
+# expiration or a compliance deadline read as the document's own date, e.g.
+# 2031-10-13 on the public page), so the document date is left blank (owner
+# rule, 2026-10-17). parse_document does NOT fall back to the model's guess
+# for such a document.
+FUTURE_DATE_REJECTED = "future_date_rejected"
+
+
+def extract_document_date_from_text(pages: list[str],
+                                    today: Optional[date] = None) -> tuple[str, str]:
     """Deterministic first pass: scan `pages` (normally the RAW first 1-2
     pages of a document, in order) for the date printed on the document.
     A LATER page's own match overrides an earlier page's -- confirmed on a
@@ -428,12 +439,16 @@ def extract_document_date_from_text(pages: list[str]) -> tuple[str, str]:
     disagreed; the later page's date was the document's real, correct one.
     A page with no recognizable date leaves the running candidate as-is, so a
     plain continuation page never blanks out an earlier page's finding.
-    Returns ("", "") when nothing is found in any page -- never guesses."""
+    Returns ("", "") when nothing is found in any page -- never guesses --
+    and ("", FUTURE_DATE_REJECTED) when the date found is after `today`
+    (default: the run date)."""
     candidate: tuple[str, str] = ("", "")
     for text in pages:
         found = _page_dateline_candidate(text or "")
         if found:
             candidate = found
+    if candidate[0] and date.fromisoformat(candidate[0]) > (today or date.today()):
+        return ("", FUTURE_DATE_REJECTED)
     return candidate
 
 
@@ -447,19 +462,21 @@ def extract_document_date(doc: "fitz.Document", max_pages: int = 2) -> tuple[str
 _MIN_PLAUSIBLE_YEAR = 1990
 
 
-def _is_plausible_iso_date(s: Optional[str]) -> bool:
+def _is_plausible_iso_date(s: Optional[str], today: Optional[date] = None) -> bool:
     """A model-proposed document_date must parse as a real ISO date AND fall
     in a plausible range -- guards against a hallucinated date ("2099-01-01",
-    a stray "0001-01-01") ever reaching the Sheet. Used only for the LLM
-    fallback; the deterministic regex pass above can't produce an invalid
-    date by construction."""
+    a stray "0001-01-01") ever reaching the Sheet. No later than `today` (the
+    run date): a document can't be dated in the future, so a future date is
+    an error and the document date stays blank (owner rule, 2026-10-17; this
+    used to allow up to the end of next year). Used only for the LLM
+    fallback; the deterministic pass applies the same rule itself."""
     if not s:
         return False
     try:
         d = date.fromisoformat(s)
     except (ValueError, TypeError):
         return False
-    return _MIN_PLAUSIBLE_YEAR <= d.year <= date.today().year + 1
+    return _MIN_PLAUSIBLE_YEAR <= d.year and d <= (today or date.today())
 
 
 # ---------------------------------------------------------------------------
@@ -1124,6 +1141,10 @@ def parse_document(
     # _is_plausible_iso_date.
     if det_date:
         document_date, document_date_method = det_date, det_method
+    elif det_method == FUTURE_DATE_REJECTED:
+        # A future date is an error, not a gap: blank, never the model's guess.
+        log.warning("document date in the future rejected (%s)", metadata.get("document_name", "?"))
+        document_date, document_date_method = "", FUTURE_DATE_REJECTED
     else:
         llm_date = fields.get("document_date")
         if _is_plausible_iso_date(llm_date):
