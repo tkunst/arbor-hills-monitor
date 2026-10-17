@@ -1917,7 +1917,8 @@ temperature_thresholds:
   # alerts regardless. Exact well id (a redrill is a different well). Seeded
   # with the one pairing already established above; the full roster lives
   # outside this repo and is added by hand from the HOV letters. A well with no
-  # entry is labeled "No approved ceiling on record".
+  # entry is labeled "Approved ceiling for <well> not in this monitor's roster"
+  # (not "no approval": the roster here is incomplete, owner wording 2026-10-17).
   hov_ceilings:
     - {well_id: AHW272R4, ceiling_f: 180, effective_start: "2025-02-19", effective_end: null}
   # Above this, a "°F" number in a sentence about wells is treated as a

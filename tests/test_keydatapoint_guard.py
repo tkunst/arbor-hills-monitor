@@ -446,7 +446,7 @@ def test_malformed_roster_entry_never_breaks_the_alert(entry):
     parsed = _doc_m([_temp(150, well="AHW272R4", date="2025-03-01")])
     assert ea.is_urgent(parsed, cfg) is True
     body = ea.format_urgent_body(parsed, {}, "L", cfg)
-    assert "No approved ceiling on record for AHW272R4." in body
+    assert "Approved ceiling for AHW272R4 not in this monitor's roster." in body
 
 
 def test_non_iso_reading_date_is_treated_as_undated():
@@ -477,7 +477,8 @@ def test_hov_label_never_makes_a_below_threshold_reading_fire():
 def test_no_ceiling_on_record_label():
     parsed = _doc_m([_temp(158.3, well="AHWW312R")])
     body = ea.format_urgent_body(parsed, {}, "L", HOV_CFG)
-    assert "No approved ceiling on record for AHWW312R." in body
+    assert "Approved ceiling for AHWW312R not in this monitor's roster." in body
+    assert "No approved ceiling" not in body
 
 
 def test_format_urgent_body_without_cfg_still_works():
