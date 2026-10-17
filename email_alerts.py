@@ -204,7 +204,9 @@ _HOV_LINES_MAX = 10
 def hov_context_lines(parsed, cfg: dict) -> list[str]:
     """One line per well with a MEASURED reading at/above the urgent threshold
     (its highest such reading), labeled with its approved HOV ceiling or
-    "No approved ceiling on record". Additive context; pure."""
+    "Approved ceiling for <well> not in this monitor's roster" (accurate
+    whether or not an approval exists; owner wording 2026-10-17). Additive
+    context; pure."""
     threshold = (cfg.get("urgent") or {}).get("measured_temp_urgent_f", 145)
     by_well: dict = {}
     for m in getattr(parsed, "measurements", []) or []:
@@ -228,7 +230,8 @@ def hov_context_lines(parsed, cfg: dict) -> list[str]:
             continue
         ceiling = hov_ceiling_for(well, date, cfg)
         if ceiling is None:
-            lines.append(f"No approved ceiling on record for {well}. Measured: {_fmt_f(val)}.")
+            lines.append(f"Approved ceiling for {well} not in this monitor's roster. "
+                         f"Measured: {_fmt_f(val)}.")
         else:
             rel = "below ceiling" if val < ceiling else ("at ceiling" if val == ceiling
                                                          else "above ceiling")

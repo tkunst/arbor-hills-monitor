@@ -248,8 +248,8 @@ external users but no sensitive data). Public repo.
   to "Severity (as recorded): …" (an `[URGENT]` subject over a routine-severity
   body now says which path fired), plus HOV approved-ceiling context per
   alerted well from `hov_ceiling_for()` / `temperature_thresholds.hov_ceilings`
-  (exact well id, effective dates; seeded with AHW272R4 → 180°F only; "No
-  approved ceiling on record" otherwise). The ceiling is display-only: it
+  (exact well id, effective dates; seeded with AHW272R4 → 180°F only;
+  "Approved ceiling for <well> not in this monitor's roster" otherwise). The ceiling is display-only: it
   never changes whether an alert fires, and the 145°F threshold is unchanged.
 - `woi_router.py` — **ADR 005**: detects a WOI Status Report by content (the
   "Gas Extraction Report" header on any page, over the large-doc threshold —
