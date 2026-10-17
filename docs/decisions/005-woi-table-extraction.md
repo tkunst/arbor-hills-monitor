@@ -254,9 +254,8 @@ well as three lines: the as-found row, a comment line (e.g. "Opened Valve 1/2
 turn to 1 turn:"), and then the after-adjustment row under the SAME well and
 timestamp. The labeled back table (pp. 96–103) prints the literal `ADJ` token on
 that second row. The parser only looked for the token, so it recorded both rows
-as as-found. In this report 1,481 of 4,035 such pairs differ, and 30 wells' max
-temperature was overstated by 0.1–0.3°F (AHWW0533: 133.8 vs. 133.7). The site
-max was unchanged.
+as as-found. In this report 1,513 of the 4,082 pairs differ in at least one
+value (1,200 in temperature). See "Measured effect" below.
 
 **Rule.** Each gas table's header is checked for an `ADJ` label
 (`_ADJ_LABEL_RE`). If the header has one, rows are read as before: only the
@@ -293,5 +292,6 @@ measurements. In the 2026-10-08 report:
 - Emitted measurements dropped from 1,388 to 884. As-found ≥ 131°F temperature
   readings went from 452 to 284: 121 were after-adjustment rows and 47 were
   back-table twins that now merge. The 32 CO rows are unchanged.
-- 31 wells' max temperature fell by 0.1–0.7°F. The site peak (158.3°F) is
-  unchanged.
+- 31 wells' max temperature fell by 0.1–0.7°F (e.g. AHWW0533 133.8 → 133.7,
+  AHEW0006 101.5 → 100.8); their summary's O2/CH4-at-max-temp follow the new
+  max reading. No well's max O2 changed. The site peak (158.3°F) is unchanged.
