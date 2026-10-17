@@ -343,21 +343,22 @@ def _reference_values_f(cfg: dict) -> set:
     return {float(v) for v in vals if v is not None}
 
 
-def summary_contradicts_routed(summary: str, routed: dict, cfg: dict) -> list:
-    """°F values in `summary` that no reading in the routed report supports:
+def text_contradicts_routed(text: str, routed: dict, cfg: dict) -> list:
+    """°F values in `text` (a summary or key data point) that no reading in
+    the routed report supports:
     inside the wellhead band (watch_f .. max_plausible_wellhead_f), more than
     _SUMMARY_SLACK_F above the highest valid reading (as-found and ADJ), and
     not a regulatory/HOV reference value. Deliberately narrow: a rounded,
     averaged or prior-report figure at or below the peak passes. Pure."""
     readings = (routed or {}).get("readings") or []
     temps = [r.temp for r in readings if getattr(r, "temp", None) is not None]
-    if not summary or not temps:
+    if not text or not temps:
         return []
     peak = max(temps)
     lo, hi = _watch_f(cfg), _max_plausible_f(cfg)
     refs = _reference_values_f(cfg)
     out = []
-    for m in _SUMMARY_TEMP_RE.finditer(summary):
+    for m in _SUMMARY_TEMP_RE.finditer(text):
         v = float(m.group(1).replace(",", ""))
         if lo <= v <= hi and v > peak + _SUMMARY_SLACK_F and v not in refs and v not in out:
             out.append(v)
@@ -365,18 +366,65 @@ def summary_contradicts_routed(summary: str, routed: dict, cfg: dict) -> list:
 
 
 def apply_deterministic_headline(parsed, routed: dict, cfg: dict) -> None:
-    """For a routed report: set parsed.key_data_point from the table parse,
-    and withhold parsed.summary if it states a temperature the tables don't
-    support. Called by doc_pipeline right after route_measurements() and
-    BEFORE the Sheet row is written, so the row, the alert, the digest and the
-    _state payload all carry the corrected text."""
-    kdp = build_key_data_point(routed, parsed, cfg)
-    if kdp:
-        if kdp != parsed.key_data_point:
+    """For a routed report: replace parsed.key_data_point with the table-
+    derived headline when the model's states a temperature the tables don't
+    support (or is empty), and withhold parsed.summary on the same test. A
+    headline that isn't about temperature (a deadline or an enforcement action
+    in a Consent Judgment compilation) is kept (owner ruling, 2026-10-17).
+    Called by doc_pipeline right after route_measurements() and BEFORE the
+    Sheet row is written, so the row, the alert, the digest and the _state
+    payload all carry the corrected text."""
+    current = getattr(parsed, "key_data_point", "") or ""
+    bad_kdp = text_contradicts_routed(current, routed, cfg)
+    if bad_kdp or not current.strip():
+        kdp = build_key_data_point(routed, parsed, cfg)
+        if kdp:
             print(f"[woi_router] key data point replaced by the table-derived headline: {kdp}")
-        parsed.key_data_point = kdp
-    bad = summary_contradicts_routed(getattr(parsed, "summary", "") or "", routed, cfg)
+            parsed.key_data_point = kdp
+    bad = text_contradicts_routed(getattr(parsed, "summary", "") or "", routed, cfg)
     if bad:
         print(f"[woi_router] summary withheld: states {', '.join(f'{v:g}F' for v in bad)}, "
               f"above every reading in the Gas Extraction tables")
         parsed.summary = WITHHELD_WOI_SUMMARY
+
+
+def _peak_measured_f(parsed, max_f: float) -> Optional[float]:
+    """Highest MEASURED temperature (deg F, at or below the plausibility
+    ceiling) in parsed.measurements, unrounded, as the urgency floor reads it."""
+    best = None
+    for m in getattr(parsed, "measurements", None) or []:
+        if not isinstance(m, dict) or m.get("metric") != "temperature" \
+                or m.get("basis") != "measured":
+            continue
+        try:
+            v = float(m.get("value"))
+        except (TypeError, ValueError):
+            continue
+        if str(m.get("unit") or "F").strip().lower().startswith("c"):
+            v = v * 9 / 5 + 32
+        if v <= max_f:
+            best = v if best is None else max(best, v)
+    return best
+
+
+def recheck_severity_floor(parsed, routed: dict, cfg: dict) -> None:
+    """Undo parse_document's urgency floor when it fired ONLY on a measured
+    reading the table parse has since replaced (owner ruling, 2026-10-17: the
+    2026-10-08 shape, a fabricated 202F that floored severity to urgent).
+    Severity goes back to what the floor replaced. Kept as-is when the model
+    itself said urgent, when the floor also fired on a text/title signal, or
+    when a table reading at/above the MACT value survives (is_urgent's
+    measured branch then fires on that real reading anyway). Pure."""
+    if getattr(parsed, "severity", None) != "urgent":
+        return
+    if list(getattr(parsed, "severity_floor", None) or []) != ["measured_temperature"]:
+        return
+    threshold = float((cfg.get("urgent") or {}).get("measured_temp_urgent_f", 145))
+    peak = _peak_measured_f(parsed, _max_plausible_f(cfg))
+    if peak is not None and peak >= threshold:
+        return
+    before = getattr(parsed, "severity_before_floor", "") or "notable"
+    print(f"[woi_router] severity {parsed.severity!r} -> {before!r}: the urgency floor "
+          f"fired only on a measured reading the Gas Extraction tables don't hold "
+          f"(table peak {peak if peak is not None else 'none'}F < {threshold:g}F)")
+    parsed.severity = before

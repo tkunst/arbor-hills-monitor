@@ -236,6 +236,13 @@ class ParsedDoc:
     # them (here: the Compliance Deadlines tab). Empty list when the doc imposes
     # no dated obligation.
     deadlines: list[dict] = field(default_factory=list)
+    # Why the deterministic urgency floor raised severity to "urgent", if it
+    # did: any of "measured_temperature" (a measured reading >= MACT) and
+    # "text_signal" (an SSO/CO-spike/smoldering page tag or an enforcement
+    # title). Empty when the model said urgent itself or the floor didn't
+    # fire. `severity_before_floor` is the severity the floor replaced.
+    severity_floor: list[str] = field(default_factory=list)
+    severity_before_floor: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -1059,6 +1066,12 @@ def parse_document(
     # parameter to stay domain-agnostic (see module docstring); the text-based
     # check degrades to a no-op (not an error) for a caller with no
     # risk_register.py of its own.
+    # Recorded so a caller that later replaces the measurements (Arbor Hills'
+    # woi_router) can tell a floor that fired ONLY on a measured reading from
+    # one that fired on text/title, and undo the former if that reading is
+    # gone (coder:keydatapoint-guard, owner ruling 2026-10-17).
+    severity_floor: list[str] = []
+    severity_before_floor = ""
     if fields.get("severity") != "urgent":
         import kdp_check as _kdp
         _ref = temperature_reference or _kdp.default_reference()
@@ -1084,6 +1097,9 @@ def parse_document(
             log.warning(
                 "severity floored to urgent (%s): %s", metadata.get("document_name", "?"),
                 "measured temperature" if _temp_floor_hit else "deterministic text/title signal")
+            severity_before_floor = fields.get("severity") or ""
+            severity_floor = ((["measured_temperature"] if _temp_floor_hit else [])
+                              + (["text_signal"] if _text_floor_hit else []))
             fields = dict(fields)
             fields["severity"] = "urgent"
 
@@ -1133,4 +1149,6 @@ def parse_document(
         document_date=document_date,
         document_date_method=document_date_method,
         display_title=display_title,
+        severity_floor=severity_floor,
+        severity_before_floor=severity_before_floor,
     )

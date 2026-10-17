@@ -85,7 +85,10 @@ external users but no sensitive data). Public repo.
   (`risk_register.hard_urgency_signal`, scanned page by page), or an
   enforcement-action title (`risk_register.enforcement_title_signal`: Violation
   Notice / NOV / VN (#n) / Enforcement Notice / (Administrative) Consent Order,
-  not correspondence, responses or reports). "Subsurface oxidation" and a bare
+  not correspondence, responses or reports). The floor records why it fired on
+  `ParsedDoc.severity_floor` (`measured_temperature` / `text_signal`) and the
+  severity it replaced on `severity_before_floor` (coder:keydatapoint-guard),
+  so `woi_router` can undo a temperature-only floor the table parse refutes. "Subsurface oxidation" and a bare
   "SSO" are deliberately NOT triggers (WOI-report boilerplate).
   `_SEVERITY_HELP` makes an enforcement action by ANY authority (EPA, EGLE,
   county, YCUA/WTUA/township) urgent when the document IS the action.
@@ -255,13 +258,23 @@ external users but no sensitive data). Public repo.
   `is_urgent`/`write_document` (data-loss guard: fewer than 50 valid readings
   → not routed; peak-temp preservation; above-ceiling readings held out and
   flagged, ADR 067 amendment). **Headline (coder:keydatapoint-guard,
-  2026-10-17):** for a routed report, `apply_deterministic_headline()` sets
-  `key_data_point` from the hottest well in the table parse
-  (`build_key_data_point()`) and withholds a `summary` that states a
-  wellhead-range °F value more than 1°F above every reading
-  (`summary_contradicts_routed()`; HOV/regulatory reference values exempt).
-  `doc_pipeline` calls it right after routing and BEFORE the Sheet row is
-  written, so the row, alert, digest and `_state` payload all carry it. This
+  2026-10-17):** for a routed report, `apply_deterministic_headline()`
+  replaces `key_data_point` with the hottest well in the table parse
+  (`build_key_data_point()`) only when the model's states a wellhead-range °F
+  value more than 1°F above every reading (or is empty), and withholds a
+  `summary` on the same test (`text_contradicts_routed()`; HOV/regulatory
+  reference values exempt). A headline that isn't about temperature (a
+  Consent Judgment compilation's deadline or enforcement line) is kept (owner
+  ruling 2026-10-17). `recheck_severity_floor()` undoes `parse_document`'s
+  urgency floor when it fired ONLY on a measured reading (its new
+  `ParsedDoc.severity_floor == ["measured_temperature"]`) and no table reading
+  at/above the MACT value survives: severity returns to
+  `severity_before_floor`, so an invented 202°F the tables discard no longer
+  fires `[URGENT]` (owner ruling 2026-10-17, a deliberate firing change for
+  this case only). The model's own urgent, a text/title floor and a real
+  surviving ≥145°F reading all still fire. `doc_pipeline` calls both right
+  after routing and BEFORE the Sheet row is written, so the row, alert,
+  digest and `_state` payload all carry them (each best-effort). This
   is the second layer after `kdp_check` (ADR 067): kdp_check catches an
   implausible number in the model's text; this catches a plausible-looking
   number (the 2026-10-08 "202°F", a Depth to Bottom sounding in feet) the

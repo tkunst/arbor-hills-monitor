@@ -11,7 +11,8 @@ steps now live here once; a `Job` says only where the two jobs differ:
   download -> parse_document -> ADR 065 title/date chokepoint ->
   archiver.mirror_one_now() (inline, best-effort) ->
   related-scope doc: Related Documents row, then state, done ->
-  WOI routing (best-effort) -> routed: table-derived headline (best-effort) ->
+  WOI routing (best-effort) -> routed: table-derived headline + urgency-floor
+  recheck (best-effort) ->
   [backfill FORCE: purge stale rows] ->
   Sheet row -> [watcher: compliance deadlines] -> WOI summary tab ->
   [watcher: well_watch] -> [watcher: urgent/digest] -> review flags ->
@@ -170,11 +171,17 @@ def process_one_doc(ctx: RunContext, state: dict, d: dict, job: Job, local: str,
         # the classifier's windowed read (the 2026-10-08 "202F" bug). It must
         # run BEFORE write_document so the public Sheet row carries it too.
         # Best-effort: a bug here keeps the model's text, never a strike.
+        # The same goes for an urgency floor that fired only on a reading the
+        # tables replaced (owner ruling 2026-10-17).
         if routed is not None:
             try:
                 woi_router.apply_deterministic_headline(parsed, routed, ctx.cfg)
             except Exception as he:  # noqa: BLE001 — keep the classifier's text
                 print(f"  WOI headline rebuild failed, keeping classifier text: {he}")
+            try:
+                woi_router.recheck_severity_floor(parsed, routed, ctx.cfg)
+            except Exception as se:  # noqa: BLE001 — keep the recorded severity
+                print(f"  WOI severity recheck failed, keeping recorded severity: {se}")
 
         # FORCE_REPROCESS (apply): remove this doc's stale rows BEFORE writing
         # the fresh ones, only after a successful download+parse+route.

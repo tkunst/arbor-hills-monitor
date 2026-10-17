@@ -24,10 +24,14 @@ FABRICATED_SUMMARY = ("The report shows AHW331 at 202°F, well above the MACT li
                       "Several wells remain on the WOI list.")
 
 
-def _parsed(kdp=FABRICATED_KDP, summary=FABRICATED_SUMMARY, severity="routine"):
+def _parsed(kdp=FABRICATED_KDP, summary=FABRICATED_SUMMARY, severity="routine",
+            measurements=None, severity_floor=None, severity_before_floor=""):
     return SimpleNamespace(doc_type="evidence", severity=severity, risks=["R8"],
-                           display_title="", document_date="", measurements=[],
-                           deadlines=[], key_data_point=kdp, summary=summary, full_text="")
+                           display_title="", document_date="",
+                           measurements=list(measurements or []), deadlines=[],
+                           key_data_point=kdp, summary=summary, full_text="",
+                           severity_floor=list(severity_floor or []),
+                           severity_before_floor=severity_before_floor)
 
 
 def _page59_pdf(tmp_path):
@@ -69,6 +73,28 @@ def test_woi_routed_key_data_point_uses_deterministic_temp(tmp_path):
     assert "202°F" not in parsed.key_data_point
     assert parsed.key_data_point == (
         "AHWW312R: max measured 158.3°F (2025-03-14, Gas Extraction Report).")
+
+
+@pytest.mark.parametrize("kdp", [
+    # Owner ruling 2026-10-17: a headline that isn't about temperature (a
+    # Consent Judgment compilation's deadline or enforcement line) is kept.
+    "Consent Judgment quarterly report; corrective-action deadline 2026-11-01.",
+    "EGLE issued a Violation Notice for the gas collection system.",
+    # A temperature the tables DO support is kept too.
+    "AHWW312R reached 158°F, above the 145°F MACT limit.",
+])
+def test_headline_kept_when_not_contradicting_the_tables(tmp_path, kdp):
+    parsed = _parsed(kdp=kdp, summary="ok")
+    routed = woi_router.route_measurements(parsed, _page59_pdf(tmp_path), META, CFG)
+    woi_router.apply_deterministic_headline(parsed, routed, CFG)
+    assert parsed.key_data_point == kdp
+
+
+def test_empty_headline_is_filled_from_the_tables(tmp_path):
+    parsed = _parsed(kdp="", summary="ok")
+    routed = woi_router.route_measurements(parsed, _page59_pdf(tmp_path), META, CFG)
+    woi_router.apply_deterministic_headline(parsed, routed, CFG)
+    assert parsed.key_data_point.startswith("AHWW312R: max measured 158.3°F")
 
 
 # --- pipeline level: the Sheet row, not just the email -----------------------
@@ -143,6 +169,74 @@ def test_headline_failure_keeps_model_text_and_never_strikes(pipeline, tmp_path,
     assert state["errors"] == {} and pipeline == [("model text", "model summary")]
 
 
+# --- urgency floor recheck (owner ruling 2026-10-17) -------------------------
+
+FAKE_202 = {"metric": "temperature", "value": 202, "unit": "F", "basis": "measured",
+            "well_id": "AHW331", "as_of_date": "2025-03-14"}
+
+
+def _run_alerting(tmp_path, pipeline, parsed, reads):
+    """process_one_doc with the real is_urgent as the alert decision."""
+    pdf = _build_pdf(tmp_path / "woi.pdf", reads)
+    fired = []
+    ctx = _ctx(parsed, pdf)
+    job = dp.Job(name="watcher", feed_tab=sw.TAB_NEW, payload=lambda p, d: {},
+                 alert=lambda p, d, link: fired.append((p.severity, ea.is_urgent(p, ctx.cfg))))
+    local = tmp_path / "local.pdf"
+    local.write_bytes((tmp_path / "woi.pdf").read_bytes())
+    state = {"processed": {}, "errors": {}, "skipped": {}}
+    assert dp.process_one_doc(ctx, state, _doc(), job, str(local)) == "processed"
+    return fired[0]
+
+
+def test_invented_reading_the_tables_discard_does_not_fire_urgent(pipeline, tmp_path):
+    # The 2026-10-08 shape: the classifier's fabricated measured 202F floored
+    # severity to urgent; the tables' real peak is 140F. No [URGENT].
+    parsed = _parsed(severity="urgent", measurements=[FAKE_202],
+                     severity_floor=["measured_temperature"], severity_before_floor="notable")
+    assert ea.is_urgent(parsed, CFG) is True                      # before routing: fires
+    severity, urgent = _run_alerting(tmp_path, pipeline, parsed,
+                                     _many(54, temp=90) + [("AHWW312R", 140.0)])
+    assert (severity, urgent) == ("notable", False)
+
+
+def test_real_reading_at_or_above_145_still_fires_urgent(pipeline, tmp_path):
+    parsed = _parsed(severity="urgent", measurements=[FAKE_202],
+                     severity_floor=["measured_temperature"], severity_before_floor="notable")
+    severity, urgent = _run_alerting(tmp_path, pipeline, parsed,
+                                     _many(54, temp=90) + [("AHWW312R", 158.3)])
+    assert (severity, urgent) == ("urgent", True)
+
+
+@pytest.mark.parametrize("floor", [["text_signal"], ["measured_temperature", "text_signal"], []])
+def test_other_urgent_sources_are_untouched(pipeline, tmp_path, floor):
+    # An SSO/CO-spike/enforcement-title floor, or the classifier's own urgent
+    # (no floor recorded), still fires even when the tables are cool.
+    parsed = _parsed(severity="urgent", measurements=[FAKE_202], severity_floor=floor,
+                     severity_before_floor="routine" if floor else "")
+    severity, urgent = _run_alerting(tmp_path, pipeline, parsed,
+                                     _many(54, temp=90) + [("AHWW312R", 140.0)])
+    assert (severity, urgent) == ("urgent", True)
+
+
+def test_severity_recheck_failure_keeps_severity_and_never_strikes(pipeline, tmp_path,
+                                                                    monkeypatch):
+    monkeypatch.setattr(dp.woi_router, "recheck_severity_floor",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bug")))
+    parsed = _parsed(severity="urgent", measurements=[FAKE_202],
+                     severity_floor=["measured_temperature"], severity_before_floor="notable")
+    severity, urgent = _run_alerting(tmp_path, pipeline, parsed,
+                                     _many(54, temp=90) + [("AHWW312R", 140.0)])
+    assert severity == "urgent"
+
+
+def test_parse_document_records_why_the_floor_fired():
+    import egle_doc_parser as edp
+    p = edp.ParsedDoc(summary="", key_data_point="", doc_type="evidence", risks=[],
+                      severity="routine", full_text="", ocr_applied=False, page_count=1)
+    assert p.severity_floor == [] and p.severity_before_floor == ""
+
+
 # --- summary guard: narrow on purpose ----------------------------------------
 
 def _routed(temps):
@@ -166,19 +260,19 @@ _GUARD_CFG = {**CFG, "temperature_thresholds": {
     "AHWW312R peaked at 158.3 degrees Fahrenheit.",
 ])
 def test_summary_guard_keeps_consistent_summaries(summary):
-    assert woi_router.summary_contradicts_routed(summary, _routed([158.3, 150.0, 90]),
+    assert woi_router.text_contradicts_routed(summary, _routed([158.3, 150.0, 90]),
                                                  _GUARD_CFG) == []
 
 
 def test_summary_guard_flags_a_value_above_every_reading():
-    assert woi_router.summary_contradicts_routed(
+    assert woi_router.text_contradicts_routed(
         FABRICATED_SUMMARY, _routed([158.3, 150.0, 90]), _GUARD_CFG) == [202.0]
 
 
 @pytest.mark.parametrize("summary", ["AHW331 hit 202 degrees Fahrenheit.", "AHW331 hit 202º F.",
                                      "AHW331 hit 202˚F.", "AHW331 hit 202 deg F."])
 def test_summary_guard_reads_other_degree_spellings(summary):
-    assert woi_router.summary_contradicts_routed(
+    assert woi_router.text_contradicts_routed(
         summary, _routed([158.3]), _GUARD_CFG) == [202.0]
 
 
