@@ -187,16 +187,35 @@ def is_suspicious_shrink(previous_total: int | None, new_total: int) -> bool:
     return previous_total is not None and previous_total > 0 and new_total < previous_total * SHRINK_GUARD_RATIO
 
 
-def parse_feed_rows(raw_rows: list[list]) -> list[dict]:
+def _future_date(value: str, today: _date) -> bool:
+    """True iff `value` starts with an ISO date later than `today`. A
+    malformed or partial value is not judged here (False)."""
+    try:
+        return _date.fromisoformat((value or "")[:10]) > today
+    except ValueError:
+        return False
+
+
+def parse_feed_rows(raw_rows: list[list], today: _date | None = None) -> list[dict]:
     """Zip FEED_HEADERS-shaped Sheet rows into dicts. Pads a short row (a
     trailing blank cell is sometimes not written at all) and ignores any
-    extra columns, so a header drift on either side doesn't crash this."""
+    extra columns, so a header drift on either side doesn't crash this.
+
+    A Document Date later than `today` (the build date) is an error, not a
+    date (owner rule 2026-10-17; e.g. a permit expiration read as 2031-10-13),
+    so it is blanked here and the row falls back to Date Filed everywhere the
+    page shows a date. This repairs rows already in the Sheet without
+    rewriting them; egle_doc_parser applies the same rule to new rows."""
+    today = today or _date.today()
     out = []
     for r in raw_rows:
         if not r:
             continue
         padded = list(r) + [""] * (len(FEED_FIELDS) - len(r))
-        out.append(dict(zip(FEED_FIELDS, padded)))
+        row = dict(zip(FEED_FIELDS, padded))
+        if _future_date(row.get("document_date", ""), today):
+            row["document_date"] = ""
+        out.append(row)
     return out
 
 

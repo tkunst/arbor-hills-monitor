@@ -57,7 +57,8 @@ import drive_client as dc  # noqa: E402
 import document_titles as dt  # noqa: E402
 import nsite_client as nc  # noqa: E402
 import sheet_writer as sw  # noqa: E402
-from egle_doc_parser import extract_document_date_from_text, parse_document  # noqa: E402
+from egle_doc_parser import (  # noqa: E402
+    FUTURE_DATE_REJECTED, extract_document_date_from_text, parse_document)
 from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS  # noqa: E402
 from config_loader import load_config  # noqa: E402
 
@@ -224,7 +225,10 @@ def run(out_dir: str, pdf_dir: str | None, limit: int | None,
 
         det_date, det_method = extract_document_date_from_text(pages)
 
-        needs_llm = is_generic or not det_date
+        # A future date is an error (owner rule 2026-10-17): the date stays
+        # blank and the model is not asked for one (a generic title still is,
+        # and parse_document applies the same rule to the date).
+        needs_llm = is_generic or (not det_date and det_method != FUTURE_DATE_REJECTED)
         if needs_llm and run_llm:
             llm_candidates.append((live, payload, is_generic))
             continue  # Phase 2 fills this row in below
