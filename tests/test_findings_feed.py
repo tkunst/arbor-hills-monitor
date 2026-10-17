@@ -656,7 +656,10 @@ def test_parse_handcurated_rows_maps_all_nine_feed_fields():
     # The 9 FEED_FIELDS keys the auto tabs produce, plus `source` -- the one
     # field Hand-Curated carries that the auto tabs have no equivalent for.
     assert set(row.keys()) == set(ff.FEED_FIELDS) | {"source"}
-    assert row["date_filed"] == "2026-08-21"
+    # Owner decision 2026-10-17: the entry date (added_at) is the hand-curated
+    # Date Filed; doc_date is the Document Date.
+    assert row["date_filed"] == "2026-09-02"
+    assert row["document_date"] == "2026-08-21"
     assert row["document_name"] == "GFL 120-day GCCS extension request"
     assert row["type"] == "procedural"
     assert row["risks"] == "R4, R8"
@@ -1145,3 +1148,21 @@ def test_hand_curated_rows_interleave_by_their_date_and_dateless_sort_last():
         ff.merge_and_sort([_row(date="2026-10-13", name="auto", document_date="2019-10-01")], []),
         [hc_blank, hc_dated])
     assert [r["document_name"] for r in rows] == ["curated 2021", "auto", "curated undated"]
+
+
+def test_handcurated_entry_date_is_its_filed_date_for_every_rule():
+    from datetime import date
+    today = date(2026, 10, 17)
+    undated = _hc_row(doc_date="", title="Undated", added_at="2026-09-10T08:00:00")
+    future = _hc_row(doc_date="2031-01-01", title="Future", added_at="2026-09-05T08:00:00")
+    rows = ff.parse_handcurated_rows([undated, future], today=today)
+    # No doc_date: the row orders and displays by its entry date, not last.
+    assert rows[0]["document_date"] == "" and ff.display_date(rows[0]) == "2026-09-10"
+    # A future doc_date is blanked like any other Document Date.
+    assert rows[1]["document_date"] == "" and ff.display_date(rows[1]) == "2026-09-05"
+    # The "(filed ...)" annotation applies to the entry date too.
+    old = ff.parse_handcurated_rows([_hc_row(doc_date="2019-04-02")], today=today)[0]
+    assert ff.display_date(old) == "2019-04-02 (filed 2026-09-02)"
+    combined = ff.merge_handcurated(
+        ff.merge_and_sort([_row(date="2026-09-07", name="Auto")], []), [undated])
+    assert [r["document_name"] for r in combined] == ["Undated", "Auto"]
