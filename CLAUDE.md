@@ -263,7 +263,8 @@ external users but no sensitive data). Public repo.
   (`build_key_data_point()`) only when the model's headline states a wellhead-range °F
   value more than 1°F above every reading (or is empty), and withholds a
   `summary` on the same test (`text_contradicts_routed()`; HOV/regulatory
-  reference values exempt). A headline that isn't about temperature (a
+  reference values are exempt in the summary only, never in the headline —
+  owner ruling 2026-10-17). A headline that isn't about temperature (a
   Consent Judgment compilation's deadline or enforcement line) is kept (owner
   ruling 2026-10-17). `recheck_severity_floor()` undoes `parse_document`'s
   urgency floor when it fired ONLY on a measured reading (its new
