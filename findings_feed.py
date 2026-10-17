@@ -219,24 +219,36 @@ def parse_feed_rows(raw_rows: list[list], today: _date | None = None) -> list[di
     return out
 
 
+def _sort_key(row: dict) -> str:
+    """The date a row is ordered by: its Document Date (the date printed on
+    the document, ADR 065), falling back to Date Filed when that's blank.
+    Hand-Curated rows carry their one human-entered date as date_filed, so
+    they order by it the same way. A row with neither sorts last."""
+    return row.get("document_date") or row.get("date_filed") or ""
+
+
 def _sort_newest_first(rows: list[dict]) -> list[dict]:
-    """Newest Date Filed first. Date Filed is normally ISO (YYYY-MM-DD); a
-    handful of Hand-Curated Files rows only know a partial ISO-prefixed date
-    (e.g. "2022-03") -- a plain string sort still orders those correctly
-    relative to full dates (a shorter string that's a prefix of a longer one
-    sorts before it in Python), and never raises regardless of format. A
-    NON-ISO date_filed (e.g. "3/15/2021"), were one ever entered, would sort
-    by lexicographic accident rather than raise -- silently misplaced, not
+    """Newest Document Date first, falling back to Date Filed (_sort_key;
+    owner ruling 2026-10-17 -- this used to be Date Filed only, so an old
+    report EGLE filed today sat on page 1 and a hand-curated letter sat in
+    its own year). Dates are normally ISO (YYYY-MM-DD); a handful of
+    Hand-Curated Files rows only know a partial ISO-prefixed date (e.g.
+    "2022-03") -- a plain string sort still orders those correctly relative
+    to full dates (a shorter string that's a prefix of a longer one sorts
+    before it in Python), and never raises regardless of format. A NON-ISO
+    date (e.g. "3/15/2021"), were one ever entered, would sort by
+    lexicographic accident rather than raise -- silently misplaced, not
     crashed. Hand-Curated Files has no format validation on doc_date today
     (a manually-populated column, unlike the auto tabs' pipeline-guaranteed
-    ISO dates); all real rows as of this writing are ISO-prefixed. Python's
-    sort is stable, so rows sharing an identical date_filed keep their
-    relative input order."""
-    return sorted(rows, key=lambda r: r["date_filed"], reverse=True)
+    ISO dates); all real rows as of this writing are ISO-prefixed. A future
+    Document Date never reaches here (parse_feed_rows blanks it). Python's
+    sort is stable, so rows sharing an identical date keep their relative
+    input order."""
+    return sorted(rows, key=_sort_key, reverse=True)
 
 
 def merge_and_sort(new_rows: list[list], historical_rows: list[list]) -> list[dict]:
-    """New Documents + Historical Documents, newest Date Filed first."""
+    """New Documents + Historical Documents, newest Document Date first."""
     return _sort_newest_first(parse_feed_rows(new_rows) + parse_feed_rows(historical_rows))
 
 
@@ -428,9 +440,8 @@ def display_date(row: dict) -> str:
     differ by more than _FILED_GAP_DAYS, appends "(filed <date_filed>)" so
     the EGLE-filing lag is visible without making it the headline date; a gap
     of 7 days or less is close enough that the plain document_date alone is
-    sufficient. Browse-list ORDER is deliberately untouched by this (still
-    date_filed via _sort_newest_first) — a doc with an old document_date must
-    still land on the newest-first page it was actually filed on."""
+    sufficient. The browse list is ordered by the same date
+    (_sort_newest_first, owner ruling 2026-10-17)."""
     date_filed = row.get("date_filed") or ""
     document_date = row.get("document_date") or ""
     if not document_date:
