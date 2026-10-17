@@ -1914,13 +1914,45 @@ temperature_thresholds:
   # Per-well approved HOV ceilings, for CONTEXT in the [URGENT] email body only
   # (email_alerts.hov_ceiling_for, coder:keydatapoint-guard). Never a trigger
   # or a suppressor: every measured reading at/above measured_temp_urgent_f
-  # alerts regardless. Exact well id (a redrill is a different well). Seeded
-  # with the one pairing already established above; the full roster lives
-  # outside this repo and is added by hand from the HOV letters. A well with no
-  # entry is labeled "Approved ceiling for <well> not in this monitor's roster"
-  # (not "no approval": the roster here is incomplete, owner wording 2026-10-17).
+  # alerts regardless. Exact well id (a redrill is a different well); ids are
+  # the canonical spellings the ADR 068 alias map produces. Filled 2026-10-17
+  # from the five EGLE AQD letters in hand (Lotext source-docs/hov-etlf/):
+  # 4/30/2024 15-well renewal (to 5/1/2026), 7/10/2024 four replacement wells,
+  # 2/19/2025 AHW272R4, 7/23/2025 AHW263R5, 4/7/2026 16-well renewal (to
+  # 5/1/2028). Each window starts at the earliest letter granting that exact
+  # id. The 2019-2023 grant letters were never pulled, so a reading dated
+  # before 2024-04-30 matches no entry. A well with no matching entry is
+  # labeled "Approved ceiling for <well> not in this monitor's roster"
+  # (not "no approval exists"). Add a row when a new HOV letter arrives.
   hov_ceilings:
-    - {well_id: AHW272R4, ceiling_f: 180, effective_start: "2025-02-19", effective_end: null}
+    # 4/7/2026 renewal (Table 1), continuous with the 2024/2025 grants at the same value.
+    - {well_id: AHWW258R, ceiling_f: 150, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHW259R5, ceiling_f: 170, effective_start: "2024-07-10", effective_end: "2028-05-01"}
+    - {well_id: AHW272R4, ceiling_f: 180, effective_start: "2025-02-19", effective_end: "2028-05-01"}
+    - {well_id: AHWW0279, ceiling_f: 160, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHW285R3, ceiling_f: 170, effective_start: "2024-07-10", effective_end: "2028-05-01"}
+    - {well_id: AHWW287R, ceiling_f: 150, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHWW290R, ceiling_f: 170, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHWW0300, ceiling_f: 160, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHWW301R, ceiling_f: 160, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHWW302R, ceiling_f: 160, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHW311R2, ceiling_f: 150, effective_start: "2024-07-10", effective_end: "2028-05-01"}
+    - {well_id: AHW312R2, ceiling_f: 160, effective_start: "2024-07-10", effective_end: "2028-05-01"}
+    - {well_id: AHWW0313, ceiling_f: 160, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHWW0315, ceiling_f: 150, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHWWTS01, ceiling_f: 150, effective_start: "2024-04-30", effective_end: "2028-05-01"}  # leachate sump
+    - {well_id: AHWTS01R, ceiling_f: 150, effective_start: "2024-04-30", effective_end: "2028-05-01"}  # leachate sump
+    # 4/30/2024 grant only; replaced by the R-redrills above (7/10/2024). End
+    # is that grant's stated term; no letter revoked them.
+    - {well_id: AHW259R4, ceiling_f: 170, effective_start: "2024-04-30", effective_end: "2026-05-01"}
+    - {well_id: AHW285R2, ceiling_f: 170, effective_start: "2024-04-30", effective_end: "2026-05-01"}
+    - {well_id: AHWW311R, ceiling_f: 150, effective_start: "2024-04-30", effective_end: "2026-05-01"}
+    - {well_id: AHWW312R, ceiling_f: 160, effective_start: "2024-04-30", effective_end: "2026-05-01"}
+    # 7/23/2025 grant states no end date, but the well is not in the 4/7/2026
+    # renewal, which says the existing waivers lapse 5/1/2026. The end date
+    # below is the last date the waiver is CONFIRMED in force, not a lapse any
+    # letter states (Trisha 2026-10-17). Update if EGLE confirms its status.
+    - {well_id: AHW263R5, ceiling_f: 170, effective_start: "2025-07-23", effective_end: "2026-05-01"}
   # Above this, a "°F" number in a sentence about wells is treated as a
   # misread column (e.g. H2S ppm), never a wellhead temperature. Flare and
   # combustion sentences are exempt (kdp_check.py). Such a number never fires
