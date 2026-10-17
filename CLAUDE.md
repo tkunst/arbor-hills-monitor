@@ -260,7 +260,7 @@ external users but no sensitive data). Public repo.
   flagged, ADR 067 amendment). **Headline (coder:keydatapoint-guard,
   2026-10-17):** for a routed report, `apply_deterministic_headline()`
   replaces `key_data_point` with the hottest well in the table parse
-  (`build_key_data_point()`) only when the model's states a wellhead-range °F
+  (`build_key_data_point()`) only when the model's headline states a wellhead-range °F
   value more than 1°F above every reading (or is empty), and withholds a
   `summary` on the same test (`text_contradicts_routed()`; HOV/regulatory
   reference values exempt). A headline that isn't about temperature (a
