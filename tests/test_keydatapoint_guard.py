@@ -219,6 +219,39 @@ def test_other_urgent_sources_are_untouched(pipeline, tmp_path, floor):
     assert (severity, urgent) == ("urgent", True)
 
 
+def _floored(peak_f, before="notable"):
+    return SimpleNamespace(severity="urgent", severity_floor=["measured_temperature"],
+                           severity_before_floor=before,
+                           measurements=[{"metric": "temperature", "value": peak_f, "unit": "F",
+                                          "basis": "measured"}])
+
+
+def test_recheck_keeps_urgent_when_the_peak_rounds_to_the_threshold():
+    # is_urgent fires on 144.6 (rounds to 145); the record must agree.
+    p = _floored(144.6)
+    woi_router.recheck_severity_floor(p, {}, CFG)
+    assert p.severity == "urgent" and ea.is_urgent(p, CFG) is True
+
+
+def test_recheck_keeps_urgent_when_thresholds_drift_apart():
+    # The floor fired at mact_f 145; is_urgent's threshold set to 150. A real
+    # 147F table reading still keeps the document urgent.
+    cfg = {**CFG, "urgent": {"measured_temp_urgent_f": 150},
+           "temperature_thresholds": {"mact_f": 145}}
+    p = _floored(147.0)
+    woi_router.recheck_severity_floor(p, {}, cfg)
+    assert p.severity == "urgent"
+
+
+def test_recheck_reverts_to_recorded_severity_or_notable():
+    p = _floored(140.0, before="routine")
+    woi_router.recheck_severity_floor(p, {}, CFG)
+    assert p.severity == "routine"
+    p = _floored(140.0, before="")
+    woi_router.recheck_severity_floor(p, {}, CFG)
+    assert p.severity == "notable"
+
+
 def test_severity_recheck_failure_keeps_severity_and_never_strikes(pipeline, tmp_path,
                                                                     monkeypatch):
     monkeypatch.setattr(dp.woi_router, "recheck_severity_floor",

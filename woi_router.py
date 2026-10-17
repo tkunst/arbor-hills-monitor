@@ -419,12 +419,18 @@ def recheck_severity_floor(parsed, routed: dict, cfg: dict) -> None:
         return
     if list(getattr(parsed, "severity_floor", None) or []) != ["measured_temperature"]:
         return
+    # Keep urgent if a surviving reading meets EITHER test: the floor's own
+    # (unrounded, >= mact_f) or is_urgent's (rounded, >= measured_temp_urgent_f).
+    # The two are one YAML anchor today; this keeps a real reading urgent if
+    # they ever drift, and keeps the recorded severity in step with an alert
+    # that fires on a value that only rounds up (144.6 -> 145).
     threshold = float((cfg.get("urgent") or {}).get("measured_temp_urgent_f", 145))
+    mact = float((cfg.get("temperature_thresholds") or {}).get("mact_f", threshold))
     peak = _peak_measured_f(parsed, _max_plausible_f(cfg))
-    if peak is not None and peak >= threshold:
+    if peak is not None and (peak >= mact or int(round(peak)) >= threshold):
         return
     before = getattr(parsed, "severity_before_floor", "") or "notable"
     print(f"[woi_router] severity {parsed.severity!r} -> {before!r}: the urgency floor "
           f"fired only on a measured reading the Gas Extraction tables don't hold "
-          f"(table peak {peak if peak is not None else 'none'}F < {threshold:g}F)")
+          f"(table peak {peak if peak is not None else 'none'}F < {min(mact, threshold):g}F)")
     parsed.severity = before
