@@ -1006,6 +1006,19 @@ answers "is it live right now."
 - **Don't inherit the old scraper's `doc_date == today` filter.** Backfill needs
   full history. (Already handled in `nsite_client`.)
 
+## Assumptions (never make these)
+
+- **Never assume a data point was read during the period in the report's
+  title.** Reports reprint older readings (back tables, historical trend
+  pages, carried-forward rows), so every reading's own date is the date that
+  counts, not the report's period or its filing date. Real example: the N2688
+  "HOV WOI Quarterly Status Report H1 2024" (nSITE doc `-6975595422894935530`,
+  filed 2026-10-08) has as its table-wide peak AHWW312R at 158.3°F dated
+  **2023-08-29**, a year before H1 2024. Anything that says "max", "latest",
+  "this period" or "current" (headlines, alerts, the digest, the Sheet) must
+  carry the reading's own date, and must not describe an out-of-period reading
+  as the period's value.
+
 ## Invariants
 
 - Write the Sheet row BEFORE the state entry (crash-safe; a kill between them
