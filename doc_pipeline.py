@@ -11,7 +11,8 @@ steps now live here once; a `Job` says only where the two jobs differ:
   download -> parse_document -> ADR 065 title/date chokepoint ->
   archiver.mirror_one_now() (inline, best-effort) ->
   related-scope doc: Related Documents row, then state, done ->
-  WOI routing (best-effort) -> [backfill FORCE: purge stale rows] ->
+  WOI routing (best-effort) -> routed: table-derived headline (best-effort) ->
+  [backfill FORCE: purge stale rows] ->
   Sheet row -> [watcher: compliance deadlines] -> WOI summary tab ->
   [watcher: well_watch] -> [watcher: urgent/digest] -> review flags ->
   'processed' state event LAST (Sheet row before state, ADR 006).
@@ -164,6 +165,16 @@ def process_one_doc(ctx: RunContext, state: dict, d: dict, job: Job, local: str,
         except Exception as we:  # noqa: BLE001 — degrade to the generic parse
             print(f"  WOI routing failed, using generic parse: {we}")
             routed = None
+
+        # A routed report's headline comes from the exhaustive table parse, not
+        # the classifier's windowed read (the 2026-10-08 "202F" bug). It must
+        # run BEFORE write_document so the public Sheet row carries it too.
+        # Best-effort: a bug here keeps the model's text, never a strike.
+        if routed is not None:
+            try:
+                woi_router.apply_deterministic_headline(parsed, routed, ctx.cfg)
+            except Exception as he:  # noqa: BLE001 — keep the classifier's text
+                print(f"  WOI headline rebuild failed, keeping classifier text: {he}")
 
         # FORCE_REPROCESS (apply): remove this doc's stale rows BEFORE writing
         # the fresh ones, only after a successful download+parse+route.

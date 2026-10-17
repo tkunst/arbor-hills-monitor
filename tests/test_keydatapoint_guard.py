@@ -1,0 +1,296 @@
+"""key_data_point guard + urgency_reason + HOV ceiling context
+(coder:keydatapoint-guard, docs/overnight-coder-handoffs/keydatapoint-guard.md).
+
+The 2026-10-08 bug: an [URGENT] email and the public Sheet row for an N2688 WOI
+Status Report said a well read 202F. The 202 was a Depth to Bottom sounding (feet)
+on a page the classifier saw without its column-header page. woi_router had
+already replaced the measurements with the exhaustive, validated table parse, but
+the headline (key_data_point) was still the model's windowed text. These tests pin
+the fix: for a routed report the headline comes from woi_router's own data, the
+Sheet row carries it, and the urgent body says why it fired. Hermetic: synthetic
+PDFs built in-process (tests/test_woi_router.py's builder), no network."""
+from types import SimpleNamespace
+
+import pytest
+
+import doc_pipeline as dp
+import email_alerts as ea
+import sheet_writer as sw
+import woi_router
+from tests.test_woi_router import CFG, META, _build_pdf, _many
+
+FABRICATED_KDP = "Well AHW331 recorded 202°F, far above the 145°F MACT limit."
+FABRICATED_SUMMARY = ("The report shows AHW331 at 202°F, well above the MACT limit. "
+                      "Several wells remain on the WOI list.")
+
+
+def _parsed(kdp=FABRICATED_KDP, summary=FABRICATED_SUMMARY, severity="routine"):
+    return SimpleNamespace(doc_type="evidence", severity=severity, risks=["R8"],
+                           display_title="", document_date="", measurements=[],
+                           deadlines=[], key_data_point=kdp, summary=summary, full_text="")
+
+
+def _page59_pdf(tmp_path):
+    """The real bug shape. The report's own gas table (header on p8) holds
+    AHWW312R as the hottest well at 158.3F on 3/14/2025. Nothing in the table is
+    202. The 202 the classifier reported was a Depth to Bottom sounding on a
+    'page 59' with no header row of its own; that page isn't a gas table, so
+    the exhaustive parse never turns it into a reading."""
+    reads = _many(54, temp=90) + [("AHWW312R", 158.3), ("AHW272R4", 150.0)]
+    return _build_pdf(tmp_path / "woi.pdf", reads)
+
+
+# --- 1. deterministic headline -----------------------------------------------
+
+def test_build_key_data_point_formats_hottest_well():
+    routed = {"summary": [{"well": "AHWW312R", "max_temp_f": 158.3,
+                           "max_temp_date": "8/29/2023 10:15"},
+                          {"well": "AHW272R4", "max_temp_f": 150.0,
+                           "max_temp_date": "8/30/2023 09:00"}]}
+    assert woi_router.build_key_data_point(routed, None, CFG) == (
+        "AHWW312R: max measured 158.3°F (2023-08-29, Gas Extraction Report).")
+
+
+def test_build_key_data_point_none_without_a_temperature():
+    assert woi_router.build_key_data_point({"summary": []}, None, CFG) is None
+    assert woi_router.build_key_data_point(
+        {"summary": [{"well": "X", "max_temp_f": None, "max_temp_date": None}]}, None, CFG) is None
+
+
+def test_woi_routed_key_data_point_uses_deterministic_temp(tmp_path):
+    # Regression for the windowed-page bug (handoff item 4): the classifier's
+    # fabricated 202F headline must not survive a successful route.
+    parsed = _parsed()
+    routed = woi_router.route_measurements(parsed, _page59_pdf(tmp_path), META, CFG)
+    assert routed is not None
+    top = routed["summary"][0]
+    assert top["well"] == "AHWW312R" and top["max_temp_f"] == 158.3
+    woi_router.apply_deterministic_headline(parsed, routed, CFG)
+    assert "202°F" not in parsed.key_data_point
+    assert parsed.key_data_point == (
+        "AHWW312R: max measured 158.3°F (2025-03-14, Gas Extraction Report).")
+
+
+# --- pipeline level: the Sheet row, not just the email -----------------------
+
+@pytest.fixture
+def pipeline(monkeypatch):
+    rows = []
+    monkeypatch.setattr(dp.nc, "download_pdf", lambda *a: None)
+    monkeypatch.setattr(dp.av, "mirror_one_now", lambda *a, **k: "LINK")
+    # Capture STRINGS at write time: parsed is mutable, so holding the object
+    # would hide a fix applied after the Sheet row was written.
+    monkeypatch.setattr(dp.sw, "write_document",
+                        lambda s, sid, p, *a, **k: rows.append((p.key_data_point, p.summary)))
+    monkeypatch.setattr(dp.sw, "ensure_woi_tabs", lambda *a, **k: None)
+    monkeypatch.setattr(dp.sw, "write_woi_summary", lambda *a, **k: None)
+    monkeypatch.setattr(dp.sw, "mark_processed", lambda *a, **k: None)
+    monkeypatch.setattr(dp.rf, "log_for_document", lambda *a, **k: None)
+    return rows
+
+
+def _ctx(parsed, pdf):
+    cfg = {**CFG, "large_doc_max_keyword_pages": 10, "classification_max_tokens": 10,
+           "temperature_thresholds": {"max_plausible_wellhead_f": 250,
+                                      "hov_values_f": [150, 155, 160, 170, 180]}}
+    return dp.RunContext(cfg=cfg, sheets=None, sheet_id="SID", session=None, model="m",
+                         well_alias_map=None, parse=lambda *a, **k: parsed, now=lambda: "T")
+
+
+def _doc():
+    return {"doc_id": "1", "document_name": "nForm Document", "date_filed": "2026-10-08",
+            "facility_scope": "core", "type_name": "nForm Document"}
+
+
+def test_sheet_row_gets_corrected_key_data_point(pipeline, tmp_path):
+    pdf = _page59_pdf(tmp_path)
+    parsed = _parsed()
+    alerts = []
+    job = dp.Job(name="watcher", feed_tab=sw.TAB_NEW, payload=lambda p, d: {},
+                 alert=lambda p, d, link: alerts.append((p.key_data_point, p.summary)))
+    # process_one_doc deletes `local` in its finally; hand it a copy.
+    local = tmp_path / "local.pdf"
+    local.write_bytes((tmp_path / "woi.pdf").read_bytes())
+    state = {"processed": {}, "errors": {}, "skipped": {}}
+    assert dp.process_one_doc(_ctx(parsed, pdf), state, _doc(), job, str(local)) == "processed"
+    (kdp, summary), = pipeline
+    assert "202°F" not in kdp and "AHWW312R" in kdp and "158.3°F" in kdp
+    # The summary carried the same fabricated number: withheld, not published.
+    assert "202°F" not in summary and summary == woi_router.WITHHELD_WOI_SUMMARY
+    assert alerts == [(kdp, summary)]                  # the alert sees the same text
+
+
+def test_unrouted_document_keeps_classifier_text(pipeline, tmp_path, monkeypatch):
+    monkeypatch.setattr(dp.woi_router, "route_measurements", lambda *a, **k: None)
+    parsed = _parsed(kdp="AHW272 read 150°F.", summary="A short summary.")
+    job = dp.Job(name="backfill", feed_tab=sw.TAB_HISTORICAL, payload=lambda p, d: {})
+    state = {"processed": {}, "errors": {}, "skipped": {}}
+    assert dp.process_one_doc(_ctx(parsed, ""), state, _doc(), job,
+                              str(tmp_path / "x.pdf")) == "processed"
+    assert pipeline == [("AHW272 read 150°F.", "A short summary.")]
+
+
+def test_headline_failure_keeps_model_text_and_never_strikes(pipeline, tmp_path, monkeypatch):
+    monkeypatch.setattr(dp.woi_router, "route_measurements",
+                        lambda *a, **k: {"summary": [], "readings": []})
+    monkeypatch.setattr(dp.woi_router, "apply_deterministic_headline",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bug")))
+    parsed = _parsed(kdp="model text", summary="model summary")
+    job = dp.Job(name="backfill", feed_tab=sw.TAB_HISTORICAL, payload=lambda p, d: {})
+    state = {"processed": {}, "errors": {}, "skipped": {}}
+    assert dp.process_one_doc(_ctx(parsed, ""), state, _doc(), job,
+                              str(tmp_path / "x.pdf")) == "processed"
+    assert state["errors"] == {} and pipeline == [("model text", "model summary")]
+
+
+# --- summary guard: narrow on purpose ----------------------------------------
+
+def _routed(temps):
+    readings = [SimpleNamespace(temp=t) for t in temps]
+    return {"summary": [], "readings": readings}
+
+
+_GUARD_CFG = {**CFG, "temperature_thresholds": {
+    "epa_gas_operating_f": 131, "mact_f": 145, "max_plausible_wellhead_f": 250,
+    "hov_values_f": [150, 155, 160, 170, 180]}}
+
+
+@pytest.mark.parametrize("summary", [
+    "AHWW312R peaked at 158.3°F.",                 # the routed peak itself
+    "AHWW312R peaked near 159°F.",                 # model rounding, within 1F
+    "Wells AHW272R4 holds an HOV of 180°F.",        # an HOV value, a reference number
+    "Above the 145°F MACT limit and 131°F EPA limit.",
+    "A flare ran at 1,500°F.",                      # above the plausibility ceiling
+    "Ambient air was 85°F.",                        # below the watch band
+    "No temperatures stated.",
+])
+def test_summary_guard_keeps_consistent_summaries(summary):
+    assert woi_router.summary_contradicts_routed(summary, _routed([158.3, 150.0, 90]),
+                                                 _GUARD_CFG) == []
+
+
+def test_summary_guard_flags_a_value_above_every_reading():
+    assert woi_router.summary_contradicts_routed(
+        FABRICATED_SUMMARY, _routed([158.3, 150.0, 90]), _GUARD_CFG) == [202.0]
+
+
+# --- 2. urgency_reason --------------------------------------------------------
+
+def _doc_m(measurements, severity="routine"):
+    return SimpleNamespace(doc_type="evidence", severity=severity, risks=["R8"],
+                           key_data_point="k", summary="s", full_text="",
+                           measurements=measurements)
+
+
+def _temp(v, well="AHWW312R", basis="measured", date="2023-08-29"):
+    return {"metric": "temperature", "value": v, "unit": "F", "basis": basis,
+            "well_id": well, "as_of_date": date}
+
+
+def test_urgent_body_states_urgency_reason():
+    parsed = _doc_m([_temp(158.3)], severity="routine")
+    assert ea.is_urgent(parsed, CFG) is True
+    body = ea.format_urgent_body(parsed, {"document_name": "D", "date_filed": "x"}, "L", CFG)
+    assert "Urgent because: measured temperature 158.3°F at AHWW312R" in body
+    assert "145°F" in body
+    assert "Classifier severity: routine" in body
+    # The bare "Severity:" label is gone: the body never shows a severity
+    # without saying whose it is.
+    assert "   Severity:" not in body
+
+
+def test_urgency_reason_names_both_triggers():
+    parsed = _doc_m([_temp(150, well="AHW272R4")], severity="urgent")
+    reason = ea.urgency_reason(parsed, CFG)
+    assert "measured temperature 150°F at AHW272R4" in reason
+    assert "classifier marked the document urgent" in reason
+
+
+def test_urgency_reason_classifier_only():
+    parsed = _doc_m([_temp(120)], severity="urgent")
+    reason = ea.urgency_reason(parsed, CFG)
+    assert reason.startswith("the classifier marked the document urgent")
+    assert "measured" not in reason
+
+
+def test_urgency_reason_free_text_fallback():
+    parsed = SimpleNamespace(severity="routine", measurements=[], key_data_point="",
+                             summary="", full_text="The well read 151 F on Tuesday.")
+    assert ea.is_urgent(parsed, CFG) is True
+    reason = ea.urgency_reason(parsed, CFG)
+    assert "151°F" in reason and "free-text" in reason
+
+
+def test_urgency_reason_shows_rounding_it_used():
+    # max_measured_temp_f rounds before comparing (unchanged); the reason must
+    # not print "144.6F, at or above 145F" without saying so.
+    parsed = _doc_m([_temp(144.6)])
+    assert ea.is_urgent(parsed, CFG) is True
+    assert "144.6°F (rounds to 145°F)" in ea.urgency_reason(parsed, CFG)
+
+
+def test_urgency_reason_empty_when_not_urgent():
+    assert ea.urgency_reason(_doc_m([_temp(120)]), CFG) == ""
+
+
+def test_is_urgent_unchanged_by_reason_function():
+    # One decision function: is_urgent and urgency_reason can never disagree.
+    cases = [_doc_m([_temp(t)], severity=s) for t in (100, 144.4, 144.6, 145, 200)
+             for s in ("routine", "notable", "urgent")]
+    for p in cases:
+        assert ea.is_urgent(p, CFG) is bool(ea.urgency_reason(p, CFG))
+
+
+# --- 3. HOV ceiling context (additive only) ----------------------------------
+
+HOV_CFG = {**CFG, "temperature_thresholds": {
+    "hov_ceilings": [{"well_id": "AHW272R4", "ceiling_f": 180,
+                      "effective_start": "2025-02-19", "effective_end": None}]}}
+
+
+def test_hov_ceiling_lookup_exact_id_and_dates():
+    assert ea.hov_ceiling_for("AHW272R4", "2025-03-01", HOV_CFG) == 180
+    assert ea.hov_ceiling_for("ahw272r4*", "2025-03-01", HOV_CFG) == 180
+    assert ea.hov_ceiling_for("AHW272R4", "2025-01-01", HOV_CFG) is None   # before the grant
+    assert ea.hov_ceiling_for("AHW272R3", "2025-03-01", HOV_CFG) is None   # a redrill isn't it
+    assert ea.hov_ceiling_for("AHW272", "2025-03-01", HOV_CFG) is None
+    assert ea.hov_ceiling_for("AHW272R4", "2025-03-01", CFG) is None       # no roster at all
+
+
+@pytest.mark.parametrize("value", [154.4, 185.5])
+def test_urgent_fires_regardless_of_hov_ceiling_label(value):
+    parsed = _doc_m([_temp(value, well="AHW272R4", date="2025-03-01")])
+    with_roster = ea.is_urgent(parsed, HOV_CFG)
+    without = ea.is_urgent(parsed, CFG)
+    assert with_roster is True and without is True
+    assert bool(ea.urgency_reason(parsed, HOV_CFG)) is True
+    body = ea.format_urgent_body(parsed, {}, "L", HOV_CFG)
+    rel = "below ceiling" if value < 180 else "above ceiling"
+    assert f"HOV approved ceiling for AHW272R4: 180°F. Measured: {value}°F ({rel})." in body
+
+
+def test_hov_label_never_makes_a_below_threshold_reading_fire():
+    parsed = _doc_m([_temp(140, well="AHW272R4", date="2025-03-01")])
+    assert ea.is_urgent(parsed, HOV_CFG) is False
+
+
+def test_no_ceiling_on_record_label():
+    parsed = _doc_m([_temp(158.3, well="AHWW312R")])
+    body = ea.format_urgent_body(parsed, {}, "L", HOV_CFG)
+    assert "No approved ceiling on record for AHWW312R." in body
+
+
+def test_format_urgent_body_without_cfg_still_works():
+    # Old two-arg-plus-link callers keep working (defaults, no HOV lines).
+    body = ea.format_urgent_body(_doc_m([_temp(150)]), {"document_name": "D"}, "L")
+    assert "Urgent because:" in body and "Classifier severity: routine" in body
+
+
+def test_config_roster_agrees_with_top_hov_wells():
+    # kdp_check's top_hov_wells (the only well allowed 180F) and the new
+    # roster must not disagree about who holds the top value.
+    from config_loader import load_config
+    tt = load_config()["temperature_thresholds"]
+    top = max(tt["hov_values_f"])
+    holders = {e["well_id"] for e in tt["hov_ceilings"] if e["ceiling_f"] == top}
+    assert holders == set(tt["top_hov_wells"])

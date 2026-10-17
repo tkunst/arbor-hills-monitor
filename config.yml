@@ -1911,6 +1911,15 @@ temperature_thresholds:
   # The only well(s) holding the top HOV value above (180°F). kdp_check flags
   # classifier text that gives that value to any other well (Trisha 2026-10-12).
   top_hov_wells: [AHW272R4]
+  # Per-well approved HOV ceilings, for CONTEXT in the [URGENT] email body only
+  # (email_alerts.hov_ceiling_for, coder:keydatapoint-guard). Never a trigger
+  # or a suppressor: every measured reading at/above measured_temp_urgent_f
+  # alerts regardless. Exact well id (a redrill is a different well). Seeded
+  # with the one pairing already established above; the full roster lives
+  # outside this repo and is added by hand from the HOV letters. A well with no
+  # entry is labeled "No approved ceiling on record".
+  hov_ceilings:
+    - {well_id: AHW272R4, ceiling_f: 180, effective_start: "2025-02-19", effective_end: null}
   # Above this, a "°F" number in a sentence about wells is treated as a
   # misread column (e.g. H2S ppm), never a wellhead temperature. Flare and
   # combustion sentences are exempt (kdp_check.py). Such a number never fires

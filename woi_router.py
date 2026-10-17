@@ -284,3 +284,99 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
         # needs single-well rows below the watch band trim and the ADJ rows.
         "readings": valid,
     }
+
+
+# ---------------------------------------------------------------------------
+# Deterministic headline (coder:keydatapoint-guard, 2026-10-17)
+# ---------------------------------------------------------------------------
+#
+# route_measurements() replaces parsed.measurements but used to leave the
+# classifier's key_data_point/summary alone. Those are the model's read of a
+# WINDOWED sample (cover + keyword pages), so on 2026-10-08 a Depth to Bottom
+# sounding (202, in feet) on a page seen without its column header reached the
+# [URGENT] email and the public Sheet row as "202F". kdp_check (ADR 067) runs
+# earlier, inside parse_document, and could not catch it: 202 is under the 250F
+# plausibility ceiling. This is the second layer. For a ROUTED report only, the
+# headline is rebuilt from the exhaustive table parse, and a summary stating a
+# wellhead-range temperature above every reading the parse found is withheld.
+
+# Shown in place of a routed report's summary when it fails the check below.
+WITHHELD_WOI_SUMMARY = (
+    "Automated summary withheld: it stated a wellhead temperature higher than "
+    "any reading in this report's Gas Extraction tables. The key data point "
+    "above is taken from those tables.")
+
+# A summary value up to this many degrees over the routed peak still passes
+# (the model rounding 158.6 up to 159, say).
+_SUMMARY_SLACK_F = 1.0
+
+# "202°F", "202 F", "202 degrees F", "158.3°F". Thousands separators are read
+# whole ("1,500°F" is 1500, a flare value above the ceiling).
+_SUMMARY_TEMP_RE = re.compile(
+    r"(?<![\d.])(\d{1,3}(?:,\d{3})+|\d{2,4}(?:\.\d+)?)\s*(?:°|deg(?:rees)?\.?\s*)?\s*F\b",
+    re.I)
+
+
+def build_key_data_point(routed: dict, parsed=None, cfg: Optional[dict] = None) -> Optional[str]:
+    """A plain-language headline from the hottest well in routed["summary"]
+    (per_well_summary is sorted hottest-first, as-found readings only), e.g.
+    "AHWW312R: max measured 158.3°F (2023-08-29, Gas Extraction Report)."
+    None when the summary holds no temperature. Pure. `parsed`/`cfg` are
+    accepted for call-site symmetry and unused."""
+    rows = (routed or {}).get("summary") or []
+    if not rows or rows[0].get("max_temp_f") is None:
+        return None
+    top = rows[0]
+    when = wtp._to_iso(top.get("max_temp_date") or "")
+    when = f"{when}, " if when else ""
+    return (f"{top['well']}: max measured {top['max_temp_f']:g}°F "
+            f"({when}Gas Extraction Report).")
+
+
+def _reference_values_f(cfg: dict) -> set:
+    """Regulatory/HOV numbers a summary may name without them being readings."""
+    tt = cfg.get("temperature_thresholds") or {}
+    urgent = cfg.get("urgent") or {}
+    vals = {tt.get("epa_gas_operating_f", 131), tt.get("mact_f", 145),
+            urgent.get("measured_temp_urgent_f", 145), urgent.get("measured_temp_watch_f", 131)}
+    vals.update(tt.get("hov_values_f") or [])
+    return {float(v) for v in vals if v is not None}
+
+
+def summary_contradicts_routed(summary: str, routed: dict, cfg: dict) -> list:
+    """°F values in `summary` that no reading in the routed report supports:
+    inside the wellhead band (watch_f .. max_plausible_wellhead_f), more than
+    _SUMMARY_SLACK_F above the highest valid reading (as-found and ADJ), and
+    not a regulatory/HOV reference value. Deliberately narrow: a rounded,
+    averaged or prior-report figure at or below the peak passes. Pure."""
+    readings = (routed or {}).get("readings") or []
+    temps = [r.temp for r in readings if getattr(r, "temp", None) is not None]
+    if not summary or not temps:
+        return []
+    peak = max(temps)
+    lo, hi = _watch_f(cfg), _max_plausible_f(cfg)
+    refs = _reference_values_f(cfg)
+    out = []
+    for m in _SUMMARY_TEMP_RE.finditer(summary):
+        v = float(m.group(1).replace(",", ""))
+        if lo <= v <= hi and v > peak + _SUMMARY_SLACK_F and v not in refs and v not in out:
+            out.append(v)
+    return out
+
+
+def apply_deterministic_headline(parsed, routed: dict, cfg: dict) -> None:
+    """For a routed report: set parsed.key_data_point from the table parse,
+    and withhold parsed.summary if it states a temperature the tables don't
+    support. Called by doc_pipeline right after route_measurements() and
+    BEFORE the Sheet row is written, so the row, the alert, the digest and the
+    _state payload all carry the corrected text."""
+    kdp = build_key_data_point(routed, parsed, cfg)
+    if kdp:
+        if kdp != parsed.key_data_point:
+            print(f"[woi_router] key data point replaced by the table-derived headline: {kdp}")
+        parsed.key_data_point = kdp
+    bad = summary_contradicts_routed(getattr(parsed, "summary", "") or "", routed, cfg)
+    if bad:
+        print(f"[woi_router] summary withheld: states {', '.join(f'{v:g}F' for v in bad)}, "
+              f"above every reading in the Gas Extraction tables")
+        parsed.summary = WITHHELD_WOI_SUMMARY

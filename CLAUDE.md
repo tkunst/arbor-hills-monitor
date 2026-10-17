@@ -239,6 +239,33 @@ external users but no sensitive data). Public repo.
   corrective-action/enforcement letter gets pinned to its own
   "CORRESPONDENCE & ENFORCEMENT" digest section instead of the ordinary soft
   line — absorbs the retired `schedule-title-overrides.md` handoff's Option A.
+  **coder:keydatapoint-guard (2026-10-17):** `is_urgent()` is now the bool of
+  one `_urgency_decision()`, whose reasons `urgency_reason()` joins, so the two
+  can't drift. `format_urgent_body(..., cfg)` prints "Urgent because: …" next
+  to "Classifier severity: …" (an `[URGENT]` subject over a routine-severity
+  body now says which path fired), plus HOV approved-ceiling context per
+  alerted well from `hov_ceiling_for()` / `temperature_thresholds.hov_ceilings`
+  (exact well id, effective dates; seeded with AHW272R4 → 180°F only; "No
+  approved ceiling on record" otherwise). The ceiling is display-only: it
+  never changes whether an alert fires, and the 145°F threshold is unchanged.
+- `woi_router.py` — **ADR 005**: detects a WOI Status Report by content (the
+  "Gas Extraction Report" header on any page, over the large-doc threshold —
+  never by nSITE name), parses it exhaustively with `woi_table_parser`, and
+  REPLACES the classifier's windowed temperature/O2/CH4/CO measurements before
+  `is_urgent`/`write_document` (data-loss guard: fewer than 50 valid readings
+  → not routed; peak-temp preservation; above-ceiling readings held out and
+  flagged, ADR 067 amendment). **Headline (coder:keydatapoint-guard,
+  2026-10-17):** for a routed report, `apply_deterministic_headline()` sets
+  `key_data_point` from the hottest well in the table parse
+  (`build_key_data_point()`) and withholds a `summary` that states a
+  wellhead-range °F value more than 1°F above every reading
+  (`summary_contradicts_routed()`; HOV/regulatory reference values exempt).
+  `doc_pipeline` calls it right after routing and BEFORE the Sheet row is
+  written, so the row, alert, digest and `_state` payload all carry it. This
+  is the second layer after `kdp_check` (ADR 067): kdp_check catches an
+  implausible number in the model's text; this catches a plausible-looking
+  number (the 2026-10-08 "202°F", a Depth to Bottom sounding in feet) the
+  table parse doesn't support. Unrouted documents are unchanged.
 - `backfill.py` — nightly batch of 50, self-terminating, resumable. Mirrors
   each doc to Drive inline (`archiver.mirror_one_now()`) before writing its
   Sheet row.
