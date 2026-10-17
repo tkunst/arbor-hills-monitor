@@ -1122,3 +1122,26 @@ def test_public_view_shared_by_render_entry_and_build_search_index(monkeypatch):
     row = ff.parse_feed_rows([_row()])[0]
     assert "PATCHED TITLE" in ff.render_entry(row)
     assert json.loads(ff.build_search_index([row]))[0]["title"] == "PATCHED TITLE"
+
+
+# --- ordering by Document Date (owner ruling 2026-10-17) ----------------------
+
+def test_browse_order_is_document_date_falling_back_to_date_filed():
+    # Filed the same day, very different document dates: they spread out by
+    # their own dates instead of clumping on the filing day.
+    rows = ff.merge_and_sort(
+        [_row(date="2026-10-13", name="old report", document_date="2019-10-01"),
+         _row(date="2026-10-13", name="recent letter", document_date="2026-07-20"),
+         _row(date="2026-09-01", name="no document date")],
+        [_row(date="2020-05-05", name="historical", document_date="2020-05-01")])
+    assert [r["document_name"] for r in rows] == [
+        "no document date", "recent letter", "historical", "old report"]
+
+
+def test_hand_curated_rows_interleave_by_their_date_and_dateless_sort_last():
+    hc_dated = ["f1.pdf", "curated 2021", "", "2021-06-01", "N2688", "evidence"]
+    hc_blank = ["f2.pdf", "curated undated", "", "", "N2688", "evidence"]
+    rows = ff.merge_handcurated(
+        ff.merge_and_sort([_row(date="2026-10-13", name="auto", document_date="2019-10-01")], []),
+        [hc_blank, hc_dated])
+    assert [r["document_name"] for r in rows] == ["curated 2021", "auto", "curated undated"]

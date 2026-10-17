@@ -137,9 +137,9 @@ dropped both new columns otherwise — the gap the handoff's own guardrail warne
 
 `findings_feed.py`: `FEED_FIELDS` gains `document_date`/`egle_title`. `display_date(row)` shows
 the document's own date, falling back to Date Filed when unknown, annotated `"(filed <date>)"`
-only when the two differ by more than 7 days — browse-list ORDER is deliberately untouched
-(still `date_filed` via `_sort_newest_first`; a doc with an old `document_date` must still land
-on the newest-first page it was actually filed on). The search index's `date` field prefers
+only when the two differ by more than 7 days. (Superseded 2026-10-17, owner ruling: the
+browse list was originally left ordered by `date_filed`; it is now ordered by `document_date`,
+falling back to Date Filed when blank — see the addendum at the end.) The search index's `date` field prefers
 `document_date` (falling back to Date Filed) since `search.js` is schema-agnostic — a reader
 searching "December 2019" should find the Fibertec report by its real date.
 
@@ -175,3 +175,15 @@ apply step writes the two new columns to the live Sheet only after Trisha's expl
   positives + 2 real negatives, not the full 8-doc set from the retired handoff (time-boxed
   during this build) — the backfill dry-run CSV surfaces every historical generic-titled doc
   for Trisha's eyes before anything is asserted about it live.
+
+## Addendum (2026-10-17): order by Document Date; future dates are errors
+
+Owner rulings, PR #160:
+
+- The public-records browse list is ordered newest **Document Date** first, falling back to
+  Date Filed when the Document Date is blank (`findings_feed._sort_key`). Hand-Curated rows
+  order by their one human-entered `doc_date`. A row with no date at all sorts last.
+- A Document Date later than the run/build date is an error, not a date: the parser records it
+  blank with method `future_date_rejected` and does not fall back to the model's guess, and
+  `findings_feed.parse_feed_rows` blanks one already in the Sheet at build time (the
+  2031-10-13 permit-expiration case).
