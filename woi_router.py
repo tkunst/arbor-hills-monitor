@@ -310,10 +310,10 @@ WITHHELD_WOI_SUMMARY = (
 # (the model rounding 158.6 up to 159, say).
 _SUMMARY_SLACK_F = 1.0
 
-# "202°F", "202 F", "202 degrees F", "158.3°F". Thousands separators are read
+# "202°F", "202 F", "202 degrees F(ahrenheit)", "202º F", "158.3°F". Thousands separators are read
 # whole ("1,500°F" is 1500, a flare value above the ceiling).
 _SUMMARY_TEMP_RE = re.compile(
-    r"(?<![\d.])(\d{1,3}(?:,\d{3})+|\d{2,4}(?:\.\d+)?)\s*(?:°|deg(?:rees)?\.?\s*)?\s*F\b",
+    r"(?<![\d.])(\d{1,3}(?:,\d{3})+|\d{2,4}(?:\.\d+)?)\s*(?:[°º˚]|deg(?:rees)?\.?\s*)?\s*F(?:ahrenheit)?\b",
     re.I)
 
 

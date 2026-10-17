@@ -65,10 +65,11 @@ def max_measured_temp_f(parsed) -> Optional[int]:
 
 
 def _peak_measured(parsed) -> Optional[dict]:
-    """The measurement max_measured_temp_f() picked (same filter, same
-    rounding, first one wins on a tie), with its value in deg F as `value_f`.
-    For naming the well in the urgent body; never used to decide."""
-    best, best_i = None, None
+    """The highest MEASURED temperature measurement (same filter as
+    max_measured_temp_f, whose rounded value it always matches), with its
+    value in deg F as `value_f`. For naming the well in the urgent body;
+    never used to decide."""
+    best = None
     for m in getattr(parsed, "measurements", []) or []:
         if m.get("metric") != "temperature" or m.get("basis") != "measured":
             continue
@@ -78,9 +79,8 @@ def _peak_measured(parsed) -> Optional[dict]:
             continue
         if (m.get("unit") or "F").lower().startswith("c"):
             val = val * 9 / 5 + 32
-        ival = int(round(val))
-        if best_i is None or ival > best_i:
-            best, best_i = {**m, "value_f": val}, ival
+        if best is None or val > best["value_f"]:
+            best = {**m, "value_f": val}
     return best
 
 
@@ -96,9 +96,15 @@ def _urgency_decision(parsed, cfg: dict) -> tuple[bool, list[str]]:
     always says which path fired (the 2026-10-08 email that didn't)."""
     urgent_cfg = cfg.get("urgent", {})
     threshold = urgent_cfg.get("measured_temp_urgent_f", 145)
+    mact = (cfg.get("temperature_thresholds") or {}).get("mact_f", 145)
+    label = " (MACT limit)" if threshold == mact else ""
     reasons: list[str] = []
     if urgent_cfg.get("severity_is_urgent", True) and parsed.severity == "urgent":
-        reasons.append("the classifier marked the document urgent")
+        # Not "the classifier": parse_document's deterministic floor (a
+        # measured reading >= MACT, an SSO/CO-spike/smoldering tag, an
+        # enforcement title) also sets severity, and ParsedDoc doesn't say which.
+        reasons.append("the document's severity is \"urgent\" (set by the classifier "
+                       "or by parse_document's deterministic urgency floor)")
 
     # Prefer structured measurements (correctly excludes permitted ceilings).
     measured = max_measured_temp_f(parsed)
@@ -112,7 +118,7 @@ def _urgency_decision(parsed, cfg: dict) -> tuple[bool, list[str]]:
             well = peak.get("well_id")
             reasons.append(f"measured temperature {shown}"
                            + (f" at {well}" if well else "")
-                           + f", at or above the {threshold}°F threshold (MACT limit)")
+                           + f", at or above the {threshold}°F threshold{label}")
         return bool(reasons), reasons
 
     # If the parser extracted ANY temperature reading at all (even a permitted
@@ -139,6 +145,12 @@ def _urgency_decision(parsed, cfg: dict) -> tuple[bool, list[str]]:
 
 
 def is_urgent(parsed, cfg: dict) -> bool:
+    # The severity short-circuit is kept ahead of the shared decision so an
+    # urgent-severity document fires without its measurements being read,
+    # exactly as before (a malformed measurement can't turn it into a raise).
+    urgent_cfg = cfg.get("urgent", {})
+    if urgent_cfg.get("severity_is_urgent", True) and parsed.severity == "urgent":
+        return True
     return _urgency_decision(parsed, cfg)[0]
 
 
@@ -146,6 +158,9 @@ def urgency_reason(parsed, cfg: dict) -> str:
     """Why is_urgent() fires, in one line ("" when it doesn't). Presentation
     only: it never changes whether an alert fires."""
     return "; and ".join(_urgency_decision(parsed, cfg)[1])
+
+
+_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}$")
 
 
 def hov_ceiling_for(well_id: str, as_of_date: Optional[str], cfg: dict) -> Optional[float]:
@@ -159,14 +174,24 @@ def hov_ceiling_for(well_id: str, as_of_date: Optional[str], cfg: dict) -> Optio
     wid = (well_id or "").strip().rstrip("*").upper()
     if not wid:
         return None
+    # Only an ISO date is compared ("8/29/2023" would compare lexically
+    # wrong); anything else is treated as undated.
     date = (as_of_date or "")[:10]
+    if not _ISO_DATE_RE.match(date):
+        date = ""
     for e in (cfg.get("temperature_thresholds") or {}).get("hov_ceilings") or []:
         if str(e.get("well_id") or "").strip().rstrip("*").upper() != wid:
             continue
         start, end = str(e.get("effective_start") or ""), str(e.get("effective_end") or "")
         if date and ((start and date < start) or (end and date > end)):
             continue
-        return float(e["ceiling_f"])
+        try:
+            return float(e["ceiling_f"])
+        except (KeyError, TypeError, ValueError):
+            # A hand-edited roster entry with no/garbled ceiling: label the
+            # well as having none on record rather than break the alert.
+            print(f"[email_alerts] hov_ceilings entry for {wid} has no usable ceiling_f; ignored")
+            return None
     return None
 
 
@@ -278,7 +303,11 @@ def format_urgent_body(parsed, metadata: dict, link: str, cfg: dict | None = Non
     ceiling (context only). `cfg` None = built-in defaults, no HOV roster."""
     cfg = cfg or {}
     reason = urgency_reason(parsed, cfg) or "(no urgency trigger matched)"
-    hov = hov_context_lines(parsed, cfg)
+    try:
+        hov = hov_context_lines(parsed, cfg)
+    except Exception as e:  # noqa: BLE001 — context must never cost the alert
+        print(f"[email_alerts] HOV context skipped: {type(e).__name__}")
+        hov = []
     hov_block = ("Approved-ceiling context (does not affect whether this alert fires):\n"
                  + "".join(f"  {line}\n" for line in hov) + "\n") if hov else ""
     return (
