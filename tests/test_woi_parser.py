@@ -517,9 +517,21 @@ def test_value_then_comment_on_one_line_ends_the_row():
     assert b.raw_well_id == "AHW1" and b.temp == 120
 
 
-def test_comment_starting_with_a_number_never_fills_a_column():
+def test_comment_starting_with_a_number_cannot_supply_temp():
+    # Temp is the last column (gas_temp layout) and isn't printed; the comment
+    # "150 ft of water" would complete the row, but a mixed line may only
+    # supply columns after Temp. The row ends before Temp: truncated.
+    hdr = ["Well ID", "Date/Time", "CH4 (%)", "CO2 (%)", "O2 (%)", "Balance", "Temp.", "Comments"]
+    g = w._parse_table_lines(L(*hdr, "AHW1", "1/1/2025 9:00", "50", "40", "0", "10",
+                               "150 ft of water in well"))
+    assert g.readings == [] and g.truncated_rows == 1
+
+
+def test_comment_starting_with_a_number_after_a_short_row():
     # The row is short (no Well/Header Pres printed), then a comment that
     # starts with a number. Its cells don't complete the row, so it isn't read.
+    # (Residual, see ADR 005 2026-10-19: a comment whose leading numbers
+    # exactly complete the row after Temp is still read as those cells.)
     g = _alias(["AHW2", "AHW2", "1/1/2025 9:00", "50", "40", "0", "10", "0.5", "121", "5",
                 "2 turns open"])
     r, = g.readings
@@ -644,3 +656,20 @@ def test_alias_table_through_the_pdf_path(tmp_path):
     assert g.rejected_tables == [] and g.blank_rows == 1
     assert [(r.well_id, r.alias_as_printed, r.temp, r.header_pres) for r in g.readings] == [
         ("AHEW0008", "EW-008", 27.6, -0.68), ("AHW3", "AHW3", None, None)]
+
+
+def test_gas_only_row_is_never_the_as_found_partner():
+    hdr = [h for h in HDR_ALIAS if h != "ADJ"]
+    gas_only = ["AHW1", "AHW1", "1/1/2025 9:00", "50", "40", "0", "10", "0.5", "---", "5", "-1",
+                "-2 Opened valve:"]
+    real = ["AHW1", "AHW1", "1/1/2025 9:00", "50", "40", "0", "10", "0.5", "178", "5", "-1", "-2"]
+    rs = w._parse_table_lines(L(*hdr, *gas_only, *real)).readings
+    assert [(r.adj, r.temp) for r in rs] == [(False, None), (False, 178.0)]
+    assert w.per_well_summary(rs)[0]["max_temp_f"] == 178.0
+
+
+def test_numbers_past_a_blank_cell_do_not_make_a_non_gas_table_look_gas():
+    hdr = ["Well ID", "Date/Time", "Depth to Liquid", "Depth to Bottom"]
+    g = w._parse_table_lines(L(*hdr, "AHW5", "1/1/2025 9:00", "12.5", "---", "202", "3", "---",
+                               "4", "5", "6"))
+    assert g.rejected_tables == []

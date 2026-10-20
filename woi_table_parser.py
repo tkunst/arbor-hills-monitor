@@ -358,15 +358,17 @@ def _cell(tok: str):
     return False, None
 
 
-def _read_values(lines, j: int, width: int) -> tuple[list, int]:
+def _read_values(lines, j: int, width: int, mixed_after: int = -1) -> tuple[list, int]:
     """Read up to `width` cells starting at line j, token by token. A number
     fills the next column; BLANK_CELL fills it with None. A line that starts
     with any other token is not read (the next row's Well ID, a header, a
     comment line). A line with cells and then other text is the row's last
     cells followed by the Comments column ("-0.68 No Change: :"): it is read
-    only when its cells complete the row exactly, and the row ends there.
-    Otherwise the row ends before it, so a comment that starts with a number
-    ("2 turns open") never fills a column. Returns (cells, next_j)."""
+    only when its cells complete the row exactly AND the cells already read
+    reach past position `mixed_after` (the Temp column), and the row ends
+    there. Otherwise the row ends before it, so a comment that starts with a
+    number ("150 ft of water") can never supply Temp or any column before it.
+    Returns (cells, next_j)."""
     vals: list = []
     n = len(lines)
     while j < n and len(vals) < width:
@@ -380,7 +382,7 @@ def _read_values(lines, j: int, width: int) -> tuple[list, int]:
         if not cells:
             break
         if mixed:
-            if len(vals) + len(cells) == width:
+            if len(vals) + len(cells) == width and len(vals) > mixed_after:
                 vals.extend(cells)
                 j += 1
             break
@@ -522,12 +524,17 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
             adj = True
             j += 1
         elif not adj_labeled and cur_rows:
-            # Unlabeled ADJ: see _ADJ_LABEL_RE.
+            # Unlabeled ADJ: see _ADJ_LABEL_RE. A gas-only row (no Temp) is
+            # never the as-found partner: main never emitted one, and pairing
+            # on it would turn the next row's real temperature into ADJ, out
+            # of alerting.
             prev = cur_rows[-1]
-            adj = (not prev.adj and prev.dt == dt
+            adj = (not prev.adj and prev.temp is not None and prev.dt == dt
                    and prev.raw_well_id.rstrip("*") == raw_well.rstrip("*"))
         width = len(layout) if layout else len(COLUMNS)
-        nums, j = _read_values(lines, j, width)
+        # A mixed cells-and-comment line may only supply columns after Temp.
+        nums, j = _read_values(lines, j, width,
+                               layout.index("temp") if layout else width)
         if layout is None:
             # Gas-shaped row with no recognized layout: reject, never guess.
             # Under a gas header we didn't recognize, every row with the four
@@ -535,7 +542,10 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
             # gas header at all, only rows long enough to have been read as gas
             # readings before this guard existed.
             unknown_gas = header not in ("", NON_GAS_HEADER)
-            n_numeric = sum(v is not None for v in nums)  # "---" cells don't count
+            # Leading numeric cells only, as main counted them (it stopped at
+            # the first "---"): a non-gas table's blank cells, or the numbers
+            # read past them, must not make it look like a gas table.
+            n_numeric = next((k for k, v in enumerate(nums) if v is None), len(nums))
             if n_numeric >= (4 if unknown_gas else 6):
                 cur_rejected["n"] += 1
                 cur_rejected["first"] = cur_rejected["first"] or page
@@ -546,6 +556,8 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
                     else "rows before any recognized header")
         elif nums and all(v is None for v in nums):
             out.blank_rows += 1  # every cell "---": no reading to emit
+        elif not nums:
+            pass  # no cells at all (as on main: not a reading, not counted)
         elif len(nums) < 4 or None in nums[:4]:
             out.partial_rows += 1  # values, but not all four gas columns
         elif len(nums) <= layout.index("temp"):
