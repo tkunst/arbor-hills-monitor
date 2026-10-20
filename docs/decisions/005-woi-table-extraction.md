@@ -326,14 +326,16 @@ Each line is now split on whitespace (`_read_values`). A number fills the next
 column. `---` fills it with None: the cell is blank but keeps its position. A
 line that starts with any other token is not read. A line with cells followed by
 other text is the row's last cells followed by the Comments column
-(`-0.68 No Change: :`). It is read only when its cells complete the row exactly,
-and the row ends there. Otherwise the row ends before that line, so a comment
-that starts with a number (`2 turns open`) does not fill a column after a short
-row. Across the corpus below, 23,794 lines mix cells and text. Each one's text
+(`-0.68 No Change: :`). It is read only when its cells complete the row exactly and
+the cells before it already reach past Temp, and the row ends there. Otherwise
+the row ends before that line. So a comment that starts with a number
+(`150 ft of water`) can never supply Temp or any column before it, and
+`2 turns open` does not fill a column after a short row. Across the corpus below, 23,794 lines mix cells and text. Each one's text
 is a Comments-column entry ("Opened Valve…", "No Change…", "Second Reading…").
-Every one completed its row. Residual: a short row followed by a comment whose
-leading numbers happen to complete the row exactly would still be read as
-cells.
+Every one completed its row. Residual: a row one or two cells short after Temp
+(pressure columns not printed), followed by a comment whose leading numbers
+happen to complete it exactly, would still have those numbers read as the
+pressure cells.
 
 **Gas-only rows.** A row is emitted when its four gas columns hold numbers and
 its cells reach the Temp position, even if Temp (or any later column) is
@@ -341,7 +343,10 @@ its cells reach the Temp position, even if Temp (or any later column) is
 row whose cells end before Temp is not a blank Temp. That happens, for example,
 when the Temp cell is a token the parser can't read, such as `177.0*`. Such a
 row is counted in `truncated_rows` and not emitted, as on main. Otherwise it
-would turn into a "no temperature" reading and shift the unlabeled-ADJ pairing.
+would turn into a "no temperature" reading. A gas-only row is also never the
+as-found partner in the unlabeled-ADJ rule. If it were, the same-time row after
+it, which carries the real temperature, would become ADJ and drop out of
+alerting. Rows with no cells at all are neither emitted nor counted, as on main.
 `woi_router`'s data-loss guard (`_MIN_VALID_READINGS`) counts only valid
 readings WITH a temperature, so gas-only rows can't make a report whose
 temperatures don't parse replace the classifier's measurements. The three
@@ -396,10 +401,10 @@ parse outputs. The counts below are over the 42.
   a non-AH alias.
 - Rows with a blank `header_pres` fell from 143,695 to 47,910. Of the rest,
   46,522 sit on pages where no row prints that column.
-- Rejected rows rose from 9,519 to 9,573, all of them in the split tables.
-  Rows that have numbers after a `---` now have at least 4 numeric cells,
-  which is the count the reject requires. `---` cells themselves never count
-  toward it.
+- Rejected rows rose from 9,519 to 9,573. The 54 new ones are rows in two of
+  the split tables whose Alias is non-AH or blank. Main never started those
+  rows. The reject still counts only the leading numeric cells, as main did:
+  a `---` cell, and anything after it, never counts toward it.
 
 Through `route_measurements`, using the live `config.yml` and alias map:
 

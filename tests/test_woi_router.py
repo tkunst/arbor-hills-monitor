@@ -295,10 +295,10 @@ def test_gas_only_rows_route_without_changing_any_max_temperature(tmp_path):
     assert [h.temp for h in hits] == [177.0]
 
 
-def test_guard_ignores_gas_only_rows_when_temperatures_dont_parse(tmp_path):
-    # A report whose Temp cells all fail to parse must not route on the
-    # strength of its gas columns: the classifier's 177 stays (as on main).
-    reads = _many(54, temp="177.0*") + [("AHW1", 90)]
+def test_guard_ignores_gas_only_rows(tmp_path):
+    # A report whose Temp cells print "---" on all but one row must not route
+    # on the strength of its gas columns: the classifier's 177 stays.
+    reads = _many(54, temp="---") + [("AHW1", 90)]
     pdf = _build_pdf(tmp_path / "bad_temp.pdf", reads)
     parsed = _parsed(measurements=[{"metric": "temperature", "value": 177,
                                     "unit": "F", "basis": "measured"}])
