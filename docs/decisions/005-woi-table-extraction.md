@@ -296,3 +296,104 @@ measurements. In the 2026-10-08 report:
 - 31 wells' max temperature fell by 0.1–0.7°F (e.g. AHWW0533 133.8 → 133.7,
   AHEW0006 101.5 → 100.8); their summary's O2/CH4-at-max-temp follow the new
   max reading. No well's max O2 changed. The site peak (158.3°F) is unchanged.
+
+## Addendum (2026-10-19): Well ID under Alias headers, `---` cells, gas-only rows
+
+Spec: `docs/overnight-coder-handoffs/woi-parser-wellid-dashes.md` (round-4
+wellfield review). Trisha's rulings of 2026-10-19: keep gas-only readings;
+do not capture the valve-setting or comments columns.
+
+**Well ID, not Alias.** Some gas tables print Well ID, Alias, Date/Time. A row
+used to start wherever a well-shaped token sat right before a timestamp, so in
+these tables the Alias became the row's well, and a row whose Alias was not
+AH-format (`EW-008`, `V-10`) was never read. Under a header whose text has an
+`Alias` label (`_ALIAS_LABEL_RE`), a row now starts at Well ID / Alias /
+Date/Time. The Well ID must match `WELL_RE`; the Alias matches the looser
+`ALIAS_RE`. `well_id`/`raw_well_id` come from the Well ID, and the Alias is
+kept as printed in `WOIReading.alias_as_printed`. The header reader also stops
+at that three-line start, so the first row after each header keeps its Well
+ID. Tables with no Alias label are read exactly as before. The unlabeled-ADJ
+rule keys on the Well ID.
+
+**Cells are tokens.** Values used to be read one whole line at a time, and the
+row ended at the first line that wasn't a bare number. A line such as
+`27.6 ---` or `-0.68 No Change: :` therefore ended the row, so its value and
+every later column were lost, and a row with `---` before Temp was dropped.
+Each line is now split on whitespace (`_read_values`). A number fills the next
+column. `---` fills it with None: the cell is blank but keeps its position. Any
+other token ends the row, after the cells before it on that line are taken.
+
+**Gas-only rows.** A row is emitted when its four gas columns hold numbers,
+even if Temp (or any later column) is blank. It carries no temperature, and
+`valid` still gates it on the gas sum. A row whose cells are all `---` has no
+reading. It is counted in `GasExtractionParse.blank_rows` and not emitted. A row
+with some values but not all four gas columns is counted in `partial_rows` and
+not emitted. That count also includes short rows from other tables that carry
+no Well ID header, such as the 2-value probe rows. 42 rows print values
+(among them, possibly, a temperature) with every gas cell blank; there is no
+gas sum to validate them, so they are counted, not emitted.
+
+**Unrecognized layouts: split tables, still rejected.** The ~9,500 rows rejected
+as "column layout not recognized" come from four distinct reports (eight cache
+files). The header word positions read gas columns only
+(`ch4,co2,o2,balance[,diff_press]`), and the pages really do print only those
+columns. They are not gas-only tables. Each is the left half of a table split
+across pages. The right half (Temp, Flow, Well/Header Pres, Comments) is printed
+on the same number of pages directly after it, with no Well ID or timestamp:
+
+- `5379a301…` pp517–554, then pp555–592;
+- `eb09e953…` pp1–70, then pp71–140;
+- `afc0218c…` pp1–60, then pp61–120, and pp191–220, then pp221–250;
+- `ed1617e8…` pp1–78, then pp79–156.
+
+Between 0% and 16% of these rows also appear with a temperature elsewhere in
+the same report. A gas-only layout would not be a real layout. It would also:
+
+- report every well in those halves as having no temperature;
+- double-count O2 for the overlap rows, which can't merge because their temp
+  is None;
+- accept any future header whose Temp label is misread, and catching that
+  misread is the reason for the reject.
+
+So no layout was added, and the reject stays. Joining each half by page offset
+and row order is a separate follow-up.
+
+**Measured effect.** Run on 91 locally held WOI-format cache files (the
+wellfield staging doc-cache plus the VGC cache), which give 42 distinct
+parse outputs. The counts below are over the 42.
+
+- Every reading main read is still read: 0 lost, 0 changed values. Matching
+  is on page, timestamp, ADJ and printed id.
+- Outside Alias tables, no reading's well id changed.
+- 99,429 cells that were blank on main are now filled. On every line that
+  mixes a value and a comment, the value filled the row's last column. No
+  comment number landed in a middle column.
+- Readings rose from 268,289 to 278,407:
+  - 6,647 new readings have a temperature. All are valid, they range from
+    6.2 to 140.2°F, none is ≥ 145°F, and 5 are ≥ 131°F.
+  - 3,471 new readings are gas-only.
+  - 306 all-`---` rows and 1,037 partial rows were counted.
+- 3,299 rows moved from the Alias spelling to the Well ID. 1,068 of them have
+  a non-AH alias.
+- Rows with a blank `header_pres` fell from 143,695 to 47,910. Of the rest,
+  46,522 sit on pages where no row prints that column.
+- Rejected rows rose from 9,519 to 9,575. Rows with `---` in a gas cell now
+  reach the 4-cell count in the rejected split tables.
+
+Through `route_measurements`, using the live `config.yml` and alias map:
+
+- In all 40 distinct reports that route, the site peak is unchanged.
+- 297 per-well max temperatures differ:
+  - 189 come from recovered temperature rows;
+  - 52 are wells re-keyed from their Alias spelling;
+  - 56 are Alias spellings that no longer appear;
+  - 0 come from gas-only rows.
+- Emitted measurements changed in two reports (+6 and +3), from recovered
+  rows at ≥ 131°F.
+- `well_watch` hits are unchanged.
+- Per-well max O2 moves where gas-only or recovered rows add readings.
+
+Reports processed before this change keep their old rows until they are
+re-extracted. On re-extraction, an Alias-table row's "Well ID As Filed" no
+longer carries the alias spelling. The alias stays on `WOIReading` only and
+is not written to the Sheet.

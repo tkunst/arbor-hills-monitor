@@ -476,3 +476,119 @@ def test_unlabeled_adj_through_the_pdf_path(tmp_path):
     assert [(r.adj, r.temp) for r in g.readings] == [
         (False, 132.7), (True, 133.8), (False, 133.7), (True, 133.7)]
     assert w.per_well_summary(g.readings)[0]["max_temp_f"] == 133.7
+
+
+# --- Well ID / Alias tables and "---" cells (ADR 005 addendum 2026-10-19) ---
+# Lines as PyMuPDF get_text() prints them in the cached CJ/VGC reports
+# (doc-cache 0bbf365b1033... p196, 0f2abeab850a... p187).
+
+HDR_ALIAS = ["Well ID", "Alias", "Date/Time", "ADJ", "CH4 (%)", "CO2 (%)", "O2 (%)", "Balance ",
+             "(%)", "Diff. ", "Press. ", "(in. H2O) Temp.", "Flow ", "(scfm)", "Well ",
+             "Pres. (in. ", "H2O)", "Header ", "Pres. (in. ", "H2O)", "Comments"]
+
+
+def _alias(*rows):
+    return w._parse_table_lines(L(*HDR_ALIAS, *[x for r in rows for x in r]))
+
+
+def test_value_and_dash_on_one_line_fills_positions():
+    # Temp shares its line with a blank Flow; Header Pres shares its line with
+    # the comment. Main stopped at "27.6 ---" and lost Temp's neighbours.
+    g = _alias(["AHWFLRIN", "AHWFLRIN", "2/18/2025 15:32", "48.9", "35.2", "1.6", "14.3",
+                "0", "27.6 ---", "14.15", "-0.68 No Change: : "])
+    r, = g.readings
+    assert (r.diff_press, r.temp, r.flow, r.well_pres, r.header_pres) == (0, 27.6, None, 14.15, -0.68)
+
+
+def test_dash_before_temp_still_reads_temp():
+    g = _alias(["AHWFLROT", "AHWFLROT", "2/18/2025 15:36", "49", "35.9", "1.7", "13.4 ---",
+                "23.6 ---", "---", "---", "No Change: : "])
+    r, = g.readings
+    assert (r.balance, r.diff_press, r.temp, r.flow, r.well_pres, r.header_pres) == (
+        13.4, None, 23.6, None, None, None)
+
+
+def test_value_then_comment_on_one_line_ends_the_row():
+    nxt = ["AHW1", "AHW1", "1/1/2025 10:00", "50", "40", "0", "10", "0.5", "120", "5", "-1", "-2"]
+    g = _alias(["AHW2", "AHW2", "1/1/2025 9:00", "50", "40", "0", "10", "0.5", "121",
+                "5 Opened Valve 1/2 turn:", "7"], nxt)
+    a, b = g.readings
+    assert (a.flow, a.well_pres, a.header_pres) == (5, None, None)  # "7" is not read
+    assert b.raw_well_id == "AHW1" and b.temp == 120
+
+
+def test_gas_only_reading_is_kept_with_no_temperature():
+    g = _alias(["AHW3", "AHW3", "1/1/2025 9:00", "50", "40", "0", "10", "---", "---", "---",
+                "---", "---"])
+    r, = g.readings
+    assert r.valid and r.temp is None and r.o2 == 0
+    assert w.to_measurements(r) == [m for m in w.to_measurements(r) if m["metric"] != "temperature"]
+    assert w.per_well_summary(g.readings)[0]["max_temp_f"] is None
+
+
+def test_all_dash_row_is_counted_not_emitted():
+    g = _alias(["AHW264R3", "AHW264R3", "10/25/2023 8:38", "---", "---", "---", "---"],
+               ["AHW1", "AHW1", "1/1/2025 10:00", "50", "40", "0", "10", "0.5", "120", "5", "-1", "-2"])
+    assert [r.raw_well_id for r in g.readings] == ["AHW1"]
+    assert g.blank_rows == 1 and g.partial_rows == 0
+
+
+def test_partial_gas_row_is_counted_not_emitted():
+    g = _alias(["AHW4", "AHW4", "1/1/2025 9:00", "50", "---", "0", "10", "0.5", "120"])
+    assert g.readings == [] and g.partial_rows == 1
+
+
+def test_non_ah_alias_row_is_read_under_its_well_id():
+    g = _alias(["AHEW0008", "EW-008", "3/2/2023 11:07", "54.6", "40.4", "0", "5", "0", "90",
+                "10", "-1", "-2"])
+    r, = g.readings
+    assert (r.well_id, r.raw_well_id, r.alias_as_printed, r.temp) == ("AHEW0008", "AHEW0008", "EW-008", 90)
+
+
+def test_letter_o_alias_does_not_become_the_well():
+    g = _alias(["AHWTR022", "AHWTRO22", "3/2/2023 11:07", "54.6", "40.4", "0", "5", "0", "90",
+                "10", "-1", "-2"])
+    r, = g.readings
+    assert (r.well_id, r.alias_as_printed) == ("AHWTR022", "AHWTRO22")
+
+
+def test_first_row_after_an_alias_header_keeps_its_well_id():
+    # The header ends at the Well ID line, not at the alias (which is also
+    # followed by the timestamp), so the first row is not read under its alias.
+    hdr_text, j = w._read_header(L(*HDR_ALIAS, "AHWTR022", "AHWTRO22", "3/2/2023 11:07"), 0)
+    assert "AHWTR022" not in hdr_text and j == len(HDR_ALIAS)
+
+
+def test_alias_row_unlabeled_adj_keys_on_well_id():
+    hdr = [h for h in HDR_ALIAS if h != "ADJ"]
+    row = ["AHWTR022", "AHWTRO22", "3/2/2023 11:07", "54.6", "40.4", "0", "5", "0", "90",
+           "10", "-1", "-2"]
+    rs = w._parse_table_lines(L(*hdr, *row, *row)).readings
+    assert [(r.well_id, r.adj) for r in rs] == [("AHWTR022", False), ("AHWTR022", True)]
+
+
+def test_table_without_alias_label_reads_as_before():
+    # No Alias label: a three-line well/alias/date run is NOT read as Well ID +
+    # Alias; the line next to the timestamp is the well, as before.
+    rs = w._parse_table_lines(L(*HDR_FULL, "AHW9", *HOT)).readings
+    assert [r.raw_well_id for r in rs] == ["AHW272R4"] and rs[0].alias_as_printed is None
+
+
+def test_alias_table_through_the_pdf_path(tmp_path):
+    import fitz
+    path = tmp_path / "r.pdf"
+    doc = fitz.open()
+    hdr = ("Well ID Alias Date/Time ADJ CH4 (%) CO2 (%) O2 (%) Balance (%) Diff. Press. "
+           "Temp. Flow Well Pres. Header Pres. Comments")
+    rows = ["AHEW0008", "EW-008", "2/18/2025 15:32", "48.9", "35.2", "1.6", "14.3", "0",
+            "27.6 ---", "14.15", "-0.68 No Change: :",
+            "AHW3", "AHW3", "2/18/2025 15:40", "50", "40", "0", "10", "--- ---", "---", "---", "---",
+            "AHW264R3", "AHW264R3", "10/25/2023 8:38", "---", "---", "---", "---"]
+    doc.new_page().insert_text((20, 20), "Gas Extraction Report\n" + hdr + "\n" + "\n".join(rows),
+                               fontsize=5)
+    doc.save(str(path))
+    doc.close()
+    g = w.parse_gas_extraction_report(str(path))
+    assert g.rejected_tables == [] and g.blank_rows == 1
+    assert [(r.well_id, r.alias_as_printed, r.temp, r.header_pres) for r in g.readings] == [
+        ("AHEW0008", "EW-008", 27.6, -0.68), ("AHW3", "AHW3", None, None)]
