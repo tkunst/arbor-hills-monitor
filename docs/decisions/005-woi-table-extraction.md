@@ -313,7 +313,10 @@ line positions are available (the PDF path), the Well ID line must also sit in
 the page's Well ID column, the leftmost well-shaped line in the text's own
 direction (`_WELL_COLUMN_TOLERANCE`). On 4,549 corpus pages every such start
 sits exactly there. So a comment line that names a well can't take over the
-next row when that row's alias prints nothing. The Well ID must match `WELL_RE`; the Alias matches the looser
+next row when that row's alias prints nothing. A start that fails this check
+is counted in `off_column_rows` and logged. It is then read with main's
+two-line rule, or not at all. Positions are taken only on pages whose text
+contains "Alias". The Well ID must match `WELL_RE`; the Alias matches the looser
 `ALIAS_RE`, or is a blank `---`. `well_id`/`raw_well_id` come from the Well
 ID, and the Alias is kept as printed in `WOIReading.alias_as_printed` (None when
 blank). Under an Alias label the header reader also stops at that three-line
@@ -340,21 +343,28 @@ column. Across the corpus below, 23,794 lines mix cells and text. Each one's
 text is a Comments-column entry ("Opened Valve…", "No Change…", "Second
 Reading…"), and each one supplies a single Header Pres cell. Residual: a row
 whose Header Pres printed nothing at all, followed by a comment that starts
-with a number, would read that number as Header Pres.
+with a number, would read that number as Header Pres. The same holds when a bare
+number on its own line follows a row whose last cells are `---`. Pressures are
+not emitted as measurements.
 
-**Positions are trusted only when the row is complete.** If a row needed the
-new reader (a `---`, or two cells on one line) but its cells don't fill every
-column, some cell printed nothing at all. The positions after the first blank
-are then unknown, so only the cells before it are kept: the positions main
-trusted. This stops a value from shifting into Temp when Diff Press printed
-nothing and Temp printed `---`.
+**Positions are trusted only when the row is complete.** A row may need the new
+reader (a `---`, or two cells on one line such as `100 150`) but still not fill
+every column. Then some cell printed nothing at all, and where the later cells
+belong is unknown. Only the cells main's reader took are kept, and those are
+the positions main trusted. If that leaves nothing through Temp, the row is
+counted in `ambiguous_rows` and not emitted. This stops a value from shifting
+into Temp when Diff Press printed nothing.
 
 **Main's rows keep main's behavior.** For each row, `_read_values` also reports
 how many cells main's one-number-per-line reader would have taken.
 
-- The negative-flow column-shift check uses only the Flow cells main read, so
-  added rows can neither reject a table main kept nor dilute a shifted one
-  below the 25% threshold.
+- The negative-flow column-shift check judges main's rows on the Flow cells
+  main read. Added rows can therefore neither reject a table main kept nor
+  dilute a shifted one below the 25% threshold.
+- The added rows get the same check on their own Flow cells, with the same
+  20-row minimum. If they show the signature, only they are rejected
+  ("column-shift signature in rows read past a blank cell"), and main's rows
+  stay.
 - The unlabeled-ADJ partner is the last row main would have emitted. Added rows
   (gas-only, or read past a `---`) take a partner's flag but never become one,
   so no row main emitted changes its ADJ flag. A recovered as-found row and
@@ -405,7 +415,8 @@ the same report. A gas-only layout would not be a real layout. It would also:
 So no layout was added, and the reject stays. Joining each half by page offset
 and row order is a separate follow-up.
 
-**Fuzzing.** Main and this parser were run on 600,000 random line sequences.
+**Fuzzing.** Main and this parser were run on 600,000 random line sequences,
+and the final version on 300,000 more in a second, independent fuzzer.
 They mix headers (with and without Alias, ADJ and Diff Press), `---`, shared
 lines, comments, stray well ids and timestamps. Every row main emitted is still
 emitted with the same values. Outside Alias-labeled tables, every row keeps the
@@ -424,15 +435,17 @@ parse outputs. The counts below are over the 42.
   - 6,647 new readings have a temperature. All are valid, they range from
     6.2 to 140.2°F, none is ≥ 145°F, and 5 are ≥ 131°F.
   - 3,471 new readings are gas-only.
-  - 306 all-`---` rows, 1,038 partial rows and 0 truncated rows were counted.
+  - 306 all-`---` rows and 1,037 partial rows were counted. 0 rows were
+    truncated, 0 were ambiguous, and 0 Alias row starts were off-column.
 - 3,299 rows moved from the Alias spelling to the Well ID. 1,068 of them have
   a non-AH alias.
 - Rows with a blank `header_pres` fell from 143,695 to 47,910. Of the rest,
   46,522 sit on pages where no row prints that column.
 - Rejected rows rose from 9,519 to 9,573. The 54 new ones are rows in two of
   the split tables whose Alias is non-AH or blank. Main never started those
-  rows. The reject still counts only the leading numeric cells, as main did:
-  a `---` cell, and anything after it, never counts toward it.
+  rows. The reject still counts only the cells main's reader took (one bare
+  number per line). A `---`, a shared line, and anything after them never
+  count toward it.
 
 Through `route_measurements`, using the live `config.yml` and alias map:
 

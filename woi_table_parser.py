@@ -218,9 +218,16 @@ class GasExtractionParse:
     # columns (partial_rows); the four gas columns, but the row's cells ended
     # before the Temp position (truncated_rows: a cell the parser could not
     # read, e.g. "177.0*", never becomes a "no temperature" reading).
+    # ambiguous_rows: the row needed the new reader but doesn't fill every
+    # column, so only the cells main's reader would have taken are trusted;
+    # counted here when that leaves no reading. off_column_rows: a Well ID /
+    # Alias / Date/Time start whose Well ID line is not in the page's Well ID
+    # column (read with main's two-line rule instead, or not at all).
     blank_rows: int = 0
     partial_rows: int = 0
     truncated_rows: int = 0
+    ambiguous_rows: int = 0
+    off_column_rows: int = 0
 
 
 def layout_for_columns(cols: list) -> Optional[list]:
@@ -471,22 +478,36 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
     # the table currently being collected
     cur_rows: list = []
     cur_flows: list = []    # Flow cells main would have read (negative-flow check)
+    cur_added: list = []    # rows whose Flow cell main would NOT have read
     partner = None          # the last row main would have emitted (unlabeled ADJ)
     well_col: dict = {}     # page -> Well ID column position
     cur_rejected = {"n": 0, "first": None, "last": None, "reason": ""}
 
     def flush():
-        nonlocal cur_rows, cur_flows, partner
+        nonlocal cur_rows, cur_flows, cur_added, partner
         if cur_rows:
+            # Main's rows are judged on main's Flow cells alone, so added rows
+            # can neither reject them nor dilute a shifted table. The added
+            # rows get the same check on their own Flow cells (with the same
+            # minimum row count main's check has).
             share = _negative_flow_share(cur_flows)
+            added_share = _negative_flow_share([r.flow for r in cur_added if r.flow is not None])
             if share is not None and share > NEGATIVE_FLOW_REJECT_SHARE:
                 out.rejected_tables.append(RejectedTable(
                     first_page=cur_rows[0].page, last_page=cur_rows[-1].page,
                     n_rows=len(cur_rows), header=header,
                     reason=f"column-shift signature: {share:.0%} of rows have a negative flow"))
+            elif added_share is not None and added_share > NEGATIVE_FLOW_REJECT_SHARE:
+                added_ids = {id(r) for r in cur_added}
+                out.readings.extend(r for r in cur_rows if id(r) not in added_ids)
+                out.rejected_tables.append(RejectedTable(
+                    first_page=cur_added[0].page, last_page=cur_added[-1].page,
+                    n_rows=len(cur_added), header=header,
+                    reason=(f"column-shift signature in rows read past a blank cell: "
+                            f"{added_share:.0%} have a negative flow")))
             else:
                 out.readings.extend(cur_rows)
-        cur_rows, cur_flows, partner = [], [], None
+        cur_rows, cur_flows, cur_added, partner = [], [], [], None
         if cur_rejected["n"]:
             out.rejected_tables.append(RejectedTable(
                 first_page=cur_rejected["first"], last_page=cur_rejected["last"],
@@ -494,15 +515,15 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
                 header=header if header_cols is None else "columns read: " + ",".join(header_cols)))
         cur_rejected.update(n=0, first=None, last=None, reason="")
 
+    if positions is not None:  # one pass: each page's Well ID column
+        for (t, pg), x in zip(lines, positions):
+            if x is not None and WELL_RE.match(t):
+                well_col[pg] = min(well_col.get(pg, x), x)
+
     def _in_well_column(k: int) -> bool:
         if positions is None or positions[k] is None:
             return True  # no geometry for this line: text order only
-        pg = lines[k][1]
-        if pg not in well_col:
-            xs = [positions[m] for m, (t, p) in enumerate(lines)
-                  if p == pg and positions[m] is not None and WELL_RE.match(t)]
-            well_col[pg] = min(xs) if xs else None
-        col = well_col[pg]
+        col = well_col.get(lines[k][1])
         return col is None or positions[k] <= col + _WELL_COLUMN_TOLERANCE
 
     i, n = 0, len(lines)
@@ -554,7 +575,11 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
             i = j
             continue
         alias = None
-        if alias_labeled and _is_alias_row_start(lines, i) and _in_well_column(i):
+        alias_start = alias_labeled and _is_alias_row_start(lines, i)
+        if alias_start and not _in_well_column(i):
+            out.off_column_rows += 1
+            alias_start = False
+        if alias_start:
             alias = lines[i + 1][0] if lines[i + 1][0] != BLANK_CELL else None
             dt = lines[i + 2][0]
             j = i + 3
@@ -579,15 +604,16 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
         mixed_ok = (frozenset(layout.index(c) for c in ("well_pres", "header_pres")
                               if c in layout) if layout else frozenset())
         nums, j, main_len = _read_values(lines, j, width, mixed_ok)
-        if (layout is not None and main_len < len(nums) < width and None in nums
+        if (layout is not None and main_len < len(nums) < width
                 and any(v is not None for v in nums)):
-            # The row needed this reader (a "---" or a shared line) but doesn't
-            # fill every column: a cell printed nothing at all, so positions
-            # after the first blank are unknown. Keep only the cells before
-            # it (the positions main trusted).
-            nums = nums[:nums.index(None)]
-            if not nums:
-                out.partial_rows += 1  # nothing left whose position is known
+            # The row needed this reader (a "---" or a shared line such as
+            # "100 150") but doesn't fill every column: some cell printed
+            # nothing at all, so where the later cells belong is unknown.
+            # Keep only the cells main's reader took (the positions main
+            # trusted). An all-"---" row is left to the blank_rows count.
+            nums = nums[:main_len]
+            if len(nums) <= layout.index("temp"):
+                out.ambiguous_rows += 1  # no reading whose positions are known
                 i = j
                 continue
         if layout is None:
@@ -597,10 +623,10 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
             # gas header at all, only rows long enough to have been read as gas
             # readings before this guard existed.
             unknown_gas = header not in ("", NON_GAS_HEADER)
-            # Leading numeric cells only, as main counted them (it stopped at
-            # the first "---"): a non-gas table's blank cells, or the numbers
-            # read past them, must not make it look like a gas table.
-            n_numeric = next((k for k, v in enumerate(nums) if v is None), len(nums))
+            # The cells main's reader took (one bare number per line, stopping
+            # at the first other line): a non-gas table's blank cells, shared
+            # lines, or numbers read past them, must not make it look gas.
+            n_numeric = main_len
             if n_numeric >= (4 if unknown_gas else 6):
                 cur_rejected["n"] += 1
                 cur_rejected["first"] = cur_rejected["first"] or page
@@ -632,8 +658,10 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
             cur_rows.append(r)
             if main_len > layout.index("temp"):  # main emitted this row
                 partner = r
-                if "flow" in layout and main_len > layout.index("flow"):
-                    cur_flows.append(r.flow)
+            if "flow" in layout and main_len > layout.index("flow"):
+                cur_flows.append(r.flow)
+            else:
+                cur_added.append(r)
         i = j
     flush()
     return out
@@ -724,10 +752,13 @@ def parse_gas_extraction_report(pdf_path: str, alias_map: Optional[dict] = None)
     for t in out.rejected_tables:
         print(f"[woi_table_parser] REJECTED gas table pp{t.first_page}-{t.last_page} "
               f"({t.n_rows} rows): {t.reason}")
-    if out.blank_rows or out.partial_rows or out.truncated_rows:
+    if (out.blank_rows or out.partial_rows or out.truncated_rows or out.ambiguous_rows
+            or out.off_column_rows):
         print(f"[woi_table_parser] rows not emitted: {out.blank_rows} all blank, "
               f"{out.partial_rows} without all four gas columns, "
-              f"{out.truncated_rows} ending before Temp")
+              f"{out.truncated_rows} ending before Temp, "
+              f"{out.ambiguous_rows} with cells of unknown position; "
+              f"{out.off_column_rows} Alias-table row starts outside the Well ID column")
     return out
 
 
