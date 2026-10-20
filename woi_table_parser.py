@@ -205,11 +205,14 @@ class GasExtractionParse:
     readings: list = field(default_factory=list)          # [WOIReading]
     rejected_tables: list = field(default_factory=list)   # [RejectedTable]
     skipped_pages: list = field(default_factory=list)     # [int], 1-based
-    # Rows under a recognized layout that were NOT emitted because there is no
-    # reading to emit: every cell printed "---" (blank_rows), or some values
-    # but not all four gas columns (partial_rows). Counts only.
+    # Rows under a recognized layout that were NOT emitted (counts only):
+    # every cell printed "---" (blank_rows); some values but not all four gas
+    # columns (partial_rows); the four gas columns, but the row's cells ended
+    # before the Temp position (truncated_rows: a cell the parser could not
+    # read, e.g. "177.0*", never becomes a "no temperature" reading).
     blank_rows: int = 0
     partial_rows: int = 0
+    truncated_rows: int = 0
 
 
 def layout_for_columns(cols: list) -> Optional[list]:
@@ -338,38 +341,51 @@ def _is_row_start(lines, i) -> bool:
 
 
 def _is_alias_row_start(lines, i) -> bool:
-    """Well ID, Alias, Date/Time on three lines (a table with an Alias column)."""
+    """Well ID, Alias, Date/Time on three lines (a table with an Alias column).
+    A blank alias may print BLANK_CELL."""
     return (WELL_RE.match(lines[i][0]) is not None and i + 2 < len(lines)
-            and ALIAS_RE.match(lines[i + 1][0]) is not None
+            and (ALIAS_RE.match(lines[i + 1][0]) is not None or lines[i + 1][0] == BLANK_CELL)
             and DT_RE.match(lines[i + 2][0]) is not None)
+
+
+def _cell(tok: str):
+    """(True, value) for a cell token (a number, or BLANK_CELL -> None),
+    (False, None) for anything else."""
+    if tok == BLANK_CELL:
+        return True, None
+    if FLOAT_RE.match(tok):
+        return True, float(tok)
+    return False, None
 
 
 def _read_values(lines, j: int, width: int) -> tuple[list, int]:
     """Read up to `width` cells starting at line j, token by token. A number
-    fills the next column; BLANK_CELL fills it with None. Any other token (a
-    comment such as "No Change: :") ends the row after the cells before it on
-    that line are taken; a line that starts with one is not read at all (the
-    next row's Well ID, a header, a comment line). Returns (cells, next_j)."""
+    fills the next column; BLANK_CELL fills it with None. A line that starts
+    with any other token is not read (the next row's Well ID, a header, a
+    comment line). A line with cells and then other text is the row's last
+    cells followed by the Comments column ("-0.68 No Change: :"): it is read
+    only when its cells complete the row exactly, and the row ends there.
+    Otherwise the row ends before it, so a comment that starts with a number
+    ("2 turns open") never fills a column. Returns (cells, next_j)."""
     vals: list = []
     n = len(lines)
     while j < n and len(vals) < width:
-        took, ended = 0, False
+        cells, mixed = [], False
         for tok in lines[j][0].split():
-            if len(vals) >= width:
+            ok, v = _cell(tok)
+            if not ok:
+                mixed = True
                 break
-            if tok == BLANK_CELL:
-                vals.append(None)
-            elif FLOAT_RE.match(tok):
-                vals.append(float(tok))
-            else:
-                ended = True
-                break
-            took += 1
-        if not took:
+            cells.append(v)
+        if not cells:
             break
+        if mixed:
+            if len(vals) + len(cells) == width:
+                vals.extend(cells)
+                j += 1
+            break
+        vals.extend(cells[:width - len(vals)])
         j += 1
-        if ended:
-            break
     return vals, j
 
 
@@ -491,7 +507,7 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
             continue
         alias = None
         if alias_labeled and _is_alias_row_start(lines, i):
-            alias = lines[i + 1][0]
+            alias = lines[i + 1][0] if lines[i + 1][0] != BLANK_CELL else None
             dt = lines[i + 2][0]
             j = i + 3
         elif _is_row_start(lines, i):
@@ -519,7 +535,8 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
             # gas header at all, only rows long enough to have been read as gas
             # readings before this guard existed.
             unknown_gas = header not in ("", NON_GAS_HEADER)
-            if len(nums) >= (4 if unknown_gas else 6):
+            n_numeric = sum(v is not None for v in nums)  # "---" cells don't count
+            if n_numeric >= (4 if unknown_gas else 6):
                 cur_rejected["n"] += 1
                 cur_rejected["first"] = cur_rejected["first"] or page
                 cur_rejected["last"] = page
@@ -529,10 +546,15 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
                     else "rows before any recognized header")
         elif nums and all(v is None for v in nums):
             out.blank_rows += 1  # every cell "---": no reading to emit
-        elif len(nums) >= 4 and None not in nums[:4]:
-            # The four gas columns are present. Temp (or any later column)
-            # may be blank: a gas-only reading is kept, with no temperature
-            # (Trisha's ruling 2026-10-19). `valid` still gates on the gas sum.
+        elif len(nums) < 4 or None in nums[:4]:
+            out.partial_rows += 1  # values, but not all four gas columns
+        elif len(nums) <= layout.index("temp"):
+            out.truncated_rows += 1  # cells ended before Temp: not a blank Temp
+        else:
+            # The four gas columns are present and the Temp position was read.
+            # Temp (or any later column) may be blank ("---"): a gas-only
+            # reading is kept, with no temperature (Trisha's ruling
+            # 2026-10-19). `valid` still gates on the gas sum.
             r = WOIReading(
                 well_id=canonicalize(raw_well, alias_map),
                 raw_well_id=raw_well, dt=dt, adj=adj, page=page,
@@ -541,8 +563,6 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
             for ci, v in enumerate(nums):
                 setattr(r, layout[ci], v)
             cur_rows.append(r)
-        elif nums:
-            out.partial_rows += 1  # values, but not all four gas columns
         i = j
     flush()
     return out
@@ -607,6 +627,10 @@ def parse_gas_extraction_report(pdf_path: str, alias_map: Optional[dict] = None)
     for t in out.rejected_tables:
         print(f"[woi_table_parser] REJECTED gas table pp{t.first_page}-{t.last_page} "
               f"({t.n_rows} rows): {t.reason}")
+    if out.blank_rows or out.partial_rows or out.truncated_rows:
+        print(f"[woi_table_parser] rows not emitted: {out.blank_rows} all blank, "
+              f"{out.partial_rows} without all four gas columns, "
+              f"{out.truncated_rows} ending before Temp")
     return out
 
 

@@ -309,23 +309,43 @@ these tables the Alias became the row's well, and a row whose Alias was not
 AH-format (`EW-008`, `V-10`) was never read. Under a header whose text has an
 `Alias` label (`_ALIAS_LABEL_RE`), a row now starts at Well ID / Alias /
 Date/Time. The Well ID must match `WELL_RE`; the Alias matches the looser
-`ALIAS_RE`. `well_id`/`raw_well_id` come from the Well ID, and the Alias is
-kept as printed in `WOIReading.alias_as_printed`. The header reader also stops
-at that three-line start, so the first row after each header keeps its Well
-ID. Tables with no Alias label are read exactly as before. The unlabeled-ADJ
-rule keys on the Well ID.
+`ALIAS_RE`, or is a blank `---`. `well_id`/`raw_well_id` come from the Well
+ID, and the Alias is kept as printed in `WOIReading.alias_as_printed` (None when
+blank). The header reader also stops at that three-line start, so the first row
+after each header keeps its Well ID. In tables with no Alias label the row start
+is unchanged. The cell reading and gas-only rules below apply to every table.
+The unlabeled-ADJ rule keys on the Well ID. An Alias table whose Well ID isn't
+AH-format falls back to the old two-line start (the alias becomes the well), as
+on main.
 
 **Cells are tokens.** Values used to be read one whole line at a time, and the
 row ended at the first line that wasn't a bare number. A line such as
 `27.6 ---` or `-0.68 No Change: :` therefore ended the row, so its value and
 every later column were lost, and a row with `---` before Temp was dropped.
 Each line is now split on whitespace (`_read_values`). A number fills the next
-column. `---` fills it with None: the cell is blank but keeps its position. Any
-other token ends the row, after the cells before it on that line are taken.
+column. `---` fills it with None: the cell is blank but keeps its position. A
+line that starts with any other token is not read. A line with cells followed by
+other text is the row's last cells followed by the Comments column
+(`-0.68 No Change: :`). It is read only when its cells complete the row exactly,
+and the row ends there. Otherwise the row ends before that line, so a comment
+that starts with a number (`2 turns open`) does not fill a column after a short
+row. Across the corpus below, 23,794 lines mix cells and text. Each one's text
+is a Comments-column entry ("Opened Valve…", "No Change…", "Second Reading…").
+Every one completed its row. Residual: a short row followed by a comment whose
+leading numbers happen to complete the row exactly would still be read as
+cells.
 
-**Gas-only rows.** A row is emitted when its four gas columns hold numbers,
-even if Temp (or any later column) is blank. It carries no temperature, and
-`valid` still gates it on the gas sum. A row whose cells are all `---` has no
+**Gas-only rows.** A row is emitted when its four gas columns hold numbers and
+its cells reach the Temp position, even if Temp (or any later column) is
+`---`. It carries no temperature, and `valid` still gates it on the gas sum. A
+row whose cells end before Temp is not a blank Temp. That happens, for example,
+when the Temp cell is a token the parser can't read, such as `177.0*`. Such a
+row is counted in `truncated_rows` and not emitted, as on main. Otherwise it
+would turn into a "no temperature" reading and shift the unlabeled-ADJ pairing.
+`woi_router`'s data-loss guard (`_MIN_VALID_READINGS`) counts only valid
+readings WITH a temperature, so gas-only rows can't make a report whose
+temperatures don't parse replace the classifier's measurements. The three
+not-emitted counts are logged after each parse (counts only). A row whose cells are all `---` has no
 reading. It is counted in `GasExtractionParse.blank_rows` and not emitted. A row
 with some values but not all four gas columns is counted in `partial_rows` and
 not emitted. That count also includes short rows from other tables that carry
@@ -365,20 +385,21 @@ parse outputs. The counts below are over the 42.
 - Every reading main read is still read: 0 lost, 0 changed values. Matching
   is on page, timestamp, ADJ and printed id.
 - Outside Alias tables, no reading's well id changed.
-- 99,429 cells that were blank on main are now filled. On every line that
-  mixes a value and a comment, the value filled the row's last column. No
-  comment number landed in a middle column.
+- 99,428 cells that were blank on main are now filled. All of them come from
+  lines read past a `---`, or from the last cell on a value-plus-comment line.
 - Readings rose from 268,289 to 278,407:
   - 6,647 new readings have a temperature. All are valid, they range from
     6.2 to 140.2°F, none is ≥ 145°F, and 5 are ≥ 131°F.
   - 3,471 new readings are gas-only.
-  - 306 all-`---` rows and 1,037 partial rows were counted.
+  - 306 all-`---` rows, 1,038 partial rows and 0 truncated rows were counted.
 - 3,299 rows moved from the Alias spelling to the Well ID. 1,068 of them have
   a non-AH alias.
 - Rows with a blank `header_pres` fell from 143,695 to 47,910. Of the rest,
   46,522 sit on pages where no row prints that column.
-- Rejected rows rose from 9,519 to 9,575. Rows with `---` in a gas cell now
-  reach the 4-cell count in the rejected split tables.
+- Rejected rows rose from 9,519 to 9,573, all of them in the split tables.
+  Rows that have numbers after a `---` now have at least 4 numeric cells,
+  which is the count the reject requires. `---` cells themselves never count
+  toward it.
 
 Through `route_measurements`, using the live `config.yml` and alias map:
 
