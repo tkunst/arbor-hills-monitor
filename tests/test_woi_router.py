@@ -269,7 +269,10 @@ def test_gas_only_rows_route_without_changing_any_max_temperature(tmp_path):
     # gas-only reading. It must not move any well's max temperature, the peak,
     # the emitted temperatures, the headline, the severity floor or well_watch.
     import well_watch
-    reads = _many(54, temp=90) + [("AHW272R4", 177), ("AHW272R4", "---"), ("AHW999", "---")]
+    base_reads = _many(54, temp=90) + [("AHW272R4", 177)]
+    base = woi_router.route_measurements(_parsed(), _build_pdf(tmp_path / "base.pdf", base_reads),
+                                         META, CFG)
+    reads = base_reads + [("AHW272R4", "---"), ("AHW999", "---")]
     pdf = _build_pdf(tmp_path / "gas_only.pdf", reads)
     parsed = _parsed(severity="urgent")
     parsed.severity_floor, parsed.severity_before_floor = ["measured_temperature"], "notable"
@@ -277,6 +280,8 @@ def test_gas_only_rows_route_without_changing_any_max_temperature(tmp_path):
     gas_only = [r for r in routed["readings"] if r.temp is None]
     assert {r.well_id for r in gas_only} == {"AHW272R4", "AHW999"}
     by_well = {d["well"]: d for d in routed["summary"]}
+    base_max = {d["well"]: d["max_temp_f"] for d in base["summary"]}
+    assert {w_: by_well[w_]["max_temp_f"] for w_ in base_max} == base_max
     assert by_well["AHW272R4"]["max_temp_f"] == 177.0
     assert by_well["AHW999"]["max_temp_f"] is None
     assert routed["summary"][0]["well"] == "AHW272R4"   # wells with no temp sort last
@@ -288,3 +293,20 @@ def test_gas_only_rows_route_without_changing_any_max_temperature(tmp_path):
     cfg = {**CFG, "well_watch": {"wells": [{"pattern": r"^AHW+0*272", "threshold_f": 145}]}}
     (_, hits), = well_watch.find_hits(routed["readings"], cfg)
     assert [h.temp for h in hits] == [177.0]
+
+
+def test_guard_ignores_gas_only_rows_when_temperatures_dont_parse(tmp_path):
+    # A report whose Temp cells all fail to parse must not route on the
+    # strength of its gas columns: the classifier's 177 stays (as on main).
+    reads = _many(54, temp="177.0*") + [("AHW1", 90)]
+    pdf = _build_pdf(tmp_path / "bad_temp.pdf", reads)
+    parsed = _parsed(measurements=[{"metric": "temperature", "value": 177,
+                                    "unit": "F", "basis": "measured"}])
+    assert woi_router.route_measurements(parsed, pdf, META, CFG) is None
+    assert [m["value"] for m in parsed.measurements] == [177]
+
+
+def test_guard_counts_only_readings_with_a_temperature(tmp_path):
+    reads = _many(10, temp=90) + _many(60, temp="---", start=400)
+    pdf = _build_pdf(tmp_path / "mostly_gas_only.pdf", reads)
+    assert woi_router.route_measurements(_parsed(), pdf, META, CFG) is None

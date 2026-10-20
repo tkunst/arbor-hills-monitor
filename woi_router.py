@@ -193,9 +193,13 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
               f"(logged for review)")
     if review_flags is not None:
         review_flags.extend(rf.woi_flags(above, gp.rejected_tables, gp.skipped_pages, max_f))
-    if len(valid) < _MIN_VALID_READINGS:
-        print(f"[woi_router] WARNING: detected a WOI report but only {len(valid)} "
-              f"valid readings (< {_MIN_VALID_READINGS}) — NOT replacing "
+    # The guard counts readings WITH a temperature: gas-only rows (Temp
+    # printed "---", ADR 005 addendum 2026-10-19) must not let a report whose
+    # temperatures don't parse replace the classifier's measurements.
+    n_with_temp = sum(1 for r in valid if r.temp is not None)
+    if n_with_temp < _MIN_VALID_READINGS:
+        print(f"[woi_router] WARNING: detected a WOI report but only {n_with_temp} "
+              f"valid readings with a temperature (< {_MIN_VALID_READINGS}) — NOT replacing "
               f"measurements (possible false-positive detection or EGLE format "
               f"drift): {metadata.get('document_name')!r}")
         return None

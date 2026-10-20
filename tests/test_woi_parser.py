@@ -510,11 +510,60 @@ def test_dash_before_temp_still_reads_temp():
 
 def test_value_then_comment_on_one_line_ends_the_row():
     nxt = ["AHW1", "AHW1", "1/1/2025 10:00", "50", "40", "0", "10", "0.5", "120", "5", "-1", "-2"]
-    g = _alias(["AHW2", "AHW2", "1/1/2025 9:00", "50", "40", "0", "10", "0.5", "121",
-                "5 Opened Valve 1/2 turn:", "7"], nxt)
+    g = _alias(["AHW2", "AHW2", "1/1/2025 9:00", "50", "40", "0", "10", "0.5", "121", "5",
+                "-1", "-2 Opened Valve 1/2 turn:", "7"], nxt)
     a, b = g.readings
-    assert (a.flow, a.well_pres, a.header_pres) == (5, None, None)  # "7" is not read
+    assert (a.flow, a.well_pres, a.header_pres) == (5, -1, -2)  # "7" is not read
     assert b.raw_well_id == "AHW1" and b.temp == 120
+
+
+def test_comment_starting_with_a_number_never_fills_a_column():
+    # The row is short (no Well/Header Pres printed), then a comment that
+    # starts with a number. Its cells don't complete the row, so it isn't read.
+    g = _alias(["AHW2", "AHW2", "1/1/2025 9:00", "50", "40", "0", "10", "0.5", "121", "5",
+                "2 turns open"])
+    r, = g.readings
+    assert (r.flow, r.well_pres, r.header_pres) == (5, None, None)
+
+
+def test_unreadable_temp_cell_is_not_a_gas_only_reading():
+    # "177.0*" is not a cell the parser reads: the row ends before Temp. That
+    # is not a blank Temp, so the row is counted, never emitted without a
+    # temperature (main dropped it too).
+    g = _alias(["AHW7", "AHW7", "1/1/2025 9:00", "50", "40", "0", "10", "0.5", "177.0*",
+                "5", "-1", "-2"])
+    assert g.readings == [] and g.truncated_rows == 1
+
+
+def test_unreadable_temp_cell_leaves_unlabeled_adj_as_on_main():
+    hdr = [h for h in HDR_ALIAS if h != "ADJ"]
+    first = ["AHW7", "AHW7", "1/1/2025 9:00", "50", "40", "0", "10", "0.5", "177.0*", "5", "-1", "-2"]
+    second = ["AHW7", "AHW7", "1/1/2025 9:00", "50", "40", "0", "10", "0.5", "176", "5", "-1", "-2"]
+    rs = w._parse_table_lines(L(*hdr, *first, *second)).readings
+    assert [(r.adj, r.temp) for r in rs] == [(False, 176.0)]
+
+
+def test_blank_cells_under_a_non_gas_header_are_not_a_rejected_table():
+    hdr = ["Well ID", "Date/Time", "Depth to Liquid", "Depth to Bottom"]
+    g = w._parse_table_lines(L(*hdr, "AHW5", "1/1/2025 9:00", "---", "---", "---", "---",
+                               "---", "---"))
+    assert g.readings == [] and g.rejected_tables == []
+
+
+def test_blank_alias_cell():
+    g = _alias(["AHW8", "---", "1/1/2025 9:00", "50", "40", "0", "10", "0.5", "120", "5", "-1", "-2"])
+    r, = g.readings
+    assert (r.well_id, r.alias_as_printed, r.temp) == ("AHW8", None, 120)
+
+
+def test_alias_label_change_starts_a_new_table():
+    row = ["AHWTR022", "AHWTRO22", "3/2/2023 11:07", "54.6", "40.4", "0", "5", "0", "90",
+           "10", "-1", "-2"]
+    # Same columns without the Alias label: that is a different table, read the
+    # old way (the line next to the timestamp is the well).
+    rs = w._parse_table_lines(L(*HDR_ALIAS, *row, *HDR_FULL, *row)).readings
+    assert [(r.well_id, r.alias_as_printed) for r in rs] == [
+        ("AHWTR022", "AHWTRO22"), ("AHWTRO22", None)]
 
 
 def test_gas_only_reading_is_kept_with_no_temperature():
@@ -522,7 +571,7 @@ def test_gas_only_reading_is_kept_with_no_temperature():
                 "---", "---"])
     r, = g.readings
     assert r.valid and r.temp is None and r.o2 == 0
-    assert w.to_measurements(r) == [m for m in w.to_measurements(r) if m["metric"] != "temperature"]
+    assert [m["metric"] for m in w.to_measurements(r)] == ["oxygen", "methane"]
     assert w.per_well_summary(g.readings)[0]["max_temp_f"] is None
 
 
@@ -572,6 +621,9 @@ def test_table_without_alias_label_reads_as_before():
     # Alias; the line next to the timestamp is the well, as before.
     rs = w._parse_table_lines(L(*HDR_FULL, "AHW9", *HOT)).readings
     assert [r.raw_well_id for r in rs] == ["AHW272R4"] and rs[0].alias_as_printed is None
+    # ...including the first row right after the header.
+    rs = w._parse_table_lines(L(*HDR_FULL, "AHW9", "AHW272R4", *HOT[1:])).readings
+    assert [r.raw_well_id for r in rs] == ["AHW272R4"]
 
 
 def test_alias_table_through_the_pdf_path(tmp_path):
