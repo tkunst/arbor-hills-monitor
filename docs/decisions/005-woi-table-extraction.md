@@ -306,15 +306,21 @@ do not capture the valve-setting or comments columns.
 **Well ID, not Alias.** Some gas tables print Well ID, Alias, Date/Time. A row
 used to start wherever a well-shaped token sat right before a timestamp, so in
 these tables the Alias became the row's well, and a row whose Alias was not
-AH-format (`EW-008`, `V-10`) was never read. Under a header whose text has an
-`Alias` label (`_ALIAS_LABEL_RE`), a row now starts at Well ID / Alias /
-Date/Time. The Well ID must match `WELL_RE`; the Alias matches the looser
+AH-format (`EW-008`, `V-10`) was never read. Under a header whose text starts
+`Well ID Alias` (`_ALIAS_LABEL_RE`; the word "alias" elsewhere in a header does
+not count), a row now starts at Well ID / Alias / Date/Time. When the page's
+line positions are available (the PDF path), the Well ID line must also sit in
+the page's Well ID column, the leftmost well-shaped line in the text's own
+direction (`_WELL_COLUMN_TOLERANCE`). On 4,549 corpus pages every such start
+sits exactly there. So a comment line that names a well can't take over the
+next row when that row's alias prints nothing. The Well ID must match `WELL_RE`; the Alias matches the looser
 `ALIAS_RE`, or is a blank `---`. `well_id`/`raw_well_id` come from the Well
 ID, and the Alias is kept as printed in `WOIReading.alias_as_printed` (None when
-blank). The header reader also stops at that three-line start, so the first row
-after each header keeps its Well ID. In tables with no Alias label the row start
+blank). Under an Alias label the header reader also stops at that three-line
+start, so the first row after each header keeps its Well ID. Any other header
+ends where main ended it. In tables with no Alias label the row start
 is unchanged. The cell reading and gas-only rules below apply to every table.
-The unlabeled-ADJ rule keys on the Well ID. An Alias table whose Well ID isn't
+The unlabeled-ADJ rule keys on the Well ID (its partner rule is below). An Alias table whose Well ID isn't
 AH-format falls back to the old two-line start (the alias becomes the well), as
 on main.
 
@@ -324,18 +330,35 @@ row ended at the first line that wasn't a bare number. A line such as
 every later column were lost, and a row with `---` before Temp was dropped.
 Each line is now split on whitespace (`_read_values`). A number fills the next
 column. `---` fills it with None: the cell is blank but keeps its position. A
-line that starts with any other token is not read. A line with cells followed by
-other text is the row's last cells followed by the Comments column
-(`-0.68 No Change: :`). It is read only when its cells complete the row exactly and
-the cells before it already reach past Temp, and the row ends there. Otherwise
-the row ends before that line. So a comment that starts with a number
-(`150 ft of water`) can never supply Temp or any column before it, and
-`2 turns open` does not fill a column after a short row. Across the corpus below, 23,794 lines mix cells and text. Each one's text
-is a Comments-column entry ("Opened Valve…", "No Change…", "Second Reading…").
-Every one completed its row. Residual: a row one or two cells short after Temp
-(pressure columns not printed), followed by a comment whose leading numbers
-happen to complete it exactly, would still have those numbers read as the
-pressure cells.
+line that starts with any other token is not read. A line with a cell followed
+by other text is the row's last cell followed by the Comments column
+(`-0.68 No Change: :`). It is read only when it holds one cell, that cell
+completes the row, and its column is Well Pres or Header Pres. The row ends
+there. Otherwise the row ends before that line. So a comment that starts with a
+number (`150 ft of water`, `2 turns open`) can never fill Temp, Flow or a gas
+column. Across the corpus below, 23,794 lines mix cells and text. Each one's
+text is a Comments-column entry ("Opened Valve…", "No Change…", "Second
+Reading…"), and each one supplies a single Header Pres cell. Residual: a row
+whose Header Pres printed nothing at all, followed by a comment that starts
+with a number, would read that number as Header Pres.
+
+**Positions are trusted only when the row is complete.** If a row needed the
+new reader (a `---`, or two cells on one line) but its cells don't fill every
+column, some cell printed nothing at all. The positions after the first blank
+are then unknown, so only the cells before it are kept: the positions main
+trusted. This stops a value from shifting into Temp when Diff Press printed
+nothing and Temp printed `---`.
+
+**Main's rows keep main's behavior.** For each row, `_read_values` also reports
+how many cells main's one-number-per-line reader would have taken.
+
+- The negative-flow column-shift check uses only the Flow cells main read, so
+  added rows can neither reject a table main kept nor dilute a shifted one
+  below the 25% threshold.
+- The unlabeled-ADJ partner is the last row main would have emitted. Added rows
+  (gas-only, or read past a `---`) take a partner's flag but never become one,
+  so no row main emitted changes its ADJ flag. A recovered as-found row and
+  main's next same-time row can therefore both read as as-found.
 
 **Gas-only rows.** A row is emitted when its four gas columns hold numbers and
 its cells reach the Temp position, even if Temp (or any later column) is
@@ -343,10 +366,9 @@ its cells reach the Temp position, even if Temp (or any later column) is
 row whose cells end before Temp is not a blank Temp. That happens, for example,
 when the Temp cell is a token the parser can't read, such as `177.0*`. Such a
 row is counted in `truncated_rows` and not emitted, as on main. Otherwise it
-would turn into a "no temperature" reading. A gas-only row is also never the
-as-found partner in the unlabeled-ADJ rule. If it were, the same-time row after
-it, which carries the real temperature, would become ADJ and drop out of
-alerting. Rows with no cells at all are neither emitted nor counted, as on main.
+would turn into a "no temperature" reading. A gas-only row is never the
+as-found partner in the unlabeled-ADJ rule (see above), so the same-time row
+after it keeps its real temperature as an as-found reading. Rows with no cells at all are neither emitted nor counted, as on main.
 `woi_router`'s data-loss guard (`_MIN_VALID_READINGS`) counts only valid
 readings WITH a temperature, so gas-only rows can't make a report whose
 temperatures don't parse replace the classifier's measurements. The three
@@ -382,6 +404,12 @@ the same report. A gas-only layout would not be a real layout. It would also:
 
 So no layout was added, and the reject stays. Joining each half by page offset
 and row order is a separate follow-up.
+
+**Fuzzing.** Main and this parser were run on 600,000 random line sequences.
+They mix headers (with and without Alias, ADJ and Diff Press), `---`, shared
+lines, comments, stray well ids and timestamps. Every row main emitted is still
+emitted with the same values. Outside Alias-labeled tables, every row keeps the
+same ADJ flag and well id. Inside them, rows are re-keyed by design.
 
 **Measured effect.** Run on 91 locally held WOI-format cache files (the
 wellfield staging doc-cache plus the VGC cache), which give 42 distinct

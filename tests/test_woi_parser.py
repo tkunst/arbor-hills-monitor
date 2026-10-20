@@ -673,3 +673,104 @@ def test_numbers_past_a_blank_cell_do_not_make_a_non_gas_table_look_gas():
     g = w._parse_table_lines(L(*hdr, "AHW5", "1/1/2025 9:00", "12.5", "---", "202", "3", "---",
                                "4", "5", "6"))
     assert g.rejected_tables == []
+
+
+# --- Round-3 review: rows main read keep main's behavior exactly -------------
+
+H9 = "Well ID CH4 (%) CO2 (%) O2 (%) Balance (%) Diff. Press Temp. Flow Well Pres Header Pres"
+D = "5/31/2024 10:00"
+
+
+def _row9(well, diff, temp, flow):
+    return [well, D, "50.0", "30.0", "0.5", "19.5", diff, temp, flow, "-5.0", "-6.0"]
+
+
+def test_recovered_rows_never_trip_the_negative_flow_check():
+    # 20 rows main read (flow 9) + 8 rows main dropped (Diff Press "---",
+    # flow -2). Only main's flows are checked, so the table is kept whole.
+    lines = [H9]
+    for k in range(20):
+        lines += _row9(f"AHWW{k:03d}", "-1.0", "120.0", "9.0")
+    for k in range(8):
+        lines += _row9(f"AHWX{k:03d}", "---", "120.0", "-2.0")
+    g = w._parse_table_lines(L(*lines))
+    assert len(g.readings) == 28 and g.rejected_tables == []
+
+
+def test_recovered_rows_never_dilute_a_shifted_table():
+    # A shifted table (21 of 25 main-read flows negative) stays rejected even
+    # when many recovered rows with a positive flow are added.
+    lines = [H9]
+    for k in range(25):
+        lines += _row9(f"AHWW{k:03d}", "-1.0", "120.0", "-3.0" if k < 21 else "4.0")
+    for k in range(60):
+        lines += _row9(f"AHWX{k:03d}", "---", "120.0", "5.0")
+    g = w._parse_table_lines(L(*lines))
+    assert g.readings == [] and "column-shift" in g.rejected_tables[0].reason
+
+
+def test_recovered_row_does_not_change_main_rows_adj_flags():
+    hdr = H9  # no ADJ label: the unlabeled-ADJ rule applies
+    # A recovered as-found row (Diff Press "---") before main's row: main's
+    # 120 row stays as-found.
+    rs = w._parse_table_lines(L(hdr, *_row9("AHWW001", "---", "150.0", "10.0"), "Opened valve",
+                                *_row9("AHWW001", "-1.0", "120.0", "9.0"))).readings
+    assert [(r.temp, r.adj) for r in rs] == [(150.0, False), (120.0, False)]
+    # A gas-only row of another well between main's pair: 120 stays ADJ.
+    rs = w._parse_table_lines(L(hdr, *_row9("AHWW001", "-1.0", "150.0", "10.0"),
+                                *_row9("AHWW002", "-1.0", "---", "9.0"),
+                                *_row9("AHWW001", "-1.0", "120.0", "9.0"))).readings
+    assert [(r.raw_well_id, r.temp, r.adj) for r in rs] == [
+        ("AHWW001", 150.0, False), ("AHWW002", None, False), ("AHWW001", 120.0, True)]
+
+
+def test_alias_in_header_prose_is_not_an_alias_column():
+    lines = [H9 + " (alias per EGLE letter)", *_row9("AHWW001", "-1.0", "120.0", "9.0"),
+             "AHWW777", *_row9("AHWW002", "-1.0", "130.0", "9.0")]
+    rs = w._parse_table_lines(L(*lines)).readings
+    assert [(r.raw_well_id, r.temp) for r in rs] == [("AHWW001", 120.0), ("AHWW002", 130.0)]
+
+
+def test_well_shaped_comment_outside_the_well_column_cannot_take_a_row():
+    # Alias table; the second row's alias prints nothing, and a comment line
+    # naming a well sits right before it. With positions, the comment (x=500)
+    # is not in the Well ID column (x=20), so the row keeps its own Well ID.
+    lines = L(*HDR_ALIAS, "AHWW001", "AHWW001", D, "50", "30", "0.5", "19.5", "-1", "120", "9",
+              "-5", "-6 Redrilled as", "AHWW777", "AHWW002", D, "50", "30", "0.5", "19.5", "-1",
+              "130", "9", "-5", "-6")
+    pos = [None] * len(lines)
+    for k, (t, _) in enumerate(lines):
+        if t in ("AHWW001", "AHWW002"):
+            pos[k] = 20.0
+        elif t == "AHWW777":
+            pos[k] = 500.0
+    pos[len(HDR_ALIAS) + 1] = 60.0  # the first row's alias column
+    rs = w._parse_table_lines(lines, positions=pos).readings
+    assert [(r.raw_well_id, r.temp) for r in rs] == [("AHWW001", 120.0), ("AHWW002", 130.0)]
+
+
+def test_comment_number_never_fills_flow():
+    h7 = "Well ID CH4 (%) CO2 (%) O2 (%) Balance (%) Diff. Press Temp. Flow"
+    rs = w._parse_table_lines(L(h7, "AHWW001", D, "50.0", "30.0", "0.5", "19.5", "-1.0", "120.0",
+                                "150 ft of water")).readings
+    assert rs[0].flow is None
+
+
+def test_unlabeled_second_id_column_keeps_mains_header_end():
+    # A header with a second id column NOT labeled Alias: the header ends
+    # where main ended it, so the table's ADJ labeling is main's.
+    hdr = ["Well ID", "Name", "Date/Time", "CH4 (%)", "CO2 (%)", "O2 (%)", "Balance (%)",
+           "Diff. Press", "Temp.", "Flow", "Well Pres", "Header Pres"]
+    row1 = ["AHWW001", "EW-8", D, "ADJ", "50", "30", "0.5", "19.5", "-1", "120", "9", "-5", "-6"]
+    rest = [*_row9("AHWW002", "-1.0", "140.0", "9.0"), *_row9("AHWW002", "-1.0", "130.0", "9.0")]
+    rs = w._parse_table_lines(L(*hdr, *row1, *rest)).readings
+    assert [(r.temp, r.adj) for r in rs] == [(140.0, False), (130.0, False)]
+
+
+def test_unprinted_cell_before_a_blank_never_shifts_into_temp():
+    # Diff Press printed nothing; Temp prints "---". The row has 8 cells for 9
+    # columns, so positions after the first blank are unknown: it is not read
+    # as Temp = 12.0 (really the Flow value).
+    g = w._parse_table_lines(L(H9, "AHWW001", D, "50.0", "30.0", "0.5", "19.5", "---", "12.0",
+                               "-5.0", "-6.0"))
+    assert g.readings == [] and g.truncated_rows == 1
