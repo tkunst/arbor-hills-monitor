@@ -595,7 +595,8 @@ def test_all_dash_row_is_counted_not_emitted():
 
 
 def test_partial_gas_row_is_counted_not_emitted():
-    g = _alias(["AHW4", "AHW4", "1/1/2025 9:00", "50", "---", "0", "10", "0.5", "120"])
+    g = _alias(["AHW4", "AHW4", "1/1/2025 9:00", "50", "---", "0", "10", "0.5", "120", "5",
+                "-1", "-2"])
     assert g.readings == [] and g.partial_rows == 1
 
 
@@ -773,4 +774,59 @@ def test_unprinted_cell_before_a_blank_never_shifts_into_temp():
     # as Temp = 12.0 (really the Flow value).
     g = w._parse_table_lines(L(H9, "AHWW001", D, "50.0", "30.0", "0.5", "19.5", "---", "12.0",
                                "-5.0", "-6.0"))
-    assert g.readings == [] and g.truncated_rows == 1
+    assert g.readings == [] and g.ambiguous_rows == 1
+
+
+def test_shared_line_in_a_short_row_never_shifts_into_temp():
+    # Diff Press printed nothing; Temp and Flow share a line ("100 150"). The
+    # row is short, so only main's cells are trusted: no Temp of 150.
+    g = w._parse_table_lines(L(H9, "AHW1", D, "50", "40", "0", "10", "100 150", "Opened valve:"))
+    assert g.readings == [] and g.ambiguous_rows == 1
+
+
+def test_shifted_rows_read_past_a_blank_are_rejected_on_their_own():
+    # 30 rows main dropped (Diff Press "---") whose Flow is negative on every
+    # row: the column-shift signature. They are rejected; main's rows stay.
+    lines = [H9]
+    for k in range(19):
+        lines += _row9(f"AHWW{k:03d}", "-1.0", "120.0", "9.0")
+    for k in range(30):
+        lines += _row9(f"AHWX{k:03d}", "---", "150.0", "-5.0")
+    g = w._parse_table_lines(L(*lines))
+    assert [r.raw_well_id[:4] for r in g.readings] == ["AHWW"] * 19
+    assert g.rejected_tables[0].n_rows == 30
+    assert "read past a blank cell" in g.rejected_tables[0].reason
+
+
+def test_off_column_alias_start_is_counted():
+    lines = L(*HDR_ALIAS, "AHWW001", "EW-8", D, "50", "30", "0.5", "19.5", "-1", "120", "9",
+              "-5", "-6")
+    pos = [None] * len(lines)
+    k = len(HDR_ALIAS)
+    pos[k], pos[k + 1] = 300.0, 340.0     # this Well ID line sits far right ...
+    lines.append(("AHWFLARE", 1))         # ... of another well-shaped line
+    pos.append(5.0)
+    g = w._parse_table_lines(lines, positions=pos)
+    assert g.off_column_rows == 1 and g.readings == []
+
+
+def test_non_gas_table_shared_lines_are_not_a_rejected_table():
+    hdr = ["Well ID", "Date/Time", "Depth to Liquid", "Depth to Bottom"]
+    g = w._parse_table_lines(L(*hdr, "AHW5", D, "1.5 2.5 3.5", "4 5 6"))
+    assert g.rejected_tables == []
+
+
+def test_line_positions_follow_the_text_on_the_pdf_path(tmp_path):
+    import fitz
+    path = tmp_path / "r.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((20, 20), "Well ID\nAlias\nDate/Time", fontsize=5)
+    page.insert_text((20, 60), "AHWW001", fontsize=5)
+    page.insert_text((60, 70), "EW-8", fontsize=5)
+    page.insert_text((300, 80), "AHWW777", fontsize=5)
+    doc.save(str(path))
+    doc.close()
+    lines, _, _, pos = w._pdf_read(str(path), with_positions=True)
+    got = dict(zip([t for t, _ in lines], pos))
+    assert got["AHWW001"] == 20 and got["EW-8"] == 60 and got["AHWW777"] == 300
