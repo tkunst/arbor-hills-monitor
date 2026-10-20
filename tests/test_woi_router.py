@@ -262,3 +262,29 @@ def test_route_keeps_classifier_measurements_it_does_not_rederive(tmp_path):
     woi_router.route_measurements(parsed, pdf, META, CFG)
     assert h2s in parsed.measurements
     assert 999 not in [m["value"] for m in parsed.measurements if m["metric"] == "temperature"]
+
+
+def test_gas_only_rows_route_without_changing_any_max_temperature(tmp_path):
+    # ADR 005 addendum 2026-10-19: a row whose Temp prints "---" is kept as a
+    # gas-only reading. It must not move any well's max temperature, the peak,
+    # the emitted temperatures, the headline, the severity floor or well_watch.
+    import well_watch
+    reads = _many(54, temp=90) + [("AHW272R4", 177), ("AHW272R4", "---"), ("AHW999", "---")]
+    pdf = _build_pdf(tmp_path / "gas_only.pdf", reads)
+    parsed = _parsed(severity="urgent")
+    parsed.severity_floor, parsed.severity_before_floor = ["measured_temperature"], "notable"
+    routed = woi_router.route_measurements(parsed, pdf, META, CFG)
+    gas_only = [r for r in routed["readings"] if r.temp is None]
+    assert {r.well_id for r in gas_only} == {"AHW272R4", "AHW999"}
+    by_well = {d["well"]: d for d in routed["summary"]}
+    assert by_well["AHW272R4"]["max_temp_f"] == 177.0
+    assert by_well["AHW999"]["max_temp_f"] is None
+    assert routed["summary"][0]["well"] == "AHW272R4"   # wells with no temp sort last
+    temps = [m["value"] for m in parsed.measurements if m["metric"] == "temperature"]
+    assert temps == [177.0]
+    assert woi_router.build_key_data_point(routed, cfg=CFG).startswith("AHW272R4: max measured 177")
+    woi_router.recheck_severity_floor(parsed, routed, CFG)
+    assert parsed.severity == "urgent"                   # the real 177F reading survives
+    cfg = {**CFG, "well_watch": {"wells": [{"pattern": r"^AHW+0*272", "threshold_f": 145}]}}
+    (_, hits), = well_watch.find_hits(routed["readings"], cfg)
+    assert [h.temp for h in hits] == [177.0]

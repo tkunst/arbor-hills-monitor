@@ -19,6 +19,12 @@ Attachment 1 ("Gas Extraction Report") rows linearize as:
     CH4% CO2% O2% Balance% Diff.Press Temp Flow Well-Pres Header-Pres   (9 numbers)
     <comment lines, may themselves contain numbers like "581821: 0">
 
+Tables whose header has an Alias column print Well ID, Alias, Date/Time; the
+Well ID is the well (_ALIAS_LABEL_RE). Cells are read token by token: a blank
+cell prints "---" and keeps its position, and a value can share its line with
+the next cell or a comment ("27.6 ---", "-0.68 No Change: :"). A row with the
+four gas columns is kept even when Temp is blank (ADR 005 addendum 2026-10-19).
+
 Validation gate: CH4 + CO2 + O2 + Balance ≈ 100. On the 2025 1st-semi-annual
 report this passed 99% of 13,976 parsed readings.
 
@@ -39,9 +45,16 @@ from typing import Optional
 import fitz  # pymupdf
 
 WELL_RE = re.compile(r"^AH[A-Z0-9]+\*{0,4}$")
+# The Alias column printed next to Well ID in some tables (ADR 005 addendum
+# 2026-10-19): looser than WELL_RE, since aliases such as EW-008 or V-10 are
+# not AH-format.
+ALIAS_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]*\*{0,4}$")
 DT_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}$")  # date AND time
 DATE_ONLY_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
 FLOAT_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
+# A blank cell. It fills its column's position with None (ADR 005 addendum
+# 2026-10-19); it never ends the row.
+BLANK_CELL = "---"
 
 # The full column set, in the order the 9-number layout prints it after Well ID
 # / Date/Time / optional ADJ. Not every report prints every column: see LAYOUTS.
@@ -116,6 +129,12 @@ NON_GAS_HEADER = "(non-gas table)"
 # That gives as-found, ADJ, as-found, ADJ for a pair printed twice, exactly
 # what the labeled table prints. Tables that label ADJ are read as before.
 _ADJ_LABEL_RE = re.compile(r"\bADJ\b")
+# Does a gas table's header print an Alias column? (ADR 005 addendum
+# 2026-10-19.) Such tables print each row as Well ID, Alias, Date/Time. Only
+# the timestamp's neighbour was ever tested, so the ALIAS became the row's
+# well. Under an Alias label a row starts at Well ID / Alias / Date/Time and
+# the Well ID is the well; the Alias is kept as printed.
+_ALIAS_LABEL_RE = re.compile(r"\bAlias\b", re.I)
 _HEADER_START_RE = re.compile(r"^Well\s*ID\b", re.I)
 # How far past "Well ID" a header can run before its first data row (the 2025
 # reports carry ~40 label lines of pump-count / depth columns).
@@ -157,6 +176,8 @@ class WOIReading:
     flow: Optional[float] = None
     well_pres: Optional[float] = None
     header_pres: Optional[float] = None
+    # The Alias column as printed, for a table that has one (None otherwise).
+    alias_as_printed: Optional[str] = None
 
     @property
     def valid(self) -> bool:
@@ -184,6 +205,11 @@ class GasExtractionParse:
     readings: list = field(default_factory=list)          # [WOIReading]
     rejected_tables: list = field(default_factory=list)   # [RejectedTable]
     skipped_pages: list = field(default_factory=list)     # [int], 1-based
+    # Rows under a recognized layout that were NOT emitted because there is no
+    # reading to emit: every cell printed "---" (blank_rows), or some values
+    # but not all four gas columns (partial_rows). Counts only.
+    blank_rows: int = 0
+    partial_rows: int = 0
 
 
 def layout_for_columns(cols: list) -> Optional[list]:
@@ -311,12 +337,49 @@ def _is_row_start(lines, i) -> bool:
             and DT_RE.match(lines[i + 1][0]) is not None)
 
 
+def _is_alias_row_start(lines, i) -> bool:
+    """Well ID, Alias, Date/Time on three lines (a table with an Alias column)."""
+    return (WELL_RE.match(lines[i][0]) is not None and i + 2 < len(lines)
+            and ALIAS_RE.match(lines[i + 1][0]) is not None
+            and DT_RE.match(lines[i + 2][0]) is not None)
+
+
+def _read_values(lines, j: int, width: int) -> tuple[list, int]:
+    """Read up to `width` cells starting at line j, token by token. A number
+    fills the next column; BLANK_CELL fills it with None. Any other token (a
+    comment such as "No Change: :") ends the row after the cells before it on
+    that line are taken; a line that starts with one is not read at all (the
+    next row's Well ID, a header, a comment line). Returns (cells, next_j)."""
+    vals: list = []
+    n = len(lines)
+    while j < n and len(vals) < width:
+        took, ended = 0, False
+        for tok in lines[j][0].split():
+            if len(vals) >= width:
+                break
+            if tok == BLANK_CELL:
+                vals.append(None)
+            elif FLOAT_RE.match(tok):
+                vals.append(float(tok))
+            else:
+                ended = True
+                break
+            took += 1
+        if not took:
+            break
+        j += 1
+        if ended:
+            break
+    return vals, j
+
+
 def _read_header(lines, i) -> tuple[str, int]:
     """Join the label lines after a "Well ID" line at i, up to the first data
     row (or _HEADER_MAX_LINES). Returns (header_text, index_after_header)."""
     j = i + 1
     parts = [lines[i][0]]  # labels can share the "Well ID" line
-    while j < len(lines) and j - i <= _HEADER_MAX_LINES and not _is_row_start(lines, j):
+    while (j < len(lines) and j - i <= _HEADER_MAX_LINES and not _is_row_start(lines, j)
+           and not _is_alias_row_start(lines, j)):
         if _HEADER_START_RE.match(lines[j][0]):
             break  # another table's header: stop here, it is read on its own
         parts.append(lines[j][0])
@@ -354,6 +417,7 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
     header = ""
     header_cols = None
     adj_labeled = True  # no header read yet: only a literal ADJ token marks ADJ
+    alias_labeled = False  # no header read yet: rows are Well ID / Date/Time
     # the table currently being collected
     cur_rows: list = []
     cur_rejected = {"n": 0, "first": None, "last": None, "reason": ""}
@@ -404,14 +468,17 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
                     cols = _text_columns(htext)
                 new_layout = layout_for_columns(cols)
                 new_adj_labeled = bool(_ADJ_LABEL_RE.search(htext))
+                new_alias_labeled = bool(_ALIAS_LABEL_RE.search(htext))
                 # A repeated header (one per page) continues the same table;
                 # so does a repeat of the same unrecognized column set, so one
                 # unknown table is reported once, not once per page.
                 if (new_layout != layout or new_adj_labeled != adj_labeled
+                        or new_alias_labeled != alias_labeled
                         or (new_layout is None and cols != header_cols)):
                     flush()
                     layout, header, header_cols = new_layout, htext[:200], cols
                     adj_labeled = new_adj_labeled
+                    alias_labeled = new_alias_labeled
                 i = j
                 continue
             # Another table that also starts "Well ID" (CO data, liquid
@@ -419,14 +486,21 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
             flush()
             layout, header, header_cols = None, NON_GAS_HEADER, None
             adj_labeled = True
+            alias_labeled = False
             i = j
             continue
-        if not _is_row_start(lines, i):
+        alias = None
+        if alias_labeled and _is_alias_row_start(lines, i):
+            alias = lines[i + 1][0]
+            dt = lines[i + 2][0]
+            j = i + 3
+        elif _is_row_start(lines, i):
+            dt = lines[i + 1][0]
+            j = i + 2
+        else:
             i += 1
             continue
         raw_well = text
-        dt = lines[i + 1][0]
-        j = i + 2
         adj = False
         if j < n and lines[j][0] == "ADJ":
             adj = True
@@ -437,10 +511,7 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
             adj = (not prev.adj and prev.dt == dt
                    and prev.raw_well_id.rstrip("*") == raw_well.rstrip("*"))
         width = len(layout) if layout else len(COLUMNS)
-        nums: list[float] = []
-        while j < n and len(nums) < width and FLOAT_RE.match(lines[j][0]):
-            nums.append(float(lines[j][0]))
-            j += 1
+        nums, j = _read_values(lines, j, width)
         if layout is None:
             # Gas-shaped row with no recognized layout: reject, never guess.
             # Under a gas header we didn't recognize, every row with the four
@@ -456,14 +527,22 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
                     "rows under a non-gas table header" if header == NON_GAS_HEADER
                     else "column layout not recognized" if header
                     else "rows before any recognized header")
-        elif len(nums) > layout.index("temp"):  # need at least through Temp
+        elif nums and all(v is None for v in nums):
+            out.blank_rows += 1  # every cell "---": no reading to emit
+        elif len(nums) >= 4 and None not in nums[:4]:
+            # The four gas columns are present. Temp (or any later column)
+            # may be blank: a gas-only reading is kept, with no temperature
+            # (Trisha's ruling 2026-10-19). `valid` still gates on the gas sum.
             r = WOIReading(
                 well_id=canonicalize(raw_well, alias_map),
                 raw_well_id=raw_well, dt=dt, adj=adj, page=page,
+                alias_as_printed=alias,
             )
             for ci, v in enumerate(nums):
                 setattr(r, layout[ci], v)
             cur_rows.append(r)
+        elif nums:
+            out.partial_rows += 1  # values, but not all four gas columns
         i = j
     flush()
     return out
