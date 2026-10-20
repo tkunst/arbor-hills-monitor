@@ -134,7 +134,15 @@ _ADJ_LABEL_RE = re.compile(r"\bADJ\b")
 # the timestamp's neighbour was ever tested, so the ALIAS became the row's
 # well. Under an Alias label a row starts at Well ID / Alias / Date/Time and
 # the Well ID is the well; the Alias is kept as printed.
-_ALIAS_LABEL_RE = re.compile(r"\bAlias\b", re.I)
+# Only the column label right after "Well ID" counts: the word "alias" in
+# prose elsewhere in a header must not switch the row-start rule.
+_ALIAS_LABEL_RE = re.compile(r"^Well\s*ID\s+Alias\b")
+# With page geometry, a Well ID / Alias / Date/Time start also needs its Well
+# ID line in the page's Well ID column (the leftmost well-shaped line, in the
+# text's own direction). Measured 2026-10-20 on 4,549 pages: every such start
+# sits exactly at that position (offset 0). A well-shaped line elsewhere (a
+# comment that names a well) cannot take over the next row.
+_WELL_COLUMN_TOLERANCE = 3.0
 _HEADER_START_RE = re.compile(r"^Well\s*ID\b", re.I)
 # How far past "Well ID" a header can run before its first data row (the 2025
 # reports carry ~40 label lines of pump-count / depth columns).
@@ -358,22 +366,30 @@ def _cell(tok: str):
     return False, None
 
 
-def _read_values(lines, j: int, width: int, mixed_after: int = -1) -> tuple[list, int]:
+def _read_values(lines, j: int, width: int,
+                 mixed_ok: frozenset = frozenset()) -> tuple[list, int, int]:
     """Read up to `width` cells starting at line j, token by token. A number
     fills the next column; BLANK_CELL fills it with None. A line that starts
     with any other token is not read (the next row's Well ID, a header, a
     comment line). A line with cells and then other text is the row's last
-    cells followed by the Comments column ("-0.68 No Change: :"): it is read
-    only when its cells complete the row exactly AND the cells already read
-    reach past position `mixed_after` (the Temp column), and the row ends
-    there. Otherwise the row ends before it, so a comment that starts with a
-    number ("150 ft of water") can never supply Temp or any column before it.
-    Returns (cells, next_j)."""
+    cell followed by the Comments column ("-0.68 No Change: :"): it is read
+    only when it holds ONE cell, that cell completes the row, and its
+    position is in `mixed_ok` (the pressure columns), and the row ends there.
+    Otherwise the row ends before it, so a comment that starts with a number
+    ("150 ft of water", "2 turns open") can never fill Temp, Flow or any gas
+    column. Measured 2026-10-20: every such line in the 91-file corpus is a
+    single Header Pres cell.
+
+    Also returns how many cells main's reader took (one bare number per line,
+    stopping at the first other line): those are the cells whose positions
+    main trusted. Returns (cells, next_j, main_len)."""
     vals: list = []
     n = len(lines)
+    main_len, main_open = 0, True
     while j < n and len(vals) < width:
+        toks = lines[j][0].split()
         cells, mixed = [], False
-        for tok in lines[j][0].split():
+        for tok in toks:
             ok, v = _cell(tok)
             if not ok:
                 mixed = True
@@ -381,23 +397,30 @@ def _read_values(lines, j: int, width: int, mixed_after: int = -1) -> tuple[list
             cells.append(v)
         if not cells:
             break
+        if main_open and len(toks) == 1 and cells[0] is not None:
+            main_len += 1
+        else:
+            main_open = False
         if mixed:
-            if len(vals) + len(cells) == width and len(vals) > mixed_after:
+            if (len(cells) == 1 and len(vals) + 1 == width and len(vals) in mixed_ok):
                 vals.extend(cells)
                 j += 1
             break
         vals.extend(cells[:width - len(vals)])
         j += 1
-    return vals, j
+    return vals, j, main_len
 
 
 def _read_header(lines, i) -> tuple[str, int]:
     """Join the label lines after a "Well ID" line at i, up to the first data
-    row (or _HEADER_MAX_LINES). Returns (header_text, index_after_header)."""
+    row (or _HEADER_MAX_LINES). Under an Alias label the first data row is a
+    Well ID / Alias / Date/Time start; any other header ends where main ended
+    it. Returns (header_text, index_after_header)."""
     j = i + 1
     parts = [lines[i][0]]  # labels can share the "Well ID" line
     while (j < len(lines) and j - i <= _HEADER_MAX_LINES and not _is_row_start(lines, j)
-           and not _is_alias_row_start(lines, j)):
+           and not (_is_alias_row_start(lines, j)
+                    and _ALIAS_LABEL_RE.search(" ".join(parts)))):
         if _HEADER_START_RE.match(lines[j][0]):
             break  # another table's header: stop here, it is read on its own
         parts.append(lines[j][0])
@@ -405,8 +428,9 @@ def _read_header(lines, i) -> tuple[str, int]:
     return " ".join(parts), j
 
 
-def _negative_flow_share(rows: list) -> Optional[float]:
-    flows = [r.flow for r in rows if r.flow is not None]
+def _negative_flow_share(flows: list) -> Optional[float]:
+    """Share of negative values among `flows` (the table's Flow cells that
+    main's reader would also have read, see _parse_table_lines)."""
     if len(flows) < _NEGATIVE_FLOW_MIN_ROWS:
         return None
     return sum(1 for f in flows if f < 0) / len(flows)
@@ -414,7 +438,8 @@ def _negative_flow_share(rows: list) -> Optional[float]:
 
 def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] = None,
                        initial_layout: Optional[list] = None,
-                       page_headers: Optional[dict] = None) -> GasExtractionParse:
+                       page_headers: Optional[dict] = None,
+                       positions: Optional[list] = None) -> GasExtractionParse:
     """Pure line state-machine with per-table layout detection. `lines` is
     [(text, page_number)]. Rows are parsed with the layout of the most recent
     gas header; with no recognized layout they are rejected (counted into a
@@ -424,7 +449,14 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
     supplies the column order; without it the header text order is used.
     Under a gas header with no ADJ label, the second of two consecutive rows
     with the same well + timestamp is marked ADJ (_ADJ_LABEL_RE). With no
-    header at all (`initial_layout`), only the literal ADJ token counts."""
+    header at all (`initial_layout`), only the literal ADJ token counts.
+    `positions` (parallel to `lines`: each line's start along its own text
+    direction, or None) places Well ID lines in their column
+    (_WELL_COLUMN_TOLERANCE).
+
+    Rows main's line-at-a-time reader already read keep main's behavior: the
+    negative-flow check and the unlabeled-ADJ pairing see only those rows
+    (ADR 005 addendum 2026-10-19). Rows this reader adds can't move them."""
     out = GasExtractionParse()
     seen_on_page: dict = {}
     text_headers: dict = {}
@@ -438,12 +470,15 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
     alias_labeled = False  # no header read yet: rows are Well ID / Date/Time
     # the table currently being collected
     cur_rows: list = []
+    cur_flows: list = []    # Flow cells main would have read (negative-flow check)
+    partner = None          # the last row main would have emitted (unlabeled ADJ)
+    well_col: dict = {}     # page -> Well ID column position
     cur_rejected = {"n": 0, "first": None, "last": None, "reason": ""}
 
     def flush():
-        nonlocal cur_rows
+        nonlocal cur_rows, cur_flows, partner
         if cur_rows:
-            share = _negative_flow_share(cur_rows)
+            share = _negative_flow_share(cur_flows)
             if share is not None and share > NEGATIVE_FLOW_REJECT_SHARE:
                 out.rejected_tables.append(RejectedTable(
                     first_page=cur_rows[0].page, last_page=cur_rows[-1].page,
@@ -451,13 +486,24 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
                     reason=f"column-shift signature: {share:.0%} of rows have a negative flow"))
             else:
                 out.readings.extend(cur_rows)
-        cur_rows = []
+        cur_rows, cur_flows, partner = [], [], None
         if cur_rejected["n"]:
             out.rejected_tables.append(RejectedTable(
                 first_page=cur_rejected["first"], last_page=cur_rejected["last"],
                 n_rows=cur_rejected["n"], reason=cur_rejected["reason"],
                 header=header if header_cols is None else "columns read: " + ",".join(header_cols)))
         cur_rejected.update(n=0, first=None, last=None, reason="")
+
+    def _in_well_column(k: int) -> bool:
+        if positions is None or positions[k] is None:
+            return True  # no geometry for this line: text order only
+        pg = lines[k][1]
+        if pg not in well_col:
+            xs = [positions[m] for m, (t, p) in enumerate(lines)
+                  if p == pg and positions[m] is not None and WELL_RE.match(t)]
+            well_col[pg] = min(xs) if xs else None
+        col = well_col[pg]
+        return col is None or positions[k] <= col + _WELL_COLUMN_TOLERANCE
 
     i, n = 0, len(lines)
     while i < n:
@@ -508,7 +554,7 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
             i = j
             continue
         alias = None
-        if alias_labeled and _is_alias_row_start(lines, i):
+        if alias_labeled and _is_alias_row_start(lines, i) and _in_well_column(i):
             alias = lines[i + 1][0] if lines[i + 1][0] != BLANK_CELL else None
             dt = lines[i + 2][0]
             j = i + 3
@@ -523,18 +569,27 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
         if j < n and lines[j][0] == "ADJ":
             adj = True
             j += 1
-        elif not adj_labeled and cur_rows:
-            # Unlabeled ADJ: see _ADJ_LABEL_RE. A gas-only row (no Temp) is
-            # never the as-found partner: main never emitted one, and pairing
-            # on it would turn the next row's real temperature into ADJ, out
-            # of alerting.
-            prev = cur_rows[-1]
-            adj = (not prev.adj and prev.temp is not None and prev.dt == dt
-                   and prev.raw_well_id.rstrip("*") == raw_well.rstrip("*"))
+        elif not adj_labeled and partner is not None:
+            # Unlabeled ADJ: see _ADJ_LABEL_RE. The partner is the last row
+            # main would have emitted, so a row this reader adds (gas-only, or
+            # read past a "---") never changes a main row's ADJ flag.
+            adj = (not partner.adj and partner.dt == dt
+                   and partner.raw_well_id.rstrip("*") == raw_well.rstrip("*"))
         width = len(layout) if layout else len(COLUMNS)
-        # A mixed cells-and-comment line may only supply columns after Temp.
-        nums, j = _read_values(lines, j, width,
-                               layout.index("temp") if layout else width)
+        mixed_ok = (frozenset(layout.index(c) for c in ("well_pres", "header_pres")
+                              if c in layout) if layout else frozenset())
+        nums, j, main_len = _read_values(lines, j, width, mixed_ok)
+        if (layout is not None and main_len < len(nums) < width and None in nums
+                and any(v is not None for v in nums)):
+            # The row needed this reader (a "---" or a shared line) but doesn't
+            # fill every column: a cell printed nothing at all, so positions
+            # after the first blank are unknown. Keep only the cells before
+            # it (the positions main trusted).
+            nums = nums[:nums.index(None)]
+            if not nums:
+                out.partial_rows += 1  # nothing left whose position is known
+                i = j
+                continue
         if layout is None:
             # Gas-shaped row with no recognized layout: reject, never guess.
             # Under a gas header we didn't recognize, every row with the four
@@ -575,6 +630,10 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
             for ci, v in enumerate(nums):
                 setattr(r, layout[ci], v)
             cur_rows.append(r)
+            if main_len > layout.index("temp"):  # main emitted this row
+                partner = r
+                if "flow" in layout and main_len > layout.index("flow"):
+                    cur_flows.append(r.flow)
         i = j
     flush()
     return out
@@ -591,14 +650,37 @@ def _parse_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] = None)
 _WELL_ID_TEXT_RE = re.compile(r"Well\s*ID", re.I)
 
 
-def _pdf_read(pdf_path: str) -> tuple[list[tuple[str, int]], list[int], dict]:
+def _line_positions(page, text_lines: list) -> list:
+    """Each text line's start along its own text direction (rotation-proof),
+    from get_text("dict"), or all None when the dict lines don't match the
+    plain-text lines one for one (measured 2026-10-20: they match on every
+    data page of the corpus)."""
+    out = []
+    try:
+        for b in page.get_text("dict")["blocks"]:
+            for ln in b.get("lines", []):
+                txt = "".join(sp["text"] for sp in ln["spans"]).strip()
+                if txt:
+                    c, s_ = ln["dir"]
+                    ox, oy = ln["spans"][0]["origin"]
+                    out.append((txt, ox * c + oy * s_))
+    except Exception:  # noqa: BLE001 — no geometry: text order only
+        return [None] * len(text_lines)
+    if [t for t, _ in out] != text_lines:
+        return [None] * len(text_lines)
+    return [x for _, x in out]
+
+
+def _pdf_read(pdf_path: str, with_positions: bool = False):
     """Linearized text of every page, plus {page: header columns} for pages
     that carry a "Well ID" header. Any page MuPDF cannot read (e.g. "cannot
     find page N in page tree" on a damaged page tree) is skipped and returned:
-    one bad page must not cost the whole report."""
+    one bad page must not cost the whole report. With `with_positions`, also
+    returns each line's position (_line_positions), for pages under an Alias
+    header ("Alias" in the page text); None elsewhere."""
     doc = fitz.open(pdf_path)
     try:
-        lines, skipped, headers = [], [], {}
+        lines, skipped, headers, positions = [], [], {}, []
         for p in range(len(doc)):
             try:
                 page = doc[p]
@@ -611,10 +693,13 @@ def _pdf_read(pdf_path: str) -> tuple[list[tuple[str, int]], list[int], dict]:
                     headers[p + 1] = _page_header_columns(page.get_text("words"))
                 except Exception:  # noqa: BLE001 — no geometry: its header reads as unknown
                     headers[p + 1] = []
-            for ln in text.split("\n"):
-                s = ln.strip()
-                if s:
-                    lines.append((s, p + 1))
+            page_lines = [s for s in (ln.strip() for ln in text.split("\n")) if s]
+            lines.extend((s, p + 1) for s in page_lines)
+            if with_positions:
+                positions.extend(_line_positions(page, page_lines) if "Alias" in text
+                                 else [None] * len(page_lines))
+        if with_positions:
+            return lines, skipped, headers, positions
         return lines, skipped, headers
     finally:
         doc.close()
@@ -630,8 +715,8 @@ def parse_gas_extraction_report(pdf_path: str, alias_map: Optional[dict] = None)
     tables that were rejected (unknown layout / column-shift signature) and the
     pages that could not be read. Logs rejections and skipped pages (counts and
     page numbers only)."""
-    lines, skipped, headers = _pdf_read(pdf_path)
-    out = _parse_table_lines(lines, alias_map, page_headers=headers)
+    lines, skipped, headers, positions = _pdf_read(pdf_path, with_positions=True)
+    out = _parse_table_lines(lines, alias_map, page_headers=headers, positions=positions)
     out.skipped_pages = skipped
     if skipped:
         print(f"[woi_table_parser] skipped {len(skipped)} unreadable page(s): "
