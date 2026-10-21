@@ -241,6 +241,12 @@ class GasExtractionParse:
     # Cells that shared their line with a comment but didn't line up with the
     # last column (_LAST_COLUMN_TOLERANCE): read as blank, the row is kept.
     unaligned_cells: int = 0
+    # Split gas tables (ADR 005 addendum 2026-10-20): rows of a table printed
+    # as a left half (Well ID ... gas columns) plus a right half (Temp ...
+    # pressures) that were joined into readings, and rows of such a table
+    # that were not (no clean right-half row; kept rejected).
+    split_joined_rows: int = 0
+    split_unjoined_rows: int = 0
 
 
 def layout_for_columns(cols: list) -> Optional[list]:
@@ -471,15 +477,18 @@ def _negative_flow_share(flows: list) -> Optional[float]:
 def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] = None,
                        initial_layout: Optional[list] = None,
                        page_headers: Optional[dict] = None,
-                       positions: Optional[list] = None) -> GasExtractionParse:
+                       positions: Optional[list] = None, split: Optional[dict] = None,
+                       on_split_candidate=None) -> GasExtractionParse:
     """See _parse_table_lines_once. With page geometry (`positions`), the
     lines are parsed twice: the first pass collects, per page, the right edge
     of the last column's bare-number cells; the second reads a cell that
     shares its line with a comment only when it lines up with that edge
     (_LAST_COLUMN_TOLERANCE). Rows are identical in both passes otherwise:
     accepting or refusing such a cell never moves a row boundary."""
+    kw = {"split": split, "on_split_candidate": on_split_candidate}
     if positions is None or all(p is None for p in positions):
-        return _parse_table_lines_once(lines, alias_map, initial_layout, page_headers, positions)
+        return _parse_table_lines_once(lines, alias_map, initial_layout, page_headers, positions,
+                                       **kw)
     edges: dict = {}
 
     def collect(k: int) -> None:
@@ -488,7 +497,7 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
             edges.setdefault(lines[k][1], []).append(pos[1])
 
     _parse_table_lines_once(lines, alias_map, initial_layout, page_headers, positions,
-                            on_last_cell=collect)
+                            on_last_cell=collect, split=split)
     edge = {pg: sorted(v)[len(v) // 2] for pg, v in edges.items()}
 
     def lines_up(k: int) -> bool:
@@ -502,14 +511,16 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
         return col is not None and abs(pos[1] - col) <= _LAST_COLUMN_TOLERANCE * pos[2]
 
     return _parse_table_lines_once(lines, alias_map, initial_layout, page_headers, positions,
-                                   mixed_line_ok=lines_up)
+                                   mixed_line_ok=lines_up, **kw)
 
 
 def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[dict] = None,
                             initial_layout: Optional[list] = None,
                             page_headers: Optional[dict] = None,
                             positions: Optional[list] = None,
-                            mixed_line_ok=None, on_last_cell=None) -> GasExtractionParse:
+                            mixed_line_ok=None, on_last_cell=None,
+                            split: Optional[dict] = None, on_split_row=None,
+                            on_split_candidate=None) -> GasExtractionParse:
     """Pure line state-machine with per-table layout detection. `lines` is
     [(text, page_number)]. Rows are parsed with the layout of the most recent
     gas header; with no recognized layout they are rejected (counted into a
@@ -528,7 +539,15 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
 
     Rows main's line-at-a-time reader already read keep main's behavior: the
     negative-flow check and the unlabeled-ADJ pairing see only those rows
-    (ADR 005 addendum 2026-10-19). Rows this reader adds can't move them."""
+    (ADR 005 addendum 2026-10-19). Rows this reader adds can't move them.
+
+    Split tables (ADR 005 addendum 2026-10-20): `on_split_candidate(cols,
+    first, last)` receives each rejected table whose header reads gas columns
+    only (_is_split_left). `split` ({left page: _SplitPage}, from
+    _split_plan) joins such a table's rows to their right halves: a row whose
+    left cells are all read is joined when its page pairs cleanly, else
+    counted (split_unjoined_rows) and kept rejected. `on_split_row(page,
+    coord)` receives each such row's coordinate (the pairing dry run)."""
     out = GasExtractionParse()
     seen_on_page: dict = {}
     text_headers: dict = {}
@@ -547,6 +566,8 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
     partner = None          # the last row main would have emitted (unlabeled ADJ)
     well_col: dict = {}     # page -> Well ID column position
     cur_rejected = {"n": 0, "first": None, "last": None, "reason": ""}
+    cur_unjoined = {"n": 0, "first": None, "last": None}  # split-table rows not joined
+    page_first: dict = {}   # page -> index of its first line (split coordinates)
 
     def flush():
         nonlocal cur_rows, cur_flows, cur_added, partner
@@ -573,12 +594,26 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             else:
                 out.readings.extend(cur_rows)
         cur_rows, cur_flows, cur_added, partner = [], [], [], None
+        if cur_unjoined["n"]:
+            out.rejected_tables.append(RejectedTable(
+                first_page=cur_unjoined["first"], last_page=cur_unjoined["last"],
+                n_rows=cur_unjoined["n"], reason=SPLIT_UNJOINED_REASON,
+                header="columns read: " + ",".join(header_cols or [])))
+            cur_unjoined.update(n=0, first=None, last=None)
+        if (cur_rejected["n"] and on_split_candidate is not None
+                and cur_rejected["reason"] == "column layout not recognized"
+                and _is_split_left(header_cols)):
+            on_split_candidate((tuple(header_cols), cur_rejected["first"], cur_rejected["last"]))
         if cur_rejected["n"]:
             out.rejected_tables.append(RejectedTable(
                 first_page=cur_rejected["first"], last_page=cur_rejected["last"],
                 n_rows=cur_rejected["n"], reason=cur_rejected["reason"],
                 header=header if header_cols is None else "columns read: " + ",".join(header_cols)))
         cur_rejected.update(n=0, first=None, last=None, reason="")
+
+    if split:
+        for k, (_, pg) in enumerate(lines):
+            page_first.setdefault(pg, k)
 
     if positions is not None:  # one pass: each page's Well ID column
         for (t, pg), pos in zip(lines, positions):
@@ -646,14 +681,15 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             alias_start = False
         if alias_start:
             alias = lines[i + 1][0] if lines[i + 1][0] != BLANK_CELL else None
-            dt = lines[i + 2][0]
+            dt_i = i + 2
             j = i + 3
         elif _is_row_start(lines, i):
-            dt = lines[i + 1][0]
+            dt_i = i + 1
             j = i + 2
         else:
             i += 1
             continue
+        dt = lines[dt_i][0]
         raw_well = text
         adj = False
         if j < n and lines[j][0] == "ADJ":
@@ -665,14 +701,44 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             # read past a "---") never changes a main row's ADJ flag.
             adj = (not partner.adj and partner.dt == dt
                    and partner.raw_well_id.rstrip("*") == raw_well.rstrip("*"))
-        width = len(layout) if layout else len(COLUMNS)
-        mixed_ok = (frozenset(layout.index(c) for c in ("well_pres", "header_pres")
-                              if c in layout) if layout else frozenset())
-        nums, j, main_len, refused, last_line = _read_values(lines, j, width, mixed_ok,
-                                                             mixed_line_ok)
-        if refused:
-            out.unaligned_cells += 1
-        if (layout is not None and main_len < len(nums) < width
+        row_layout = layout
+        joined = False
+        sp = split.get(page) if split and layout is None and header_cols is not None else None
+        if sp is not None and tuple(header_cols) == sp.left_cols:
+            # A split table (see _split_plan): the left half's cells, then the
+            # right half's row at the same coordinate on the paired page. A
+            # row whose left cells are not all read is left to the reject
+            # below, exactly as before.
+            left, j_left, _, _, _ = _read_values(lines, j, len(sp.left_cols))
+            if len(left) == len(sp.left_cols):
+                coord = (sp.coords[dt_i - page_first[page]]
+                         if sp.coords is not None and lines[dt_i][1] == page else None)
+                if on_split_row is not None:
+                    on_split_row(page, coord)
+                right = sp.right_cells(coord)
+                j = j_left
+                if right is None:
+                    out.split_unjoined_rows += 1
+                    cur_unjoined["n"] += 1
+                    cur_unjoined["first"] = cur_unjoined["first"] or page
+                    cur_unjoined["last"] = page
+                    i = j
+                    continue
+                cells = dict(zip(sp.left_cols, left))
+                cells.update(right)
+                row_layout = sp.layout
+                nums = [cells[c] for c in row_layout]
+                width, mixed_ok = len(nums), frozenset()
+                main_len, last_line, joined = len(nums), None, True
+        if not joined:
+            width = len(layout) if layout else len(COLUMNS)
+            mixed_ok = (frozenset(layout.index(c) for c in ("well_pres", "header_pres")
+                                  if c in layout) if layout else frozenset())
+            nums, j, main_len, refused, last_line = _read_values(lines, j, width, mixed_ok,
+                                                                 mixed_line_ok)
+            if refused:
+                out.unaligned_cells += 1
+        if (not joined and layout is not None and main_len < len(nums) < width
                 and any(v is not None for v in nums)):
             # The row needed this reader (a "---" or a shared line such as
             # "100 150") but doesn't fill every column: some cell printed
@@ -684,7 +750,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 out.ambiguous_rows += 1  # no reading whose positions are known
                 i = j
                 continue
-        if layout is None:
+        if row_layout is None:
             # Gas-shaped row with no recognized layout: reject, never guess.
             # Under a gas header we didn't recognize, every row with the four
             # gas columns counts (the 250pp variant prints 5 numbers); with no
@@ -709,7 +775,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             pass  # no cells at all (as on main: not a reading, not counted)
         elif len(nums) < 4 or None in nums[:4]:
             out.partial_rows += 1  # values, but not all four gas columns
-        elif len(nums) <= layout.index("temp"):
+        elif len(nums) <= row_layout.index("temp"):
             out.truncated_rows += 1  # cells ended before Temp: not a blank Temp
         else:
             # The four gas columns are present and the Temp position was read.
@@ -722,17 +788,27 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 alias_as_printed=alias,
             )
             for ci, v in enumerate(nums):
-                setattr(r, layout[ci], v)
+                setattr(r, row_layout[ci], v)
             cur_rows.append(r)
             if on_last_cell is not None and last_line is not None and mixed_ok and (
                     width - 1) in mixed_ok and len(nums) == width:
                 on_last_cell(last_line)  # a reference cell: emitted row, pressure column
-            if main_len > layout.index("temp"):  # main emitted this row
+            if joined:
+                # Every cell of a joined row is placed by its position on the
+                # page: it is a full row for the unlabeled-ADJ pairing and the
+                # negative-flow check of its own table (all rows of which are
+                # joined rows).
+                out.split_joined_rows += 1
                 partner = r
-            if "flow" in layout and main_len > layout.index("flow"):
-                cur_flows.append(r.flow)
+                if r.flow is not None:
+                    cur_flows.append(r.flow)
             else:
-                cur_added.append(r)
+                if main_len > layout.index("temp"):  # main emitted this row
+                    partner = r
+                if "flow" in layout and main_len > layout.index("flow"):
+                    cur_flows.append(r.flow)
+                else:
+                    cur_added.append(r)
         i = j
     flush()
     return out
@@ -829,6 +905,354 @@ def _pdf_lines(pdf_path: str) -> list[tuple[str, int]]:
     return _pdf_read(pdf_path)[0]
 
 
+# ---------------------------------------------------------------------------
+# Split gas tables (coder:woi-split-table-join, ADR 005 addendum 2026-10-20)
+# ---------------------------------------------------------------------------
+#
+# Some reports print a gas table in two page ranges. The LEFT half (Well ID,
+# [Alias], Date/Time, [ADJ], CH4, CO2, O2, Balance[, Diff. Press]) runs on n
+# pages; the RIGHT half (Temp, Flow, the pressures[, Diff. Press], then
+# Comments and sometimes pump counts) runs on the n pages right after it and
+# prints no Well ID and no timestamp. Read alone, the left half is rejected
+# ("column layout not recognized"). Left page k pairs with right page k + n,
+# and a left row with the right-page cells printed at the same coordinate
+# across the text (its baseline in the text's own frame). Measured
+# 2026-10-20 on the four such reports in the corpus: every left row's
+# baseline matches a right row's exactly.
+#
+# The right half's column ORDER comes from its labels' positions, never the
+# text order (one report extracts "Temp." first but prints Diff. Press
+# first). Each right column runs from its label's start to the next label's
+# start along the text, and a cell must also line up with its column's other
+# cells on the page (centre, left or right edge, within _SPLIT_ALIGN_TOLERANCE
+# of a character width): a comment that starts with a number sits at the
+# Comments position and lines up with nothing. Comments, valve settings and
+# pump counts are not read (Trisha's 2026-10-19 ruling): only the measurement
+# columns through Header Pres.
+#
+# Anything that doesn't fit stays rejected: a right range that isn't exactly
+# n pages, a page without readable geometry, right labels that don't combine
+# with the left columns into a known layout (LAYOUTS, compared as a set), a
+# left row with no right row or two left rows on one right row (the whole
+# page is then not joined), a right row missing a cell. Those rows are
+# counted in split_unjoined_rows and listed as a RejectedTable.
+
+_SPLIT_GAS = frozenset(("ch4", "co2", "o2", "balance"))
+_SPLIT_LEFT_OK = _SPLIT_GAS | {"diff_press"}
+# Baselines of a left row and its right row: equal in every pair measured
+# (max difference 0.0); a wrapped comment line sits ~11 pt away.
+_SPLIT_ROW_TOLERANCE = 0.5
+# A cell's centre, start or end along the text vs the median of its column's
+# bare cells on that page, in character widths. Measured: every cell within
+# 0.03 (centred columns) or exactly 0 (right-aligned columns).
+_SPLIT_ALIGN_TOLERANCE = 0.3
+# A column needs this many bare cells on a page to set its alignment there;
+# otherwise the whole right range's cells set it.
+_SPLIT_MIN_REF_CELLS = 3
+_DT_ANYWHERE_RE = re.compile(r"\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}")
+SPLIT_UNJOINED_REASON = "split table: rows not joined to a right-half row"
+
+
+def _is_split_left(cols) -> bool:
+    """A gas header that reads the four gas columns (and maybe Diff. Press)
+    and nothing else: a left half candidate. Pure."""
+    return (cols is not None and len(set(cols)) == len(cols)
+            and _SPLIT_GAS <= set(cols) <= _SPLIT_LEFT_OK)
+
+
+@dataclass
+class _FrameLine:
+    text: str
+    across: float        # baseline, across the text (the row)
+    dir: tuple           # the line's text direction (cos, sin), rounded
+    words: list          # [(start, end, text)] along the text
+
+
+def _frame_lines(page) -> Optional[list]:
+    """Every text line of a page, in its own text direction (rotation-proof):
+    `across` is -ox*sin + oy*cos of the first span's origin. None when a
+    line's words don't match its text one for one."""
+    tp = page.get_textpage(flags=fitz.TEXTFLAGS_TEXT)
+    words: dict = {}
+    for x0, y0, x1, y1, t, bno, lno, wno in tp.extractWORDS():
+        words.setdefault((bno, lno), []).append((wno, x0, y0, x1, y1, t))
+    out = []
+    for bno, b in enumerate(tp.extractDICT()["blocks"]):
+        for lno, ln in enumerate(b.get("lines", [])):
+            txt = "".join(sp["text"] for sp in ln["spans"]).strip()
+            if not txt:
+                continue
+            c, s_ = ln["dir"]
+            ox, oy = ln["spans"][0]["origin"]
+            ws = []
+            for _, x0, y0, x1, y1, t in sorted(words.get((bno, lno), [])):
+                along = [x * c + y * s_ for x in (x0, x1) for y in (y0, y1)]
+                ws.append((min(along), max(along), t))
+            if [w[2] for w in ws] != txt.split():
+                return None
+            out.append(_FrameLine(txt, -ox * s_ + oy * c, (round(c, 3), round(s_, 3)), ws))
+    return out
+
+
+def _cell_tokens(fl: _FrameLine) -> list:
+    """The leading cell tokens of a line (numbers and BLANK_CELL), up to its
+    first other token: the rest of the line is a comment."""
+    out = []
+    for w in fl.words:
+        if not _cell(w[2])[0]:
+            break
+        out.append(w)
+    return out
+
+
+def _right_columns(flines: list) -> Optional[list]:
+    """The right half's label columns on one page, in order along the text:
+    [(column name or None, start)]. None if the page prints no Temp label;
+    [] if its labels can't be read (two Temp labels on different rows, a
+    label naming two columns, a non-measurement label before or between the
+    measurement ones). Label words one space apart form a phrase; phrases
+    that overlap along the text form a column (a wrapped label)."""
+    anchors = [fl for fl in flines if not _cell_tokens(fl)
+               and any(_LABEL_WORDS["temp"].match(w[2]) for w in fl.words)]
+    if not anchors:
+        return None
+    base = anchors[0].across
+    if any(abs(a.across - base) > _SPLIT_ROW_TOLERANCE for a in anchors):
+        return []
+    phrases = []
+    for fl in flines:
+        if _cell_tokens(fl) or not (base - _HEADER_BAND_ABOVE <= fl.across
+                                    <= base + _HEADER_BAND_BELOW):
+            continue
+        cur = None
+        for a0, a1, t in fl.words:
+            if cur is not None and a0 - cur[1] <= (a1 - a0) / max(len(t), 1):
+                cur[1] = a1
+                cur[2].append((fl.across, a0, t))
+            else:
+                cur = [a0, a1, [(fl.across, a0, t)]]
+                phrases.append(cur)
+    phrases.sort(key=lambda p: p[0])
+    clusters: list = []
+    for a0, a1, ws in phrases:
+        if clusters and a0 <= clusters[-1][1]:
+            clusters[-1][1] = max(clusters[-1][1], a1)
+            clusters[-1][2].extend(ws)
+        else:
+            clusters.append([a0, a1, list(ws)])
+    cols = []
+    for a0, _, ws in clusters:
+        text = " ".join(t for _, _, t in sorted(ws))
+        names = [c for c, rx in _LABEL_RES if rx.search(text)]
+        if len(names) > 1:
+            return []
+        cols.append((names[0] if names else None, a0))
+    names = [c for c, _ in cols]
+    meas = [c for c in names if c is not None]
+    # measurement columns first, then only others (Comments, pump counts)
+    if (not meas or None in names[:len(meas)] or len(set(meas)) != len(meas)
+            or names[:len(meas)] != meas):
+        return []
+    return cols
+
+
+@dataclass
+class _RightPage:
+    flines: list
+    columns: Optional[list]   # this page's own labels (_right_columns)
+
+
+def _right_page(page) -> Optional[_RightPage]:
+    """A page that can be a right half: one text direction, no Well ID, no
+    well-ID line, no timestamp, and at least one line of cells. Else None."""
+    flines = _frame_lines(page)
+    if not flines or len({fl.dir for fl in flines}) != 1:
+        return None
+    for fl in flines:
+        if (WELL_RE.match(fl.text) or _HEADER_START_RE.match(fl.text)
+                or _DT_ANYWHERE_RE.search(fl.text)):
+            return None
+    if not any(_cell_tokens(fl) for fl in flines):
+        return None
+    return _RightPage(flines, _right_columns(flines))
+
+
+def _assign_cells(rp: _RightPage, columns: list) -> list:
+    """[(across, column name, token, line is bare)] for every cell token that
+    falls in a measurement column's band (its label start to the next
+    label's start). Tokens in other columns, or before the first, are not
+    cells of the row."""
+    out = []
+    starts = [a for _, a in columns]
+    for fl in rp.flines:
+        toks = _cell_tokens(fl)
+        bare = len(fl.words) == 1
+        for a0, a1, t in toks:
+            mid = (a0 + a1) / 2
+            for ci, (name, start) in enumerate(columns):
+                end = starts[ci + 1] if ci + 1 < len(starts) else float("inf")
+                if start <= mid < end:
+                    if name is not None:
+                        out.append((fl.across, name, (a0, a1, t), bare))
+                    break
+    return out
+
+
+def _alignment_refs(cells: list) -> dict:
+    """{column: (median centre, median start, median end)} of the bare
+    number cells, for columns with at least _SPLIT_MIN_REF_CELLS of them."""
+    by: dict = {}
+    for _, name, (a0, a1, t), bare in cells:
+        if bare and t != BLANK_CELL:
+            by.setdefault(name, []).append((a0, a1))
+    refs = {}
+    for name, v in by.items():
+        if len(v) >= _SPLIT_MIN_REF_CELLS:
+            refs[name] = tuple(sorted(x)[len(x) // 2] for x in (
+                [(a + b) / 2 for a, b in v], [a for a, _ in v], [b for _, b in v]))
+    return refs
+
+
+def _right_rows(cells: list, refs: dict, meas: list) -> list:
+    """[(across, {column: value} or None)]: the right half's rows. A row is
+    the aligned cells at one baseline; it is None (not joinable) unless every
+    measurement column holds exactly one cell there."""
+    aligned = []
+    for across, name, (a0, a1, t), _ in cells:
+        ref = refs.get(name)
+        if ref is None:
+            continue
+        cw = (a1 - a0) / max(len(t), 1)
+        if any(abs(x - r) <= _SPLIT_ALIGN_TOLERANCE * cw
+               for x, r in zip(((a0 + a1) / 2, a0, a1), ref)):
+            aligned.append((across, name, t))
+    aligned.sort(key=lambda c: c[0])
+    groups: list = []
+    for c in aligned:
+        if groups and c[0] - groups[-1][-1][0] <= _SPLIT_ROW_TOLERANCE:
+            groups[-1].append(c)
+        else:
+            groups.append([c])
+    rows = []
+    for g in groups:
+        names = [n for _, n, _ in g]
+        vals = None
+        if sorted(names) == sorted(meas):
+            vals = {n: _cell(t)[1] for _, n, t in g}
+        rows.append((g[0][0], vals))
+    return rows
+
+
+@dataclass
+class _SplitPage:
+    """One left page of a split table and its right half's rows."""
+    left_cols: tuple
+    layout: list              # the joined row's columns (a LAYOUTS entry)
+    right_page: int
+    coords: Optional[list]    # baseline of each line of the left page, or None
+    rows: list                # _right_rows
+    ok: bool = True           # set by the pairing dry run (_settle_split)
+
+    def find(self, coord) -> Optional[int]:
+        """The one right row at this baseline, else None (none, or two)."""
+        if coord is None:
+            return None
+        hits = [k for k, (a, _) in enumerate(self.rows) if abs(a - coord) <= _SPLIT_ROW_TOLERANCE]
+        return hits[0] if len(hits) == 1 else None
+
+    def right_cells(self, coord) -> Optional[dict]:
+        if not self.ok:
+            return None
+        k = self.find(coord)
+        return None if k is None else self.rows[k][1]
+
+
+def _plan_one(doc, left_cols: tuple, first: int, last: int, page_lines: dict,
+              skipped: set) -> dict:
+    """{left page: _SplitPage} for one candidate table on pages first..last
+    (1-based), or {} when its right half isn't found."""
+    n = last - first + 1
+    right = list(range(last + 1, last + n + 1))
+    if right[-1] > len(doc) or any(p in skipped for p in right):
+        return {}
+    rps = [_right_page(doc[p - 1]) for p in right]
+    if any(rp is None for rp in rps):
+        return {}
+    labeled = [rp.columns for rp in rps if rp.columns is not None]
+    if not labeled or any(not c for c in labeled):
+        return {}
+    meas = [c for c, _ in labeled[0] if c is not None]
+    if any([c for c, _ in cols if c is not None] != meas for cols in labeled):
+        return {}
+    if set(meas) & set(left_cols):
+        return {}
+    layout = next((list(lay) for lay in LAYOUTS.values()
+                   if set(lay) == set(left_cols) | set(meas)), None)
+    if layout is None:
+        return {}
+    # A page without labels uses the nearest labeled page before it (else
+    # the first labeled page): the right half is one table.
+    cols_for, cur = [], None
+    for rp in rps:
+        cur = rp.columns if rp.columns is not None else cur
+        cols_for.append(cur if cur is not None else labeled[0])
+    cells = [_assign_cells(rp, cols) for rp, cols in zip(rps, cols_for)]
+    range_refs = _alignment_refs([c for cs in cells for c in cs])
+    # The right run must end here: a next page with a Temp label, or with
+    # rows in these columns, means the page counts differ. (A next page of
+    # other columns, e.g. pump counts and liquid depths, ends the run.)
+    after = last + n + 1
+    nxt = _right_page(doc[after - 1]) if after <= len(doc) and after not in skipped else None
+    if nxt is not None and (nxt.columns is not None or any(
+            v is not None for _, v in _right_rows(_assign_cells(nxt, cols_for[-1]),
+                                                  range_refs, meas))):
+        return {}
+    plan = {}
+    for k, p in enumerate(range(first, last + 1)):
+        refs = dict(range_refs)
+        refs.update(_alignment_refs(cells[k]))
+        rows = _right_rows(cells[k], refs, meas)
+        coords = None
+        if p not in skipped:
+            fl = _frame_lines(doc[p - 1])
+            if (fl is not None and [x.text for x in fl] == page_lines.get(p)
+                    and {x.dir for x in fl} == {rps[k].flines[0].dir}):
+                coords = [x.across for x in fl]
+        plan[p] = _SplitPage(tuple(left_cols), layout, right[k], coords, rows)
+    return plan
+
+
+def _split_plan(pdf_path: str, candidates: list, lines: list, skipped: list) -> dict:
+    """{left page: _SplitPage} for every candidate split table whose right
+    half is found. Never raises: a candidate that fails stays rejected."""
+    page_lines: dict = {}
+    for t, pg in lines:
+        page_lines.setdefault(pg, []).append(t)
+    plan: dict = {}
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:  # noqa: BLE001 — no geometry: nothing is joined
+        return {}
+    try:
+        for left_cols, first, last in candidates:
+            try:
+                plan.update(_plan_one(doc, left_cols, first, last, page_lines, set(skipped)))
+            except Exception:  # noqa: BLE001 — this table stays rejected
+                continue
+    finally:
+        doc.close()
+    return plan
+
+
+def _settle_split(plan: dict, seen: dict) -> None:
+    """Page-level pairing verdict, from the dry run's row baselines (`seen`:
+    {left page: [baseline]}): a page joins only if every left row has its
+    own right row (one per row, none shared). Mutates `plan`."""
+    for pg, sp in plan.items():
+        ks = [sp.find(c) for c in seen.get(pg, [])]
+        sp.ok = None not in ks and len(set(ks)) == len(ks)
+
+
 def parse_gas_extraction_report(pdf_path: str, alias_map: Optional[dict] = None) -> GasExtractionParse:
     """Parse every Attachment-1 gas-extraction reading in the report, table by
     table, with each table's own column layout. Returns the readings plus the
@@ -836,7 +1260,20 @@ def parse_gas_extraction_report(pdf_path: str, alias_map: Optional[dict] = None)
     pages that could not be read. Logs rejections and skipped pages (counts and
     page numbers only)."""
     lines, skipped, headers, positions = _pdf_read(pdf_path, with_positions=True)
-    out = _parse_table_lines(lines, alias_map, page_headers=headers, positions=positions)
+    candidates: list = []
+    out = _parse_table_lines(lines, alias_map, page_headers=headers, positions=positions,
+                             on_split_candidate=candidates.append)
+    plan = _split_plan(pdf_path, sorted(set(candidates)), lines, skipped) if candidates else {}
+    if plan:
+        # Split tables (see _split_plan): a dry run collects each left row's
+        # baseline, which settles which pages pair cleanly; then the report
+        # is parsed again with the join.
+        seen: dict = {}
+        _parse_table_lines_once(lines, alias_map, None, headers, positions, split=plan,
+                                on_split_row=lambda pg, c: seen.setdefault(pg, []).append(c))
+        _settle_split(plan, seen)
+        out = _parse_table_lines(lines, alias_map, page_headers=headers, positions=positions,
+                                 split=plan)
     out.skipped_pages = skipped
     if skipped:
         print(f"[woi_table_parser] skipped {len(skipped)} unreadable page(s): "
@@ -852,6 +1289,9 @@ def parse_gas_extraction_report(pdf_path: str, alias_map: Optional[dict] = None)
               f"{out.ambiguous_rows} with cells of unknown position; "
               f"{out.off_column_rows} Alias-table row starts outside the Well ID column; "
               f"{out.unaligned_cells} comment-line cells read as blank")
+    if out.split_joined_rows or out.split_unjoined_rows:
+        print(f"[woi_table_parser] split tables: {out.split_joined_rows} rows joined to "
+              f"their right half, {out.split_unjoined_rows} not joined")
     return out
 
 
