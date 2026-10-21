@@ -5,7 +5,7 @@ import pytest
 
 import woi_table_parser as w
 from tests.test_woi_parser import HDR_FULL, HDR_FULL_NO_ADJ, HDR_ALIAS, L
-from tests.test_woi_split_join import build, row
+from tests.test_woi_split_join import build, row, three
 
 CELLS = ["49.5", "39.1", "2.1", "9.3", "1.54", "77.9", "36.4", "-1.85", "-37.71"]
 AS_FOUND = ["AH147AR4", "10/21/2022 11:44", "49.4", "39.2", "2.1", "9.3", "1.5", "77.5",
@@ -162,3 +162,36 @@ def test_a_literal_adj_line_after_a_one_line_adj_is_the_same_token():
     rs = w._parse_table_lines(L(*HDR_FULL, "AH147AR4", "10/21/2022 11:46 ADJ", "ADJ",
                                 *CELLS)).readings
     assert [(r.dt, r.adj, r.temp) for r in rs] == [("10/21/2022 11:46", True, 77.9)]
+
+
+# --- review round 2: tables main left rejected stay rejected; main's reject entries unchanged ---
+
+def _oneline_row(well, minute):
+    r = row(well, minute)
+    r["dt"] += " ADJ"
+    return r
+
+
+@pytest.mark.parametrize("pages", [
+    [three("AHW1"), [_oneline_row("AHW5", 0), _oneline_row("AHW5", 1)], three("AHW2", 10)],
+    [[_oneline_row("AHW5", 0), _oneline_row("AHW5", 1)], three("AHW1")],
+], ids=["middle_page", "first_page"])
+def test_a_left_page_of_one_line_rows_alone_does_not_plan_a_split_join(tmp_path, pages):
+    # Main plans no join when a left page prints no bare timestamp, so the
+    # table stays rejected and no row main started becomes a reading.
+    g = w.parse_gas_extraction_report(build(tmp_path / "r.pdf", pages))
+    assert g.readings == []
+    assert g.split_joined_rows == 0
+    assert g.rejected_tables and all(t.reason != w.SPLIT_UNJOINED_REASON for t in g.rejected_tables)
+
+
+def test_column_shift_reject_entry_describes_main_rows_only():
+    bad = [x for k in range(25) for x in
+           [f"AHW{k}", f"1/1/2025 10:{k:02d}", "50", "40", "0", "10", "0.5", "120", "-5", "-1", "-2"]]
+    one = [(t, 2) for t in ["AHZ", "1/1/2025 11:00 ADJ", "50", "40", "0", "10", "0.5", "120",
+                            "9", "-1", "-2"]]
+    g = w._parse_table_lines(L(*HDR_FULL, *bad) + one)
+    assert g.readings == []
+    assert [(t.first_page, t.last_page, t.n_rows) for t in g.rejected_tables] == [(1, 1, 25), (2, 2, 1)]
+    assert g.rejected_tables[0].reason.startswith("column-shift signature: 100%")
+    assert "one-line timestamp ADJ" in g.rejected_tables[1].reason

@@ -754,5 +754,27 @@ after `recheck_severity_floor` are identical to main, and `well_watch` hits
 and review flags are unchanged. That is expected: Measurements and the per-well
 summary use as-found readings only. Only the reading counts move.
 
+**Known, accepted (review round 2, all low).**
+
+- A table main leaves rejected stays rejected: a split-table left page that
+  prints only one-line rows does not count as a page of rows (main's
+  `DT_RE` rule), so no join is planned and no row main started becomes a
+  reading.
+- Main's column-shift reject entry keeps main's rows and page range; one-line
+  rows rejected with it get their own entry.
+- Other reject entries (rows under an unrecognized header, split rows not
+  joined) and the row counters (`blank_rows`, `partial_rows` and the like)
+  now include the one-line rows they hold, because those rows are now read.
+  This changes counts and review-flag text only, never a reading.
+- `31dbbade` prints 86 ADJ readings twice, one-line on about p25-26 and
+  two-line on about p79-81. `merge_cross_table_duplicates` keeps the first
+  copy, so the kept reading's page moves from p79 to p25. The values are
+  identical; ADJ readings never reach Measurements or the headline, so only
+  review-flag page numbers can change.
+- A one-line first row under a header is read into the header text, as on
+  main, so its ADJ counts as an ADJ label there. On a page boundary that can
+  leave a page of one-line rows as its own rejected table: recovery is
+  incomplete in that case, and no main reading changes.
+
 Nothing is re-extracted by this change. Re-extracting these reports waits for
 Trisha's go.
