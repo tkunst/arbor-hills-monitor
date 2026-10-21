@@ -971,6 +971,15 @@ rows were pooled with the bare two-digit rows for the column-shift check and
 set the edge; in the four-digit twin they are checked on their own and set
 no edge. Security: no findings at medium or high.
 
+**Extra review of the round-3 fix** (Trisha's go; a fresh diff-only
+reviewer): no defects. About 23,000 mixed tables and 300 PDFs lost or changed
+no main reading; about 40,000 two-digit tables and 300 PDFs matched their
+four-digit twins exactly under labeled headers. One test gap closed (a
+one-line two-digit row must not set the two-digit edge). Two branches that
+can't be reached today are left as they are: a joined split row in the
+two-digit form (two-digit timestamps never pair a split page) and the
+empty-list fallback of the two-digit reject entry.
+
 **Open (not fixed; review round 3, medium).** Under an *unlabeled* header
 repeated on each page, a two-digit table's boundaries still come from main's
 header text, which runs on over the first two-digit rows: a page whose rows
