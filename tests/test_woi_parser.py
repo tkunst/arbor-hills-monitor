@@ -848,7 +848,7 @@ def test_comment_line_cell_is_read_only_when_it_lines_up_with_the_last_column():
         cells = [well, D, "50", "30", "0.5", "19.5", "-1", "120", "9", "-4", last]
         for k, t in enumerate(cells):
             lines.append((t, 1))
-            pos.append((20.0, edge) if k == len(cells) - 1 else (20.0, None))
+            pos.append((20.0, edge, 3.0) if k == len(cells) - 1 else (20.0, None, None))
     g = w._parse_table_lines(lines, positions=pos)
     assert [(r.raw_well_id, r.header_pres) for r in g.readings] == [
         ("AHW1", -5.0), ("AHW2", -6.0), ("AHW3", -0.68), ("AHW4", None)]
@@ -856,3 +856,50 @@ def test_comment_line_cell_is_read_only_when_it_lines_up_with_the_last_column():
     # Without geometry (no positions) the text rules alone read both.
     g = w._parse_table_lines(lines)
     assert [r.header_pres for r in g.readings] == [-5.0, -6.0, -0.68, 2.0]
+
+
+def test_blank_comment_line_cell_keeps_the_row():
+    # "--- No Change" in the last column is a blank Header Pres, consumed as a
+    # cell, so the row (temp 120) is still complete and read.
+    rs = w._parse_lines(L("AHW1", "1/2/2025 10:00", "50", "30", "0.5", "19.5", "---", "120", "9",
+                          "-4", "--- No Change"))
+    assert [(r.temp, r.header_pres) for r in rs] == [(120.0, None)]
+
+
+def test_comment_line_alignment_through_the_pdf_path(tmp_path):
+    # A real right-aligned Header Pres column: bare cells and "-0.68 No
+    # Change" end at x=300; "2 turns open" starts at the Comments column
+    # (x=304), so its "2" doesn't line up and is read as blank.
+    import fitz
+    path = tmp_path / "r.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    fs = 6
+    y = 20
+    page.insert_text((20, y), H9, fontsize=fs)
+
+    def right(text, x_end, yy):
+        page.insert_text((x_end - fitz.get_text_length(text, fontsize=fs), yy), text, fontsize=fs)
+
+    rows = [("AHW1", "-5"), ("AHW2", "-6"), ("AHW3", "-0.68"), ("AHW4", None)]
+    for well, last in rows:
+        cells = [well, D, "50", "30", "0.5", "19.5", "-1", "120", "9", "-4"]
+        for k, t in enumerate(cells):
+            y += 8
+            page.insert_text((20 + 25 * min(k, 1), y), t, fontsize=fs)
+        y += 8
+        if last is None:
+            page.insert_text((304, y), "2 turns open", fontsize=fs)
+        elif well == "AHW3":
+            right(last, 300, y)
+            page.insert_text((304, y), "No Change: :", fontsize=fs)
+        else:
+            right(last, 300, y)
+    doc.save(str(path))
+    doc.close()
+    lines, _, _, pos = w._pdf_read(str(path), with_positions=True)
+    assert "-0.68 No Change: :" in [t for t, _ in lines]   # one text line, as in the filings
+    g = w.parse_gas_extraction_report(str(path))
+    assert [(r.raw_well_id, r.header_pres) for r in g.readings] == [
+        ("AHW1", -5.0), ("AHW2", -6.0), ("AHW3", -0.68), ("AHW4", None)]
+    assert g.unaligned_cells == 1
