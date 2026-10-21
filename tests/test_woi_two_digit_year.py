@@ -12,6 +12,13 @@ from tests.test_woi_parser import HDR_ALIAS, HDR_FULL, HDR_FULL_NO_ADJ, L
 from tests.test_woi_split_join import build, row
 
 CELLS = ["47.8", "36", "1.8", "14.4", "0", "59.1", "1096", "0.56", "0.01"]
+NEG = ["47.8", "36", "1.8", "14.4", "0", "59.1", "-1096", "0.56", "0.01"]
+TODAY = datetime.date(2026, 10, 21)
+
+
+@pytest.fixture(autouse=True)
+def _fixed_today(monkeypatch):
+    monkeypatch.setattr(w, "_today", lambda: TODAY)
 
 
 def _key(r):
@@ -41,8 +48,9 @@ def test_one_line_adj_with_a_two_digit_year():
 @pytest.mark.parametrize("printed, stored", [
     ("05/01/26 09:53", "5/1/2026 9:53"),     # zero-padded
     ("10/1/25  7:56", "10/1/2025 7:56"),     # two spaces
-    ("1/1/00 0:00", "1/1/2000 0:00"),
+    ("1/1/10 0:00", "1/1/2010 0:00"),        # the first year read
     ("12/31/25 23:59", "12/31/2025 23:59"),
+    ("10/21/26 7:56", "10/21/2026 7:56"),    # today
 ])
 def test_two_digit_year_is_stored_in_the_unpadded_four_digit_form(printed, stored):
     assert w._dt_line(printed) == (stored, False)
@@ -73,7 +81,10 @@ def test_four_digit_form_is_kept_exactly_as_printed():
     "10/1/25 7:5",
     "2/30/25 7:56",         # not a date
     "13/1/25 7:56",
-    "1/0/00 0:00",          # a spreadsheet's zero date, printed in one report
+    "1/0/00 0:00",          # a spreadsheet's day 0, printed in one report
+    "1/1/00 0:00",          # and its day 1
+    "12/31/09 7:56",        # before TWO_DIGIT_YEAR_MIN
+    "10/22/26 7:56",        # tomorrow
     "10/1/25 24:00",        # not a time
     "10/1/25 7:60",
     "1/1/99 7:56",          # 2099: after today
@@ -83,15 +94,10 @@ def test_near_misses_start_no_row(line):
     assert _read(["AHW1", line, *CELLS]) == []
 
 
-def test_a_two_digit_date_after_today_starts_no_row():
-    today = datetime.date.today()
-    if today.year >= 2099:  # pragma: no cover - the two-digit window ends
-        pytest.skip("20YY no longer covers tomorrow")
-    tomorrow = today + datetime.timedelta(days=1)
-    t = f"{today.month}/{today.day}/{today.year % 100:02d} 7:56"
-    n = f"{tomorrow.month}/{tomorrow.day}/{tomorrow.year % 100:02d} 7:56"
-    assert w._dt_line(t) == (f"{today.month}/{today.day}/{today.year} 7:56", False)
-    assert w._dt_line(n) is None
+def test_the_date_bound_is_the_parse_day(monkeypatch):
+    assert w._dt_line("10/22/26 7:56") is None
+    monkeypatch.setattr(w, "_today", lambda: datetime.date(2026, 10, 22))
+    assert w._dt_line("10/22/26 7:56") == ("10/22/2026 7:56", False)
 
 
 def test_alias_table_with_two_digit_years():
@@ -109,14 +115,60 @@ def test_the_header_ends_at_a_two_digit_first_row():
     assert g.rejected_tables == []
 
 
-def test_unlabeled_adj_partner_matches_across_the_two_digit_form():
+def test_unlabeled_adj_partner_within_two_digit_rows():
     # No ADJ label: the second copy of a row is its ADJ twin, compared on the
-    # stored (four-digit) timestamp.
+    # stored (four-digit) timestamp, among two-digit-year rows.
     a = ["AHW1", "10/1/25 7:56", *CELLS]
     rs = _read(a, a, hdr=HDR_FULL_NO_ADJ)
     assert [(r.dt, r.adj) for r in rs] == [("10/1/2025 7:56", False), ("10/1/2025 7:56", True)]
 
 
+def test_two_digit_and_four_digit_rows_never_pair():
+    # The same reading in both forms is not an ADJ twin of the other.
+    two = ["AHW1", "10/1/25 7:56", *CELLS]
+    four = ["AHW1", "10/1/2025 7:56", *CELLS]
+    assert [r.adj for r in _read(four, two, hdr=HDR_FULL_NO_ADJ)] == [False, False]
+    assert [r.adj for r in _read(two, four, hdr=HDR_FULL_NO_ADJ)] == [False, False]
+
+
+# A table that mixes the two forms: every reading main reads from the
+# four-digit rows is unchanged, and the two-digit rows are only added.
+
+def test_a_two_digit_row_never_moves_a_main_rows_unlabeled_adj_flag():
+    a = ["AHW1", "10/1/2025 7:56", *CELLS]
+    mid = ["AHW9", "1/2/25 3:00", *CELLS]
+    rs = _read(a, mid, a, hdr=HDR_FULL_NO_ADJ)
+    assert [(r.well_id, r.adj) for r in rs] == [("AHW1", False), ("AHW9", False), ("AHW1", True)]
+
+
+def test_two_digit_rows_cannot_reject_main_rows_by_negative_flow():
+    mains = [x for k in range(15) for x in (f"AHW{k}", f"10/1/2025 7:{k:02d}", *CELLS)]
+    added = [x for k in range(20) for x in (f"AHX{k}", f"1/2/25 3:{k:02d}", *NEG)]
+    base = w._parse_table_lines(L(*HDR_FULL, *mains))
+    g = w._parse_table_lines(L(*HDR_FULL, *mains, *added))
+    assert [_key(r) for r in g.readings] == [_key(r) for r in base.readings]
+    assert [(t.n_rows, t.reason) for t in g.rejected_tables] == [
+        (20, "column-shift signature in rows started by a two-digit-year timestamp: "
+             "100% have a negative flow")]
+
+
+def test_main_rows_cannot_reject_two_digit_rows_by_negative_flow():
+    mains = [x for k in range(20) for x in (f"AHW{k}", f"10/1/2025 7:{k:02d}", *NEG)]
+    added = [x for k in range(3) for x in (f"AHX{k}", f"1/2/25 3:{k:02d}", *CELLS)]
+    g = w._parse_table_lines(L(*HDR_FULL, *mains, *added))
+    assert [(t.n_rows, t.reason[:22]) for t in g.rejected_tables] == [
+        (20, "column-shift signature"), (3, "rows started by a two-")]
+    assert g.readings == []
+
+
+def test_a_two_digit_first_row_never_ends_mains_header():
+    hdr = ["Well ID", "Date/Time", "AHW5", "1/2/25 3:00", "ADJ", "CH4 (%)", "CO2 (%)",
+           "O2 (%)", "Balance", "(%)", "Diff. Press.", "Temp.", "Flow", "Well Pres.",
+           "Header Pres."]
+    main = ["AHW1", "10/1/2025 7:56", *CELLS]
+    g = w._parse_table_lines(L(*hdr, *main))
+    assert [(r.well_id, r.dt) for r in g.readings] == [("AHW1", "10/1/2025 7:56")]
+    assert g.rejected_tables == []
 def test_measurements_carry_the_four_digit_date():
     r = _read(["AHW1", "10/1/25 7:56", *CELLS])[0]
     ms = w.to_measurements(r)
@@ -147,18 +199,18 @@ def test_two_digit_rows_through_the_pdf_path(tmp_path):
         ("AHCANFLR", "10/1/2025 15:55", True, 59.1, 1096.0)]
 
 
-def test_split_table_with_two_digit_years_joins(tmp_path):
+def test_a_split_table_of_two_digit_rows_stays_rejected(tmp_path):
+    # The split planner keeps main's rule: a left page that prints only
+    # two-digit-year rows does not count as a page of rows, so the table
+    # stays rejected exactly as on main (none is printed in the corpus).
     rows = [dict(row("AHW1", k), dt=f"1/2/25 10:{k:02d}") for k in range(3)]
     g = w.parse_gas_extraction_report(build(tmp_path / "r.pdf", [rows]))
-    assert g.split_joined_rows == 3 and g.rejected_tables == []
-    assert [r.dt for r in g.readings] == ["1/2/2025 10:00", "1/2/2025 10:01", "1/2/2025 10:02"]
+    assert g.split_joined_rows == 0 and g.readings == []
+    assert [t.reason for t in g.rejected_tables] == ["column layout not recognized"]
 
 
-def test_a_two_digit_timestamp_on_a_right_page_refuses_the_join(tmp_path):
-    # A right half prints no timestamp in any year form.
+def test_two_digit_text_on_a_right_page_changes_no_join(tmp_path):
     rows = [dict(row("AHW1", k), dt=f"1/2/2025 10:{k:02d}") for k in range(3)]
-    ok = w.parse_gas_extraction_report(build(tmp_path / "a.pdf", [rows]))
-    bad = w.parse_gas_extraction_report(build(tmp_path / "b.pdf", [rows],
-                                              extra_lines=[(0, 300, 52, "1/2/25 10:00")]))
-    assert ok.split_joined_rows == 3
-    assert bad.split_joined_rows == 0
+    for name, extra in (("a.pdf", []), ("b.pdf", [(0, 300, 52, "Printed 1/2/25 10:00")])):
+        g = w.parse_gas_extraction_report(build(tmp_path / name, [rows], extra_lines=extra))
+        assert g.split_joined_rows == 3 and len(g.readings) == 3
