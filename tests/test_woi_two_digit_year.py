@@ -214,3 +214,100 @@ def test_two_digit_text_on_a_right_page_changes_no_join(tmp_path):
     for name, extra in (("a.pdf", []), ("b.pdf", [(0, 300, 52, "Printed 1/2/25 10:00")])):
         g = w.parse_gas_extraction_report(build(tmp_path / name, [rows], extra_lines=extra))
         assert g.split_joined_rows == 3 and len(g.readings) == 3
+
+
+# Review round 2: a table printed only in two-digit years gets main's own
+# bookkeeping (trusted Flow cells vs cells read past a blank, the last-column
+# edge, the unlabeled-ADJ partner), so it reads exactly like its four-digit
+# twin.
+
+def _four(t):
+    return t.replace("/25 ", "/2025 ")
+
+
+def _twin_case(rows):
+    two = w._parse_table_lines(L(*HDR_FULL, *[x for r in rows for x in r]))
+    four = w._parse_table_lines(L(*HDR_FULL, *[_four(x) for r in rows for x in r]))
+    return two, four
+
+
+@pytest.mark.parametrize("n_neg, n_blank, n_clean", [(6, 10, 14), (0, 12, 30), (8, 0, 20),
+                                                     (3, 12, 17)])
+def test_a_two_digit_table_is_column_shift_checked_like_its_four_digit_twin(
+        n_neg, n_blank, n_clean):
+    past_blank = ["47.8", "36", "1.8", "14.4", "---", "59.1", "-1096", "0.56", "0.01"]
+    rows = ([[f"AHW{k}", f"10/1/25 7:{k:02d}", *NEG] for k in range(n_neg)]
+            + [[f"AHB{k}", f"10/2/25 7:{k:02d}", *past_blank] for k in range(n_blank)]
+            + [[f"AHC{k}", f"10/3/25 7:{k:02d}", *CELLS] for k in range(n_clean)])
+    two, four = _twin_case(rows)
+    assert [_key(r) for r in two.readings] == [_key(r) for r in four.readings]
+    assert [(t.first_page, t.last_page, t.n_rows) for t in two.rejected_tables] == [
+        (t.first_page, t.last_page, t.n_rows) for t in four.rejected_tables]
+
+
+def test_one_line_two_digit_adj_is_never_the_partner():
+    # as a four-digit one-line ADJ row never is: the third row is the first
+    # row's unlabeled ADJ twin in both forms
+    rows = [["AHW1", "10/1/25 7:56", *CELLS], ["AHW1", "10/1/25 7:56 ADJ", *CELLS],
+            ["AHW1", "10/1/25 7:56", *CELLS]]
+    two = _read(*rows, hdr=HDR_FULL_NO_ADJ)
+    four = _read(*[[_four(x) for x in r] for r in rows], hdr=HDR_FULL_NO_ADJ)
+    assert [r.adj for r in two] == [r.adj for r in four] == [False, True, True]
+
+
+def _positioned(rows):
+    from tests.test_woi_parser import H9
+    lines, pos = [(H9, 1)], [None]
+    for well, dt, last, edge in rows:
+        cells = [well, dt, "50", "30", "0.5", "19.5", "-1", "120", "9", "-4", last]
+        for k, t in enumerate(cells):
+            lines.append((t, 1))
+            pos.append((20.0, edge, 3.0) if k == len(cells) - 1 else (20.0, None, None))
+    return w._parse_table_lines(lines, positions=pos)
+
+
+def test_comment_line_cell_in_a_two_digit_table_lines_up_with_its_own_edge():
+    rows = [("AHW1", "1/2/25 10:00", "-5", 230.0), ("AHW2", "1/2/25 10:01", "-6", 230.0),
+            ("AHW3", "1/2/25 10:02", "-0.68 No Change: :", 230.0)]
+    g = _positioned(rows)
+    assert [r.header_pres for r in g.readings] == [-5.0, -6.0, -0.68]
+    assert g.unaligned_cells == 0
+
+
+def test_two_digit_rows_never_move_mains_last_column_edge():
+    # Main's rows end at 230; three two-digit rows end at 260. Main's
+    # comment-line cell still lines up with main's own edge.
+    mains = [("AHW1", "1/2/2025 10:00", "-5", 230.0), ("AHW2", "1/2/2025 10:01", "-6", 230.0),
+             ("AHW3", "1/2/2025 10:02", "-0.68 No Change: :", 230.0)]
+    added = [(f"AHX{k}", f"1/3/25 10:0{k}", "-7", 260.0) for k in range(3)]
+    base = _positioned(mains)
+    g = _positioned(mains + added)
+    assert [_key(r) for r in g.readings[:3]] == [_key(r) for r in base.readings]
+    assert g.readings[2].header_pres == -0.68
+
+
+def test_two_digit_tables_read_like_their_four_digit_twins():
+    # Seeded random tables (headers with and without ADJ/Alias labels, ADJ
+    # lines, "---" cells, negative flows, comments, short rows): printed with
+    # two-digit years they give exactly the readings and reject ranges of the
+    # same table printed with four-digit years.
+    import random
+    rnd = random.Random(20261021)
+    cells = [CELLS, NEG, CELLS[:4] + ["---"] + CELLS[5:], CELLS[:5], ["---"] * 9]
+    for _ in range(400):
+        hdr = rnd.choice([HDR_FULL, HDR_FULL_NO_ADJ, HDR_ALIAS])
+        seq = list(hdr)
+        for k in range(rnd.randint(1, 45)):
+            well = rnd.choice(["AHW1", "AHW2", "AHWW312R*"])
+            seq += [well] + (["EW-7"] if hdr is HDR_ALIAS else [])
+            seq += [f"{rnd.randint(1, 12)}/{rnd.randint(1, 28)}/25 {rnd.randint(0, 23)}:"
+                    f"{rnd.randint(0, 59):02d}"]
+            seq += ["ADJ"] if rnd.random() < 0.3 else []
+            seq += list(rnd.choice(cells))
+            seq += [rnd.choice(["No Change: :", "Opened Valve 1/2 turn:", "581821: 0"])] \
+                if rnd.random() < 0.3 else []
+        two = w._parse_table_lines(L(*seq))
+        four = w._parse_table_lines(L(*[_four(x) for x in seq]))
+        assert [_key(r) for r in two.readings] == [_key(r) for r in four.readings], seq
+        assert [(t.first_page, t.last_page, t.n_rows) for t in two.rejected_tables] == [
+            (t.first_page, t.last_page, t.n_rows) for t in four.rejected_tables], seq
