@@ -1012,7 +1012,10 @@ def _right_columns(flines: list) -> Optional[list]:
     label naming two columns, a non-measurement label before or between the
     measurement ones). Label words one space apart form a phrase; phrases
     that overlap along the text form a column (a wrapped label)."""
-    anchors = [fl for fl in flines if not _cell_tokens(fl)
+    # Labels sit above the first row of cells: a comment further down that
+    # says "Temp" is not a label.
+    first_cell = min((fl.across for fl in flines if _cell_tokens(fl)), default=float("inf"))
+    anchors = [fl for fl in flines if not _cell_tokens(fl) and fl.across < first_cell
                and any(_LABEL_WORDS["temp"].match(w[2]) for w in fl.words)]
     if not anchors:
         return None
@@ -1151,6 +1154,7 @@ class _SplitPage:
     right_page: int
     coords: Optional[list]    # baseline of each line of the left page, or None
     rows: list                # _right_rows
+    dt_coords: list = field(default_factory=list)  # baselines of left-page timestamp lines
     ok: bool = True           # set by the pairing dry run (_settle_split)
 
     def find(self, coord) -> Optional[int]:
@@ -1168,9 +1172,19 @@ class _SplitPage:
 
 
 def _plan_one(doc, left_cols: tuple, first: int, last: int, page_lines: dict,
-              skipped: set) -> dict:
+              skipped: set, headers: dict) -> dict:
     """{left page: _SplitPage} for one candidate table on pages first..last
     (1-based), or {} when its right half isn't found."""
+    # The left half starts on `first`: that page prints its header (some
+    # reports print it on the first page only), and no later left page
+    # prints another one. Otherwise n, and so the page offset, could be off.
+    # (A missed last left page can't be paired as a right page: it prints
+    # well ids and timestamps, which _right_page refuses.)
+    if [tuple(c) for c in headers.get(first) or []] != [tuple(left_cols)]:
+        return {}
+    if any(headers.get(p) and [tuple(c) for c in headers[p]] != [tuple(left_cols)]
+           for p in range(first + 1, last + 1)):
+        return {}
     n = last - first + 1
     right = list(range(last + 1, last + n + 1))
     if right[-1] > len(doc) or any(p in skipped for p in right):
@@ -1191,13 +1205,25 @@ def _plan_one(doc, left_cols: tuple, first: int, last: int, page_lines: dict,
     if layout is None:
         return {}
     # A page without labels uses the nearest labeled page before it (else
-    # the first labeled page): the right half is one table.
-    cols_for, cur = [], None
-    for rp in rps:
-        cur = rp.columns if rp.columns is not None else cur
-        cols_for.append(cur if cur is not None else labeled[0])
+    # the first labeled page): its column bands AND that page's cell
+    # positions. Its own cells must line up with the labeled page's, so a
+    # page whose columns are drawn elsewhere is not joined.
+    src, cur = [], None
+    for k, rp in enumerate(rps):
+        cur = k if rp.columns is not None else cur
+        src.append(cur)
+    first_labeled = next(k for k, rp in enumerate(rps) if rp.columns is not None)
+    src = [first_labeled if k is None else k for k in src]
+    cols_for = [rps[k].columns for k in src]
     cells = [_assign_cells(rp, cols) for rp, cols in zip(rps, cols_for)]
-    range_refs = _alignment_refs([c for cs in cells for c in cs])
+    labeled_refs = _alignment_refs([c for k, cs in enumerate(cells)
+                                    if rps[k].columns is not None for c in cs])
+    page_refs = []
+    for k in range(n):
+        refs = dict(labeled_refs)
+        refs.update(_alignment_refs(cells[src[k]]))
+        page_refs.append(refs)
+    range_refs = page_refs[-1]
     # The right run must end here: a next page with a Temp label, or with
     # rows in these columns, means the page counts differ. (A next page of
     # other columns, e.g. pump counts and liquid depths, ends the run.)
@@ -1209,20 +1235,20 @@ def _plan_one(doc, left_cols: tuple, first: int, last: int, page_lines: dict,
         return {}
     plan = {}
     for k, p in enumerate(range(first, last + 1)):
-        refs = dict(range_refs)
-        refs.update(_alignment_refs(cells[k]))
-        rows = _right_rows(cells[k], refs, meas)
-        coords = None
+        rows = _right_rows(cells[k], page_refs[k], meas)
+        coords, dt_coords = None, []
         if p not in skipped:
             fl = _frame_lines(doc[p - 1])
             if (fl is not None and [x.text for x in fl] == page_lines.get(p)
                     and {x.dir for x in fl} == {rps[k].flines[0].dir}):
                 coords = [x.across for x in fl]
-        plan[p] = _SplitPage(tuple(left_cols), layout, right[k], coords, rows)
+                dt_coords = [x.across for x in fl if _DT_ANYWHERE_RE.search(x.text)]
+        plan[p] = _SplitPage(tuple(left_cols), layout, right[k], coords, rows, dt_coords)
     return plan
 
 
-def _split_plan(pdf_path: str, candidates: list, lines: list, skipped: list) -> dict:
+def _split_plan(pdf_path: str, candidates: list, lines: list, skipped: list,
+                headers: dict) -> dict:
     """{left page: _SplitPage} for every candidate split table whose right
     half is found. Never raises: a candidate that fails stays rejected."""
     page_lines: dict = {}
@@ -1236,7 +1262,8 @@ def _split_plan(pdf_path: str, candidates: list, lines: list, skipped: list) -> 
     try:
         for left_cols, first, last in candidates:
             try:
-                plan.update(_plan_one(doc, left_cols, first, last, page_lines, set(skipped)))
+                plan.update(_plan_one(doc, left_cols, first, last, page_lines, set(skipped),
+                                      headers))
             except Exception:  # noqa: BLE001 — this table stays rejected
                 continue
     finally:
@@ -1247,10 +1274,17 @@ def _split_plan(pdf_path: str, candidates: list, lines: list, skipped: list) -> 
 def _settle_split(plan: dict, seen: dict) -> None:
     """Page-level pairing verdict, from the dry run's row baselines (`seen`:
     {left page: [baseline]}): a page joins only if every left row has its
-    own right row (one per row, none shared). Mutates `plan`."""
+    own right row (one per row, none shared), and every complete right row
+    no left row claims sits on the baseline of a left-page timestamp line
+    the row reader didn't start (e.g. "10/21/2022 11:46 ADJ" printed as one
+    line). Any other leftover right row means the halves don't agree.
+    Mutates `plan`."""
     for pg, sp in plan.items():
         ks = [sp.find(c) for c in seen.get(pg, [])]
-        sp.ok = None not in ks and len(set(ks)) == len(ks)
+        claimed = set(ks)
+        leftover = [a for k, (a, v) in enumerate(sp.rows) if v is not None and k not in claimed]
+        sp.ok = (None not in ks and len(claimed) == len(ks) and all(
+            any(abs(a - d) <= _SPLIT_ROW_TOLERANCE for d in sp.dt_coords) for a in leftover))
 
 
 def parse_gas_extraction_report(pdf_path: str, alias_map: Optional[dict] = None) -> GasExtractionParse:
@@ -1263,7 +1297,8 @@ def parse_gas_extraction_report(pdf_path: str, alias_map: Optional[dict] = None)
     candidates: list = []
     out = _parse_table_lines(lines, alias_map, page_headers=headers, positions=positions,
                              on_split_candidate=candidates.append)
-    plan = _split_plan(pdf_path, sorted(set(candidates)), lines, skipped) if candidates else {}
+    plan = (_split_plan(pdf_path, sorted(set(candidates)), lines, skipped, headers)
+            if candidates else {})
     if plan:
         # Split tables (see _split_plan): a dry run collects each left row's
         # baseline, which settles which pages pair cleanly; then the report

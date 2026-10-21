@@ -33,19 +33,28 @@ def _put(page, mode, along, across, text):
         page.insert_text((along, across), text, fontsize=FS)
 
 
-def build(path, left_pages, mode="none", right_labels=None, extra_right=0, extra_lines=()):
+def build(path, left_pages, mode="none", right_labels=None, extra_right=0, extra_lines=(),
+          left_headers=None, shift=None, before=None):
     """left_pages: [[row, ...], ...]; the right half follows on as many
     pages. right_labels: indexes of the right pages that print labels (all
     by default). extra_right: more right pages after them. extra_lines:
-    (right page index, along, across, text) printed as well."""
+    (right page index, along, across, text) printed as well. left_headers:
+    indexes of the left pages that print the header (all by default).
+    shift: {right page index: points} moves that page's cells along the
+    text. before: lines for a page printed before the left half."""
     doc = fitz.open()
+    if before is not None:
+        p = doc.new_page(width=612, height=H)
+        p.insert_text((20, 20), "\n".join(before), fontsize=FS)
+    shift = shift or {}
     n = len(left_pages)
     right_labels = set(range(n)) if right_labels is None else set(right_labels)
-    for rows in left_pages:
+    for li, rows in enumerate(left_pages):
         p = doc.new_page(width=612, height=H)
         _put(p, mode, 20, 20, "Gas Extraction Report")
-        for x, t in LEFT_LABELS:
-            _put(p, mode, x, 40, t)
+        if left_headers is None or li in left_headers:
+            for x, t in LEFT_LABELS:
+                _put(p, mode, x, 40, t)
         for k, r in enumerate(rows):
             y = 52 + 12 * k
             _put(p, mode, 20, y, r["well"])
@@ -66,7 +75,7 @@ def build(path, left_pages, mode="none", right_labels=None, extra_right=0, extra
                 continue
             for x, v in zip(RIGHT_X, r["right"]):
                 if v is not None:
-                    _put(p, mode, x, y, v)
+                    _put(p, mode, x + shift.get(i, 0), y, v)
             if r["comment"]:
                 _put(p, mode, 270, y, r["comment"])
         for pi, x, y, t in extra_lines:
@@ -197,3 +206,91 @@ def test_is_split_left():
     assert not w._is_split_left(["ch4", "co2", "o2", "balance", "temp"])
     assert not w._is_split_left(["ch4", "co2", "o2"])
     assert not w._is_split_left(None)
+
+
+def test_unlabeled_right_page_drawn_elsewhere_is_not_joined(tmp_path):
+    # Right page 2 prints no labels and its columns sit 40 pt to the left,
+    # with a pump count where Header Pres would be: its cells don't line up
+    # with the labeled page's, so nothing on it is joined (never Flow as Temp).
+    p2 = three("AHW2", 10)
+    g = w.parse_gas_extraction_report(build(
+        tmp_path / "r.pdf", [three("AHW1"), p2], right_labels={0}, shift={1: -40},
+        extra_lines=[(1, 230, 52 + 12 * k, "3") for k in range(3)]))
+    assert [r.well_id for r in g.readings] == ["AHW1"] * 3
+    assert g.split_unjoined_rows == 3
+
+
+def test_unlabeled_right_page_in_place_is_joined(tmp_path):
+    g = w.parse_gas_extraction_report(build(tmp_path / "r.pdf", [three("AHW1"), three("AHW2", 10)],
+                                            right_labels={0}))
+    assert g.split_joined_rows == 6
+
+
+def test_header_only_on_the_first_left_page(tmp_path):
+    g = w.parse_gas_extraction_report(build(tmp_path / "r.pdf", [three("AHW1"), three("AHW2", 10)],
+                                            left_headers={0}))
+    assert g.split_joined_rows == 6
+
+
+def test_left_range_not_starting_at_its_header_is_not_joined(tmp_path):
+    # The first left page's rows are all unreadable ("---" gas cells), so the
+    # rejected rows start on page 2, which prints no header: n would be one
+    # short and every page would pair one page off. Nothing is joined.
+    p1 = [dict(r, gas=("---", "---", "---", "---")) for r in three("AHW1")]
+    g = w.parse_gas_extraction_report(build(tmp_path / "r.pdf", [p1, three("AHW2", 10),
+                                                                 three("AHW3", 20)],
+                                            left_headers={0}))
+    assert g.split_joined_rows == 0 and g.readings == []
+
+
+def test_unclaimed_right_row_leaves_the_page_unjoined(tmp_path):
+    # A complete right row at a baseline where the left page prints nothing:
+    # the halves disagree, so the page is not joined.
+    g = w.parse_gas_extraction_report(build(
+        tmp_path / "r.pdf", [three("AHW1"), three("AHW2", 10)],
+        extra_lines=[(0, x, 88, v) for x, v in zip(RIGHT_X, ("1", "100", "5", "-1", "-9"))]))
+    assert [r.well_id for r in g.readings] == ["AHW2"] * 3
+    assert g.split_unjoined_rows == 3
+
+
+def test_adj_rows_are_joined_with_their_flag(tmp_path):
+    rows = [row("AHW1", 0), row("AHW1", 0, adj=True, right=("0.4", "121", "8", "-4", "-41")),
+            row("AHW1", 5)]
+    g = w.parse_gas_extraction_report(build(tmp_path / "r.pdf", [rows]))
+    assert [(r.adj, r.temp) for r in g.readings] == [(False, 120.0), (True, 121.0), (False, 120.0)]
+
+
+def test_temp_in_a_comment_below_the_rows_is_not_a_label(tmp_path):
+    p1 = three("AHW1")
+    p1[2]["comment"] = "High Temp. reading"
+    g = w.parse_gas_extraction_report(build(tmp_path / "r.pdf", [p1, three("AHW2", 10)]))
+    assert g.split_joined_rows == 6
+
+
+def test_a_normal_table_before_the_split_one_reads_as_before(tmp_path):
+    before = ["Gas Extraction Report",
+              "Well ID Date/Time ADJ CH4 (%) CO2 (%) O2 (%) Balance (%) Diff. Press. "
+              "Temp. Flow Well Pres. Header Pres.",
+              "AHW9", "3/14/2025 15:40", "8.1", "40", "7.0", "44.9", "0.5", "177.0", "10", "-5", "-40"]
+    g = w.parse_gas_extraction_report(build(tmp_path / "r.pdf", [three("AHW1")], before=before))
+    assert [(r.well_id, r.temp, r.page) for r in g.readings] == [
+        ("AHW9", 177.0, 1)] + [("AHW1", 120.0, 2)] * 3
+    assert g.split_joined_rows == 3
+
+
+def test_diff_press_on_both_halves_is_not_joined(tmp_path):
+    # Left header with Diff. Press and a right half that also has it: the
+    # columns don't combine into a known layout.
+    global LEFT_LABELS
+    saved = LEFT_LABELS
+    try:
+        LEFT_LABELS = saved + [(280, "Diff. Press.")]
+        rows = [dict(r, gas=GAS + ("0.3",)) for r in three("AHW1")]
+        orig = list(LEFT_X)
+        LEFT_X.append(280)
+        g = w.parse_gas_extraction_report(build(tmp_path / "r.pdf", [rows]))
+    finally:
+        LEFT_LABELS = saved
+        LEFT_X[:] = orig
+    assert g.split_joined_rows == 0 and g.readings == []
+    assert [t.reason for t in g.rejected_tables] == ["column layout not recognized"]
