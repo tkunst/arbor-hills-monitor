@@ -144,12 +144,15 @@ _ALIAS_LABEL_RE = re.compile(r"^Well\s*ID\s+Alias\b")
 # comment that names a well) cannot take over the next row.
 _WELL_COLUMN_TOLERANCE = 3.0
 # A cell sharing its line with a comment ("-0.68 No Change: :") is read only
-# when its right edge lines up with the row's last column on that page: the
-# column's other cells (bare numbers on their own line) are right-aligned to
-# one edge. A comment that starts with a number ("2 turns open") begins at the
-# Comments column, a few points further along, so its number never lines up.
-# Measured 2026-10-20 on the corpus: see the ADR 005 addendum.
-_LAST_COLUMN_TOLERANCE = 1.0
+# when its right edge lines up with the row's last column on that page (the
+# median right edge of that column's bare-number cells), within this fraction
+# of the cell's own character width. A comment that starts with a number
+# ("2 turns open") begins at the Comments column, after that edge, so its
+# number ends at least one character width past it. Measured 2026-10-20 on
+# the corpus: every real comment-line cell is within 0.07 of a character
+# width (see the ADR 005 addendum). Scaled to the font, since the filings
+# print these tables at very different sizes.
+_LAST_COLUMN_TOLERANCE = 0.3
 _HEADER_START_RE = re.compile(r"^Well\s*ID\b", re.I)
 # How far past "Well ID" a header can run before its first data row (the 2025
 # reports carry ~40 label lines of pump-count / depth columns).
@@ -384,7 +387,7 @@ def _cell(tok: str):
 
 
 def _read_values(lines, j: int, width: int, mixed_ok: frozenset = frozenset(),
-                 mixed_line_ok=None, on_last_cell=None) -> tuple[list, int, int, bool]:
+                 mixed_line_ok=None) -> tuple[list, int, int, bool, Optional[int]]:
     """Read up to `width` cells starting at line j, token by token. A number
     fills the next column; BLANK_CELL fills it with None. A line that starts
     with any other token is not read (the next row's Well ID, a header, a
@@ -399,16 +402,16 @@ def _read_values(lines, j: int, width: int, mixed_ok: frozenset = frozenset(),
     the line (the page-geometry check, _LAST_COLUMN_TOLERANCE). A cell the
     check refuses still holds its column, as a blank (None): the cell was
     printed, only its value is not trusted, so the row's positions stay known.
-    `on_last_cell(j)` is called for each bare-number line read into the last
-    column (the geometry check's reference cells).
 
     Also returns how many cells main's reader took (one bare number per line,
     stopping at the first other line): those are the cells whose positions
-    main trusted. Returns (cells, next_j, main_len, refused) where `refused`
-    says a comment-line cell was blanked by the geometry check."""
+    main trusted. Returns (cells, next_j, main_len, refused, last_line):
+    `refused` says a comment-line cell was blanked by the geometry check;
+    `last_line` is the line index of a bare-number cell read into the last
+    column (a reference cell for that check), or None."""
     vals: list = []
     n = len(lines)
-    main_len, main_open, refused = 0, True, False
+    main_len, main_open, refused, last_line = 0, True, False, None
     while j < n and len(vals) < width:
         toks = lines[j][0].split()
         cells, mixed = [], False
@@ -425,21 +428,19 @@ def _read_values(lines, j: int, width: int, mixed_ok: frozenset = frozenset(),
         else:
             main_open = False
         if mixed:
-            if (len(cells) == 1 and len(vals) + 1 == width and len(vals) in mixed_ok
-                    and cells[0] is not None):
-                if mixed_line_ok is None or mixed_line_ok(j):
-                    vals.extend(cells)
+            if len(cells) == 1 and len(vals) + 1 == width and len(vals) in mixed_ok:
+                if cells[0] is None or mixed_line_ok is None or mixed_line_ok(j):
+                    vals.extend(cells)  # a "---" cell is blank either way
                 else:
                     vals.append(None)
                     refused = True
                 j += 1
             break
-        if (on_last_cell is not None and len(toks) == 1 and cells[0] is not None
-                and len(vals) == width - 1):
-            on_last_cell(j)
+        if len(toks) == 1 and cells[0] is not None and len(vals) == width - 1:
+            last_line = j
         vals.extend(cells[:width - len(vals)])
         j += 1
-    return vals, j, main_len, refused
+    return vals, j, main_len, refused, last_line
 
 
 def _read_header(lines, i) -> tuple[str, int]:
@@ -492,10 +493,13 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
 
     def lines_up(k: int) -> bool:
         pos = positions[k]
-        if pos is None or pos[1] is None:
+        if pos is None or pos[1] is None or not pos[2]:
             return False  # can't be checked: read as blank, never as a guess
-        col = edge.get(lines[k][1])
-        return col is not None and abs(pos[1] - col) <= _LAST_COLUMN_TOLERANCE
+        pg = lines[k][1]
+        # A page with no reference cell of its own uses an adjacent page's
+        # (the same table continues across pages).
+        col = edge.get(pg, edge.get(pg - 1, edge.get(pg + 1)))
+        return col is not None and abs(pos[1] - col) <= _LAST_COLUMN_TOLERANCE * pos[2]
 
     return _parse_table_lines_once(lines, alias_map, initial_layout, page_headers, positions,
                                    mixed_line_ok=lines_up)
@@ -518,8 +522,9 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
     header at all (`initial_layout`), only the literal ADJ token counts.
     `positions` (parallel to `lines`: each line's (start, first word's right
     edge) along its own text direction, or None) places Well ID lines in their
-    column (_WELL_COLUMN_TOLERANCE). `mixed_line_ok` / `on_last_cell`: see
-    _read_values.
+    column (_WELL_COLUMN_TOLERANCE). `mixed_line_ok`: see _read_values;
+    `on_last_cell(j)` receives each reference cell's line (see
+    _parse_table_lines).
 
     Rows main's line-at-a-time reader already read keep main's behavior: the
     negative-flow check and the unlabeled-ADJ pairing see only those rows
@@ -663,8 +668,8 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
         width = len(layout) if layout else len(COLUMNS)
         mixed_ok = (frozenset(layout.index(c) for c in ("well_pres", "header_pres")
                               if c in layout) if layout else frozenset())
-        nums, j, main_len, refused = _read_values(lines, j, width, mixed_ok,
-                                                  mixed_line_ok, on_last_cell)
+        nums, j, main_len, refused, last_line = _read_values(lines, j, width, mixed_ok,
+                                                             mixed_line_ok)
         if refused:
             out.unaligned_cells += 1
         if (layout is not None and main_len < len(nums) < width
@@ -719,6 +724,9 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             for ci, v in enumerate(nums):
                 setattr(r, layout[ci], v)
             cur_rows.append(r)
+            if on_last_cell is not None and last_line is not None and mixed_ok and (
+                    width - 1) in mixed_ok and len(nums) == width:
+                on_last_cell(last_line)  # a reference cell: emitted row, pressure column
             if main_len > layout.index("temp"):  # main emitted this row
                 partner = r
             if "flow" in layout and main_len > layout.index("flow"):
@@ -742,15 +750,14 @@ _WELL_ID_TEXT_RE = re.compile(r"Well\s*ID", re.I)
 
 
 def _line_positions(page, text_lines: list) -> list:
-    """For each text line, (start, first word's right edge), both measured
-    along the line's own text direction (rotation-proof), from one text page's
-    dict and words. All None when the dict lines don't match the plain-text
-    lines one for one (measured 2026-10-20: they match on every data page of
-    the corpus, up to a comment clipped at the page edge); the edge is None
-    when the first word can't be matched."""
+    """For each text line, (start, first word's right edge, first word's
+    width per character), all measured along the line's own text direction
+    (rotation-proof), from one text page's dict and words. All None when the dict lines don't match the plain-text
+    lines one for one (the text page uses get_text()'s own flags, so they
+    match exactly); the edge is None when the first word can't be matched."""
     out = []
     try:
-        tp = page.get_textpage()
+        tp = page.get_textpage(flags=fitz.TEXTFLAGS_TEXT)  # what get_text() uses
         first_word: dict = {}
         for wx0, wy0, wx1, wy1, wtxt, bno, lno, wno in tp.extractWORDS():
             if (bno, lno) not in first_word or wno < first_word[(bno, lno)][0]:
@@ -762,24 +769,25 @@ def _line_positions(page, text_lines: list) -> list:
                     continue
                 c, s_ = ln["dir"]
                 ox, oy = ln["spans"][0]["origin"]
-                edge = None
+                edge = char_w = None
                 fw = first_word.get((bno, lno))
                 if fw is not None and fw[1] == txt.split()[0]:
                     x0, y0, x1, y1 = fw[2]
-                    edge = max(x * c + y * s_ for x in (x0, x1) for y in (y0, y1))
-                out.append((txt, (ox * c + oy * s_, edge)))
+                    along = [x * c + y * s_ for x in (x0, x1) for y in (y0, y1)]
+                    edge = max(along)
+                    char_w = (edge - min(along)) / len(fw[1])
+                out.append((txt, (ox * c + oy * s_, edge, char_w)))
     except Exception:  # noqa: BLE001 — no geometry: text order only
         return [None] * len(text_lines)
-    # One for one; a line may differ only in how far it runs (plain text clips
-    # a long comment at the page edge, the dict doesn't).
-    if len(out) != len(text_lines) or any(
-            not (a == b or a.startswith(b) or b.startswith(a))
-            for (a, _), b in zip(out, text_lines)):
+    if [t for t, _ in out] != text_lines:
         return [None] * len(text_lines)
     return [x for _, x in out]
 
 
-_DT_LINE_RE = re.compile(r"^\s*\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}\s*$", re.M)
+# A line that starts with a number and goes on with text: the only lines the
+# geometry check reads. Pages without one (and without an Alias label) skip
+# the geometry extraction.
+_MIXED_LINE_RE = re.compile(r"^\s*-?\d+(?:\.\d+)?[ \t]+(?!-?\d|---)\S", re.M)
 
 
 def _pdf_read(pdf_path: str, with_positions: bool = False):
@@ -787,8 +795,8 @@ def _pdf_read(pdf_path: str, with_positions: bool = False):
     that carry a "Well ID" header. Any page MuPDF cannot read (e.g. "cannot
     find page N in page tree" on a damaged page tree) is skipped and returned:
     one bad page must not cost the whole report. With `with_positions`, also
-    returns each line's geometry (_line_positions) for pages that carry a
-    gas row timestamp or an Alias label; None elsewhere."""
+    returns each line's geometry (_line_positions) for pages that carry an
+    Alias label or a number-then-text line (_MIXED_LINE_RE); None elsewhere."""
     doc = fitz.open(pdf_path)
     try:
         lines, skipped, headers, positions = [], [], {}, []
@@ -808,7 +816,7 @@ def _pdf_read(pdf_path: str, with_positions: bool = False):
             lines.extend((s, p + 1) for s in page_lines)
             if with_positions:
                 positions.extend(_line_positions(page, page_lines)
-                                 if ("Alias" in text or _DT_LINE_RE.search(text))
+                                 if ("Alias" in text or _MIXED_LINE_RE.search(text))
                                  else [None] * len(page_lines))
         if with_positions:
             return lines, skipped, headers, positions
