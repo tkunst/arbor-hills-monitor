@@ -511,3 +511,91 @@ Reports processed before this change keep their old rows until they are
 re-extracted. On re-extraction, an Alias-table row's "Well ID As Filed" no
 longer carries the alias spelling. The alias stays on `WOIReading` only and
 is not written to the Sheet.
+
+## Addendum (2026-10-20): gas tables split across two page ranges
+
+Spec: `docs/overnight-coder-handoffs/woi-split-table-join.md`
+(`coder:woi-split-table-join`, the follow-up to the 2026-10-19 addendum).
+
+**What these tables are.** Four reports in the corpus print each gas table
+in two page ranges. The left half (Well ID, [Alias], Date/Time, ADJ, CH4,
+CO2, O2, Balance, sometimes Diff. Press) runs on n pages. The right half
+(Temp, Flow, Well Pres, Header Pres, Diff. Press when the left lacks it,
+then Comments and sometimes pump counts) runs on the n pages right after it
+and prints no Well ID and no timestamp. Read alone, the left half was
+rejected ("column layout not recognized"), which is what the 2026-10-19
+addendum kept.
+
+**The join** (`_split_plan`, `_settle_split`, and the `split` path in
+`_parse_table_lines_once`):
+
+- A candidate is a rejected table whose header reads the four gas columns
+  and maybe Diff. Press, and nothing else (`_is_split_left`). The first
+  parse records it directly (`on_split_candidate`); nothing is parsed back
+  out of `RejectedTable.header`.
+- The left half must start on a page that prints that header (some reports
+  print it on the first left page only), and no later left page may print
+  a different one. The n pages after it must each read as a right half: one
+  text direction, no Well ID, no well-ID line, no timestamp anywhere, at
+  least one line of cells. The page after them must not: a Temp label or a
+  complete row there means the page counts differ. A page of other columns
+  (one report prints pump counts and liquid depths on a third range) ends
+  the run.
+- Left page k pairs with right page k + n. A left row's coordinate is the
+  baseline of its Date/Time line across the text (`-ox*sin + oy*cos` of the
+  line's first span origin, in the line's own direction). Its right row is
+  the right-page cells on the same baseline (`_SPLIT_ROW_TOLERANCE` 0.5 pt;
+  every pair in the corpus differs by exactly 0).
+- The right half's column order comes from its label positions, never the
+  text order: on `ed1617e8` the text reads "Temp." first, but Diff. Press is
+  printed first. Label words one space apart form a phrase; phrases that
+  overlap along the text form one column (a wrapped label); each column runs
+  from its label's start to the next label's start. The measurement columns
+  must come first, each named once; Comments and pump counts follow and are
+  never read (Trisha's 2026-10-19 ruling). Labels are read from the right
+  page's own header band (above its first row of cells), or, on a page that
+  prints none, from the nearest labeled right page.
+- A cell must also line up with its column's bare cells: its centre, start
+  or end within `_SPLIT_ALIGN_TOLERANCE` (0.3) of a character width of their
+  median. On a page without labels, the median is the labeled page's, so a
+  page drawn elsewhere can't put Flow under Temp. Measured: every corpus
+  cell is within 0.03 of a character width (centred columns) or exactly 0
+  (the right-aligned table). A comment that starts with a number sits at the
+  Comments position and lines up with nothing, so it never fills a column.
+  `---` is a blank cell that keeps its column.
+- The left columns plus the right measurement columns must equal one of
+  `LAYOUTS` as a set. A right row is used only when every measurement column
+  holds exactly one aligned cell.
+- A page joins only if every left row has its own right row (none shared)
+  and every complete right row no left row claims sits on a left-page
+  timestamp line the row reader did not start. On `eb09e953` 117 right rows
+  are such leftovers: their left row prints `10/21/2022 11:46 ADJ` on one
+  line, which `DT_RE` does not match, so main never reads that row (see the
+  follow-up below). Any other leftover means the halves don't agree.
+- A joined row takes its Well ID, Alias, timestamp and ADJ from the left
+  half, then goes through everything a normal row does: the blank/partial
+  counts, `valid`, the negative-flow check of its own table, the
+  unlabeled-ADJ rule, and, in the router, `merge_cross_table_duplicates`,
+  the plausibility ceiling and the data-loss guard.
+- Rows that don't join stay rejected, counted in `split_unjoined_rows` and
+  listed as a `RejectedTable` with the fixed reason
+  `split table: rows not joined to a right-half row`. A left row whose left
+  cells are not all read is left to the old reject. A table whose right half
+  isn't found stays rejected exactly as before. All of this is best-effort:
+  an exception in the geometry leaves that table rejected, and
+  `parse_gas_extraction_report` never raises from it.
+
+**Proof that the right rows are paired.** The same reports print 803 of the
+joined readings elsewhere with a temperature (by well, timestamp and ADJ:
+`ed1617e8` 304, `5379a301` 219, `eb09e953` 280). Every one matches exactly
+on every column both copies print: CH4, CO2, O2, Balance, Diff. Press (left
+on two reports, right on `ed1617e8`, where the text order would have swapped
+it with Temp) and Temp on all three, and Flow on `eb09e953`. Ten of them
+have two copies elsewhere (two readings in the same minute), and the joined
+pair equals that pair. `afc0218c` prints none of its joined readings
+elsewhere with a temperature. Its two split tables (pp 1-60 and 191-220)
+print 166 of the same readings, each joined from a different right range,
+and all 166 agree on all nine columns. Well Pres and Header Pres are never
+printed twice, so they have no in-report check; they are the right half's
+last two measurement columns, placed by the same label and alignment rules.
+

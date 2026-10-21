@@ -210,14 +210,14 @@ def test_is_split_left():
 
 def test_unlabeled_right_page_drawn_elsewhere_is_not_joined(tmp_path):
     # Right page 2 prints no labels and its columns sit 40 pt to the left,
-    # with a pump count where Header Pres would be: its cells don't line up
-    # with the labeled page's, so nothing on it is joined (never Flow as Temp).
+    # with a pump count where Header Pres would be: it holds no row in the
+    # labeled page's columns, so the table is not joined (never Flow as Temp).
     p2 = three("AHW2", 10)
     g = w.parse_gas_extraction_report(build(
         tmp_path / "r.pdf", [three("AHW1"), p2], right_labels={0}, shift={1: -40},
         extra_lines=[(1, 230, 52 + 12 * k, "3") for k in range(3)]))
-    assert [r.well_id for r in g.readings] == ["AHW1"] * 3
-    assert g.split_unjoined_rows == 3
+    assert g.readings == [] and g.split_joined_rows == 0
+    assert [t.reason for t in g.rejected_tables] == ["column layout not recognized"]
 
 
 def test_unlabeled_right_page_in_place_is_joined(tmp_path):
@@ -293,4 +293,79 @@ def test_diff_press_on_both_halves_is_not_joined(tmp_path):
         LEFT_LABELS = saved
         LEFT_X[:] = orig
     assert g.split_joined_rows == 0 and g.readings == []
+    assert [t.reason for t in g.rejected_tables] == ["column layout not recognized"]
+
+
+def test_unlabeled_column_inside_a_measurement_column_is_not_joined(tmp_path):
+    # A column printed between Temp and Flow with no label of its own: two
+    # numbers in the Temp column on every row, so no row is joined.
+    extra = [(pi, 100, 52 + 12 * k, "526") for pi in range(2) for k in range(3)]
+    g = w.parse_gas_extraction_report(build(tmp_path / "r.pdf", [three("AHW1"), three("AHW2", 10)],
+                                            extra_lines=extra))
+    assert g.split_joined_rows == 0
+    assert all(r.temp != 526.0 for r in g.readings)
+
+
+def _two_tables(tmp_path, footers=0):
+    a = build(tmp_path / "a.pdf", [three("AHW1")])
+    b = build(tmp_path / "b.pdf", [three("AHW2", 10, right=("0.1", "150", "5", "-2", "-20"))])
+    d = fitz.open(a)
+    d.insert_pdf(fitz.open(b))
+    for k in range(footers):
+        d.new_page(width=612, height=H).insert_text((300, 780), str(k + 5), fontsize=FS)
+    d.save(str(tmp_path / "ab.pdf"))
+    return w.parse_gas_extraction_report(str(tmp_path / "ab.pdf"))
+
+
+@pytest.mark.parametrize("footers", [0, 2])
+def test_two_split_tables_in_a_row_never_borrow_each_others_halves(tmp_path, footers):
+    # Pages: A left, A right, B left, B right (+ pages holding only a page
+    # number). The run of rejected rows spans A left..B left; it is not a
+    # left half (A right prints no rows), so nothing is joined.
+    g = _two_tables(tmp_path, footers)
+    assert g.split_joined_rows == 0 and g.readings == []
+
+
+def test_page_shifted_one_column_with_a_leading_column_is_not_joined(tmp_path):
+    # Evenly spaced columns plus a numeric pump-count column. The unlabeled
+    # page prints an extra leading column and everything one column over:
+    # two columns share the pump-count label, so that page is not joined.
+    labels = [(80, 40, "Temp."), (40, 34, "Diff."), (40, 40, "Press."), (120, 40, "Flow"),
+              (160, 34, "Well"), (160, 40, "Pres."), (200, 34, "Header"), (200, 40, "Pres."),
+              (240, 40, "Pump"), (290, 40, "Comments")]
+    global RIGHT_LABELS, RIGHT_X
+    saved = RIGHT_LABELS, list(RIGHT_X)
+    try:
+        RIGHT_LABELS = labels
+        RIGHT_X[:] = [40, 80, 120, 160, 200]
+        pump = [(0, 240, 52 + 12 * k, "3") for k in range(3)]
+        pump += [(1, 280, 52 + 12 * k, "3") for k in range(3)]
+        pump += [(1, 40, 52 + 12 * k, "7") for k in range(3)]
+        g = w.parse_gas_extraction_report(build(tmp_path / "r.pdf", [three("AHW1"), three("AHW2", 10)],
+                                                right_labels={0}, shift={1: 40}, extra_lines=pump))
+    finally:
+        RIGHT_LABELS, RIGHT_X[:] = saved[0], saved[1]
+    assert [r.well_id for r in g.readings] == ["AHW1"] * 3
+    assert g.split_unjoined_rows == 3
+
+
+def test_unjoined_row_is_still_the_adj_partner(tmp_path, monkeypatch):
+    # No ADJ label: an as-found row whose right half is incomplete is not
+    # joined, but its after-adjustment twin must still be read as ADJ.
+    monkeypatch.setitem(globals(), "LEFT_LABELS", [lab for lab in LEFT_LABELS if lab[1] != "ADJ"])
+    rows = [row("AHW1", 0, right=("0.5", "120", None, "-4", "-40")),
+            row("AHW1", 0, right=("0.4", "125", "8", "-4", "-41")), row("AHW1", 5),
+            row("AHW1", 6), row("AHW1", 7)]
+    g = w.parse_gas_extraction_report(build(tmp_path / "r.pdf", [rows]))
+    assert [(r.dt[-5:], r.adj, r.temp) for r in g.readings][:2] == [
+        ("10:00", True, 125.0), ("10:05", False, 120.0)]
+    assert g.split_unjoined_rows == 1
+
+
+def test_a_failing_join_keeps_the_first_parse(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("geometry")
+    monkeypatch.setattr(w, "_settle_split", boom)
+    g = w.parse_gas_extraction_report(build(tmp_path / "r.pdf", [three("AHW1")]))
+    assert g.readings == [] and g.split_joined_rows == 0
     assert [t.reason for t in g.rejected_tables] == ["column layout not recognized"]

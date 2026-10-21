@@ -38,6 +38,7 @@ count; cross-reference the WOI list instead.
 """
 from __future__ import annotations
 
+import collections
 import re
 from dataclasses import dataclass, field
 from typing import Optional
@@ -247,6 +248,10 @@ class GasExtractionParse:
     # that were not (no clean right-half row; kept rejected).
     split_joined_rows: int = 0
     split_unjoined_rows: int = 0
+    # Right-half rows left over on a joined page because their left row
+    # prints its timestamp and more on one line ("10/21/2022 11:46 ADJ"),
+    # which the row reader doesn't start: never read, counted here.
+    split_unread_rows: int = 0
 
 
 def layout_for_columns(cols: list) -> Optional[list]:
@@ -710,14 +715,22 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             # row whose left cells are not all read is left to the reject
             # below, exactly as before.
             left, j_left, _, _, _ = _read_values(lines, j, len(sp.left_cols))
+            # one more cell right after them is an unlabeled column: the
+            # left cells' positions are then unknown
+            extra = (j_left < n and lines[j_left][1] == page
+                     and _cell(lines[j_left][0].split()[0])[0])
             if len(left) == len(sp.left_cols):
                 coord = (sp.coords[dt_i - page_first[page]]
                          if sp.coords is not None and lines[dt_i][1] == page else None)
                 if on_split_row is not None:
                     on_split_row(page, coord)
-                right = sp.right_cells(coord)
+                right = None if extra else sp.right_cells(coord)
                 j = j_left
                 if right is None:
+                    # Still a printed row: it is the as-found partner the
+                    # unlabeled-ADJ rule compares the next row with.
+                    partner = WOIReading(well_id=raw_well, raw_well_id=raw_well, dt=dt,
+                                         adj=adj, page=page)
                     out.split_unjoined_rows += 1
                     cur_unjoined["n"] += 1
                     cur_unjoined["first"] = cur_unjoined["first"] or page
@@ -1081,32 +1094,34 @@ def _right_page(page) -> Optional[_RightPage]:
 
 
 def _assign_cells(rp: _RightPage, columns: list) -> list:
-    """[(across, column name, token, line is bare)] for every cell token that
-    falls in a measurement column's band (its label start to the next
-    label's start). Tokens in other columns, or before the first, are not
-    cells of the row."""
+    """[(across, band, column name or None, token, line is bare, line has
+    text after its cells)] for every cell token on the page. `band` is the
+    label column whose span (its label start to the next label's start)
+    holds the token's centre, or -1 before the first label."""
     out = []
     starts = [a for _, a in columns]
     for fl in rp.flines:
         toks = _cell_tokens(fl)
         bare = len(fl.words) == 1
+        mixed = len(toks) < len(fl.words)
         for a0, a1, t in toks:
             mid = (a0 + a1) / 2
-            for ci, (name, start) in enumerate(columns):
-                end = starts[ci + 1] if ci + 1 < len(starts) else float("inf")
-                if start <= mid < end:
-                    if name is not None:
-                        out.append((fl.across, name, (a0, a1, t), bare))
-                    break
+            band = -1
+            for ci, start in enumerate(starts):
+                if mid >= start:
+                    band = ci
+            name = columns[band][0] if band >= 0 else None
+            out.append((fl.across, band, name, (a0, a1, t), bare, mixed))
     return out
 
 
 def _alignment_refs(cells: list) -> dict:
     """{column: (median centre, median start, median end)} of the bare
-    number cells, for columns with at least _SPLIT_MIN_REF_CELLS of them."""
+    number cells in each measurement column, for columns with at least
+    _SPLIT_MIN_REF_CELLS of them."""
     by: dict = {}
-    for _, name, (a0, a1, t), bare in cells:
-        if bare and t != BLANK_CELL:
+    for _, _, name, (a0, a1, t), bare, _ in cells:
+        if name is not None and bare and t != BLANK_CELL:
             by.setdefault(name, []).append((a0, a1))
     refs = {}
     for name, v in by.items():
@@ -1116,33 +1131,79 @@ def _alignment_refs(cells: list) -> dict:
     return refs
 
 
+def _band_pattern(cells: list, n_bands: int) -> tuple:
+    """For the space before the first label and each label column: does a
+    column of number cells run down the page there (bare number cells lined
+    up with each other on at least half of the page's cell baselines; a
+    comment column with a stray number on a few rows doesn't count), and do
+    two share it? Compared between a page without labels and the labeled
+    page it borrows them from."""
+    baselines: list = []
+    for c in sorted(cells, key=lambda c: c[0]):
+        if not baselines or c[0] - baselines[-1] > _SPLIT_ROW_TOLERANCE:
+            baselines.append(c[0])
+    by: dict = {}
+    for _, b, _, (a0, a1, t), bare, _ in cells:
+        if bare and t != BLANK_CELL:
+            by.setdefault(b, []).append((a0, a1, t))
+    out = []
+    for b in range(-1, n_bands):
+        toks = by.get(b, [])
+        ref = (tuple(sorted(x)[len(x) // 2] for x in (
+            [(a0 + a1) / 2 for a0, a1, _ in toks], [a0 for a0, _, _ in toks],
+            [a1 for _, a1, _ in toks])) if toks else None)
+        n_aligned = sum(_aligned(t, ref) for t in toks) if ref is not None else 0
+        out.append(n_aligned >= max(_SPLIT_MIN_REF_CELLS, len(baselines) / 2))
+        # and whether two such columns share this label (most baselines hold
+        # two bare numbers here): a page drawn a column over can stack two
+        per_line = collections.Counter(c[0] for c in cells
+                                       if c[1] == b and c[4] and c[3][2] != BLANK_CELL)
+        out.append(sum(v >= 2 for v in per_line.values()) >= max(1, len(baselines) / 2))
+    return tuple(out)
+
+
+def _aligned(tok, ref) -> bool:
+    a0, a1, t = tok
+    cw = (a1 - a0) / max(len(t), 1)
+    return any(abs(x - r) <= _SPLIT_ALIGN_TOLERANCE * cw
+               for x, r in zip(((a0 + a1) / 2, a0, a1), ref))
+
+
 def _right_rows(cells: list, refs: dict, meas: list) -> list:
-    """[(across, {column: value} or None)]: the right half's rows. A row is
-    the aligned cells at one baseline; it is None (not joinable) unless every
-    measurement column holds exactly one cell there."""
-    aligned = []
-    for across, name, (a0, a1, t), _ in cells:
-        ref = refs.get(name)
-        if ref is None:
-            continue
-        cw = (a1 - a0) / max(len(t), 1)
-        if any(abs(x - r) <= _SPLIT_ALIGN_TOLERANCE * cw
-               for x, r in zip(((a0 + a1) / 2, a0, a1), ref)):
-            aligned.append((across, name, t))
-    aligned.sort(key=lambda c: c[0])
+    """[(across, {column: value} or None)]: the right half's rows, one per
+    baseline that holds a cell in a measurement column. A row is None (not
+    joinable) unless each measurement column holds exactly one cell there,
+    lined up with that column, and no cell sits before the first label. A
+    number that starts a comment line and doesn't line up ("2 turns open")
+    is the comment, not a cell; any other extra or unaligned cell (an
+    unlabeled column, a shifted page) makes the row not joinable."""
     groups: list = []
-    for c in aligned:
+    for c in sorted(cells, key=lambda c: c[0]):
         if groups and c[0] - groups[-1][-1][0] <= _SPLIT_ROW_TOLERANCE:
             groups[-1].append(c)
         else:
             groups.append([c])
     rows = []
     for g in groups:
-        names = [n for _, n, _ in g]
-        vals = None
-        if sorted(names) == sorted(meas):
-            vals = {n: _cell(t)[1] for _, n, t in g}
-        rows.append((g[0][0], vals))
+        toks = []
+        for across, band, name, tok, _, mixed in g:
+            if name is None and band != -1:
+                continue  # Comments, pump counts: never read
+            ok = name is not None and name in refs and _aligned(tok, refs[name])
+            if not ok and mixed and name is not None:
+                continue  # the leading number of a comment line
+            toks.append((name, tok, ok, across))
+        if not toks:
+            continue  # not a row (a wrapped comment that starts with a number)
+        vals: Optional[dict] = {}
+        for name, tok, ok, _ in toks:
+            if not ok or name in vals:
+                vals = None
+                break
+            vals[name] = _cell(tok[2])[1]
+        if vals is not None and sorted(vals) != sorted(meas):
+            vals = None
+        rows.append((toks[0][3], vals))
     return rows
 
 
@@ -1186,8 +1247,14 @@ def _plan_one(doc, left_cols: tuple, first: int, last: int, page_lines: dict,
            for p in range(first + 1, last + 1)):
         return {}
     n = last - first + 1
+    # Every left page prints rows (a page of the table's own right half, or
+    # of another table's, inside the run would shift the offset).
+    if any(p in skipped or not any(DT_RE.match(t) for t in page_lines.get(p, []))
+           for p in range(first, last + 1)):
+        return {}
     right = list(range(last + 1, last + n + 1))
-    if right[-1] > len(doc) or any(p in skipped for p in right):
+    after = last + n + 1
+    if after > len(doc) + 1 or any(p in skipped for p in right + [after]):
         return {}
     rps = [_right_page(doc[p - 1]) for p in right]
     if any(rp is None for rp in rps):
@@ -1224,18 +1291,31 @@ def _plan_one(doc, left_cols: tuple, first: int, last: int, page_lines: dict,
         refs.update(_alignment_refs(cells[src[k]]))
         page_refs.append(refs)
     range_refs = page_refs[-1]
+    rows_for = [_right_rows(cells[k], page_refs[k], meas) for k in range(n)]
+    # Every right page prints rows of these columns (a page holding only a
+    # footer number is not a right half).
+    if any(not any(v is not None for _, v in rows) for rows in rows_for):
+        return {}
+    # A page without labels must have its columns of number cells under the
+    # same labels (and none before the first) as the labeled page it borrows
+    # them from. A page drawn a column over does not: some column moves
+    # before the first label or past the last measurement column. Its rows
+    # are then not joined.
+    pattern = [_band_pattern(cells[k], len(cols_for[k])) for k in range(n)]
+    for k in range(n):
+        if src[k] != k and pattern[k] != pattern[src[k]]:
+            rows_for[k] = []
     # The right run must end here: a next page with a Temp label, or with
     # rows in these columns, means the page counts differ. (A next page of
     # other columns, e.g. pump counts and liquid depths, ends the run.)
-    after = last + n + 1
-    nxt = _right_page(doc[after - 1]) if after <= len(doc) and after not in skipped else None
+    nxt = _right_page(doc[after - 1]) if after <= len(doc) else None
     if nxt is not None and (nxt.columns is not None or any(
             v is not None for _, v in _right_rows(_assign_cells(nxt, cols_for[-1]),
                                                   range_refs, meas))):
         return {}
     plan = {}
     for k, p in enumerate(range(first, last + 1)):
-        rows = _right_rows(cells[k], page_refs[k], meas)
+        rows = rows_for[k]
         coords, dt_coords = None, []
         if p not in skipped:
             fl = _frame_lines(doc[p - 1])
@@ -1278,13 +1358,18 @@ def _settle_split(plan: dict, seen: dict) -> None:
     no left row claims sits on the baseline of a left-page timestamp line
     the row reader didn't start (e.g. "10/21/2022 11:46 ADJ" printed as one
     line). Any other leftover right row means the halves don't agree.
-    Mutates `plan`."""
+    Mutates `plan`; returns how many such leftover rows the joined pages
+    have."""
+    unread = 0
     for pg, sp in plan.items():
         ks = [sp.find(c) for c in seen.get(pg, [])]
         claimed = set(ks)
         leftover = [a for k, (a, v) in enumerate(sp.rows) if v is not None and k not in claimed]
         sp.ok = (None not in ks and len(claimed) == len(ks) and all(
             any(abs(a - d) <= _SPLIT_ROW_TOLERANCE for d in sp.dt_coords) for a in leftover))
+        if sp.ok:
+            unread += len(leftover)
+    return unread
 
 
 def parse_gas_extraction_report(pdf_path: str, alias_map: Optional[dict] = None) -> GasExtractionParse:
@@ -1302,13 +1387,19 @@ def parse_gas_extraction_report(pdf_path: str, alias_map: Optional[dict] = None)
     if plan:
         # Split tables (see _split_plan): a dry run collects each left row's
         # baseline, which settles which pages pair cleanly; then the report
-        # is parsed again with the join.
-        seen: dict = {}
-        _parse_table_lines_once(lines, alias_map, None, headers, positions, split=plan,
-                                on_split_row=lambda pg, c: seen.setdefault(pg, []).append(c))
-        _settle_split(plan, seen)
-        out = _parse_table_lines(lines, alias_map, page_headers=headers, positions=positions,
-                                 split=plan)
+        # is parsed again with the join. Any failure keeps the first parse
+        # (those tables rejected, as before).
+        try:
+            seen: dict = {}
+            _parse_table_lines_once(lines, alias_map, None, headers, positions, split=plan,
+                                    on_split_row=lambda pg, c: seen.setdefault(pg, []).append(c))
+            unread = _settle_split(plan, seen)
+            joined = _parse_table_lines(lines, alias_map, page_headers=headers,
+                                        positions=positions, split=plan)
+            joined.split_unread_rows = unread
+            out = joined
+        except Exception:  # noqa: BLE001 — the join is best-effort
+            print("[woi_table_parser] split-table join failed; those tables stay rejected")
     out.skipped_pages = skipped
     if skipped:
         print(f"[woi_table_parser] skipped {len(skipped)} unreadable page(s): "
@@ -1326,7 +1417,8 @@ def parse_gas_extraction_report(pdf_path: str, alias_map: Optional[dict] = None)
               f"{out.unaligned_cells} comment-line cells read as blank")
     if out.split_joined_rows or out.split_unjoined_rows:
         print(f"[woi_table_parser] split tables: {out.split_joined_rows} rows joined to "
-              f"their right half, {out.split_unjoined_rows} not joined")
+              f"their right half, {out.split_unjoined_rows} not joined, "
+              f"{out.split_unread_rows} right-half rows whose left row is not read")
     return out
 
 
