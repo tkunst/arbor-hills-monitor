@@ -596,6 +596,79 @@ pair equals that pair. `afc0218c` prints none of its joined readings
 elsewhere with a temperature. Its two split tables (pp 1-60 and 191-220)
 print 166 of the same readings, each joined from a different right range,
 and all 166 agree on all nine columns. Well Pres and Header Pres are never
-printed twice, so they have no in-report check; they are the right half's
-last two measurement columns, placed by the same label and alignment rules.
+printed twice in the same report; the check against other filings below
+covers them.
+
+**Guards added in review** (each has a synthetic-PDF test). A candidate's
+left pages must each print rows and each right page must hold a complete
+right row, so two split tables in a row (or footer-only pages) can't lend one
+table the other's right half. A right row is not joinable if a number sits
+before the first label, or a measurement column holds a second or unaligned
+number; only the unaligned leading number of a comment line is skipped. A
+right page without labels must have its columns of numbers under the same
+labels as the page it borrows from, and no label holding two such columns.
+A row with one more left cell than its header names is not joined. An
+unjoined row is still the unlabeled-ADJ partner of the next row. The page
+after the right run being unreadable refuses the join, and any exception in
+the join keeps the first parse. Right-half rows whose left row is never read
+are counted in `split_unread_rows`.
+
+**Measured effect** (91 WOI-format cache files, 42 distinct parse outputs,
+same corpus as the 2026-10-19 addendum; counts over the 42):
+
+- Every reading main reads is still read with identical values, ADJ flag,
+  well id, alias and page: 0 lost, 0 changed.
+- Readings rose from 278,407 to 287,980: +9,573, all joined split-table
+  rows (`ed1617e8` 2,296, `5379a301` 1,374, `eb09e953` 2,447, `afc0218c`
+  3,456). Rejected rows fell from 9,573 to 0; 0 rows were left unjoined.
+  The only other counter that moved: `partial_rows` +2 (two left rows of
+  `ed1617e8` with a `---` gas cell, which main never counted).
+- Every joined row is valid (gas sum) and has a temperature; joined
+  temperatures run 23.7-169.7°F. Reading dates run 2022-07-08 to 2024-03-28,
+  a year and more before these 2026-02-05 filings.
+- Every one of the 9,573 joined readings is also printed, by well,
+  timestamp and ADJ, in at least one OTHER filing in the corpus that main
+  reads normally (not a byte-different copy of the same report), and all of
+  them agree on every column both print, Well Pres and Header Pres included
+  (two `eb09e953` rows print no Diff. Press or pressures there). So the
+  joined readings largely duplicate data the monitor already holds from
+  those filings, and they confirm the join.
+
+Through `route_measurements` (live `config.yml` and alias map), on the
+four reports:
+
+- `merge_cross_table_duplicates` collapses the in-report overlap as
+  expected (304, 280; 220 on `5379a301`).
+- No per-well maximum or site peak changes except through a joined reading.
+  Site peak: unchanged on `ed1617e8` (170.2°F, 2022-06-13) and `eb09e953`
+  (171.8°F, 2021-11-04). On `5379a301` it rises from 152.0°F (2024-03-13) to
+  158.3°F (AHWW312R, **2023-08-29**), the out-of-period reading the
+  CLAUDE.md Assumptions section names; the headline carries its own date.
+- `afc0218c` did not route on main (every row rejected, so the data-loss
+  guard held). It now routes: 650 measurements, peak 169.7°F (AHWW312R,
+  2022-07-28).
+- New temperature measurements ≥ 131°F: 7, 220, 7 and 212; ≥ 145°F: 0, 147,
+  0 and 125. 702 joined readings are ≥ 145°F (as-found and ADJ; listed on
+  PR #166). `well_watch` hits are unchanged (none). Severity after
+  `recheck_severity_floor` stays urgent where it was.
+
+**Residual risk, accepted.** Nothing on a right page names its row. Pairing
+rests on the page offset, equal baselines and the column checks above. A
+right page from the wrong position with the same row grid, or a page without
+labels drawn exactly one column over with evenly spaced columns and the same
+number of number columns under each label, can't be told apart by geometry.
+The real reports print one template on every page, and every joined reading
+in the corpus matches another filing.
+
+**Follow-up (not done here).** Some rows print their timestamp and `ADJ` on
+one line (`10/21/2022 11:46 ADJ`). `DT_RE` doesn't match that line, so the
+row reader never starts the row, in split tables (117 right-half rows on
+`eb09e953`, counted in `split_unread_rows`) and in ordinary tables alike.
+Such lines appear in six corpus reports (counting byte-different copies
+once), 3,540 in all: `5379a301` 1,768, `31dbbade` 1,201, `eb09e953` 199,
+`ed1617e8` 159, `d609654d` 131, `7504fbc4` 82. Widening `DT_RE` adds readings to tables
+main already reads, so it needs its own regression.
+
+Nothing is re-extracted by this change. Re-extracting the four reports and
+re-running `stage_wellfield.py` wait for Trisha's go.
 
