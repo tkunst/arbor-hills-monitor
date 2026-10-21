@@ -849,8 +849,10 @@ four digits, so the row reader started none of its rows and read 0 readings.
     prints none. A page that mixes main's rows with two-digit rows that have
     right-half rows stays unjoined, as on main.
 - **Among themselves, two-digit rows get main's bookkeeping** (review
-  round 2), so a table printed only in two-digit years reads exactly as its
-  four-digit twin would (pinned by a seeded test over 400 random tables):
+  rounds 2 and 3), so a table printed only in two-digit years under a
+  labeled header reads exactly as its four-digit twin would. A seeded test
+  over 600 random tables (up to three pages, one-line and two-line ADJ rows)
+  pins this; see the open item below for unlabeled headers:
   - their own unlabeled-ADJ partner (`partner_2d`), never a one-line
     "timestamp ADJ" row, as on main; and their own ADJ label, read from the
     header text cut at the first row of any form (main's header text runs
@@ -858,10 +860,14 @@ four digits, so the row reader started none of its rows and read 0 readings.
   - their own negative-flow check on their trusted Flow cells
     (`cur_flows_2d`: the cells main's reader would read), rejecting all
     two-digit rows of the table with the reason "rows started by a
-    two-digit-year timestamp", and apart from it their rows read past a `---`
-    ("two-digit-year rows read past a blank cell");
-  - their own last-column edge (`edges_2d`), which only their cells are
-    checked against, falling back to main's edge.
+    two-digit-year timestamp"; apart from it, their rows read past a `---`
+    ("two-digit-year rows read past a blank cell") and their one-line
+    "timestamp ADJ" rows ("two-digit-year rows started by a one-line
+    timestamp ADJ") are each checked on their own, as main checks its
+    one-line rows;
+  - their own last-column edge (`edges_2d`), set by their bare rows only
+    (never a one-line row, as on main), which only their cells are checked
+    against, falling back to main's edge.
 - Not matched, on purpose: date-only lines (the CO tables' form, still
   `DATE_ONLY_RE`, four digits only), `AM`/`PM`, a comma after the date,
   anything after the time or after `ADJ`.
@@ -958,8 +964,35 @@ always read as blank (no edge of its own); a one-line two-digit ADJ row
 could become the partner; and the ADJ label of an all-two-digit table came
 from main's over-long header text. Accepted below.
 
+**Review round 3** (the last round; diff-only reviewer plus a security
+review). No high findings, and no input moved a main reading (3,000 random
+mixed tables, six mixed split-table PDFs). Fixed: one-line two-digit ADJ
+rows were pooled with the bare two-digit rows for the column-shift check and
+set the edge; in the four-digit twin they are checked on their own and set
+no edge. Security: no findings at medium or high.
+
+**Open (not fixed; review round 3, medium).** Under an *unlabeled* header
+repeated on each page, a two-digit table's boundaries still come from main's
+header text, which runs on over the first two-digit rows: a page whose rows
+print an `ADJ` token reads as labeled to main, so main's rule can split one
+two-digit table into two (or keep two as one) where its four-digit twin
+would not. That can change the column-shift verdict and unlabeled-ADJ flags
+of two-digit rows only (never a main reading). Relatedly, where main's own
+header text takes a first one-line row's `ADJ` as a label (the 2026-10-21
+one-line addendum's accepted case), the two-digit table reads the header as
+printed instead, so the two can differ there too. In the reviewer's random
+twin test: 0 differences of 3,000 under labeled headers, 72-284 of 3,000
+under unlabeled ones. `97d39ba7` prints a labeled ADJ header on every gas
+page, and its parse equals its four-digit rewrite. A fix would track the
+two-digit table's boundary from the header cut at the first row
+(`adj_labeled_2d`), separately from main's.
+
 **Known, accepted.**
 
+- Under an all-two-digit table, the columns come from main's header text,
+  which can run up to `_HEADER_MAX_LINES` lines into the rows; a comment
+  there that names a column the table lacks could change the layout (text
+  path) or empty it (geometry path). Main's readings can't change.
 - Reject entries main itself writes ("column layout not recognized",
   "split table: rows not joined", rows under a non-gas header) count the
   two-digit rows they hold, so their row counts and page ranges can grow.

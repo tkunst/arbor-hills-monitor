@@ -698,6 +698,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
     cur_twodigit: list = []  # rows started by a two-digit-year timestamp (either form)
     cur_flows_2d: list = []  # their Flow cells main's reader would have read
     cur_added_2d: list = []  # those of them whose Flow cell it would NOT have read
+    cur_oneline_2d: list = []  # those of them printed as a one-line "timestamp ADJ"
     partner = None          # the last row main would have emitted (unlabeled ADJ)
     partner_2d = None       # the same, among two-digit-year rows only
     well_col: dict = {}     # page -> Well ID column position
@@ -710,7 +711,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
 
     def flush():
         nonlocal cur_rows, cur_flows, cur_added, cur_oneline, cur_twodigit, partner, partner_2d
-        nonlocal cur_flows_2d, cur_added_2d
+        nonlocal cur_flows_2d, cur_added_2d, cur_oneline_2d
         if cur_rows:
             # Main's rows are judged on main's Flow cells alone, so added rows
             # can neither reject them nor dilute a shifted table. The added
@@ -745,10 +746,28 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 checks = [(cur_added, "rows read past a blank cell", None),
                           (cur_oneline, "rows started by a one-line timestamp ADJ", None)]
                 if share_2d is not None and share_2d > NEGATIVE_FLOW_REJECT_SHARE:
-                    checks.append((cur_twodigit, "rows started by a two-digit-year timestamp",
-                                   share_2d))
+                    # all of them, one-line ones included, as main rejects its
+                    # whole table; as main's, the entry describes the rows
+                    # whose Flow cells decided it, the one-line ones get their own
+                    drop |= {id(r) for r in cur_twodigit}
+                    one_2d = {id(r) for r in cur_oneline_2d}
+                    bare = [r for r in cur_twodigit if id(r) not in one_2d] or cur_twodigit
+                    out.rejected_tables.append(RejectedTable(
+                        first_page=bare[0].page, last_page=bare[-1].page,
+                        n_rows=len(bare), header=header,
+                        reason=("column-shift signature in rows started by a two-digit-year "
+                                f"timestamp: {share_2d:.0%} have a negative flow")))
+                    if cur_oneline_2d and len(bare) < len(cur_twodigit):
+                        out.rejected_tables.append(RejectedTable(
+                            first_page=cur_oneline_2d[0].page, last_page=cur_oneline_2d[-1].page,
+                            n_rows=len(cur_oneline_2d), header=header,
+                            reason=("two-digit-year rows started by a one-line timestamp ADJ, "
+                                    "in a column-shift rejected table")))
                 else:
                     checks.append((cur_added_2d, "two-digit-year rows read past a blank cell",
+                                   None))
+                    checks.append((cur_oneline_2d,
+                                   "two-digit-year rows started by a one-line timestamp ADJ",
                                    None))
                 for pool, what, pshare in checks:
                     if pshare is None:
@@ -762,7 +781,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                                     f"{pshare:.0%} have a negative flow")))
                 out.readings.extend(r for r in cur_rows if id(r) not in drop)
         cur_rows, cur_flows, cur_added, cur_oneline, cur_twodigit = [], [], [], [], []
-        cur_flows_2d, cur_added_2d = [], []
+        cur_flows_2d, cur_added_2d, cur_oneline_2d = [], [], []
         partner = partner_2d = None
         if cur_unjoined["n"]:
             out.rejected_tables.append(RejectedTable(
@@ -996,7 +1015,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             cur_rows.append(r)
             pools = {"oneline": cur_oneline, "two_digit": cur_twodigit}
             if on_last_cell is not None and last_line is not None and mixed_ok and (
-                    width - 1) in mixed_ok and len(nums) == width and dt_added != "oneline":
+                    width - 1) in mixed_ok and len(nums) == width and not dt_adj:
                 # a reference cell: emitted row, pressure column (a two-digit
                 # row's goes to its own edge, see _parse_table_lines)
                 if dt_added is None:
@@ -1011,9 +1030,10 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 out.split_joined_rows += 1
                 if dt_added is not None:
                     pools[dt_added].append(r)  # a row main never started: see below
-                    if dt_added == "two_digit":
-                        if not dt_adj:  # as main: never a one-line "timestamp ADJ"
-                            partner_2d = r
+                    if dt_added == "two_digit" and dt_adj:
+                        cur_oneline_2d.append(r)  # as main's one-line rows
+                    elif dt_added == "two_digit":
+                        partner_2d = r
                         if r.flow is not None:
                             cur_flows_2d.append(r.flow)
                 else:
@@ -1028,9 +1048,11 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 # rows'.
                 if dt_added is not None:
                     pools[dt_added].append(r)
-                    if dt_added == "two_digit":
+                    if dt_added == "two_digit" and dt_adj:
+                        cur_oneline_2d.append(r)  # as main's one-line rows
+                    elif dt_added == "two_digit":
                         # main's bookkeeping, for the two-digit rows alone
-                        if not dt_adj and main_len > layout.index("temp"):
+                        if main_len > layout.index("temp"):
                             partner_2d = r
                         if "flow" in layout and main_len > layout.index("flow"):
                             cur_flows_2d.append(r.flow)
