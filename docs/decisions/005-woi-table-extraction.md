@@ -797,3 +797,116 @@ summary use as-found readings only. Only the reading counts move.
 
 Nothing is re-extracted by this change. Re-extracting these reports waits for
 Trisha's go.
+
+## Addendum (2026-10-21): two-digit years in row timestamps
+
+Spec: `docs/overnight-coder-handoffs/woi-two-digit-year.md`
+(`coder:woi-two-digit-year`, found by the 2026-10-21 one-line-ADJ review).
+
+**What these rows are.** One report in the corpus, `97d39ba7` (the operator's
+2025 fourth-quarter Consent Judgment report, filed 2026-01-30), prints every
+gas-table timestamp with a two-digit year: `10/1/25 7:56`, and
+`10/1/25 15:55 ADJ` on one line for an ADJ row. `DT_RE` and `DT_ADJ_RE` wanted
+four digits, so the row reader started none of its rows and read 0 readings.
+
+**Change.**
+
+- `DT_RE`, `DT_ADJ_RE` and the split planner's "no timestamp on a right page"
+  test (`_DT_ANYWHERE_RE`) accept a four-digit or a two-digit year, and
+  nothing else (one, three or five digits never match).
+- `_dt_line()` passes the timestamp through `_four_digit_year()`. A
+  four-digit timestamp is kept exactly as printed, so nothing main reads
+  changes. A two-digit one is stored in the unpadded four-digit form
+  (`10/1/25 7:56` -> `10/1/2025 7:56`, `05/01/26 09:53` -> `5/1/2026 9:53`).
+  Every four-digit `dt` main reads in the corpus (628,187) is unpadded, so a
+  reading copied between filings gets the same `dt` and dedupe key.
+- **Century rule:** `YY` is read as `20YY`. The line starts no row when that
+  is not a real date and time (`2/30/25`, hour 24, minute 60, or the
+  spreadsheet zero date `1/0/00 0:00`, which `97d39ba7` prints 7 times) or
+  when the date is after today. The spec asked for a bound against the filing
+  date; the parser is not given one, so the bound is today, which no filing
+  date can be after. In the corpus the stronger bound changes nothing:
+  `97d39ba7`'s readings run 2025-10-01 to 2025-12-31 and it was filed
+  2026-01-30.
+- `_is_row_start_main` / `_is_alias_row_start_main` and the split planner's
+  "left page prints rows" check use `_dt_bare()`, the same `_dt_line()` rule
+  for a timestamp printed alone. A two-digit row printed alone is therefore a
+  main-form row (it ends a header, it can be the unlabeled-ADJ partner), and a
+  two-digit one-line ADJ row is handled exactly as the 2026-10-21 one-line
+  addendum describes. Within `97d39ba7` the two forms never mix in a table.
+- Not matched, on purpose: date-only lines (the CO tables' form, still
+  `DATE_ONLY_RE`, four digits only), `AM`/`PM`, a comma after the date,
+  anything after the time or after `ADJ`.
+
+Its gas tables (pp 220-344) print only two-digit years; the 65 four-digit
+timestamps in the report are on later, non-gas pages.
+
+**Measured effect** (91 WOI-format cache files, 42 distinct parse outputs,
+the same corpus as the earlier addenda; origin/main @ `dad8796` vs this
+change):
+
+- Every reading main reads is still read with identical values, ADJ flag,
+  well id, alias and page: 0 lost, 0 changed. No rejected table changed.
+- Readings rose from 291,713 to 299,666: +7,953, all in `97d39ba7` (and its
+  Drive-mirror twin): 4,015 as-found and 3,938 ADJ, all valid, 180 of them
+  gas-only (ids such as AHMP0011, AHTGP18D and AHETGP19, whose rows print `---` for
+  Temp). Temperatures
+  run 15.5-155.5°F; reading dates 2025-10-01 to 2025-12-31.
+- Of its 9,462 two-digit timestamp lines, 1,509 start no reading: 1,455 follow
+  an id `WELL_RE` does not read in either year form (`RNGINLET`, the
+  `STEST…`/`NTEST…`/`WTEST…` ids, lab rows such as `Blank` and `LCS`), 47 are rows of the one-column "Probe Monitoring Site Report" (`LEL %`), and 7 are the
+  refused `1/0/00 0:00`. The probe rows and other short rows on pp 345+ are
+  counted in `partial_rows` (43 to 90) and never become readings.
+- `beadf960` `partial_rows` 93 to 95: two lab sample-prep lines (a well-format
+  id, a lab sample id, a two-digit timestamp) now start a row under an Alias
+  header and stop short. No reading, reject entry or review flag moves.
+- **Cross-filing check.** 6,816 of the 7,953 are also printed, by well and
+  (four-digit) timestamp and ADJ, in the operator's 2025 second semi-annual
+  WOI status report (`a0d0ad1d`), where main already reads them. All 6,816
+  agree on every column both print (temperature on all of them). 0
+  mismatches, which also confirms the century rule and the stored form. The
+  other 1,137 are wells and points that report does not print at all
+  (most often `AHWWCS1D`, `AHWVACW2`, `AHCANFLR` and the `AHPW…` ids); none
+  is at or above 131°F.
+- 42 added readings are at or above 145°F, 21 as-found and 21 ADJ, all
+  2025-10-01 to 2025-12-31, all also in `a0d0ad1d` (listed on the PR). The
+  hottest is AHWW0279, 155.5°F as-found on 2025-10-13.
+
+**Downstream for `97d39ba7`** (nSITE `-6434168316378583072`; live
+`config.yml` and alias map). On main it reads 0 readings, so the router does
+not route it and the live record is the classifier's: severity routine, a
+key data point about screen submergence, 5 `operational_capacity`
+measurements and no temperature. With this change it routes:
+
+- 402 table measurements (134 as-found readings at or above 131°F, each with
+  its temperature, O2 and CH4) replace the classifier's temperature/O2/CH4
+  set; the 5 `operational_capacity` rows are kept. 553 wells in the per-well
+  summary; site peak AHWW0279 155.5°F (2025-10-13).
+- `is_urgent` becomes true on that reading (measured 155.5°F, at or above
+  145°F). The key data point is kept (it isn't about temperature), and so is
+  the summary (it states no °F value). No review flags, no `well_watch` hits.
+- Nothing happens until the report is re-extracted. A backfill re-extract
+  sends no email (the backfill job never calls `is_urgent` or `well_watch`);
+  it rewrites the row and adds the Measurements and WOI Well Summary rows.
+  A future report in this format processed by the daily watcher would route
+  and could alert.
+
+The other 89 files read identical readings, so their router output is
+unchanged.
+
+**Not covered: `6d0f88ed`.** The spec named a second report. It is an EGLE
+email of 2026-08-01 with an EGLE-made analysis workbook printed to PDF, not
+an operator filing. It fails `is_woi_report` (no "Gas Extraction Report"
+header), so it is not in the corpus and is never routed in production. Its
+tables also use layouts the parser does not know (Temp first, a RAW/ADJ word
+column, O2 before CO2, no Balance), so they stay rejected ("column layout not
+recognized") even with two-digit years read. Reading it would be its own item,
+with a provenance decision first: it is a derived copy of wellhead data.
+
+**Known, accepted.**
+
+- The future-date bound is the parse day, so it only ever widens: a date
+  accepted once is accepted on every later run.
+- A two-digit timestamp in a lab or probe table after a well-format id can
+  start a row, as a four-digit one already can. In the corpus that adds
+  partial-row counts only (above).
