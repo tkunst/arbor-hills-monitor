@@ -604,25 +604,36 @@ def _parse_table_lines(lines: list[tuple[str, int]], alias_map: Optional[dict] =
     if positions is None or all(p is None for p in positions):
         return _parse_table_lines_once(lines, alias_map, initial_layout, page_headers, positions,
                                        **kw)
+    # Main's rows set the edge main uses. Two-digit-year rows (ADR 005
+    # addendum 2026-10-21, two-digit years) set their own, which only their
+    # own cells are checked against (falling back to main's), so they can
+    # never move main's edge.
     edges: dict = {}
+    edges_2d: dict = {}
 
-    def collect(k: int) -> None:
+    def collect(k: int, two_digit: bool = False) -> None:
         pos = positions[k]
         if pos is not None and pos[1] is not None:
-            edges.setdefault(lines[k][1], []).append(pos[1])
+            (edges_2d if two_digit else edges).setdefault(lines[k][1], []).append(pos[1])
 
     _parse_table_lines_once(lines, alias_map, initial_layout, page_headers, positions,
                             on_last_cell=collect, split=split)
     edge = {pg: sorted(v)[len(v) // 2] for pg, v in edges.items()}
+    edge_2d = {pg: sorted(v)[len(v) // 2] for pg, v in edges_2d.items()}
 
-    def lines_up(k: int) -> bool:
+    def near(e: dict, pg: int):
+        # A page with no reference cell of its own uses an adjacent page's
+        # (the same table continues across pages).
+        return e.get(pg, e.get(pg - 1, e.get(pg + 1)))
+
+    def lines_up(k: int, two_digit: bool = False) -> bool:
         pos = positions[k]
         if pos is None or pos[1] is None or not pos[2]:
             return False  # can't be checked: read as blank, never as a guess
         pg = lines[k][1]
-        # A page with no reference cell of its own uses an adjacent page's
-        # (the same table continues across pages).
-        col = edge.get(pg, edge.get(pg - 1, edge.get(pg + 1)))
+        col = near(edge, pg)
+        if two_digit:
+            col = near(edge_2d, pg) if near(edge_2d, pg) is not None else col
         return col is not None and abs(pos[1] - col) <= _LAST_COLUMN_TOLERANCE * pos[2]
 
     return _parse_table_lines_once(lines, alias_map, initial_layout, page_headers, positions,
@@ -674,6 +685,10 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
     header = ""
     header_cols = None
     adj_labeled = True  # no header read yet: only a literal ADJ token marks ADJ
+    # The same, for two-digit-year rows: read from the header text cut at the
+    # first row of any form, so a two-digit row's own "ADJ" (which main's
+    # header text runs over) is not taken as the table's ADJ label.
+    adj_labeled_2d = True
     alias_labeled = False  # no header read yet: rows are Well ID / Date/Time
     # the table currently being collected
     cur_rows: list = []
@@ -681,6 +696,8 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
     cur_added: list = []    # rows whose Flow cell main would NOT have read
     cur_oneline: list = []  # rows started by a one-line "timestamp ADJ" (DT_ADJ_RE)
     cur_twodigit: list = []  # rows started by a two-digit-year timestamp (either form)
+    cur_flows_2d: list = []  # their Flow cells main's reader would have read
+    cur_added_2d: list = []  # those of them whose Flow cell it would NOT have read
     partner = None          # the last row main would have emitted (unlabeled ADJ)
     partner_2d = None       # the same, among two-digit-year rows only
     well_col: dict = {}     # page -> Well ID column position
@@ -693,14 +710,17 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
 
     def flush():
         nonlocal cur_rows, cur_flows, cur_added, cur_oneline, cur_twodigit, partner, partner_2d
+        nonlocal cur_flows_2d, cur_added_2d
         if cur_rows:
             # Main's rows are judged on main's Flow cells alone, so added rows
             # can neither reject them nor dilute a shifted table. The added
             # rows get the same check on their own Flow cells (with the same
             # minimum row count main's check has), and so, separately, do the
-            # rows started by a one-line "timestamp ADJ" and the rows started
-            # by a two-digit-year timestamp: no pool can take another's rows
-            # with it.
+            # rows started by a one-line "timestamp ADJ". The rows started by
+            # a two-digit-year timestamp are their own table within the table:
+            # judged on their own trusted Flow cells, exactly as main judges
+            # its rows, with their own rows read past a blank cell checked
+            # apart. No pool can take another's rows with it.
             share = _negative_flow_share(cur_flows)
             if share is not None and share > NEGATIVE_FLOW_REJECT_SHARE:
                 # Main's reject entry describes main's rows only; one-line
@@ -721,10 +741,18 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                             reason=f"{what}, in a column-shift rejected table"))
             else:
                 drop: set = set()
-                for pool, what in ((cur_added, "rows read past a blank cell"),
-                                   (cur_oneline, "rows started by a one-line timestamp ADJ"),
-                                   (cur_twodigit, "rows started by a two-digit-year timestamp")):
-                    pshare = _negative_flow_share([r.flow for r in pool if r.flow is not None])
+                share_2d = _negative_flow_share(cur_flows_2d)
+                checks = [(cur_added, "rows read past a blank cell", None),
+                          (cur_oneline, "rows started by a one-line timestamp ADJ", None)]
+                if share_2d is not None and share_2d > NEGATIVE_FLOW_REJECT_SHARE:
+                    checks.append((cur_twodigit, "rows started by a two-digit-year timestamp",
+                                   share_2d))
+                else:
+                    checks.append((cur_added_2d, "two-digit-year rows read past a blank cell",
+                                   None))
+                for pool, what, pshare in checks:
+                    if pshare is None:
+                        pshare = _negative_flow_share([r.flow for r in pool if r.flow is not None])
                     if pshare is not None and pshare > NEGATIVE_FLOW_REJECT_SHARE:
                         drop |= {id(r) for r in pool}
                         out.rejected_tables.append(RejectedTable(
@@ -734,6 +762,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                                     f"{pshare:.0%} have a negative flow")))
                 out.readings.extend(r for r in cur_rows if id(r) not in drop)
         cur_rows, cur_flows, cur_added, cur_oneline, cur_twodigit = [], [], [], [], []
+        cur_flows_2d, cur_added_2d = [], []
         partner = partner_2d = None
         if cur_unjoined["n"]:
             out.rejected_tables.append(RejectedTable(
@@ -794,6 +823,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                     cols = _text_columns(htext)
                 new_layout = layout_for_columns(cols)
                 new_adj_labeled = bool(_ADJ_LABEL_RE.search(htext))
+                adj_labeled_2d = bool(_ADJ_LABEL_RE.search(" ".join(t for t, _ in lines[i:j])))
                 new_alias_labeled = bool(_ALIAS_LABEL_RE.search(htext))
                 # A repeated header (one per page) continues the same table;
                 # so does a repeat of the same unrecognized column set, so one
@@ -811,7 +841,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             # levels): the gas table has ended. Its rows are not gas readings.
             flush()
             layout, header, header_cols = None, NON_GAS_HEADER, None
-            adj_labeled = True
+            adj_labeled = adj_labeled_2d = True
             alias_labeled = False
             i = j
             continue
@@ -844,7 +874,8 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
         elif j < n and lines[j][0] == "ADJ":
             adj = True
             j += 1
-        elif not adj_labeled and (partner_2d if dt_added == "two_digit" else partner) is not None:
+        elif not (adj_labeled_2d if dt_added == "two_digit" else adj_labeled) and (
+                partner_2d if dt_added == "two_digit" else partner) is not None:
             # Unlabeled ADJ: see _ADJ_LABEL_RE. The partner is the last row
             # main would have emitted, so a row this reader adds (gas-only, or
             # read past a "---") never changes a main row's ADJ flag. A
@@ -881,7 +912,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                     if dt_added is None:
                         partner = WOIReading(well_id=raw_well, raw_well_id=raw_well, dt=dt,
                                              adj=adj, page=page)
-                    elif dt_added == "two_digit":
+                    elif dt_added == "two_digit" and not dt_adj:
                         partner_2d = WOIReading(well_id=raw_well, raw_well_id=raw_well, dt=dt,
                                                 adj=adj, page=page)
                     out.split_unjoined_rows += 1
@@ -900,8 +931,12 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             width = len(layout) if layout else len(COLUMNS)
             mixed_ok = (frozenset(layout.index(c) for c in ("well_pres", "header_pres")
                                   if c in layout) if layout else frozenset())
+            line_ok = mixed_line_ok
+            if line_ok is not None and dt_added == "two_digit":
+                def line_ok(k, _ok=mixed_line_ok):
+                    return _ok(k, True)
             nums, j, main_len, refused, last_line = _read_values(lines, j, width, mixed_ok,
-                                                                 mixed_line_ok)
+                                                                 line_ok)
             if refused:
                 out.unaligned_cells += 1
         if (not joined and layout is not None and main_len < len(nums) < width
@@ -961,8 +996,13 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             cur_rows.append(r)
             pools = {"oneline": cur_oneline, "two_digit": cur_twodigit}
             if on_last_cell is not None and last_line is not None and mixed_ok and (
-                    width - 1) in mixed_ok and len(nums) == width and dt_added is None:
-                on_last_cell(last_line)  # a reference cell: emitted row, pressure column
+                    width - 1) in mixed_ok and len(nums) == width and dt_added != "oneline":
+                # a reference cell: emitted row, pressure column (a two-digit
+                # row's goes to its own edge, see _parse_table_lines)
+                if dt_added is None:
+                    on_last_cell(last_line)
+                else:
+                    on_last_cell(last_line, True)
             if joined:
                 # Every cell of a joined row is placed by its position on the
                 # page: it is a full row for the unlabeled-ADJ pairing and the
@@ -972,7 +1012,10 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 if dt_added is not None:
                     pools[dt_added].append(r)  # a row main never started: see below
                     if dt_added == "two_digit":
-                        partner_2d = r
+                        if not dt_adj:  # as main: never a one-line "timestamp ADJ"
+                            partner_2d = r
+                        if r.flow is not None:
+                            cur_flows_2d.append(r.flow)
                 else:
                     partner = r
                     if r.flow is not None:
@@ -985,8 +1028,14 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 # rows'.
                 if dt_added is not None:
                     pools[dt_added].append(r)
-                    if dt_added == "two_digit" and main_len > layout.index("temp"):
-                        partner_2d = r
+                    if dt_added == "two_digit":
+                        # main's bookkeeping, for the two-digit rows alone
+                        if not dt_adj and main_len > layout.index("temp"):
+                            partner_2d = r
+                        if "flow" in layout and main_len > layout.index("flow"):
+                            cur_flows_2d.append(r.flow)
+                        else:
+                            cur_added_2d.append(r)
                 else:
                     if main_len > layout.index("temp"):  # main emitted this row
                         partner = r

@@ -837,22 +837,31 @@ four digits, so the row reader started none of its rows and read 0 readings.
   (review round 1). Main's rule (`_DT_MAIN_RE`, `_dt_bare()`: a four-digit
   timestamp printed alone) still decides everything that can move a row
   main reads:
-  - the header text, and with it the ADJ and Alias labels, ends only at a
-    row main's rule starts;
-  - a two-digit row is never main's unlabeled-ADJ partner. Two-digit rows
-    pair among themselves (`partner_2d`), so the unlabeled-ADJ rule still
-    works in a table printed only in that form, and the two chains never
-    meet;
-  - their Flow cells are checked in their own negative-flow pool, with the
-    reason "rows started by a two-digit-year timestamp", apart from main's
-    rows, the rows read past a `---` and the one-line rows;
-  - they don't feed the last-column edge;
+  - the header text, and with it the layout and the ADJ and Alias labels,
+    ends only at a row main's rule starts;
+  - a two-digit row is never main's unlabeled-ADJ partner, its Flow cells
+    never join main's negative-flow check, and its cells never set main's
+    last-column edge;
   - the split planner keeps four-digit years only: "every left page prints
     rows", "no timestamp on a right page" and the left-page timestamp lines
     that may leave a right row unread (`_DT_ANYWHERE_RE`). A split table
-    printed only in two-digit years stays rejected, as on main. The corpus
-    prints none. On a joined page a two-digit row is handled like a one-line
-    row.
+    printed only in two-digit years stays rejected, as on main; the corpus
+    prints none. A page that mixes main's rows with two-digit rows that have
+    right-half rows stays unjoined, as on main.
+- **Among themselves, two-digit rows get main's bookkeeping** (review
+  round 2), so a table printed only in two-digit years reads exactly as its
+  four-digit twin would (pinned by a seeded test over 400 random tables):
+  - their own unlabeled-ADJ partner (`partner_2d`), never a one-line
+    "timestamp ADJ" row, as on main; and their own ADJ label, read from the
+    header text cut at the first row of any form (main's header text runs
+    over two-digit rows and could take a row's `ADJ` as a label);
+  - their own negative-flow check on their trusted Flow cells
+    (`cur_flows_2d`: the cells main's reader would read), rejecting all
+    two-digit rows of the table with the reason "rows started by a
+    two-digit-year timestamp", and apart from it their rows read past a `---`
+    ("two-digit-year rows read past a blank cell");
+  - their own last-column edge (`edges_2d`), which only their cells are
+    checked against, falling back to main's edge.
 - Not matched, on purpose: date-only lines (the CO tables' form, still
   `DATE_ONLY_RE`, four digits only), `AM`/`PM`, a comma after the date,
   anything after the time or after `ADJ`.
@@ -940,13 +949,35 @@ tests. Also fixed: the year floor (`1/1/00` was read as 2000) and the
 injectable parse day. Security: no medium or high findings; regexes are
 linear on adversarial input.
 
+**Review round 2** (diff-only reviewer, about 60,000 mixed-form line
+sequences, 20 mixed split-table PDFs and the real report): no high
+findings; no input moved a main reading. Fixed: a two-digit table had a
+weaker column-shift check than its four-digit twin (trusted and past-blank
+Flow cells were pooled together); its comment-line pressure cells were
+always read as blank (no edge of its own); a one-line two-digit ADJ row
+could become the partner; and the ADJ label of an all-two-digit table came
+from main's over-long header text. Accepted below.
+
 **Known, accepted.**
 
+- Reject entries main itself writes ("column layout not recognized",
+  "split table: rows not joined", rows under a non-gas header) count the
+  two-digit rows they hold, so their row counts and page ranges can grow.
+  As with the one-line rows, this changes review-flag text only, never a
+  reading. The corpus has no such case.
+- `merge_cross_table_duplicates` (in the router) keeps the first copy of a
+  reading printed twice in a report, so a two-digit copy printed before
+  main's copy is the one kept. The values are the same reading; only its
+  page (and a column one copy leaves blank) can differ. The same holds for
+  one-line rows already.
+- `_today()` is read per line, so a parse running across midnight could
+  treat a reading dated that day differently in two passes. It only matters
+  for a reading dated the day of the parse.
+- Pre-existing, not changed here: main pools a one-line "timestamp ADJ"
+  row's Flow cell with no trusted/past-blank split. One-line rows are a few
+  per table, so it is noted, not fixed.
 - A two-digit timestamp in a lab or probe table after a well-format id can
   start a row, as a four-digit one already can. In the corpus that adds
   partial-row counts only (above).
-- As with the one-line rows, reject entries and row counters other than
-  main's own now include the two-digit rows they hold (counts and
-  review-flag text only).
 - `\d` also matches non-ASCII digits, as main's four-digit rule already
   does. The stored `dt` is ASCII either way.
