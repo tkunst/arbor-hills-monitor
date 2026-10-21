@@ -333,3 +333,16 @@ def test_one_line_two_digit_rows_are_checked_in_their_own_pool(n_clean, n_neg_on
     two, four = _twin_case(rows)
     assert [_key(r) for r in two.readings] == [_key(r) for r in four.readings]
     assert len(two.readings) == n_clean + (n_neg_oneline if n_neg_oneline < 20 else 0)
+
+
+def test_one_line_two_digit_rows_never_set_the_two_digit_edge():
+    # As main's one-line rows never set main's edge: two bare rows end at
+    # 230, three one-line ADJ rows at 260. The bare comment-line cell at 230
+    # still lines up, in both year forms.
+    rows = [("AHW1", "1/2/25 10:00", "-5", 230.0), ("AHW2", "1/2/25 10:01", "-6", 230.0),
+            *[(f"AHX{k}", f"1/2/25 10:1{k} ADJ", "-7", 260.0) for k in range(3)],
+            ("AHW3", "1/2/25 10:02", "-0.68 No Change: :", 230.0)]
+    two = _positioned(rows)
+    four = _positioned([(w_, _four(dt), last, e) for w_, dt, last, e in rows])
+    assert [_key(r) for r in two.readings] == [_key(r) for r in four.readings]
+    assert two.readings[-1].header_pres == -0.68 and two.unaligned_cells == four.unaligned_cells
