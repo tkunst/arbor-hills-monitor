@@ -626,10 +626,19 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             # take the other's rows with it.
             share = _negative_flow_share(cur_flows)
             if share is not None and share > NEGATIVE_FLOW_REJECT_SHARE:
+                # Main's reject entry describes main's rows only; one-line
+                # rows rejected with them get their own entry.
+                one = {id(r) for r in cur_oneline}
+                mains = [r for r in cur_rows if id(r) not in one] or cur_rows
                 out.rejected_tables.append(RejectedTable(
-                    first_page=cur_rows[0].page, last_page=cur_rows[-1].page,
-                    n_rows=len(cur_rows), header=header,
+                    first_page=mains[0].page, last_page=mains[-1].page,
+                    n_rows=len(mains), header=header,
                     reason=f"column-shift signature: {share:.0%} of rows have a negative flow"))
+                if cur_oneline and len(mains) < len(cur_rows):
+                    out.rejected_tables.append(RejectedTable(
+                        first_page=cur_oneline[0].page, last_page=cur_oneline[-1].page,
+                        n_rows=len(cur_oneline), header=header,
+                        reason="rows started by a one-line timestamp ADJ, in a column-shift rejected table"))
             else:
                 drop: set = set()
                 for pool, what in ((cur_added, "rows read past a blank cell"),
@@ -1320,8 +1329,10 @@ def _plan_one(doc, left_cols: tuple, first: int, last: int, page_lines: dict,
         return {}
     n = last - first + 1
     # Every left page prints rows (a page of the table's own right half, or
-    # of another table's, inside the run would shift the offset).
-    if any(p in skipped or not any(_dt_line(t) for t in page_lines.get(p, []))
+    # of another table's, inside the run would shift the offset). Main's
+    # rule (DT_RE): a page of one-line "timestamp ADJ" rows alone does not
+    # count, so a table main left rejected stays rejected.
+    if any(p in skipped or not any(DT_RE.match(t) for t in page_lines.get(p, []))
            for p in range(first, last + 1)):
         return {}
     right = list(range(last + 1, last + n + 1))
