@@ -667,7 +667,82 @@ row reader never starts the row, in split tables (117 right-half rows on
 Such lines appear in six corpus reports (counting byte-different copies
 once), 3,540 in all: `5379a301` 1,768, `31dbbade` 1,201, `eb09e953` 199,
 `ed1617e8` 159, `d609654d` 131, `7504fbc4` 82. Widening `DT_RE` adds readings to tables
-main already reads, so it needs its own regression.
+main already reads, so it needs its own regression. (Done: see the
+2026-10-21 addendum.)
 
 Nothing is re-extracted by this change. Re-extracting the four reports and
 re-running `stage_wellfield.py` wait for Trisha's go.
+
+## Addendum (2026-10-21): timestamp and ADJ printed on one line
+
+Spec: `docs/overnight-coder-handoffs/woi-dt-adj-oneline.md`
+(`coder:woi-dt-adj-oneline`, the follow-up named in the 2026-10-20
+addendum).
+
+**What these rows are.** Some reports print an after-adjustment row's
+timestamp and its `ADJ` token on one text line (`10/21/2022 11:46 ADJ`)
+instead of two. `DT_RE` only matches a bare timestamp, so the row reader never
+started these rows. Their cells were skipped, in ordinary tables and in split
+tables alike (on `eb09e953` the right-half rows they leave are the 117
+`split_unread_rows`).
+
+**Change.** `DT_ADJ_RE` matches a timestamp followed by whitespace and `ADJ`,
+and nothing else on the line. `_dt_line()` returns the timestamp and an ADJ
+flag for either form, and every row start (`_is_row_start`,
+`_is_alias_row_start`, `_read_header`'s end of header, and `_plan_one`'s
+"every left page prints rows" check) uses it. A row started this way is
+flagged ADJ, exactly as a literal `ADJ` line after the timestamp flags it, and
+its `dt` is the timestamp part only, so both forms give the same reading.
+
+Main never read these rows, so they are treated as added rows, the same way as
+rows read past a `---` (2026-10-19 addendum):
+
+- they never become the unlabeled-ADJ partner, so no row main reads changes
+  its ADJ flag;
+- their Flow cells are checked with the other added rows, not with main's. If
+  they show the negative-flow signature only they are rejected, with the
+  reason "column-shift signature in rows read past a blank cell or started by
+  a one-line timestamp ADJ" (the 2026-10-19 addendum quotes the shorter
+  earlier wording).
+
+Not matched, on purpose: `ADJ` with no space before it, lower case, anything
+after `ADJ`, and `AM`/`PM` timestamps. (The corpus prints 5,951
+`M/D/YYYY H:MM AM` / `PM` lines; none follows a Well ID line, so none is a
+gas-table row start.)
+
+**Measured effect** (91 WOI-format cache files, 42 distinct parse outputs,
+the same corpus as the 2026-10-19 and 2026-10-20 addenda; origin/main @
+`59462a4` vs this change):
+
+- Every reading main reads is still read with identical values, ADJ flag,
+  well id, alias and page: 0 lost, 0 changed.
+- Readings rose from 287,980 to 291,713: +3,733, every one flagged ADJ.
+  Per report (byte-identical twins counted once): `5379a301` 1,767,
+  `31dbbade` 1,196, `eb09e953` 199, `3cdf4c5e` 199, `ed1617e8` 159,
+  `d609654d` 131, `7504fbc4` 82. `3cdf4c5e` is a full-width reprint of
+  `eb09e953`'s tables, so its 199 lines are the same rows; that is why the
+  total is above the 3,540 counted with copies merged.
+- Of the 3,739 one-line lines, 6 start no reading: 4 rows of `31dbbade`
+  print `---` in every cell (counted in `blank_rows`, +4), and one row each
+  of `31dbbade` and `5379a301` is well `HC1LARON`, which `WELL_RE` does not
+  read in either form. One added `5379a301` row prints all-zero gas and no
+  temperature; it is kept and is not valid, as for any such row.
+- On `eb09e953` the 117 right-half rows now join: `split_unread_rows` 117 to
+  0, `split_joined_rows` 2,447 to 2,564. No other counter moved, and no table
+  was rejected.
+- Every added reading is also printed, by well, timestamp and ADJ, in at
+  least one OTHER filing in the corpus where main reads it (in the two-line
+  form), and every one agrees on all the columns both print. Temperature is
+  among them for all but one (the all-zero row above). 0 mismatches.
+- Added temperatures run 4.8-172.5°F. 119 added readings are at or above
+  145°F (listed on the PR); all are ADJ readings, and their reading dates run
+  2021-10-12 to 2024-03-30.
+
+Through `route_measurements` (live `config.yml` and alias map), on the seven
+reports: Measurements, per-well maxima, site peak, key data point and severity
+after `recheck_severity_floor` are identical to main, and `well_watch` hits
+and review flags are unchanged. That is expected: Measurements and the per-well
+summary use as-found readings only. Only the reading counts move.
+
+Nothing is re-extracted by this change. Re-extracting these reports waits for
+Trisha's go.

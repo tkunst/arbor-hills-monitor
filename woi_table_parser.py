@@ -15,7 +15,9 @@ Attachment 1 ("Gas Extraction Report") rows linearize as:
                           date-only CO rows in Attachment 2, which are skipped)
     [ADJ]                (optional: the post-valve-adjustment reading; a
                           table whose header has no ADJ column prints no token,
-                          see _ADJ_LABEL_RE)
+                          see _ADJ_LABEL_RE; some reports print it on the
+                          timestamp's own line, "10/21/2022 11:46 ADJ", see
+                          DT_ADJ_RE)
     CH4% CO2% O2% Balance% Diff.Press Temp Flow Well-Pres Header-Pres   (9 numbers)
     <comment lines, may themselves contain numbers like "581821: 0">
 
@@ -51,6 +53,12 @@ WELL_RE = re.compile(r"^AH[A-Z0-9]+\*{0,4}$")
 # not AH-format.
 ALIAS_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]*\*{0,4}$")
 DT_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}$")  # date AND time
+# The same timestamp with the ADJ token printed on its own line's end
+# ("10/21/2022 11:46 ADJ"; ADR 005 addendum 2026-10-21). Some reports print a
+# row's ADJ this way instead of on the next line. It starts a row exactly as
+# the two-line form does, flagged ADJ; the row's timestamp is the part before
+# "ADJ", so both forms give the same `dt`.
+DT_ADJ_RE = re.compile(r"^(\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2})\s+ADJ$")
 DATE_ONLY_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
 FLOAT_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 # A blank cell. It fills its column's position with None (ADR 005 addendum
@@ -374,9 +382,19 @@ def canonicalize(well_id: str, alias_map: Optional[dict] = None) -> str:
     return canon
 
 
+def _dt_line(text: str) -> Optional[tuple]:
+    """(timestamp, adj) for a Date/Time line: a bare timestamp (DT_RE) gives
+    (text, False), a timestamp that ends in ADJ (DT_ADJ_RE) gives (the
+    timestamp, True). None for any other line."""
+    if DT_RE.match(text):
+        return text, False
+    m = DT_ADJ_RE.match(text)
+    return (m.group(1), True) if m else None
+
+
 def _is_row_start(lines, i) -> bool:
     return (WELL_RE.match(lines[i][0]) is not None and i + 1 < len(lines)
-            and DT_RE.match(lines[i + 1][0]) is not None)
+            and _dt_line(lines[i + 1][0]) is not None)
 
 
 def _is_alias_row_start(lines, i) -> bool:
@@ -384,7 +402,7 @@ def _is_alias_row_start(lines, i) -> bool:
     A blank alias may print BLANK_CELL."""
     return (WELL_RE.match(lines[i][0]) is not None and i + 2 < len(lines)
             and (ALIAS_RE.match(lines[i + 1][0]) is not None or lines[i + 1][0] == BLANK_CELL)
-            and DT_RE.match(lines[i + 2][0]) is not None)
+            and _dt_line(lines[i + 2][0]) is not None)
 
 
 def _cell(tok: str):
@@ -594,7 +612,8 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 out.rejected_tables.append(RejectedTable(
                     first_page=cur_added[0].page, last_page=cur_added[-1].page,
                     n_rows=len(cur_added), header=header,
-                    reason=(f"column-shift signature in rows read past a blank cell: "
+                    reason=(f"column-shift signature in rows read past a blank cell "
+                            f"or started by a one-line timestamp ADJ: "
                             f"{added_share:.0%} have a negative flow")))
             else:
                 out.readings.extend(cur_rows)
@@ -694,10 +713,15 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
         else:
             i += 1
             continue
-        dt = lines[dt_i][0]
+        dt, dt_adj = _dt_line(lines[dt_i][0])
         raw_well = text
         adj = False
-        if j < n and lines[j][0] == "ADJ":
+        if dt_adj:
+            # "M/D/YYYY HH:MM ADJ" on one line (DT_ADJ_RE): the literal ADJ
+            # token, as on the next line below. Main never started this row,
+            # so it is an added row (see the end of this loop).
+            adj = True
+        elif j < n and lines[j][0] == "ADJ":
             adj = True
             j += 1
         elif not adj_labeled and partner is not None:
@@ -728,9 +752,11 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 j = j_left
                 if right is None:
                     # Still a printed row: it is the as-found partner the
-                    # unlabeled-ADJ rule compares the next row with.
-                    partner = WOIReading(well_id=raw_well, raw_well_id=raw_well, dt=dt,
-                                         adj=adj, page=page)
+                    # unlabeled-ADJ rule compares the next row with (unless
+                    # main never started it: a one-line "timestamp ADJ").
+                    if not dt_adj:
+                        partner = WOIReading(well_id=raw_well, raw_well_id=raw_well, dt=dt,
+                                             adj=adj, page=page)
                     out.split_unjoined_rows += 1
                     cur_unjoined["n"] += 1
                     cur_unjoined["first"] = cur_unjoined["first"] or page
@@ -812,13 +838,20 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 # negative-flow check of its own table (all rows of which are
                 # joined rows).
                 out.split_joined_rows += 1
-                partner = r
-                if r.flow is not None:
-                    cur_flows.append(r.flow)
-            else:
-                if main_len > layout.index("temp"):  # main emitted this row
+                if dt_adj:
+                    cur_added.append(r)  # a one-line "timestamp ADJ" row: see below
+                else:
                     partner = r
-                if "flow" in layout and main_len > layout.index("flow"):
+                    if r.flow is not None:
+                        cur_flows.append(r.flow)
+            else:
+                # A row started by a one-line "timestamp ADJ" (dt_adj) is one
+                # main never read: like a row read past a "---", it can't
+                # become the unlabeled-ADJ partner of main's next row, and its
+                # Flow is checked with the added rows, not main's.
+                if main_len > layout.index("temp") and not dt_adj:  # main emitted this row
+                    partner = r
+                if not dt_adj and "flow" in layout and main_len > layout.index("flow"):
                     cur_flows.append(r.flow)
                 else:
                     cur_added.append(r)
@@ -1249,7 +1282,7 @@ def _plan_one(doc, left_cols: tuple, first: int, last: int, page_lines: dict,
     n = last - first + 1
     # Every left page prints rows (a page of the table's own right half, or
     # of another table's, inside the run would shift the offset).
-    if any(p in skipped or not any(DT_RE.match(t) for t in page_lines.get(p, []))
+    if any(p in skipped or not any(_dt_line(t) for t in page_lines.get(p, []))
            for p in range(first, last + 1)):
         return {}
     right = list(range(last + 1, last + n + 1))
