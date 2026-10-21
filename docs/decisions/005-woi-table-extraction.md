@@ -811,29 +811,48 @@ four digits, so the row reader started none of its rows and read 0 readings.
 
 **Change.**
 
-- `DT_RE`, `DT_ADJ_RE` and the split planner's "no timestamp on a right page"
-  test (`_DT_ANYWHERE_RE`) accept a four-digit or a two-digit year, and
+- `DT_RE` and `DT_ADJ_RE` accept a four-digit or a two-digit year, and
   nothing else (one, three or five digits never match).
-- `_dt_line()` passes the timestamp through `_four_digit_year()`. A
-  four-digit timestamp is kept exactly as printed, so nothing main reads
-  changes. A two-digit one is stored in the unpadded four-digit form
-  (`10/1/25 7:56` -> `10/1/2025 7:56`, `05/01/26 09:53` -> `5/1/2026 9:53`).
-  Every four-digit `dt` main reads in the corpus (628,187) is unpadded, so a
-  reading copied between filings gets the same `dt` and dedupe key.
+- `_dt_row()` passes the timestamp through `_four_digit_year()`. A
+  four-digit timestamp is kept exactly as printed. A two-digit one is stored
+  in the unpadded four-digit form (`10/1/25 7:56` -> `10/1/2025 7:56`,
+  `05/01/26 09:53` -> `5/1/2026 9:53`). Every four-digit `dt` main reads in
+  the corpus (628,187) is unpadded, so a reading copied between filings gets
+  the same `dt` and dedupe key. (A zero-padded four-digit timestamp would not
+  match its two-digit copy; none is printed in the corpus.)
 - **Century rule:** `YY` is read as `20YY`. The line starts no row when that
-  is not a real date and time (`2/30/25`, hour 24, minute 60, or the
-  spreadsheet zero date `1/0/00 0:00`, which `97d39ba7` prints 7 times) or
-  when the date is after today. The spec asked for a bound against the filing
-  date; the parser is not given one, so the bound is today, which no filing
-  date can be after. In the corpus the stronger bound changes nothing:
-  `97d39ba7`'s readings run 2025-10-01 to 2025-12-31 and it was filed
-  2026-01-30.
-- `_is_row_start_main` / `_is_alias_row_start_main` and the split planner's
-  "left page prints rows" check use `_dt_bare()`, the same `_dt_line()` rule
-  for a timestamp printed alone. A two-digit row printed alone is therefore a
-  main-form row (it ends a header, it can be the unlabeled-ADJ partner), and a
-  two-digit one-line ADJ row is handled exactly as the 2026-10-21 one-line
-  addendum describes. Within `97d39ba7` the two forms never mix in a table.
+  is not a real date and time (`2/30/25`, hour 24, minute 60), when the year
+  is before `TWO_DIGIT_YEAR_MIN` (2010), or when the date is after the parse
+  day (`_today()`, a function so tests fix it).
+  - The floor refuses a spreadsheet's day 0 and day 1 (`1/0/00 0:00`, which
+    `97d39ba7` prints 7 times, and `1/1/00 0:00`). The oldest reading main
+    reads in the corpus is from 2021.
+  - The spec asked for a bound against the filing date. The parser is not
+    given one, so the bound is the parse day, which no filing date can be
+    after. In the corpus the stronger bound changes nothing: `97d39ba7`'s
+    readings run 2025-10-01 to 2025-12-31 and it was filed 2026-01-30. The
+    parse-day bound only ever widens: a date accepted once is accepted on
+    every later run.
+- **A two-digit row is an added row**, like a one-line "timestamp ADJ" row
+  (review round 1). Main's rule (`_DT_MAIN_RE`, `_dt_bare()`: a four-digit
+  timestamp printed alone) still decides everything that can move a row
+  main reads:
+  - the header text, and with it the ADJ and Alias labels, ends only at a
+    row main's rule starts;
+  - a two-digit row is never main's unlabeled-ADJ partner. Two-digit rows
+    pair among themselves (`partner_2d`), so the unlabeled-ADJ rule still
+    works in a table printed only in that form, and the two chains never
+    meet;
+  - their Flow cells are checked in their own negative-flow pool, with the
+    reason "rows started by a two-digit-year timestamp", apart from main's
+    rows, the rows read past a `---` and the one-line rows;
+  - they don't feed the last-column edge;
+  - the split planner keeps four-digit years only: "every left page prints
+    rows", "no timestamp on a right page" and the left-page timestamp lines
+    that may leave a right row unread (`_DT_ANYWHERE_RE`). A split table
+    printed only in two-digit years stays rejected, as on main. The corpus
+    prints none. On a joined page a two-digit row is handled like a one-line
+    row.
 - Not matched, on purpose: date-only lines (the CO tables' form, still
   `DATE_ONLY_RE`, four digits only), `AM`/`PM`, a comma after the date,
   anything after the time or after `ADJ`.
@@ -845,18 +864,25 @@ timestamps in the report are on later, non-gas pages.
 the same corpus as the earlier addenda; origin/main @ `dad8796` vs this
 change):
 
-- Every reading main reads is still read with identical values, ADJ flag,
-  well id, alias and page: 0 lost, 0 changed. No rejected table changed.
+- In the corpus, every reading main reads is still read with identical
+  values, ADJ flag, well id, alias and page: 0 lost, 0 changed, and no reject
+  entry changed. (By construction, the rules above keep two-digit rows from
+  moving a main row; differential fuzzing of 20,000 mixed-form line
+  sequences found 0 main readings lost or changed.)
 - Readings rose from 291,713 to 299,666: +7,953, all in `97d39ba7` (and its
-  Drive-mirror twin): 4,015 as-found and 3,938 ADJ, all valid, 180 of them
-  gas-only (ids such as AHMP0011, AHTGP18D and AHETGP19, whose rows print `---` for
-  Temp). Temperatures
-  run 15.5-155.5°F; reading dates 2025-10-01 to 2025-12-31.
-- Of its 9,462 two-digit timestamp lines, 1,509 start no reading: 1,455 follow
-  an id `WELL_RE` does not read in either year form (`RNGINLET`, the
-  `STEST…`/`NTEST…`/`WTEST…` ids, lab rows such as `Blank` and `LCS`), 47 are rows of the one-column "Probe Monitoring Site Report" (`LEL %`), and 7 are the
-  refused `1/0/00 0:00`. The probe rows and other short rows on pp 345+ are
-  counted in `partial_rows` (43 to 90) and never become readings.
+  Drive-mirror twin): 4,015 as-found and 3,938 ADJ, all valid. 180 are
+  gas-only (ids such as `AHMP0011`, `AHTGP18D` and `AHETGP19`, whose rows
+  print `---` for Temp). Temperatures run 15.5-155.5°F; reading dates
+  2025-10-01 to 2025-12-31.
+- Of its 9,462 two-digit timestamp lines, 1,509 start no reading:
+  - 1,455 follow an id `WELL_RE` does not read in either year form
+    (`RNGINLET`, the `STEST…`/`NTEST…`/`WTEST…` ids, lab rows such as
+    `Blank` and `LCS`);
+  - 47 are rows of the one-column "Probe Monitoring Site Report" (`LEL %`);
+  - 7 are the refused `1/0/00 0:00`.
+
+  The probe rows and other short rows on pp 345+ are counted in
+  `partial_rows` (43 to 90) and never become readings.
 - `beadf960` `partial_rows` 93 to 95: two lab sample-prep lines (a well-format
   id, a lab sample id, a two-digit timestamp) now start a row under an Alias
   header and stop short. No reading, reject entry or review flag moves.
@@ -903,10 +929,24 @@ column, O2 before CO2, no Balance), so they stay rejected ("column layout not
 recognized") even with two-digit years read. Reading it would be its own item,
 with a provenance decision first: it is a derived copy of wellhead data.
 
+**Review round 1** (diff-only reviewer plus a security review). The first
+version treated a two-digit row printed alone as a row main reads. The
+reviewer built four inputs that mix the two forms in one table, and each one
+moved a main reading: a two-digit row became the unlabeled-ADJ partner, its
+negative Flow cells rejected main's rows, it ended main's header early, and
+two-digit text on a right page refused a split join. None of these occurs in
+the corpus. All four are fixed by the "added row" rules above and pinned by
+tests. Also fixed: the year floor (`1/1/00` was read as 2000) and the
+injectable parse day. Security: no medium or high findings; regexes are
+linear on adversarial input.
+
 **Known, accepted.**
 
-- The future-date bound is the parse day, so it only ever widens: a date
-  accepted once is accepted on every later run.
 - A two-digit timestamp in a lab or probe table after a well-format id can
   start a row, as a four-digit one already can. In the corpus that adds
   partial-row counts only (above).
+- As with the one-line rows, reject entries and row counters other than
+  main's own now include the two-digit rows they hold (counts and
+  review-flag text only).
+- `\d` also matches non-ASCII digits, as main's four-digit rule already
+  does. The stored `dt` is ASCII either way.

@@ -60,6 +60,11 @@ ALIAS_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]*\*{0,4}$")
 # years); a two-digit year is read by _dt_line, never stored as printed.
 _DT_TEXT = r"\d{1,2}/\d{1,2}/(?:\d{4}|\d{2})\s+\d{1,2}:\d{2}"
 DT_RE = re.compile(rf"^{_DT_TEXT}$")
+# Main's rule: a four-digit timestamp printed alone. Rows it starts are the
+# rows main read; every other row start (a one-line "timestamp ADJ", a
+# two-digit year) is an added row that may never move one of main's.
+_DT4_TEXT = r"\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}"
+_DT_MAIN_RE = re.compile(rf"^{_DT4_TEXT}$")
 # The same timestamp with the ADJ token printed on its own line's end
 # ("10/21/2022 11:46 ADJ"; ADR 005 addendum 2026-10-21). Some reports print a
 # row's ADJ this way instead of on the next line. It starts a row exactly as
@@ -67,6 +72,10 @@ DT_RE = re.compile(rf"^{_DT_TEXT}$")
 # "ADJ", so both forms give the same `dt`.
 DT_ADJ_RE = re.compile(rf"^({_DT_TEXT})\s+ADJ$")
 _TWO_DIGIT_YEAR_RE = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{2})\s+(\d{1,2}):(\d{2})$")
+# A two-digit year before 20YY = 2010 starts no row: "1/0/00 0:00" and
+# "1/1/00 0:00" are a spreadsheet's day 0 and day 1, and the oldest reading
+# this monitor holds (main's corpus) is from 2021.
+TWO_DIGIT_YEAR_MIN = 2010
 DATE_ONLY_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
 FLOAT_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 # A blank cell. It fills its column's position with None (ADR 005 addendum
@@ -390,6 +399,10 @@ def canonicalize(well_id: str, alias_map: Optional[dict] = None) -> str:
     return canon
 
 
+def _today() -> datetime.date:
+    return datetime.date.today()  # a function, so tests can fix the date
+
+
 def _four_digit_year(ts: str) -> Optional[str]:
     """A timestamp as the row stores it. A four-digit-year timestamp is kept
     exactly as printed. A two-digit year ("10/1/25 7:56", "05/01/26 09:53")
@@ -397,42 +410,55 @@ def _four_digit_year(ts: str) -> Optional[str]:
     ("10/1/2025 7:56", "5/1/2026 9:53"), the form the other filings print, so
     a reading copied between filings gets the same `dt` (and dedupe key).
     None, so the line starts no row, when that is not a real date and time,
-    or when it is after today: a reading can't be later than its filing, and
-    no filing is later than the day it is parsed."""
+    when the year is before TWO_DIGIT_YEAR_MIN, or when the date is after
+    today: a reading can't be later than its filing, and no filing is later
+    than the day it is parsed."""
     m = _TWO_DIGIT_YEAR_RE.match(ts)
     if m is None:
         return ts
     mo, d, yy, h, mi = (int(x) for x in m.groups())
+    year = 2000 + yy
     try:
-        when = datetime.date(2000 + yy, mo, d)
+        when = datetime.date(year, mo, d)
     except ValueError:
         return None
-    if h > 23 or mi > 59 or when > datetime.date.today():
+    if h > 23 or mi > 59 or year < TWO_DIGIT_YEAR_MIN or when > _today():
         return None
-    return f"{mo}/{d}/{2000 + yy} {h}:{mi:02d}"
+    return f"{mo}/{d}/{year} {h}:{mi:02d}"
 
 
-def _dt_line(text: str) -> Optional[tuple]:
-    """(timestamp, adj) for a Date/Time line: a bare timestamp (DT_RE) gives
-    (the timestamp, False), a timestamp that ends in ADJ (DT_ADJ_RE) gives (the
-    timestamp, True). The timestamp is _four_digit_year's. None for any other
-    line."""
+def _dt_row(text: str) -> Optional[tuple]:
+    """(timestamp, adj, added) for a Date/Time line, None for any other line.
+    A bare timestamp (DT_RE) gives adj False, a timestamp that ends in ADJ
+    (DT_ADJ_RE) adj True. The timestamp is _four_digit_year's. `added` says
+    main's rule (_DT_MAIN_RE) did not start this row: "oneline" for a
+    four-digit "timestamp ADJ", "two_digit" for a two-digit year (either
+    form), None for a row main read."""
     m = DT_RE.match(text)
-    ts, adj = (text, False) if m else (None, None)
-    if ts is None:
+    if m is not None:
+        raw, adj = text, False
+    else:
         m = DT_ADJ_RE.match(text)
         if m is None:
             return None
-        ts, adj = m.group(1), True
-    ts = _four_digit_year(ts)
-    return (ts, adj) if ts is not None else None
+        raw, adj = m.group(1), True
+    ts = _four_digit_year(raw)
+    if ts is None:
+        return None
+    added = (None if _DT_MAIN_RE.match(text)
+             else "two_digit" if _TWO_DIGIT_YEAR_RE.match(raw) else "oneline")
+    return ts, adj, added
 
 
-def _dt_bare(text: str) -> Optional[tuple]:
-    """_dt_line for a timestamp printed alone (main's rule): None for the
-    one-line "timestamp ADJ" form."""
-    r = _dt_line(text)
-    return r if r is not None and not r[1] else None
+def _dt_line(text: str) -> Optional[tuple]:
+    """(timestamp, adj) for a Date/Time line (_dt_row without `added`)."""
+    r = _dt_row(text)
+    return r[:2] if r is not None else None
+
+
+def _dt_bare(text: str):
+    """Main's rule: a four-digit timestamp printed alone (a match, or None)."""
+    return _DT_MAIN_RE.match(text)
 
 
 def _is_row_start(lines, i, dt_ok=_dt_line) -> bool:
@@ -449,7 +475,8 @@ def _is_alias_row_start(lines, i, dt_ok=_dt_line) -> bool:
 
 
 def _is_row_start_main(lines, i) -> bool:
-    """A row start whose timestamp prints alone (main's rule, DT_RE only)."""
+    """A row start main's rule starts (_dt_bare: a four-digit timestamp
+    printed alone)."""
     return _is_row_start(lines, i, _dt_bare)
 
 
@@ -530,11 +557,12 @@ def _read_header(lines, i) -> tuple[str, int]:
     Well ID / Alias / Date/Time start; any other header ends where main ended
     it. Returns (header_text, index_after_header).
 
-    The header TEXT is always the text main read: it ends at a row whose
-    timestamp prints alone (DT_RE), so a first row printed as "timestamp ADJ"
-    on one line is still part of it, and the ADJ / Alias labels and columns
-    read from it are main's (ADR 005 addendum 2026-10-21). The rows start at
-    the first row of either form, so that row is read too."""
+    The header TEXT is always the text main read: it ends at a row main's
+    rule starts (_dt_bare: a four-digit timestamp printed alone), so a first
+    row printed as "timestamp ADJ" on one line, or with a two-digit year, is
+    still part of it, and the ADJ / Alias labels and columns read from it are
+    main's (ADR 005 addendum 2026-10-21, both). The rows start at the first
+    row of any form, so that row is read too."""
     text, j_main = _read_header_until(lines, i, _is_row_start_main, _is_alias_row_start_main)
     _, j = _read_header_until(lines, i, _is_row_start, _is_alias_row_start)
     return text, min(j, j_main)
@@ -652,7 +680,9 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
     cur_flows: list = []    # Flow cells main would have read (negative-flow check)
     cur_added: list = []    # rows whose Flow cell main would NOT have read
     cur_oneline: list = []  # rows started by a one-line "timestamp ADJ" (DT_ADJ_RE)
+    cur_twodigit: list = []  # rows started by a two-digit-year timestamp (either form)
     partner = None          # the last row main would have emitted (unlabeled ADJ)
+    partner_2d = None       # the same, among two-digit-year rows only
     well_col: dict = {}     # page -> Well ID column position
     # mfirst/mlast: the pages of the rows main itself would have started (not
     # one-line "timestamp ADJ" rows); a split candidate uses main's range only.
@@ -662,33 +692,38 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
     page_first: dict = {}   # page -> index of its first line (split coordinates)
 
     def flush():
-        nonlocal cur_rows, cur_flows, cur_added, cur_oneline, partner
+        nonlocal cur_rows, cur_flows, cur_added, cur_oneline, cur_twodigit, partner, partner_2d
         if cur_rows:
             # Main's rows are judged on main's Flow cells alone, so added rows
             # can neither reject them nor dilute a shifted table. The added
             # rows get the same check on their own Flow cells (with the same
             # minimum row count main's check has), and so, separately, do the
-            # rows started by a one-line "timestamp ADJ": neither pool can
-            # take the other's rows with it.
+            # rows started by a one-line "timestamp ADJ" and the rows started
+            # by a two-digit-year timestamp: no pool can take another's rows
+            # with it.
             share = _negative_flow_share(cur_flows)
             if share is not None and share > NEGATIVE_FLOW_REJECT_SHARE:
                 # Main's reject entry describes main's rows only; one-line
-                # rows rejected with them get their own entry.
-                one = {id(r) for r in cur_oneline}
-                mains = [r for r in cur_rows if id(r) not in one] or cur_rows
+                # and two-digit-year rows rejected with them get their own
+                # entries.
+                other = {id(r) for r in cur_oneline + cur_twodigit}
+                mains = [r for r in cur_rows if id(r) not in other] or cur_rows
                 out.rejected_tables.append(RejectedTable(
                     first_page=mains[0].page, last_page=mains[-1].page,
                     n_rows=len(mains), header=header,
                     reason=f"column-shift signature: {share:.0%} of rows have a negative flow"))
-                if cur_oneline and len(mains) < len(cur_rows):
-                    out.rejected_tables.append(RejectedTable(
-                        first_page=cur_oneline[0].page, last_page=cur_oneline[-1].page,
-                        n_rows=len(cur_oneline), header=header,
-                        reason="rows started by a one-line timestamp ADJ, in a column-shift rejected table"))
+                for pool, what in ((cur_oneline, "rows started by a one-line timestamp ADJ"),
+                                   (cur_twodigit, "rows started by a two-digit-year timestamp")):
+                    if pool and len(mains) < len(cur_rows):
+                        out.rejected_tables.append(RejectedTable(
+                            first_page=pool[0].page, last_page=pool[-1].page,
+                            n_rows=len(pool), header=header,
+                            reason=f"{what}, in a column-shift rejected table"))
             else:
                 drop: set = set()
                 for pool, what in ((cur_added, "rows read past a blank cell"),
-                                   (cur_oneline, "rows started by a one-line timestamp ADJ")):
+                                   (cur_oneline, "rows started by a one-line timestamp ADJ"),
+                                   (cur_twodigit, "rows started by a two-digit-year timestamp")):
                     pshare = _negative_flow_share([r.flow for r in pool if r.flow is not None])
                     if pshare is not None and pshare > NEGATIVE_FLOW_REJECT_SHARE:
                         drop |= {id(r) for r in pool}
@@ -698,7 +733,8 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                             reason=(f"column-shift signature in {what}: "
                                     f"{pshare:.0%} have a negative flow")))
                 out.readings.extend(r for r in cur_rows if id(r) not in drop)
-        cur_rows, cur_flows, cur_added, cur_oneline, partner = [], [], [], [], None
+        cur_rows, cur_flows, cur_added, cur_oneline, cur_twodigit = [], [], [], [], []
+        partner = partner_2d = None
         if cur_unjoined["n"]:
             out.rejected_tables.append(RejectedTable(
                 first_page=cur_unjoined["first"], last_page=cur_unjoined["last"],
@@ -794,7 +830,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
         else:
             i += 1
             continue
-        dt, dt_adj = _dt_line(lines[dt_i][0])
+        dt, dt_adj, dt_added = _dt_row(lines[dt_i][0])
         raw_well = text
         adj = False
         if dt_adj:
@@ -808,12 +844,15 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
         elif j < n and lines[j][0] == "ADJ":
             adj = True
             j += 1
-        elif not adj_labeled and partner is not None:
+        elif not adj_labeled and (partner_2d if dt_added == "two_digit" else partner) is not None:
             # Unlabeled ADJ: see _ADJ_LABEL_RE. The partner is the last row
             # main would have emitted, so a row this reader adds (gas-only, or
-            # read past a "---") never changes a main row's ADJ flag.
-            adj = (not partner.adj and partner.dt == dt
-                   and partner.raw_well_id.rstrip("*") == raw_well.rstrip("*"))
+            # read past a "---") never changes a main row's ADJ flag. A
+            # two-digit-year row pairs only with the last two-digit-year row
+            # (partner_2d), so the two chains never meet.
+            prev = partner_2d if dt_added == "two_digit" else partner
+            adj = (not prev.adj and prev.dt == dt
+                   and prev.raw_well_id.rstrip("*") == raw_well.rstrip("*"))
         row_layout = layout
         joined = False
         sp = split.get(page) if split and layout is None and header_cols is not None else None
@@ -831,16 +870,20 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 coord = (sp.coords[dt_i - page_first[page]]
                          if sp.coords is not None and lines[dt_i][1] == page else None)
                 if on_split_row is not None:
-                    on_split_row(page, coord, dt_adj)
-                right = None if extra else sp.right_cells(coord, added=dt_adj)
+                    on_split_row(page, coord, dt_added is not None)
+                right = None if extra else sp.right_cells(coord, added=dt_added is not None)
                 j = j_left
                 if right is None:
                     # Still a printed row: it is the as-found partner the
                     # unlabeled-ADJ rule compares the next row with (unless
-                    # main never started it: a one-line "timestamp ADJ").
-                    if not dt_adj:
+                    # main never started it: a one-line "timestamp ADJ" or a
+                    # two-digit year).
+                    if dt_added is None:
                         partner = WOIReading(well_id=raw_well, raw_well_id=raw_well, dt=dt,
                                              adj=adj, page=page)
+                    elif dt_added == "two_digit":
+                        partner_2d = WOIReading(well_id=raw_well, raw_well_id=raw_well, dt=dt,
+                                                adj=adj, page=page)
                     out.split_unjoined_rows += 1
                     cur_unjoined["n"] += 1
                     cur_unjoined["first"] = cur_unjoined["first"] or page
@@ -888,7 +931,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 cur_rejected["n"] += 1
                 cur_rejected["first"] = cur_rejected["first"] or page
                 cur_rejected["last"] = page
-                if not dt_adj:
+                if dt_added is None:
                     cur_rejected["mfirst"] = cur_rejected["mfirst"] or page
                     cur_rejected["mlast"] = page
                 cur_rejected["reason"] = (
@@ -916,8 +959,9 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             for ci, v in enumerate(nums):
                 setattr(r, row_layout[ci], v)
             cur_rows.append(r)
+            pools = {"oneline": cur_oneline, "two_digit": cur_twodigit}
             if on_last_cell is not None and last_line is not None and mixed_ok and (
-                    width - 1) in mixed_ok and len(nums) == width and not dt_adj:
+                    width - 1) in mixed_ok and len(nums) == width and dt_added is None:
                 on_last_cell(last_line)  # a reference cell: emitted row, pressure column
             if joined:
                 # Every cell of a joined row is placed by its position on the
@@ -925,19 +969,24 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 # negative-flow check of its own table (all rows of which are
                 # joined rows).
                 out.split_joined_rows += 1
-                if dt_adj:
-                    cur_oneline.append(r)  # a one-line "timestamp ADJ" row: see below
+                if dt_added is not None:
+                    pools[dt_added].append(r)  # a row main never started: see below
+                    if dt_added == "two_digit":
+                        partner_2d = r
                 else:
                     partner = r
                     if r.flow is not None:
                         cur_flows.append(r.flow)
             else:
-                # A row started by a one-line "timestamp ADJ" (dt_adj) is one
-                # main never read: it can't become the unlabeled-ADJ partner of
-                # main's next row, and its Flow is checked in its own pool,
-                # neither main's nor the other added rows'.
-                if dt_adj:
-                    cur_oneline.append(r)
+                # A row started by a one-line "timestamp ADJ" or a two-digit
+                # year (dt_added) is one main never read: it can't become the
+                # unlabeled-ADJ partner of main's next row, and its Flow is
+                # checked in its own pool, neither main's nor the other added
+                # rows'.
+                if dt_added is not None:
+                    pools[dt_added].append(r)
+                    if dt_added == "two_digit" and main_len > layout.index("temp"):
+                        partner_2d = r
                 else:
                     if main_len > layout.index("temp"):  # main emitted this row
                         partner = r
@@ -1085,7 +1134,9 @@ _SPLIT_ALIGN_TOLERANCE = 0.3
 # A column needs this many bare cells on a page to set its alignment there;
 # otherwise the whole right range's cells set it.
 _SPLIT_MIN_REF_CELLS = 3
-_DT_ANYWHERE_RE = re.compile(_DT_TEXT)
+# Main's timestamp (four-digit years only): two-digit text on a right page,
+# or beside a left-page row, changes no split verdict main reaches.
+_DT_ANYWHERE_RE = re.compile(_DT4_TEXT)
 SPLIT_UNJOINED_REASON = "split table: rows not joined to a right-half row"
 
 
@@ -1379,8 +1430,9 @@ def _plan_one(doc, left_cols: tuple, first: int, last: int, page_lines: dict,
     n = last - first + 1
     # Every left page prints rows (a page of the table's own right half, or
     # of another table's, inside the run would shift the offset). Main's
-    # rule (DT_RE): a page of one-line "timestamp ADJ" rows alone does not
-    # count, so a table main left rejected stays rejected.
+    # rule (_dt_bare): a page of one-line "timestamp ADJ" rows, or of
+    # two-digit-year rows, alone does not count, so a table main left
+    # rejected stays rejected.
     if any(p in skipped or not any(_dt_bare(t) for t in page_lines.get(p, []))
            for p in range(first, last + 1)):
         return {}
