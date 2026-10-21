@@ -212,12 +212,14 @@ def test_one_line_rows_do_not_widen_a_split_candidate_main_rejects(tmp_path):
 
 
 def test_two_one_line_rows_never_share_one_right_row():
-    from types import SimpleNamespace
-    sp = SimpleNamespace(rows=[(10.0, ["x"]), (20.0, ["y"])], dt_coords=[20.0],
-                         find=lambda c: 0 if c < 15 else 1)
-    plan = {1: sp}
-    # main's row claims right row 0; two one-line rows both resolve to row 1
-    w._settle_split(plan, {1: [(10.0, False), (19.0, True), (21.0, True)]})
+    def page():
+        return w._SplitPage(left_cols=(), layout=[], right_page=2, coords=None,
+                            rows=[(10.0, {"temp": 1.0}), (20.0, {"temp": 2.0})], dt_coords=[20.0])
+    # main's row claims right row 0; two one-line rows (both within tolerance
+    # of right row 1) must not both take it
+    sp = page()
+    assert w._settle_split({1: sp}, {1: [(10.0, False), (19.8, True), (20.2, True)]}) == 1
     assert sp.ok and sp.added_ok == set()
-    w._settle_split(plan, {1: [(10.0, False), (20.0, True)]})
+    sp = page()
+    assert w._settle_split({1: sp}, {1: [(10.0, False), (20.0, True)]}) == 0
     assert sp.ok and sp.added_ok == {1}
