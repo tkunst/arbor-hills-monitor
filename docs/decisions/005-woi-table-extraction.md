@@ -688,22 +688,32 @@ tables alike (on `eb09e953` the right-half rows they leave are the 117
 
 **Change.** `DT_ADJ_RE` matches a timestamp followed by whitespace and `ADJ`,
 and nothing else on the line. `_dt_line()` returns the timestamp and an ADJ
-flag for either form, and every row start (`_is_row_start`,
-`_is_alias_row_start`, `_read_header`'s end of header, and `_plan_one`'s
-"every left page prints rows" check) uses it. A row started this way is
-flagged ADJ, exactly as a literal `ADJ` line after the timestamp flags it, and
-its `dt` is the timestamp part only, so both forms give the same reading.
+flag for either form, and the row reader and the split planner's "every left
+page prints rows" check use it. A row started this way is flagged ADJ, exactly
+as a literal `ADJ` line after the timestamp flags it (one printed after it as
+well is the same token), and its `dt` is the timestamp part only, so both
+forms give the same reading.
 
-Main never read these rows, so they are treated as added rows, the same way as
-rows read past a `---` (2026-10-19 addendum):
+Main never read these rows, so nothing about them may move a row main reads:
 
-- they never become the unlabeled-ADJ partner, so no row main reads changes
-  its ADJ flag;
-- their Flow cells are checked with the other added rows, not with main's. If
-  they show the negative-flow signature only they are rejected, with the
-  reason "column-shift signature in rows read past a blank cell or started by
-  a one-line timestamp ADJ" (the 2026-10-19 addendum quotes the shorter
-  earlier wording).
+- **Header.** The header text, and so the ADJ and Alias labels and the text
+  columns read from it, is still the text main read: it ends at the first row
+  whose timestamp prints alone. Main's header ran on through a first row
+  printed in the one-line form (and could take its `ADJ` as a label); it still
+  does. Only the row reader starts earlier, at that row.
+- **Unlabeled ADJ.** They never become the unlabeled-ADJ partner.
+- **Negative flow.** Their Flow cells are checked in their own pool, apart from
+  main's rows and apart from the rows read past a `---`. If they show the
+  signature only they are rejected, with the reason "column-shift signature
+  in rows started by a one-line timestamp ADJ". Neither added pool can take
+  the other's rows with it.
+- **Last-column edge.** They don't feed the per-page edge that places a
+  pressure cell sharing its line with a comment.
+- **Split tables.** They don't count toward a page's pairing verdict, which is
+  decided by main's rows exactly as before. On a joined page, each takes the
+  leftover complete right row at its own baseline when no other left row
+  claims it. One that has none stays unjoined on its own (counted in
+  `split_unjoined_rows`) and the rest of the page still joins.
 
 Not matched, on purpose: `ADJ` with no space before it, lower case, anything
 after `ADJ`, and `AM`/`PM` timestamps. (The corpus prints 5,951
