@@ -12,7 +12,9 @@ the linearized text and validates each reading, then emits ADR-004
 Attachment 1 ("Gas Extraction Report") rows linearize as:
     Well ID
     Date/Time            (M/D/YYYY HH:MM  — the TIME distinguishes these from the
-                          date-only CO rows in Attachment 2, which are skipped)
+                          date-only CO rows in Attachment 2, which are skipped;
+                          some reports print a two-digit year, "10/1/25 7:56",
+                          stored as "10/1/2025 7:56", see _dt_line)
     [ADJ]                (optional: the post-valve-adjustment reading; a
                           table whose header has no ADJ column prints no token,
                           see _ADJ_LABEL_RE; some reports print it on the
@@ -41,6 +43,7 @@ count; cross-reference the WOI list instead.
 from __future__ import annotations
 
 import collections
+import datetime
 import re
 from dataclasses import dataclass, field
 from typing import Optional
@@ -52,13 +55,18 @@ WELL_RE = re.compile(r"^AH[A-Z0-9]+\*{0,4}$")
 # 2026-10-19): looser than WELL_RE, since aliases such as EW-008 or V-10 are
 # not AH-format.
 ALIAS_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]*\*{0,4}$")
-DT_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}$")  # date AND time
+# A row's Date/Time: date AND time. The year prints as four digits, or in
+# some reports as two ("10/1/25 7:56"; ADR 005 addendum 2026-10-21, two-digit
+# years); a two-digit year is read by _dt_line, never stored as printed.
+_DT_TEXT = r"\d{1,2}/\d{1,2}/(?:\d{4}|\d{2})\s+\d{1,2}:\d{2}"
+DT_RE = re.compile(rf"^{_DT_TEXT}$")
 # The same timestamp with the ADJ token printed on its own line's end
 # ("10/21/2022 11:46 ADJ"; ADR 005 addendum 2026-10-21). Some reports print a
 # row's ADJ this way instead of on the next line. It starts a row exactly as
 # the two-line form does, flagged ADJ; the row's timestamp is the part before
 # "ADJ", so both forms give the same `dt`.
-DT_ADJ_RE = re.compile(r"^(\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2})\s+ADJ$")
+DT_ADJ_RE = re.compile(rf"^({_DT_TEXT})\s+ADJ$")
+_TWO_DIGIT_YEAR_RE = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{2})\s+(\d{1,2}):(\d{2})$")
 DATE_ONLY_RE = re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$")
 FLOAT_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
 # A blank cell. It fills its column's position with None (ADR 005 addendum
@@ -382,14 +390,49 @@ def canonicalize(well_id: str, alias_map: Optional[dict] = None) -> str:
     return canon
 
 
+def _four_digit_year(ts: str) -> Optional[str]:
+    """A timestamp as the row stores it. A four-digit-year timestamp is kept
+    exactly as printed. A two-digit year ("10/1/25 7:56", "05/01/26 09:53")
+    is read as 20YY and written in the unpadded four-digit form
+    ("10/1/2025 7:56", "5/1/2026 9:53"), the form the other filings print, so
+    a reading copied between filings gets the same `dt` (and dedupe key).
+    None, so the line starts no row, when that is not a real date and time,
+    or when it is after today: a reading can't be later than its filing, and
+    no filing is later than the day it is parsed."""
+    m = _TWO_DIGIT_YEAR_RE.match(ts)
+    if m is None:
+        return ts
+    mo, d, yy, h, mi = (int(x) for x in m.groups())
+    try:
+        when = datetime.date(2000 + yy, mo, d)
+    except ValueError:
+        return None
+    if h > 23 or mi > 59 or when > datetime.date.today():
+        return None
+    return f"{mo}/{d}/{2000 + yy} {h}:{mi:02d}"
+
+
 def _dt_line(text: str) -> Optional[tuple]:
     """(timestamp, adj) for a Date/Time line: a bare timestamp (DT_RE) gives
-    (text, False), a timestamp that ends in ADJ (DT_ADJ_RE) gives (the
-    timestamp, True). None for any other line."""
-    if DT_RE.match(text):
-        return text, False
-    m = DT_ADJ_RE.match(text)
-    return (m.group(1), True) if m else None
+    (the timestamp, False), a timestamp that ends in ADJ (DT_ADJ_RE) gives (the
+    timestamp, True). The timestamp is _four_digit_year's. None for any other
+    line."""
+    m = DT_RE.match(text)
+    ts, adj = (text, False) if m else (None, None)
+    if ts is None:
+        m = DT_ADJ_RE.match(text)
+        if m is None:
+            return None
+        ts, adj = m.group(1), True
+    ts = _four_digit_year(ts)
+    return (ts, adj) if ts is not None else None
+
+
+def _dt_bare(text: str) -> Optional[tuple]:
+    """_dt_line for a timestamp printed alone (main's rule): None for the
+    one-line "timestamp ADJ" form."""
+    r = _dt_line(text)
+    return r if r is not None and not r[1] else None
 
 
 def _is_row_start(lines, i, dt_ok=_dt_line) -> bool:
@@ -407,11 +450,11 @@ def _is_alias_row_start(lines, i, dt_ok=_dt_line) -> bool:
 
 def _is_row_start_main(lines, i) -> bool:
     """A row start whose timestamp prints alone (main's rule, DT_RE only)."""
-    return _is_row_start(lines, i, DT_RE.match)
+    return _is_row_start(lines, i, _dt_bare)
 
 
 def _is_alias_row_start_main(lines, i) -> bool:
-    return _is_alias_row_start(lines, i, DT_RE.match)
+    return _is_alias_row_start(lines, i, _dt_bare)
 
 
 def _cell(tok: str):
@@ -1042,7 +1085,7 @@ _SPLIT_ALIGN_TOLERANCE = 0.3
 # A column needs this many bare cells on a page to set its alignment there;
 # otherwise the whole right range's cells set it.
 _SPLIT_MIN_REF_CELLS = 3
-_DT_ANYWHERE_RE = re.compile(r"\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}")
+_DT_ANYWHERE_RE = re.compile(_DT_TEXT)
 SPLIT_UNJOINED_REASON = "split table: rows not joined to a right-half row"
 
 
@@ -1338,7 +1381,7 @@ def _plan_one(doc, left_cols: tuple, first: int, last: int, page_lines: dict,
     # of another table's, inside the run would shift the offset). Main's
     # rule (DT_RE): a page of one-line "timestamp ADJ" rows alone does not
     # count, so a table main left rejected stays rejected.
-    if any(p in skipped or not any(DT_RE.match(t) for t in page_lines.get(p, []))
+    if any(p in skipped or not any(_dt_bare(t) for t in page_lines.get(p, []))
            for p in range(first, last + 1)):
         return {}
     right = list(range(last + 1, last + n + 1))
