@@ -288,26 +288,48 @@ def test_two_digit_rows_never_move_mains_last_column_edge():
 
 def test_two_digit_tables_read_like_their_four_digit_twins():
     # Seeded random tables (headers with and without ADJ/Alias labels, ADJ
-    # lines, "---" cells, negative flows, comments, short rows): printed with
-    # two-digit years they give exactly the readings and reject ranges of the
-    # same table printed with four-digit years.
+    # lines and one-line "timestamp ADJ" rows, "---" cells, negative flows,
+    # comments, short rows; up to three pages, the header repeated on each,
+    # under labeled headers): printed with two-digit years they give exactly
+    # the readings and reject ranges of the same table printed with
+    # four-digit years. (A multi-page table under an unlabeled header is
+    # left out: see the ADR addendum's open item.)
     import random
     rnd = random.Random(20261021)
     cells = [CELLS, NEG, CELLS[:4] + ["---"] + CELLS[5:], CELLS[:5], ["---"] * 9]
-    for _ in range(400):
+    for _ in range(600):
         hdr = rnd.choice([HDR_FULL, HDR_FULL_NO_ADJ, HDR_ALIAS])
-        seq = list(hdr)
-        for k in range(rnd.randint(1, 45)):
-            well = rnd.choice(["AHW1", "AHW2", "AHWW312R*"])
-            seq += [well] + (["EW-7"] if hdr is HDR_ALIAS else [])
-            seq += [f"{rnd.randint(1, 12)}/{rnd.randint(1, 28)}/25 {rnd.randint(0, 23)}:"
-                    f"{rnd.randint(0, 59):02d}"]
-            seq += ["ADJ"] if rnd.random() < 0.3 else []
-            seq += list(rnd.choice(cells))
-            seq += [rnd.choice(["No Change: :", "Opened Valve 1/2 turn:", "581821: 0"])] \
-                if rnd.random() < 0.3 else []
-        two = w._parse_table_lines(L(*seq))
-        four = w._parse_table_lines(L(*[_four(x) for x in seq]))
+        n_pages = 1 if hdr is HDR_FULL_NO_ADJ else rnd.randint(1, 3)
+        seq = []
+        for page in range(1, n_pages + 1):
+            seq += [(h, page) for h in hdr]
+            for k in range(rnd.randint(1, 30)):
+                ts = (f"{rnd.randint(1, 12)}/{rnd.randint(1, 28)}/25 {rnd.randint(0, 23)}:"
+                      f"{rnd.randint(0, 59):02d}")
+                adj = rnd.random()
+                row = [rnd.choice(["AHW1", "AHW2", "AHWW312R*"])]
+                row += ["EW-7"] if hdr is HDR_ALIAS else []
+                row += [ts + " ADJ"] if adj < 0.2 else [ts, "ADJ"] if adj < 0.35 else [ts]
+                row += list(rnd.choice(cells))
+                if rnd.random() < 0.3:
+                    row.append(rnd.choice(["No Change: :", "Opened Valve 1/2 turn:", "581821: 0"]))
+                seq += [(x, page) for x in row]
+        two = w._parse_table_lines(seq)
+        four = w._parse_table_lines([(_four(x), pg) for x, pg in seq])
         assert [_key(r) for r in two.readings] == [_key(r) for r in four.readings], seq
         assert [(t.first_page, t.last_page, t.n_rows) for t in two.rejected_tables] == [
             (t.first_page, t.last_page, t.n_rows) for t in four.rejected_tables], seq
+
+
+@pytest.mark.parametrize("n_clean, n_neg_oneline", [(14, 8), (70, 20)])
+def test_one_line_two_digit_rows_are_checked_in_their_own_pool(n_clean, n_neg_oneline):
+    # As the four-digit one-line rows are: 8 negative one-line rows can't
+    # reject 14 clean rows, and 20 of them are rejected on their own even
+    # among 70 clean rows.
+    def ts(k):
+        return f"10/3/25 {7 + k // 60}:{k % 60:02d}"
+    rows = ([[f"AHC{k}", ts(k), *CELLS] for k in range(n_clean)]
+            + [[f"AHC{k}", ts(k) + " ADJ", *NEG] for k in range(n_neg_oneline)])
+    two, four = _twin_case(rows)
+    assert [_key(r) for r in two.readings] == [_key(r) for r in four.readings]
+    assert len(two.readings) == n_clean + (n_neg_oneline if n_neg_oneline < 20 else 0)
