@@ -655,8 +655,12 @@ def test_alias_table_through_the_pdf_path(tmp_path):
     doc.close()
     g = w.parse_gas_extraction_report(str(path))
     assert g.rejected_tables == [] and g.blank_rows == 1
+    # Every line of this synthetic page starts at the same x, so the page has
+    # no right-aligned Header Pres cells to line "-0.68" up with: the cell is
+    # kept as a blank (its position is known) and the row is still read.
     assert [(r.well_id, r.alias_as_printed, r.temp, r.header_pres) for r in g.readings] == [
-        ("AHEW0008", "EW-008", 27.6, -0.68), ("AHW3", "AHW3", None, None)]
+        ("AHEW0008", "EW-008", 27.6, None), ("AHW3", "AHW3", None, None)]
+    assert g.unaligned_cells == 1
 
 
 def test_gas_only_row_is_never_the_as_found_partner():
@@ -742,10 +746,10 @@ def test_well_shaped_comment_outside_the_well_column_cannot_take_a_row():
     pos = [None] * len(lines)
     for k, (t, _) in enumerate(lines):
         if t in ("AHWW001", "AHWW002"):
-            pos[k] = 20.0
+            pos[k] = (20.0, None)
         elif t == "AHWW777":
-            pos[k] = 500.0
-    pos[len(HDR_ALIAS) + 1] = 60.0  # the first row's alias column
+            pos[k] = (500.0, None)
+    pos[len(HDR_ALIAS) + 1] = (60.0, None)  # the first row's alias column
     rs = w._parse_table_lines(lines, positions=pos).readings
     assert [(r.raw_well_id, r.temp) for r in rs] == [("AHWW001", 120.0), ("AHWW002", 130.0)]
 
@@ -803,9 +807,9 @@ def test_off_column_alias_start_is_counted():
               "-5", "-6")
     pos = [None] * len(lines)
     k = len(HDR_ALIAS)
-    pos[k], pos[k + 1] = 300.0, 340.0     # this Well ID line sits far right ...
-    lines.append(("AHWFLARE", 1))         # ... of another well-shaped line
-    pos.append(5.0)
+    pos[k], pos[k + 1] = (300.0, None), (340.0, None)  # this Well ID sits far right ...
+    lines.append(("AHWFLARE", 1))                       # ... of another well-shaped line
+    pos.append((5.0, None))
     g = w._parse_table_lines(lines, positions=pos)
     assert g.off_column_rows == 1 and g.readings == []
 
@@ -829,4 +833,26 @@ def test_line_positions_follow_the_text_on_the_pdf_path(tmp_path):
     doc.close()
     lines, _, _, pos = w._pdf_read(str(path), with_positions=True)
     got = dict(zip([t for t, _ in lines], pos))
-    assert got["AHWW001"] == 20 and got["EW-8"] == 60 and got["AHWW777"] == 300
+    assert got["AHWW001"][0] == 20 and got["EW-8"][0] == 60 and got["AHWW777"][0] == 300
+
+
+def test_comment_line_cell_is_read_only_when_it_lines_up_with_the_last_column():
+    # Two rows end in a bare Header Pres cell whose right edge is 230; a third
+    # ends "-0.68 No Change" with its number's edge at 230 (a real cell); a
+    # fourth's Header Pres printed nothing and its comment starts "2 turns",
+    # whose number ends at 224 (the Comments column).
+    rows = [("AHW1", "-5", None, 230.0), ("AHW2", "-6", None, 230.0),
+            ("AHW3", "-0.68 No Change: :", None, 230.0), ("AHW4", "2 turns open", None, 224.0)]
+    lines, pos = [(H9, 1)], [None]
+    for well, last, _, edge in rows:
+        cells = [well, D, "50", "30", "0.5", "19.5", "-1", "120", "9", "-4", last]
+        for k, t in enumerate(cells):
+            lines.append((t, 1))
+            pos.append((20.0, edge) if k == len(cells) - 1 else (20.0, None))
+    g = w._parse_table_lines(lines, positions=pos)
+    assert [(r.raw_well_id, r.header_pres) for r in g.readings] == [
+        ("AHW1", -5.0), ("AHW2", -6.0), ("AHW3", -0.68), ("AHW4", None)]
+    assert g.unaligned_cells == 1
+    # Without geometry (no positions) the text rules alone read both.
+    g = w._parse_table_lines(lines)
+    assert [r.header_pres for r in g.readings] == [-5.0, -6.0, -0.68, 2.0]

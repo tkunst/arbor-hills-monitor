@@ -341,11 +341,49 @@ there. Otherwise the row ends before that line. So a comment that starts with a
 number (`150 ft of water`, `2 turns open`) can never fill Temp, Flow or a gas
 column. Across the corpus below, 23,794 lines mix cells and text. Each one's
 text is a Comments-column entry ("Opened Valve…", "No Change…", "Second
-Reading…"), and each one supplies a single Header Pres cell. Residual: a row
-whose Header Pres printed nothing at all, followed by a comment that starts
-with a number, would read that number as Header Pres. The same holds when a bare
-number on its own line follows a row whose last cells are `---`. Pressures are
-not emitted as measurements.
+Reading…"), and each one supplies a single Header Pres cell.
+
+**A comment-line cell must line up with its column.** Text alone can't tell
+`-0.68 No Change: :` (a Header Pres cell, then the comment) from a row whose
+Header Pres printed nothing, followed by a comment that starts with a number
+(`2 turns open`). The page can. Numeric cells are right-aligned, so every Header
+Pres cell on a page ends at the same point along the text direction. The
+Comments column starts a few points further along. On one corpus page, Header
+Pres cells end at 229.8 and comments start at 227.4 (a rotated page, so the
+coordinate runs downward). A number at the start of a comment therefore ends at
+least ~5 points off the column edge.
+
+On the PDF path the parser reads each page twice:
+
+- The first pass collects the right edge of every bare-number cell read into a
+  row's last column. Their median, per page, is that column's edge.
+- The second pass reads a cell that shares its line with a comment only when
+  its right edge is within 1 point of that edge (`_LAST_COLUMN_TOLERANCE`).
+
+A cell that fails, or can't be checked, is kept as a blank (None). It was
+printed, so its position stays known and the row is still read. Only its value
+is not trusted. Such cells are counted in `unaligned_cells` and logged.
+
+Line geometry comes from one text page's dict and word lists. It is matched one
+for one to the plain-text lines; plain text clips a long comment at the page
+edge and the dict doesn't, which is the only difference seen.
+
+Measured on the corpus (23,793 comment-line cells):
+
+- 23,792 end within 0.2 points of their column's edge.
+- 1 sits on a page with no bare-number Header Pres cell to compare against, so
+  it is read as blank.
+
+The header-less fragment path (`_parse_lines`, tests and scripts) has no
+geometry and keeps the text rules. Remaining case: a bare number on its own
+line after a row whose last cells are `---` is read as the last cell. Main did
+the same for rows with no `---`.
+
+The pressure columns are not monitor measurements (alerts and the Measurements
+tab use temperature, O2, CH4 and CO). They are published in the wellfield
+dataset (`stage_wellfield.py` stages every column), and Flow and the pressures
+drive the column-shift check and the cross-table duplicate merge here. That is
+why they get the same accuracy bar as the other columns.
 
 **Positions are trusted only when the row is complete.** A row may need the new
 reader (a `---`, or two cells on one line such as `100 150`) but still not fill
@@ -429,17 +467,18 @@ parse outputs. The counts below are over the 42.
 - Every reading main read is still read: 0 lost, 0 changed values. Matching
   is on page, timestamp, ADJ and printed id.
 - Outside Alias tables, no reading's well id changed.
-- 99,428 cells that were blank on main are now filled. All of them come from
+- 99,427 cells that were blank on main are now filled. All of them come from
   lines read past a `---`, or from the last cell on a value-plus-comment line.
 - Readings rose from 268,289 to 278,407:
   - 6,647 new readings have a temperature. All are valid, they range from
     6.2 to 140.2°F, none is ≥ 145°F, and 5 are ≥ 131°F.
   - 3,471 new readings are gas-only.
   - 306 all-`---` rows and 1,037 partial rows were counted. 0 rows were
-    truncated, 0 were ambiguous, and 0 Alias row starts were off-column.
+    truncated, 0 were ambiguous, 0 Alias row starts were off-column, and 1
+    comment-line cell was read as blank (no reference cell on its page).
 - 3,299 rows moved from the Alias spelling to the Well ID. 1,068 of them have
   a non-AH alias.
-- Rows with a blank `header_pres` fell from 143,695 to 47,910. Of the rest,
+- Rows with a blank `header_pres` fell from 143,695 to 47,912. Of the rest,
   46,522 sit on pages where no row prints that column.
 - Rejected rows rose from 9,519 to 9,573. The 54 new ones are rows in two of
   the split tables whose Alias is non-AH or blank. Main never started those
