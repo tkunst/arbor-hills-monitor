@@ -118,3 +118,47 @@ def test_split_table_one_line_adj_row_joins(tmp_path):
         ("1/2/2025 10:00", False, 120.0), ("1/2/2025 10:01", True, 121.0),
         ("1/2/2025 10:05", False, 120.0)]
     assert (g.split_joined_rows, g.split_unjoined_rows, g.split_unread_rows) == (3, 0, 0)
+
+
+# --- review round 1: rows main reads are never moved by a one-line row ---
+
+def test_split_page_still_joins_when_a_one_line_row_has_no_right_row(tmp_path):
+    rows = [row("AHW1", 0), row("AHW1", 2),
+            dict(row("AHW1", 1, right=None), dt="1/2/2025 10:01 ADJ"),
+            row("AHW1", 5), row("AHW1", 6)]
+    g = w.parse_gas_extraction_report(build(tmp_path / "r.pdf", [rows]))
+    assert [(r.dt[-5:], r.adj) for r in g.readings] == [
+        ("10:00", False), ("10:02", False), ("10:05", False), ("10:06", False)]
+    assert (g.split_joined_rows, g.split_unjoined_rows, g.split_unread_rows) == (4, 1, 0)
+    assert [(t.n_rows, t.reason) for t in g.rejected_tables] == [(1, w.SPLIT_UNJOINED_REASON)]
+
+
+def test_header_text_and_labels_stay_mains_when_the_first_row_is_one_line():
+    # Main's header ran on through a first row printed "timestamp ADJ" and
+    # took its "ADJ" as a label; the labels stay main's, so main's rows keep
+    # their ADJ flags. The one-line row itself is read.
+    first = ["AHW9", "1/1/2025 09:00 ADJ", "50", "40", "0", "10", "0.5", "121", "5", "-1", "-2"]
+    a = ["AHW1", "1/1/2025 10:00", "50", "40", "0", "10", "0.5", "120", "5", "-1", "-2"]
+    rs = w._parse_table_lines(L(*HDR_FULL_NO_ADJ, *first, *a, *a)).readings
+    assert [(r.well_id, r.adj) for r in rs] == [("AHW9", True), ("AHW1", False), ("AHW1", False)]
+
+
+def test_one_line_pool_never_takes_rows_read_past_a_blank_cell_with_it():
+    good = [["AHW%d" % k, "1/1/2025 10:%02d" % k, "50", "40", "0", "10", "0.5", "120", "5",
+             "-1", "-2"] for k in range(25)]
+    dash = [["AHD%d" % k, "1/1/2025 12:%02d" % k, "50", "40", "0", "10", "---", "120", "5",
+             "-1", "-2"] for k in range(20)]
+    bad = [["AHX%d" % k, "1/1/2025 11:%02d ADJ" % k, "50", "40", "0", "10", "0.5", "120", "-5",
+            "-1", "-2"] for k in range(20)]
+    lines = [x for r in good + dash + bad for x in r]
+    g = w._parse_table_lines(L(*HDR_FULL, *lines))
+    assert [r.well_id for r in g.readings] == (["AHW%d" % k for k in range(25)]
+                                               + ["AHD%d" % k for k in range(20)])
+    assert [(t.n_rows, "one-line timestamp ADJ" in t.reason) for t in g.rejected_tables] == [
+        (20, True)]
+
+
+def test_a_literal_adj_line_after_a_one_line_adj_is_the_same_token():
+    rs = w._parse_table_lines(L(*HDR_FULL, "AH147AR4", "10/21/2022 11:46 ADJ", "ADJ",
+                                *CELLS)).readings
+    assert [(r.dt, r.adj, r.temp) for r in rs] == [("10/21/2022 11:46", True, 77.9)]

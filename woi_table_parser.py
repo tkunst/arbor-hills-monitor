@@ -392,17 +392,26 @@ def _dt_line(text: str) -> Optional[tuple]:
     return (m.group(1), True) if m else None
 
 
-def _is_row_start(lines, i) -> bool:
+def _is_row_start(lines, i, dt_ok=_dt_line) -> bool:
     return (WELL_RE.match(lines[i][0]) is not None and i + 1 < len(lines)
-            and _dt_line(lines[i + 1][0]) is not None)
+            and dt_ok(lines[i + 1][0]) is not None)
 
 
-def _is_alias_row_start(lines, i) -> bool:
+def _is_alias_row_start(lines, i, dt_ok=_dt_line) -> bool:
     """Well ID, Alias, Date/Time on three lines (a table with an Alias column).
     A blank alias may print BLANK_CELL."""
     return (WELL_RE.match(lines[i][0]) is not None and i + 2 < len(lines)
             and (ALIAS_RE.match(lines[i + 1][0]) is not None or lines[i + 1][0] == BLANK_CELL)
-            and _dt_line(lines[i + 2][0]) is not None)
+            and dt_ok(lines[i + 2][0]) is not None)
+
+
+def _is_row_start_main(lines, i) -> bool:
+    """A row start whose timestamp prints alone (main's rule, DT_RE only)."""
+    return _is_row_start(lines, i, DT_RE.match)
+
+
+def _is_alias_row_start_main(lines, i) -> bool:
+    return _is_alias_row_start(lines, i, DT_RE.match)
 
 
 def _cell(tok: str):
@@ -476,11 +485,23 @@ def _read_header(lines, i) -> tuple[str, int]:
     """Join the label lines after a "Well ID" line at i, up to the first data
     row (or _HEADER_MAX_LINES). Under an Alias label the first data row is a
     Well ID / Alias / Date/Time start; any other header ends where main ended
-    it. Returns (header_text, index_after_header)."""
+    it. Returns (header_text, index_after_header).
+
+    The header TEXT is always the text main read: it ends at a row whose
+    timestamp prints alone (DT_RE), so a first row printed as "timestamp ADJ"
+    on one line is still part of it, and the ADJ / Alias labels and columns
+    read from it are main's (ADR 005 addendum 2026-10-21). The rows start at
+    the first row of either form, so that row is read too."""
+    text, j_main = _read_header_until(lines, i, _is_row_start_main, _is_alias_row_start_main)
+    _, j = _read_header_until(lines, i, _is_row_start, _is_alias_row_start)
+    return text, min(j, j_main)
+
+
+def _read_header_until(lines, i, row_start, alias_row_start) -> tuple[str, int]:
     j = i + 1
     parts = [lines[i][0]]  # labels can share the "Well ID" line
-    while (j < len(lines) and j - i <= _HEADER_MAX_LINES and not _is_row_start(lines, j)
-           and not (_is_alias_row_start(lines, j)
+    while (j < len(lines) and j - i <= _HEADER_MAX_LINES and not row_start(lines, j)
+           and not (alias_row_start(lines, j)
                     and _ALIAS_LABEL_RE.search(" ".join(parts)))):
         if _HEADER_START_RE.match(lines[j][0]):
             break  # another table's header: stop here, it is read on its own
@@ -570,7 +591,8 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
     _split_plan) joins such a table's rows to their right halves: a row whose
     left cells are all read is joined when its page pairs cleanly, else
     counted (split_unjoined_rows) and kept rejected. `on_split_row(page,
-    coord)` receives each such row's coordinate (the pairing dry run)."""
+    coord, added)` receives each such row's coordinate, and whether a
+    one-line "timestamp ADJ" started it (the pairing dry run)."""
     out = GasExtractionParse()
     seen_on_page: dict = {}
     text_headers: dict = {}
@@ -586,6 +608,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
     cur_rows: list = []
     cur_flows: list = []    # Flow cells main would have read (negative-flow check)
     cur_added: list = []    # rows whose Flow cell main would NOT have read
+    cur_oneline: list = []  # rows started by a one-line "timestamp ADJ" (DT_ADJ_RE)
     partner = None          # the last row main would have emitted (unlabeled ADJ)
     well_col: dict = {}     # page -> Well ID column position
     cur_rejected = {"n": 0, "first": None, "last": None, "reason": ""}
@@ -593,31 +616,34 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
     page_first: dict = {}   # page -> index of its first line (split coordinates)
 
     def flush():
-        nonlocal cur_rows, cur_flows, cur_added, partner
+        nonlocal cur_rows, cur_flows, cur_added, cur_oneline, partner
         if cur_rows:
             # Main's rows are judged on main's Flow cells alone, so added rows
             # can neither reject them nor dilute a shifted table. The added
             # rows get the same check on their own Flow cells (with the same
-            # minimum row count main's check has).
+            # minimum row count main's check has), and so, separately, do the
+            # rows started by a one-line "timestamp ADJ": neither pool can
+            # take the other's rows with it.
             share = _negative_flow_share(cur_flows)
-            added_share = _negative_flow_share([r.flow for r in cur_added if r.flow is not None])
             if share is not None and share > NEGATIVE_FLOW_REJECT_SHARE:
                 out.rejected_tables.append(RejectedTable(
                     first_page=cur_rows[0].page, last_page=cur_rows[-1].page,
                     n_rows=len(cur_rows), header=header,
                     reason=f"column-shift signature: {share:.0%} of rows have a negative flow"))
-            elif added_share is not None and added_share > NEGATIVE_FLOW_REJECT_SHARE:
-                added_ids = {id(r) for r in cur_added}
-                out.readings.extend(r for r in cur_rows if id(r) not in added_ids)
-                out.rejected_tables.append(RejectedTable(
-                    first_page=cur_added[0].page, last_page=cur_added[-1].page,
-                    n_rows=len(cur_added), header=header,
-                    reason=(f"column-shift signature in rows read past a blank cell "
-                            f"or started by a one-line timestamp ADJ: "
-                            f"{added_share:.0%} have a negative flow")))
             else:
-                out.readings.extend(cur_rows)
-        cur_rows, cur_flows, cur_added, partner = [], [], [], None
+                drop: set = set()
+                for pool, what in ((cur_added, "rows read past a blank cell"),
+                                   (cur_oneline, "rows started by a one-line timestamp ADJ")):
+                    pshare = _negative_flow_share([r.flow for r in pool if r.flow is not None])
+                    if pshare is not None and pshare > NEGATIVE_FLOW_REJECT_SHARE:
+                        drop |= {id(r) for r in pool}
+                        out.rejected_tables.append(RejectedTable(
+                            first_page=pool[0].page, last_page=pool[-1].page,
+                            n_rows=len(pool), header=header,
+                            reason=(f"column-shift signature in {what}: "
+                                    f"{pshare:.0%} have a negative flow")))
+                out.readings.extend(r for r in cur_rows if id(r) not in drop)
+        cur_rows, cur_flows, cur_added, cur_oneline, partner = [], [], [], [], None
         if cur_unjoined["n"]:
             out.rejected_tables.append(RejectedTable(
                 first_page=cur_unjoined["first"], last_page=cur_unjoined["last"],
@@ -719,8 +745,11 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
         if dt_adj:
             # "M/D/YYYY HH:MM ADJ" on one line (DT_ADJ_RE): the literal ADJ
             # token, as on the next line below. Main never started this row,
-            # so it is an added row (see the end of this loop).
+            # so it is an added row (see the end of this loop). A literal ADJ
+            # line printed after it as well is the same token.
             adj = True
+            if j < n and lines[j][0] == "ADJ":
+                j += 1
         elif j < n and lines[j][0] == "ADJ":
             adj = True
             j += 1
@@ -747,8 +776,8 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 coord = (sp.coords[dt_i - page_first[page]]
                          if sp.coords is not None and lines[dt_i][1] == page else None)
                 if on_split_row is not None:
-                    on_split_row(page, coord)
-                right = None if extra else sp.right_cells(coord)
+                    on_split_row(page, coord, dt_adj)
+                right = None if extra else sp.right_cells(coord, added=dt_adj)
                 j = j_left
                 if right is None:
                     # Still a printed row: it is the as-found partner the
@@ -830,7 +859,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 setattr(r, row_layout[ci], v)
             cur_rows.append(r)
             if on_last_cell is not None and last_line is not None and mixed_ok and (
-                    width - 1) in mixed_ok and len(nums) == width:
+                    width - 1) in mixed_ok and len(nums) == width and not dt_adj:
                 on_last_cell(last_line)  # a reference cell: emitted row, pressure column
             if joined:
                 # Every cell of a joined row is placed by its position on the
@@ -839,22 +868,25 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 # joined rows).
                 out.split_joined_rows += 1
                 if dt_adj:
-                    cur_added.append(r)  # a one-line "timestamp ADJ" row: see below
+                    cur_oneline.append(r)  # a one-line "timestamp ADJ" row: see below
                 else:
                     partner = r
                     if r.flow is not None:
                         cur_flows.append(r.flow)
             else:
                 # A row started by a one-line "timestamp ADJ" (dt_adj) is one
-                # main never read: like a row read past a "---", it can't
-                # become the unlabeled-ADJ partner of main's next row, and its
-                # Flow is checked with the added rows, not main's.
-                if main_len > layout.index("temp") and not dt_adj:  # main emitted this row
-                    partner = r
-                if not dt_adj and "flow" in layout and main_len > layout.index("flow"):
-                    cur_flows.append(r.flow)
+                # main never read: it can't become the unlabeled-ADJ partner of
+                # main's next row, and its Flow is checked in its own pool,
+                # neither main's nor the other added rows'.
+                if dt_adj:
+                    cur_oneline.append(r)
                 else:
-                    cur_added.append(r)
+                    if main_len > layout.index("temp"):  # main emitted this row
+                        partner = r
+                    if "flow" in layout and main_len > layout.index("flow"):
+                        cur_flows.append(r.flow)
+                    else:
+                        cur_added.append(r)
         i = j
     flush()
     return out
@@ -1250,6 +1282,8 @@ class _SplitPage:
     rows: list                # _right_rows
     dt_coords: list = field(default_factory=list)  # baselines of left-page timestamp lines
     ok: bool = True           # set by the pairing dry run (_settle_split)
+    # right rows a one-line "timestamp ADJ" row may take (_settle_split)
+    added_ok: set = field(default_factory=set)
 
     def find(self, coord) -> Optional[int]:
         """The one right row at this baseline, else None (none, or two)."""
@@ -1258,11 +1292,16 @@ class _SplitPage:
         hits = [k for k, (a, _) in enumerate(self.rows) if abs(a - coord) <= _SPLIT_ROW_TOLERANCE]
         return hits[0] if len(hits) == 1 else None
 
-    def right_cells(self, coord) -> Optional[dict]:
+    def right_cells(self, coord, added: bool = False) -> Optional[dict]:
+        """The right row's cells at this baseline. `added`: the left row was
+        started by a one-line "timestamp ADJ", and gets only a right row
+        _settle_split set aside for it."""
         if not self.ok:
             return None
         k = self.find(coord)
-        return None if k is None else self.rows[k][1]
+        if k is None or (added and k not in self.added_ok):
+            return None
+        return self.rows[k][1]
 
 
 def _plan_one(doc, left_cols: tuple, first: int, last: int, page_lines: dict,
@@ -1386,22 +1425,30 @@ def _split_plan(pdf_path: str, candidates: list, lines: list, skipped: list,
 
 def _settle_split(plan: dict, seen: dict) -> None:
     """Page-level pairing verdict, from the dry run's row baselines (`seen`:
-    {left page: [baseline]}): a page joins only if every left row has its
-    own right row (one per row, none shared), and every complete right row
-    no left row claims sits on the baseline of a left-page timestamp line
-    the row reader didn't start (e.g. "10/21/2022 11:46 ADJ" printed as one
-    line). Any other leftover right row means the halves don't agree.
-    Mutates `plan`; returns how many such leftover rows the joined pages
-    have."""
+    {left page: [(baseline, added)]}): a page joins only if every left row
+    main's reader starts has its own right row (one per row, none shared),
+    and every complete right row none of them claims sits on the baseline of
+    a left-page timestamp line main's reader didn't start (e.g. "10/21/2022
+    11:46 ADJ" printed as one line). Any other leftover right row means the
+    halves don't agree. Rows started by a one-line "timestamp ADJ" (`added`)
+    never change that verdict (ADR 005 addendum 2026-10-21): on a joined
+    page, each takes the leftover complete right row at its own baseline
+    when no other left row claims it (sp.added_ok); one that has none stays
+    unjoined on its own. Mutates `plan`; returns how many leftover rows the
+    joined pages still have."""
     unread = 0
     for pg, sp in plan.items():
-        ks = [sp.find(c) for c in seen.get(pg, [])]
+        rows_seen = seen.get(pg, [])
+        ks = [sp.find(c) for c, added in rows_seen if not added]
         claimed = set(ks)
-        leftover = [a for k, (a, v) in enumerate(sp.rows) if v is not None and k not in claimed]
+        leftover = [k for k, (a, v) in enumerate(sp.rows) if v is not None and k not in claimed]
         sp.ok = (None not in ks and len(claimed) == len(ks) and all(
-            any(abs(a - d) <= _SPLIT_ROW_TOLERANCE for d in sp.dt_coords) for a in leftover))
+            any(abs(sp.rows[k][0] - d) <= _SPLIT_ROW_TOLERANCE for d in sp.dt_coords)
+            for k in leftover))
+        ka = [sp.find(c) for c, added in rows_seen if added]
+        sp.added_ok = {k for k in leftover if ka.count(k) == 1}
         if sp.ok:
-            unread += len(leftover)
+            unread += len(leftover) - len(sp.added_ok)
     return unread
 
 
@@ -1425,7 +1472,8 @@ def parse_gas_extraction_report(pdf_path: str, alias_map: Optional[dict] = None)
         try:
             seen: dict = {}
             _parse_table_lines_once(lines, alias_map, None, headers, positions, split=plan,
-                                    on_split_row=lambda pg, c: seen.setdefault(pg, []).append(c))
+                                    on_split_row=lambda pg, c, a: seen.setdefault(pg, []).append(
+                                        (c, a)))
             unread = _settle_split(plan, seen)
             joined = _parse_table_lines(lines, alias_map, page_headers=headers,
                                         positions=positions, split=plan)
