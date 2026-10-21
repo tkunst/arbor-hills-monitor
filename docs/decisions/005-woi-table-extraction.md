@@ -776,5 +776,24 @@ summary use as-found readings only. Only the reading counts move.
   leave a page of one-line rows as its own rejected table: recovery is
   incomplete in that case, and no main reading changes.
 
+**Review round 3 (the last round).**
+
+- Fixed: a split candidate's page range comes from the rows main itself
+  starts, so a page of one-line rows (even with a stray timestamp line main
+  never starts) cannot stretch a rejected table into a join.
+- Fixed in tests: two one-line rows can never take the same right row.
+- Accepted, low: a table of only one-line rows under an unrecognized header
+  is a new reject entry (and so a new review flag), not only a changed count.
+- Accepted, low: the router's format-drift guard counts every valid reading
+  with a temperature, ADJ included, so a report main read too few readings
+  from could now pass it; and an added ADJ reading above the plausibility
+  ceiling would raise a review flag. Neither happens in the corpus (added
+  temperatures top out at 172.5°F).
+- Not covered by a test: the guards that keep one-line rows out of the
+  per-page column-edge median and out of the unlabeled-ADJ partner on an
+  unjoined split row.
+- Out of scope, noted: two reports (`97d39ba7`, `6d0f88ed`) print two-digit
+  years (`10/1/25 7:56`); neither main nor this change reads them.
+
 Nothing is re-extracted by this change. Re-extracting these reports waits for
 Trisha's go.
