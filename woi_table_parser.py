@@ -611,7 +611,10 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
     cur_oneline: list = []  # rows started by a one-line "timestamp ADJ" (DT_ADJ_RE)
     partner = None          # the last row main would have emitted (unlabeled ADJ)
     well_col: dict = {}     # page -> Well ID column position
-    cur_rejected = {"n": 0, "first": None, "last": None, "reason": ""}
+    # mfirst/mlast: the pages of the rows main itself would have started (not
+    # one-line "timestamp ADJ" rows); a split candidate uses main's range only.
+    cur_rejected = {"n": 0, "first": None, "last": None, "reason": "",
+                    "mfirst": None, "mlast": None}
     cur_unjoined = {"n": 0, "first": None, "last": None}  # split-table rows not joined
     page_first: dict = {}   # page -> index of its first line (split coordinates)
 
@@ -659,16 +662,16 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 n_rows=cur_unjoined["n"], reason=SPLIT_UNJOINED_REASON,
                 header="columns read: " + ",".join(header_cols or [])))
             cur_unjoined.update(n=0, first=None, last=None)
-        if (cur_rejected["n"] and on_split_candidate is not None
+        if (cur_rejected["mfirst"] is not None and on_split_candidate is not None
                 and cur_rejected["reason"] == "column layout not recognized"
                 and _is_split_left(header_cols)):
-            on_split_candidate((tuple(header_cols), cur_rejected["first"], cur_rejected["last"]))
+            on_split_candidate((tuple(header_cols), cur_rejected["mfirst"], cur_rejected["mlast"]))
         if cur_rejected["n"]:
             out.rejected_tables.append(RejectedTable(
                 first_page=cur_rejected["first"], last_page=cur_rejected["last"],
                 n_rows=cur_rejected["n"], reason=cur_rejected["reason"],
                 header=header if header_cols is None else "columns read: " + ",".join(header_cols)))
-        cur_rejected.update(n=0, first=None, last=None, reason="")
+        cur_rejected.update(n=0, first=None, last=None, reason="", mfirst=None, mlast=None)
 
     if split:
         for k, (_, pg) in enumerate(lines):
@@ -842,6 +845,9 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 cur_rejected["n"] += 1
                 cur_rejected["first"] = cur_rejected["first"] or page
                 cur_rejected["last"] = page
+                if not dt_adj:
+                    cur_rejected["mfirst"] = cur_rejected["mfirst"] or page
+                    cur_rejected["mlast"] = page
                 cur_rejected["reason"] = (
                     "rows under a non-gas table header" if header == NON_GAS_HEADER
                     else "column layout not recognized" if header

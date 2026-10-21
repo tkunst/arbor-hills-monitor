@@ -195,3 +195,29 @@ def test_column_shift_reject_entry_describes_main_rows_only():
     assert [(t.first_page, t.last_page, t.n_rows) for t in g.rejected_tables] == [(1, 1, 25), (2, 2, 1)]
     assert g.rejected_tables[0].reason.startswith("column-shift signature: 100%")
     assert "one-line timestamp ADJ" in g.rejected_tables[1].reason
+
+
+# --- review round 3 ---
+
+def test_one_line_rows_do_not_widen_a_split_candidate_main_rejects(tmp_path):
+    # Page 2 prints only one-line rows plus a row main never starts (a well id
+    # WELL_RE refuses). Main's candidate is page 1 alone, so the table stays
+    # rejected and no row main started becomes a reading.
+    for p2 in ([_oneline_row("AHW5", 0), _oneline_row("AHW5", 1), row("HC1LARON", 2)],
+               [row("HC1LARON", 2), _oneline_row("AHW5", 0), _oneline_row("AHW5", 1)]):
+        g = w.parse_gas_extraction_report(
+            build(tmp_path / "r.pdf", [three("AHW1"), p2], left_headers=[0]))
+        assert g.readings == []
+        assert g.split_joined_rows == 0
+
+
+def test_two_one_line_rows_never_share_one_right_row():
+    from types import SimpleNamespace
+    sp = SimpleNamespace(rows=[(10.0, ["x"]), (20.0, ["y"])], dt_coords=[20.0],
+                         find=lambda c: 0 if c < 15 else 1)
+    plan = {1: sp}
+    # main's row claims right row 0; two one-line rows both resolve to row 1
+    w._settle_split(plan, {1: [(10.0, False), (19.0, True), (21.0, True)]})
+    assert sp.ok and sp.added_ok == set()
+    w._settle_split(plan, {1: [(10.0, False), (20.0, True)]})
+    assert sp.ok and sp.added_ok == {1}
