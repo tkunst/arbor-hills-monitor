@@ -671,4 +671,3 @@ main already reads, so it needs its own regression.
 
 Nothing is re-extracted by this change. Re-extracting the four reports and
 re-running `stage_wellfield.py` wait for Trisha's go.
-
