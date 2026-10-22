@@ -1955,8 +1955,8 @@ def per_well_summary(
     """Aggregate to one row per canonical well: max temp (with its date + the O2
     and CH4 read at that same moment), and max O2. Sorted hottest-first. Each
     row's `point_type` is "probe" when its id is in `probe_ids` (the well
-    registry's GFL-labeled probes, ADR 068 addendum 2026-10-22), else "well"."""
-    probe_ids = probe_ids or set()
+    registry's GFL-labeled probes, ADR 068 addendum 2026-10-22), else "well";
+    with no `probe_ids` (no registry given) it is None: unknown, never asserted."""
     by_well: dict[str, list[WOIReading]] = {}
     for r in readings:
         if valid_only and not r.valid:
@@ -1980,7 +1980,8 @@ def per_well_summary(
             "ch4_at_max_temp": hottest.ch4 if hottest else None,
             "max_o2_pct": max_o2,
             "n_readings": len(rs),
-            "point_type": "probe" if well in probe_ids else "well",
+            "point_type": (None if probe_ids is None
+                           else "probe" if well in probe_ids else "well"),
         })
     rows.sort(key=lambda d: (d["max_temp_f"] is not None, d["max_temp_f"] or -1), reverse=True)
     return rows

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import collections
 import json
+import types
 import os
 import re
 import sys
@@ -151,11 +152,13 @@ def clear_cache() -> None:
 
 @dataclass(frozen=True)
 class WellRegistry:
-    """Every well-id ruling, loaded from data/well_registry.json."""
-    aliases: dict          # {alias: canonical}
-    new_wells: frozenset   # ruled new wells, kept under their own ids
-    probes: frozenset      # gas probes, by GFL's "Probe ID" label
-    sources: dict          # {id or alias: citation}
+    """Every well-id ruling, loaded from data/well_registry.json. Read-only:
+    `aliases` and `sources` are mapping proxies, so a caller can't edit the
+    cached copy."""
+    aliases: types.MappingProxyType   # {alias: canonical}
+    new_wells: frozenset              # ruled new wells, kept under their own ids
+    probes: frozenset                 # gas probes, by GFL's "Probe ID" label
+    sources: types.MappingProxyType   # {id or alias: citation}
 
     @property
     def ruled_ids(self) -> frozenset:
@@ -168,18 +171,29 @@ class WellRegistry:
         return "probe" if str(well_id or "").rstrip("*") in self.probes else "well"
 
 
-EMPTY_REGISTRY = WellRegistry({}, frozenset(), frozenset(), {})
+EMPTY_REGISTRY = WellRegistry(types.MappingProxyType({}), frozenset(), frozenset(),
+                              types.MappingProxyType({}))
+_DATE_RE = re.compile(r"^20\d\d-\d\d-\d\d$")
+_TOP_KEYS = {"_note", "schema_version", "counts", "aliases", "new_wells", "probes"}
 _REG_CACHE: dict[str, WellRegistry] = {}
 
 
 def _entries(doc: dict, key: str, fields: tuple) -> list:
+    """The `key` list; each entry has exactly `fields` + source + ruled: the
+    strings non-empty, `ruled` a YYYY-MM-DD date. Unknown fields are refused
+    (the file is allowlisted past the data guard, so it must carry rulings
+    only)."""
     items = doc.get(key)
     if not isinstance(items, list):
         raise WellAliasError(f"well registry has no '{key}' list")
+    want = set(fields) | {"source", "ruled"}
     for e in items:
-        if not isinstance(e, dict) or any(not isinstance(e.get(f), str) or not e.get(f).strip()
-                                          for f in fields + ("source",)):
-            raise WellAliasError(f"well registry '{key}' entry lacks {fields + ('source',)}: {e!r:.120}")
+        if (not isinstance(e, dict) or set(e) != want
+                or any(not isinstance(e.get(f), str) or not e.get(f).strip()
+                       for f in fields + ("source",))
+                or not (isinstance(e.get("ruled"), str) and _DATE_RE.match(e["ruled"]))):
+            raise WellAliasError(f"well registry '{key}' entry must have exactly "
+                                 f"{sorted(want)} (ruled = YYYY-MM-DD): {e!r:.120}")
     return items
 
 
@@ -192,6 +206,9 @@ def validate_registry(doc) -> WellRegistry:
     never an alias key or target; no id is both a new well and a probe."""
     if not isinstance(doc, dict):
         raise WellAliasError("well registry must be a JSON object")
+    extra = sorted(set(doc) - _TOP_KEYS)
+    if extra:
+        raise WellAliasError(f"well registry has unknown top-level keys: {extra}")
     if doc.get("schema_version") != REGISTRY_SCHEMA_VERSION:
         raise WellAliasError(f"well registry schema_version {doc.get('schema_version')!r} "
                              f"!= {REGISTRY_SCHEMA_VERSION}")
@@ -218,9 +235,29 @@ def validate_registry(doc) -> WellRegistry:
     if renamed or probe_alias:
         raise WellAliasError(f"ruled new wells used as an alias key {renamed}; "
                              f"probes used as an alias key or target {probe_alias}")
+    for k, v in aliases.items():
+        # a curated pair may respell an R2 (AHWW423R2 -> AHW423R2) but never
+        # change the redrill generation (R2 vs R3 are different physical wells)
+        sk, sv = _rename_stem(k), _rename_stem(v)
+        if sk and sv and sk[2] != sv[2]:
+            raise WellAliasError(f"alias {k} -> {v} changes the redrill generation")
     sources = {e["alias"]: e["source"] for e in al}
     sources.update({e["id"]: e["source"] for e in nw + pr})
-    return WellRegistry(aliases, new_wells, probes, sources)
+    return WellRegistry(types.MappingProxyType(dict(aliases)), new_wells, probes,
+                        types.MappingProxyType(sources))
+
+
+def check_alias_map_matches(alias_map: dict, registry: WellRegistry) -> None:
+    """Run-start guard: the generated data/well_aliases.json must equal the
+    registry's aliases. A registry edited without `--export` would otherwise
+    have the monitor apply a stale map while Lotext applies the new one."""
+    if dict(alias_map) != dict(registry.aliases):
+        only_map = sorted(set(alias_map.items()) - set(registry.aliases.items()))
+        only_reg = sorted(set(registry.aliases.items()) - set(alias_map.items()))
+        raise WellAliasError(
+            "data/well_aliases.json differs from data/well_registry.json (run "
+            f"`python3 well_aliases.py --export`): only in the map {only_map[:5]}, "
+            f"only in the registry {only_reg[:5]}")
 
 
 def load_registry(path: Optional[str] = None) -> WellRegistry:

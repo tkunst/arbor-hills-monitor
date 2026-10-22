@@ -114,6 +114,9 @@ DOCS = [
 
 
 ALIAS_SENTINEL = {"AHWW0177": "AHWW177R"}
+REGISTRY_SENTINEL = __import__("well_aliases").WellRegistry(
+    __import__("types").MappingProxyType(dict(ALIAS_SENTINEL)), frozenset(),
+    frozenset({"AHMP0002"}), __import__("types").MappingProxyType({}))
 
 
 def _wire(monkeypatch, mod, severity):
@@ -142,6 +145,7 @@ def _wire(monkeypatch, mod, severity):
     monkeypatch.setattr(mod.nc, "download_pdf", lambda *a: None)
     rec["alias_kwargs"] = []
     monkeypatch.setattr(mod.well_aliases, "load_alias_map", lambda *a, **k: ALIAS_SENTINEL)
+    monkeypatch.setattr(mod.well_aliases, "load_registry", lambda *a, **k: REGISTRY_SENTINEL)
 
     def fake_parse(*a, **k):
         rec["alias_kwargs"].append(("parse", k.get("well_alias_map")))
@@ -150,7 +154,8 @@ def _wire(monkeypatch, mod, severity):
     monkeypatch.setattr(mod.av, "mirror_one_now", lambda *a, **k: "LINK-" + a[3]["doc_id"])
     monkeypatch.setattr(mod.woi_router, "route_measurements",
                         lambda parsed, local, d, cfg, **k: rec["woi"].append(d["doc_id"])
-                        or rec["alias_kwargs"].append(("route", k.get("alias_map"))))
+                        or rec["alias_kwargs"].append(("route", k.get("alias_map")))
+                        or rec.setdefault("registry_kwargs", []).append(k.get("registry")))
     if mod is w:
         monkeypatch.setattr(w, "_today", lambda: __import__("datetime").date(2026, 10, 7))
         monkeypatch.setattr(w.ea, "is_urgent", lambda parsed, cfg: parsed.severity == "urgent")
@@ -178,6 +183,8 @@ def test_watcher_routes_related_doc_to_related_tab_only(monkeypatch, severity):
     # ADR 068: the run-start alias map reaches BOTH the parser and the WOI router
     assert ("route", ALIAS_SENTINEL) in rec["alias_kwargs"]
     assert {v is ALIAS_SENTINEL for _, v in rec["alias_kwargs"]} == {True}
+    # ADR 068 addendum 2026-10-22: the run-start registry reaches the router
+    assert rec["registry_kwargs"] == [REGISTRY_SENTINEL]
 
 
 def test_backfill_routes_related_doc_to_related_tab_only(monkeypatch):
@@ -192,6 +199,7 @@ def test_backfill_routes_related_doc_to_related_tab_only(monkeypatch):
     assert sorted(rec["processed"]) == ["core1", "rel1"]
     assert ("route", ALIAS_SENTINEL) in rec["alias_kwargs"]
     assert {v is ALIAS_SENTINEL for _, v in rec["alias_kwargs"]} == {True}
+    assert rec["registry_kwargs"] == [REGISTRY_SENTINEL]
 
 
 # --- review flags reach the log on both paths (coder:woi-layout-guard) ------
@@ -215,3 +223,20 @@ def test_review_flags_logged_for_core_docs_only(monkeypatch, mod):
     flag_rows = [r for tab, rows in rec["append"] if tab == rf.TAB_REVIEW_FLAGS for r in rows]
     assert [(r[1], r[3], r[4]) for r in flag_rows] == [("core1", rf.KIND_WOI_TEMP, "526.8")]
     assert sorted(rec["processed"]) == ["core1", "rel1"]
+
+
+def test_watcher_gives_well_watch_the_readings_without_probes(monkeypatch):
+    # ADR 068 addendum 2026-10-22: well_watch gets routed["well_readings"]
+    rec, _ = _wire(monkeypatch, w, "routine")
+    routed = {"summary": [], "readings": ["WELL", "PROBE"], "well_readings": ["WELL"],
+              "n_probes": 1}
+    monkeypatch.setattr(w.woi_router, "route_measurements", lambda *a, **k: routed)
+    monkeypatch.setattr(w.woi_router, "apply_deterministic_headline", lambda *a, **k: None)
+    monkeypatch.setattr(w.woi_router, "recheck_severity_floor", lambda *a, **k: None)
+    monkeypatch.setattr(w.sw, "ensure_woi_tabs", lambda *a, **k: None)
+    monkeypatch.setattr(w.sw, "write_woi_summary", lambda *a, **k: None)
+    seen = []
+    monkeypatch.setattr(w.well_watch, "check_and_alert",
+                        lambda readings, d, link, cfg: seen.append(list(readings)) or 0)
+    assert w.run() == 0
+    assert seen == [["WELL"]]

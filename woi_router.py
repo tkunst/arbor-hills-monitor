@@ -264,7 +264,8 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
     well_aliases.log_review_candidates(
         [r.raw_well_id for r in readings], alias_map,
         context=f"WOI report {metadata.get('doc_id', '?')}")
-    summary = wtp.per_well_summary(valid, woi_set=woi_set, probe_ids=set(probes))
+    summary = wtp.per_well_summary(valid, woi_set=woi_set,
+                                   probe_ids=set(probes) if registry is not None else None)
     n_probes = sum(1 for d in summary if d.get("point_type") == "probe")
     # Replace only the metrics this router re-derives exhaustively from the
     # tables; any other classifier measurement (H2S, a permitted limit, ...)

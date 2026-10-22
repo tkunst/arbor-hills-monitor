@@ -138,7 +138,9 @@ counted probes as wells (553 "wells" for the 2025 Q4 CJ report, `97d39ba7`).
 
 - `data/well_registry.json` is the source of truth: `aliases`
   [{alias, canonical, source, ruled}], `new_wells` and `probes` [{id, source,
-  ruled}], `schema_version` and `counts`. It was migrated from the Lotext
+  ruled}] (exactly those fields; `ruled` a YYYY-MM-DD date), `schema_version`
+  and `counts`; unknown keys are refused, since the file is allowlisted past
+  the data guard. It was migrated from the Lotext
   source exactly (60 / 12 / 31; every set checked equal), each entry with the
   citation its comment carried there. The probes are labeled only by GFL's own
   heading: the "Probe Monitoring Site Report" lists them under "Probe ID" (Q4
@@ -153,8 +155,11 @@ counted probes as wells (553 "wells" for the 2025 Q4 CJ report, `97d39ba7`).
   id listed twice (across aliases, new wells and probes); anything
   `validate_alias_map` refuses; a probe used as an alias key or target. A ruled
   new well may be an alias TARGET (GFL prints `AHWW0CS9` as `AHWWCS09`'s alias,
-  p309 of the same report), never a key. `watcher.run`/`backfill.run` load it
-  once, beside the alias map.
+  p309 of the same report), never a key; and an alias never changes the
+  redrill generation. `watcher.run`/`backfill.run` load it once, beside the
+  alias map, and refuse to run if the generated alias map differs from it
+  (`check_alias_map_matches`: a registry edited without `--export`). The
+  loaded registry is read-only.
 - `EXCLUDE_FROM_NORMALIZATION` now refuses an excluded id as an alias KEY only.
   Trisha's 2026-10-19 rulings map `AHWTRO22`/`AHWTRO23`/`AHWWTR23`/`AHWTRO24`/
   `AHWWTR24` ONTO `AHWTR022`-`024`, which the 2026-07 list named; that never
@@ -162,22 +167,30 @@ counted probes as wells (553 "wells" for the 2025 Q4 CJ report, `97d39ba7`).
   have failed the loader. The list's comment no longer says what the ids are: the registry does.
 - The monitor uses it:
   - `review_candidates` skips ruled ids (`ruled=`); `log_review_candidates`
-    reads the committed registry itself (a registry it can't read only skips
-    that filter: QA logging never blocks).
+    reads the committed registry itself through the same cache (a registry
+    it can't read only skips that filter: QA logging never blocks).
   - `per_well_summary(probe_ids=)` gives each row a `point_type`; the WOI Well
     Summary tab appends a `Point Type` column (rows written before are blank).
     Probes stay in the summary, marked, rather than being dropped: their gas
-    readings are real data, and a reader can filter on the column.
+    readings are real data, and a reader can filter on the column. Without a
+    registry (scripts, tests) the point type is unknown and left blank, never
+    asserted. Rows written before this change are blank too: a filter on
+    "well" must treat blank as unknown, not as "not a well".
   - `build_key_data_point` and the router's peak anchor use wells only;
     `route_measurements` returns `well_readings` (no probes) for `well_watch`
     and `n_probes`; the ROUTED log line counts wells and probes apart.
     Measurements are unchanged: probes print no temperature in the corpus.
+    Accepted, low: if a probe ever prints one at or above the watch band, it
+    still reaches Measurements (and so `is_urgent`), and the summary check
+    compares text against it; only the headline, peak anchor and `well_watch`
+    exclude probes.
 - Lotext (separate commit, by path): `merge_well_aliases.py` reads the
   registry from the monitor checkout (`$WELL_REGISTRY`, else
   `$WOI_MONITOR_CHECKOUT/data/well_registry.json`) and keeps its relabel and
   export jobs; its literals stay only until this PR is on `main`. A ruling is
-  now a PR here. A release build reads point types from the same file (probe
-  rows in the 10-09 set get labeled, Trisha 2026-10-22).
+  now a PR here. The corrections release of the 10-09 set will label probe
+  rows (Trisha 2026-10-22) from this file's `probes` list; no release build
+  reads it yet.
 
 **Measured effect** (live `config.yml`; `origin/main` @ `f601523` vs this
 change; three corpus reports re-routed):

@@ -191,7 +191,10 @@ def run() -> int:
     # per-doc try — so a missing/malformed map fails the run red instead of
     # becoming per-doc poison strikes or a silent WOI-routing fallback.
     well_alias_map = well_aliases.load_alias_map()
-    well_registry = well_aliases.load_registry()  # ADR 068 addendum 2026-10-22; fails loudly
+    # ADR 068 addendum 2026-10-22: the registry (probes, ruled wells) and the
+    # check that the generated alias map still equals it. Both fail loudly.
+    well_registry = well_aliases.load_registry()
+    well_aliases.check_alias_map_matches(well_alias_map, well_registry)
 
     sheets = dc.sheets_service()
     sw.ensure_tabs(sheets, sheet_id)
