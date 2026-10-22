@@ -113,6 +113,8 @@ def _bad(fn):
     (_bad(lambda d: d["probes"][0].update(source="")), "exactly"),
     (_bad(lambda d: d["probes"][0].update(ruled=None)), "exactly"),
     (_bad(lambda d: d["probes"][0].update(ruled="10/22/2026")), "exactly"),
+    (_bad(lambda d: d["probes"][0].update(ruled="2026-99-99")), "exactly"),
+    (_bad(lambda d: d["probes"][0].update(source="x" * 1001)), "exactly"),
     (_bad(lambda d: d["probes"][0].update(note="extra")), "exactly"),
     (_bad(lambda d: d.update(blob=[1, 2, 3])), "unknown top-level"),
     (_bad(lambda d: d["aliases"].__setitem__(0, {"alias": "AHWW0312R2", "canonical": "AHWW312R3",
@@ -253,3 +255,30 @@ def test_run_fails_loudly_when_the_alias_map_drifts_from_the_registry(monkeypatc
                         lambda: pytest.fail("touched the Sheet with a drifted alias map"))
     with pytest.raises(wa.WellAliasError, match="differs"):
         mod.run()
+
+
+def test_registry_never_changes_measurements_even_when_a_probe_is_hottest(tmp_path):
+    # review round 2: the peak anchor stays the hottest point of any type
+    reg = wa.validate_registry(_mini())
+    for probe_temp in (120.0, 150.0):
+        pdf = _build_pdf(tmp_path / f"woi{probe_temp}.pdf",
+                         _many(60, temp=90) + [("AHMP0002", probe_temp)])
+        a, b = _parsed(), _parsed()
+        woi_router.route_measurements(a, pdf, META, CFG)
+        routed = woi_router.route_measurements(b, pdf, META, CFG, registry=reg)
+        assert a.measurements == b.measurements
+        assert woi_router.build_key_data_point(routed).startswith("AHW2")   # a well, not the probe
+
+
+def test_point_type_reaches_the_sheet_row():
+    import sheet_writer as sw
+    rows = sw.woi_summary_rows([{"well": "AHMP0002", "point_type": "probe"},
+                                {"well": "AHW1", "point_type": "well"},
+                                {"well": "AHW2", "point_type": None}], {"date_filed": "d"}, "L")
+    assert [r[-1] for r in rows] == ["probe", "well", ""]
+    assert sw.WOI_SUMMARY_HEADERS[-1] == "Point Type"
+
+
+def test_review_log_uses_the_runs_registry_when_given():
+    new = wa.log_review_candidates(["AHMP012R", "AHMP0012"], {}, ruled={"AHMP0012"})
+    assert new == ["AHMP012R"]

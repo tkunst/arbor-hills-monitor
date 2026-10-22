@@ -176,21 +176,28 @@ counted probes as wells (553 "wells" for the 2025 Q4 CJ report, `97d39ba7`).
     registry (scripts, tests) the point type is unknown and left blank, never
     asserted. Rows written before this change are blank too: a filter on
     "well" must treat blank as unknown, not as "not a well".
-  - `build_key_data_point` and the router's peak anchor use wells only;
+  - `build_key_data_point` (the table-built headline) uses wells only;
     `route_measurements` returns `well_readings` (no probes) for `well_watch`
-    and `n_probes`; the ROUTED log line counts wells and probes apart.
-    Measurements are unchanged: probes print no temperature in the corpus.
-    Accepted, low: if a probe ever prints one at or above the watch band, it
-    still reaches Measurements (and so `is_urgent`), and the summary check
-    compares text against it; only the headline, peak anchor and `well_watch`
-    exclude probes.
+    and `n_probes`; the ROUTED log line counts wells and probes apart (or
+    says probes are not known, with no registry).
+  - Measurements are unchanged by construction: the router's peak anchor
+    stays the hottest as-found reading of any point (review round 2 found
+    that a wells-only anchor could drop or add Measurements rows when a probe
+    is the hottest point). Probes DO print temperatures in some reports (e.g.
+    `c0a46696`: AHMP012R 79.0, AHMP15R2 83.5, AHMP28R2 78.6, AHTGP18D 89.2°F,
+    each twice; that report's hottest well is 156.9°F, and its Measurements
+    are identical with and without the registry). Accepted, low: a probe
+    reading at or above the watch band would reach Measurements (and so
+    `is_urgent`) as any reading does, and a model headline naming it is kept
+    (the summary check compares text against all readings).
 - Lotext (separate commit, by path): `merge_well_aliases.py` reads the
   registry from the monitor checkout (`$WELL_REGISTRY`, else
   `$WOI_MONITOR_CHECKOUT/data/well_registry.json`) and keeps its relabel and
   export jobs; its literals stay only until this PR is on `main`. A ruling is
   now a PR here. The corrections release of the 10-09 set will label probe
   rows (Trisha 2026-10-22) from this file's `probes` list; no release build
-  reads it yet.
+  reads it yet. A release packet that must reproduce offline bundles the
+  registry and `well_aliases.py` (the validator) side by side.
 
 **Measured effect** (live `config.yml`; `origin/main` @ `f601523` vs this
 change; three corpus reports re-routed):

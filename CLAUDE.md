@@ -190,8 +190,8 @@ external users but no sensitive data). Public repo.
   spelling aliases, ruled new wells and GFL-labeled gas probes (GFL's own "Probe ID"
   column), each with its citation and date, changed by PR only. `data/well_aliases.json`
   (the {alias: canonical} map) is GENERATED from it (`python3 well_aliases.py --export`;
-  a test pins the two equal); never hand-edit either one outside a PR. Lotext's staging
-  and release scripts read the registry from this repo. Both are loaded ONCE per run in
+  a test pins the two equal); never hand-edit either one outside a PR. Lotext's wellfield
+  staging reads the registry from this repo. Both are loaded ONCE per run in
   `watcher.run`/`backfill.run` (`load_alias_map()`, `load_registry()`) and fail loudly
   on a missing or malformed file. The rule is exact match only (trailing `*` stripped);
   there are no short-form, spacing or prepend-AH rules, and redrills (R2/R3) are never
@@ -200,8 +200,9 @@ external users but no sensitive data). Public repo.
   relabeled Measurements row keeps its old id in `Well ID As Filed` (appended last
   column). `_needs_canonical_review` logs possible unmapped renames (log only), skipping
   every id the registry has ruled on. Probes are marked `Point Type` = probe in the WOI
-  Well Summary (appended last column), never the headline / site peak, and never reach
-  `well_watch`. `scripts/backfill_well_aliases.py` relabels existing rows: it defaults to
+  Well Summary (appended last column), are never the table-built headline, and never
+  reach `well_watch`; Measurements are unchanged (a probe reading still emits one if it
+  meets the usual rule). `scripts/backfill_well_aliases.py` relabels existing rows: it defaults to
   a dry run, and `--apply` is Trisha's to run.
 - `drive_client.py` — Google Drive + Sheets API (service account, folder ID).
 - `sheet_writer.py` — the four+1 sheet tabs; routing/fan-out is pure & tested.

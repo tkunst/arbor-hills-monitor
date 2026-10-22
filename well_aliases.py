@@ -11,7 +11,8 @@ the wells ruled new (kept under their own ids) and the gas probes, labeled by GF
 own "Probe ID" column. It is changed by PR only. `data/well_aliases.json` (the
 {alias: canonical} map every caller loads) is GENERATED from it with
 `python3 well_aliases.py --export` and pinned equal to it by a test; never edit it
-by hand. Lotext's staging and release scripts read the registry from this repo.
+by hand. Lotext's wellfield staging (and its alias relabel script) reads the
+registry from this repo; a release build that labels probes will read it too.
 
 Rules (Trisha's 2026-08-30 + 2026-10-12 rulings):
   * Exact key match only, after stripping trailing `*` footnote markers. No
@@ -26,6 +27,7 @@ Rules (Trisha's 2026-08-30 + 2026-10-12 rulings):
 from __future__ import annotations
 
 import collections
+import datetime
 import json
 import types
 import os
@@ -174,6 +176,7 @@ class WellRegistry:
 EMPTY_REGISTRY = WellRegistry(types.MappingProxyType({}), frozenset(), frozenset(),
                               types.MappingProxyType({}))
 _DATE_RE = re.compile(r"^20\d\d-\d\d-\d\d$")
+_MAX_SOURCE_CHARS = 1000  # a citation, not a payload (the file passes the data guard)
 _TOP_KEYS = {"_note", "schema_version", "counts", "aliases", "new_wells", "probes"}
 _REG_CACHE: dict[str, WellRegistry] = {}
 
@@ -191,10 +194,22 @@ def _entries(doc: dict, key: str, fields: tuple) -> list:
         if (not isinstance(e, dict) or set(e) != want
                 or any(not isinstance(e.get(f), str) or not e.get(f).strip()
                        for f in fields + ("source",))
-                or not (isinstance(e.get("ruled"), str) and _DATE_RE.match(e["ruled"]))):
+                or not _is_date(e.get("ruled"))
+                or len(e.get("source") or "") > _MAX_SOURCE_CHARS):
             raise WellAliasError(f"well registry '{key}' entry must have exactly "
-                                 f"{sorted(want)} (ruled = YYYY-MM-DD): {e!r:.120}")
+                                 f"{sorted(want)} (ruled = a real YYYY-MM-DD date, source "
+                                 f"<= {_MAX_SOURCE_CHARS} chars): {e!r:.120}")
     return items
+
+
+def _is_date(v) -> bool:
+    if not (isinstance(v, str) and _DATE_RE.match(v)):
+        return False
+    try:
+        datetime.date.fromisoformat(v)
+    except ValueError:
+        return False
+    return True
 
 
 def validate_registry(doc) -> WellRegistry:
@@ -382,16 +397,19 @@ def review_candidates(ids: Iterable, alias_map: Optional[dict],
 _LOGGED: set[str] = set()
 
 
-def log_review_candidates(ids: Iterable, alias_map: Optional[dict], context: str = "") -> list[str]:
+def log_review_candidates(ids: Iterable, alias_map: Optional[dict], context: str = "",
+                          ruled: Optional[Iterable] = None) -> list[str]:
     """Print each review candidate ONCE per process (`_needs_canonical_review`
-    log line) and return the newly logged ones. Never raises. Ids the committed
-    registry has ruled on are skipped (the registry is read here, cached, and a
-    registry that can't be read only skips that filter: QA logging never blocks)."""
+    log line) and return the newly logged ones. Never raises. Ids already ruled
+    on are skipped: `ruled` (the run's registry.ruled_ids, passed by the WOI
+    router), else the committed registry's (cached; one that can't be read
+    only skips that filter: QA logging never blocks)."""
     try:
-        try:
-            ruled = load_registry().ruled_ids
-        except WellAliasError:
-            ruled = frozenset()
+        if ruled is None:
+            try:
+                ruled = load_registry().ruled_ids
+            except WellAliasError:
+                ruled = frozenset()
         new = [c for c in review_candidates(ids, alias_map, ruled) if c not in _LOGGED]
     except Exception as e:  # noqa: BLE001 — QA logging must never block ingest
         print(f"[well_aliases] review-candidate scan skipped: {type(e).__name__}")
