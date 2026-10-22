@@ -117,6 +117,8 @@ def _bad(fn):
     (_bad(lambda d: d["probes"][0].update(source="x" * 1001)), "exactly"),
     (_bad(lambda d: d["probes"][0].update(note="extra")), "exactly"),
     (_bad(lambda d: d.update(blob=[1, 2, 3])), "unknown top-level"),
+    (_bad(lambda d: d.update(_note=["row"] * 10)), "_note"),
+    (_bad(lambda d: d.update(_note="x" * 1001)), "_note"),
     (_bad(lambda d: d["aliases"].__setitem__(0, {"alias": "AHWW0312R2", "canonical": "AHWW312R3",
                                                   "source": "x", "ruled": "2026-10-22"})),
      "redrill generation"),
@@ -282,3 +284,30 @@ def test_point_type_reaches_the_sheet_row():
 def test_review_log_uses_the_runs_registry_when_given():
     new = wa.log_review_candidates(["AHMP012R", "AHMP0012"], {}, ruled={"AHMP0012"})
     assert new == ["AHMP012R"]
+
+
+def test_ruled_ids_include_canonical_spellings():
+    # a canonical id beside a new unmapped spelling: only the new one is flagged
+    reg = wa.validate_registry(_mini())
+    assert "AHWWCS09" in reg.ruled_ids
+    ids = ["AHWWCS09", "AHWWCS9"]              # same stem
+    assert wa.review_candidates(ids, dict(reg.aliases), reg.ruled_ids) == ["AHWWCS9"]
+
+
+def test_router_passes_the_runs_ruled_ids_to_the_review_log(tmp_path, monkeypatch):
+    seen = []
+    real = wa.log_review_candidates
+    monkeypatch.setattr(woi_router.well_aliases, "log_review_candidates",
+                        lambda ids, amap, context="", ruled=None: seen.append(ruled)
+                        or real(ids, amap, context, ruled))
+    pdf = _build_pdf(tmp_path / "woi.pdf", _many(60))
+    woi_router.route_measurements(_parsed(), pdf, META, CFG, registry=wa.EMPTY_REGISTRY)
+    woi_router.route_measurements(_parsed(), pdf, META, CFG)
+    assert seen == [wa.EMPTY_REGISTRY.ruled_ids, None]
+
+
+def test_oversized_registry_file_raises(tmp_path):
+    path = tmp_path / "well_registry.json"
+    path.write_text(json.dumps(_mini()) + " " * (300 * 1024))
+    with pytest.raises(wa.WellAliasError, match="bytes"):
+        wa.load_registry(str(path))
