@@ -123,3 +123,75 @@ Measurements row.
 - Any short-form rule.
 - `AHWTS01R`/`AHWWTS01` and the `391`/`392` flare-vs-well question stay unmapped, as
   directed.
+
+## Addendum (2026-10-22): one well registry, owned by this repo
+
+Spec: `docs/overnight-coder-handoffs/well-registry.md` (`coder:well-registry`).
+
+**Why.** The rulings lived in a Lotext script (`merge_well_aliases.py`: 60
+aliases, 12 ruled new wells, 31 probes). This repo only got an exported copy of
+the aliases, 12 behind (48), and knew nothing about the probes or the ruled
+wells. So the rename check could flag a ruled id, and the per-well WOI summary
+counted probes as wells (553 "wells" for the 2025 Q4 CJ report, `97d39ba7`).
+
+**Change.**
+
+- `data/well_registry.json` is the source of truth: `aliases`
+  [{alias, canonical, source, ruled}], `new_wells` and `probes` [{id, source,
+  ruled}], `schema_version` and `counts`. It was migrated from the Lotext
+  source exactly (60 / 12 / 31; every set checked equal), each entry with the
+  citation its comment carried there. The probes are labeled only by GFL's own
+  heading: the "Probe Monitoring Site Report" lists them under "Probe ID" (Q4
+  2025 CJ report, nSITE -6434168316378583072, p352). It is allowlisted in
+  `.gitignore` and the data guard, like the alias map.
+- `data/well_aliases.json` is kept, GENERATED from the registry
+  (`python3 well_aliases.py --export`; `--check` exits 1 on drift, and a test
+  pins the committed file equal to the export). Every current caller of
+  `load_alias_map()` is unchanged.
+- `well_aliases.load_registry()` / `validate_registry()` fail loudly on: a bad
+  schema version or count; an entry without a source; a non-AH-form id; any
+  id listed twice (across aliases, new wells and probes); anything
+  `validate_alias_map` refuses; a probe used as an alias key or target. A ruled
+  new well may be an alias TARGET (GFL prints `AHWW0CS9` as `AHWWCS09`'s alias,
+  p309 of the same report), never a key. `watcher.run`/`backfill.run` load it
+  once, beside the alias map.
+- `EXCLUDE_FROM_NORMALIZATION` now refuses an excluded id as an alias KEY only.
+  Trisha's 2026-10-19 rulings map `AHWTRO22`/`AHWTRO23`/`AHWWTR23`/`AHWTRO24`/
+  `AHWWTR24` ONTO `AHWTR022`-`024`, which the 2026-07 list named; that never
+  renames the excluded id. Under the old rule, exporting those pairs would
+  have failed the loader. The list's comment no longer says what the ids are: the registry does.
+- The monitor uses it:
+  - `review_candidates` skips ruled ids (`ruled=`); `log_review_candidates`
+    reads the committed registry itself (a registry it can't read only skips
+    that filter: QA logging never blocks).
+  - `per_well_summary(probe_ids=)` gives each row a `point_type`; the WOI Well
+    Summary tab appends a `Point Type` column (rows written before are blank).
+    Probes stay in the summary, marked, rather than being dropped: their gas
+    readings are real data, and a reader can filter on the column.
+  - `build_key_data_point` and the router's peak anchor use wells only;
+    `route_measurements` returns `well_readings` (no probes) for `well_watch`
+    and `n_probes`; the ROUTED log line counts wells and probes apart.
+    Measurements are unchanged: probes print no temperature in the corpus.
+- Lotext (separate commit, by path): `merge_well_aliases.py` reads the
+  registry from the monitor checkout (`$WELL_REGISTRY`, else
+  `$WOI_MONITOR_CHECKOUT/data/well_registry.json`) and keeps its relabel and
+  export jobs; its literals stay only until this PR is on `main`. A ruling is
+  now a PR here. A release build reads point types from the same file (probe
+  rows in the 10-09 set get labeled, Trisha 2026-10-22).
+
+**Measured effect** (live `config.yml`; `origin/main` @ `f601523` vs this
+change; three corpus reports re-routed):
+
+| Report | Summary before | After | Headline | Measurements | well_watch |
+|---|---|---|---|---|---|
+| `97d39ba7` (2025 Q4 CJ) | 553 wells | 522 wells + 31 probes | unchanged | 402, identical | none, unchanged |
+| `0bbf365b` (2025 Q1 CJ) | 544 wells | 513 wells + 31 probes | unchanged | 282, identical | none, unchanged |
+| `d13a9c2e` (2024 Q1 CJ) | 496 wells | 465 wells + 31 probes | unchanged | 189, identical | none, unchanged |
+
+- The 12 aliases this repo was missing now apply. In the 91-file corpus three
+  of them occur: `AHEWCO13` -> `AHEWC013` (1,702 readings), `AHEWCO14` ->
+  `AHEWC014` (1,752) and `AHWW0CS9` -> `AHWWCS09` (6). For the next routed
+  report they key the WOI Well Summary (and any Measurements row) under the
+  zero spelling; existing rows change only through
+  `scripts/backfill_well_aliases.py --apply` (Trisha's to run).
+- No per-well value changed in the three reports; only ids and the new column.

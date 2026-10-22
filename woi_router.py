@@ -115,7 +115,8 @@ def _max_plausible_f(cfg: dict) -> float:
 
 def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
                        alias_map: Optional[dict] = None,
-                       review_flags: Optional[list] = None) -> Optional[dict]:
+                       review_flags: Optional[list] = None,
+                       registry=None) -> Optional[dict]:
     """If woi.auto_route is on and this is a WOI report, exhaustively parse it and
     REPLACE parsed.measurements with the non-ADJ, valid, >= watch-band readings —
     plus the single peak as-found reading, always — then return a summary payload
@@ -213,7 +214,13 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
     # Peak-temp preservation (see docstring). On a hot report the peak is already
     # in the >= watch_f set; on an all-cool report this adds the one peak row so
     # is_urgent never reaches its permitted-ceiling-matching free-text fallback.
-    peak = max(asfound, key=lambda r: r.temp) if asfound else None
+    # The peak anchor is a WELL's reading when there is one: a GFL-labeled
+    # probe (the well registry, ADR 068 addendum 2026-10-22) is never the
+    # site peak. Probes print no temperature in the corpus; the fallback keeps
+    # the anchor if one ever does and no well has a temperature.
+    probes = registry.probes if registry is not None else frozenset()
+    wells_af = [r for r in asfound if r.well_id not in probes] or asfound
+    peak = max(wells_af, key=lambda r: r.temp) if wells_af else None
     if peak is not None and peak.temp < watch_f:
         measurements.extend(wtp.to_measurements(peak))
 
@@ -257,7 +264,8 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
     well_aliases.log_review_candidates(
         [r.raw_well_id for r in readings], alias_map,
         context=f"WOI report {metadata.get('doc_id', '?')}")
-    summary = wtp.per_well_summary(valid, woi_set=woi_set)
+    summary = wtp.per_well_summary(valid, woi_set=woi_set, probe_ids=set(probes))
+    n_probes = sum(1 for d in summary if d.get("point_type") == "probe")
     # Replace only the metrics this router re-derives exhaustively from the
     # tables; any other classifier measurement (H2S, a permitted limit, ...)
     # is kept. With the header now searched on every page, large compilations
@@ -269,9 +277,11 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
 
     validity = 100.0 * (len(valid) + n_merged) / max(1, len(readings))
     n_hot = sum(1 for r in asfound if r.temp >= watch_f)
-    n_hot_wells = sum(1 for d in summary if (d["max_temp_f"] or 0) >= watch_f)
+    n_hot_wells = sum(1 for d in summary if (d["max_temp_f"] or 0) >= watch_f
+                      and d.get("point_type") != "probe")
     print(f"[woi_router] ROUTED {metadata.get('document_name')!r}: {len(readings)} "
-          f"readings ({validity:.1f}% valid), {len(summary)} wells "
+          f"readings ({validity:.1f}% valid), {len(summary) - n_probes} wells "
+          f"+ {n_probes} probes "
           f"({len(woi_set)} on the WOI list), {n_hot} as-found readings "
           f">= {watch_f:.0f}F -> {len(measurements)} measurements "
           f"({len(co_measurements)} of them CO; {n_hot_wells} wells "
@@ -284,9 +294,13 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
         "validity_pct": validity,
         "n_measurements": len(measurements),
         "n_co": len(co_measurements),
-        # Every valid reading (as-found AND ADJ) for well_watch (ADR 058), which
-        # needs single-well rows below the watch band trim and the ADJ rows.
+        # Every valid reading (as-found AND ADJ), probes included: the
+        # headline / summary checks compare text against all of them.
         "readings": valid,
+        # The same without GFL-labeled probes, for well_watch (ADR 058), which
+        # needs single-well rows below the watch band trim and the ADJ rows.
+        "well_readings": [r for r in valid if r.well_id not in probes],
+        "n_probes": n_probes,
     }
 
 
@@ -328,7 +342,8 @@ def build_key_data_point(routed: dict, parsed=None, cfg: Optional[dict] = None) 
     "AHWW312R: max measured 158.3°F (2023-08-29, Gas Extraction Report)."
     None when the summary holds no temperature. Pure. `parsed`/`cfg` are
     accepted for call-site symmetry and unused."""
-    rows = (routed or {}).get("summary") or []
+    rows = [d for d in ((routed or {}).get("summary") or [])
+            if d.get("point_type") != "probe"]  # wells only (ADR 068 addendum 2026-10-22)
     if not rows or rows[0].get("max_temp_f") is None:
         return None
     top = rows[0]
