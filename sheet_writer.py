@@ -618,6 +618,10 @@ WOI_SUMMARY_HEADERS = [
     "Report Date", "Well", "On WOI List", "Max Temp (F)", "Date of Max Temp",
     "O2 % at Max Temp", "CH4 % at Max Temp", "Max O2 % (any reading)",
     "# Readings", "Document Name", "Link",
+    # Appended (ADR 068 addendum 2026-10-22): "probe" for a GFL-labeled gas
+    # probe (data/well_registry.json), else "well". Rows written before this
+    # column existed are blank there.
+    "Point Type",
 ]
 
 # GFL perimeter air (Stream E, ADR 014). One row per perimeter station, the latest
@@ -772,6 +776,7 @@ def woi_summary_rows(summary: list[dict], metadata: dict, link: str) -> list[lis
             cell(d.get("n_readings")),
             metadata.get("document_name", ""),
             link,
+            d.get("point_type", ""),
         ])
     return rows
 

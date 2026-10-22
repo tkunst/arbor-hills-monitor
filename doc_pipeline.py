@@ -62,6 +62,9 @@ class RunContext:
     generic_prefixes: list = field(default_factory=list)
     title_overrides: dict = field(default_factory=dict)
     drive_state: dict = field(default_factory=dict)  # reused across docs (mirror_one_now)
+    # The well registry (ADR 068 addendum 2026-10-22), loaded once at run start
+    # like the alias map. None = no probes known (tests, scripts).
+    well_registry: object = None
 
 
 @dataclass
@@ -162,7 +165,8 @@ def process_one_doc(ctx: RunContext, state: dict, d: dict, job: Job, local: str,
         flags: list = []
         try:
             routed = woi_router.route_measurements(
-                parsed, local, d, ctx.cfg, alias_map=ctx.well_alias_map, review_flags=flags)
+                parsed, local, d, ctx.cfg, alias_map=ctx.well_alias_map, review_flags=flags,
+                registry=ctx.well_registry)
         except Exception as we:  # noqa: BLE001 — degrade to the generic parse
             print(f"  WOI routing failed, using generic parse: {we}")
             routed = None
@@ -215,7 +219,8 @@ def process_one_doc(ctx: RunContext, state: dict, d: dict, job: Job, local: str,
             # Named single-well trip-wires (ADR 058). Best-effort.
             if job.well_watch:
                 try:
-                    well_watch.check_and_alert(routed.get("readings") or [], d, link, ctx.cfg)
+                    well_watch.check_and_alert(routed.get("well_readings", routed.get("readings")) or [],
+                                               d, link, ctx.cfg)
                 except Exception as ww:  # noqa: BLE001 — alert is best-effort
                     print(f"  well_watch skipped (doc still recorded): {ww}")
 

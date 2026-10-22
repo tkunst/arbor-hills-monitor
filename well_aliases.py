@@ -5,11 +5,13 @@ egle_doc_parser path (Part B), so one physical well's history stops fragmenting
 across id spellings (e.g. the 0-padded era `AHWW0290` vs the R-suffix era
 `AHWW290R`).
 
-SOURCE OF TRUTH: the `ALIASES` dict in Lotext's wellfield release builder
-(`merge_well_aliases.py`, outside this repo). It is exported — never hand-copied —
-with `merge_well_aliases.py --export-only data/well_aliases.json`, and the export
-is committed here (narrow `.gitignore` + data-guard allowlist for exactly that
-path). New pairs are added THERE and re-exported; never edit the JSON by hand.
+SOURCE OF TRUTH (ADR 068 addendum 2026-10-22): `data/well_registry.json`, in this
+repo, holds every well-id ruling with its citation and date: the spelling aliases,
+the wells ruled new (kept under their own ids) and the gas probes, labeled by GFL's
+own "Probe ID" column. It is changed by PR only. `data/well_aliases.json` (the
+{alias: canonical} map every caller loads) is GENERATED from it with
+`python3 well_aliases.py --export` and pinned equal to it by a test; never edit it
+by hand. Lotext's staging and release scripts read the registry from this repo.
 
 Rules (Trisha's 2026-08-30 + 2026-10-12 rulings):
   * Exact key match only, after stripping trailing `*` footnote markers. No
@@ -23,13 +25,19 @@ Rules (Trisha's 2026-08-30 + 2026-10-12 rulings):
 """
 from __future__ import annotations
 
+import collections
 import json
 import os
 import re
+import sys
+from dataclasses import dataclass
 from typing import Iterable, Optional
 
 ALIAS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "data", "well_aliases.json")
+REGISTRY_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "data", "well_registry.json")
+REGISTRY_SCHEMA_VERSION = 1
 
 # Every alias and canonical id must be AH-form (the only form the WOI parser's
 # WELL_RE can see, and the only form the 2026-10-12 ruling covers). A non-AH pair
@@ -37,10 +45,13 @@ ALIAS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 # rule to short/spaced ids.
 _AH_FORM = re.compile(r"^AH[A-Z0-9]+$")
 
-# A documented GUARD, not active logic: identifiers that are NOT gas-extraction
-# wells (flares, outfalls, probes, perimeter stations, lab QA labels, sensor
-# strings) and must never be renamed by any future normalization rule. The
-# loader refuses a map that touches one of them. Literal ids only (the source
+# A documented GUARD, not active logic: identifiers that must never be renamed by
+# any future normalization rule (they were listed in 2026-07 as flares, outfalls,
+# probes, perimeter stations, lab QA labels and sensor strings; the registry, not
+# this list, now says what a point IS: e.g. GFL prints the AHWWCO and AHWTR ids
+# under its "Well ID" column). The loader refuses a map that uses one as an alias
+# KEY. One may be an alias TARGET (a spelling variant mapped ONTO it, e.g.
+# AHWTRO22 -> AHWTR022, Trisha 2026-10-19), which never renames the id itself. Literal ids only (the source
 # list's group/pattern labels — `ECS-*`, `260-series` — can't be enumerated).
 # Carried over from the exclusion section of the superseded 2026-07-14 draft;
 # the AHC4 ids it once listed were dropped (they are Cell 4 gas extraction
@@ -83,7 +94,7 @@ class WellAliasError(RuntimeError):
 def validate_alias_map(aliases) -> None:
     """Raise WellAliasError unless `aliases` is a clean {alias: canonical} map:
     AH-form strings, no self-alias, no chains (a canonical that is itself an
-    alias), nothing touching EXCLUDE_FROM_NORMALIZATION."""
+    alias), no key in EXCLUDE_FROM_NORMALIZATION (a target may be one)."""
     if not isinstance(aliases, dict) or not aliases:
         raise WellAliasError("alias map must be a non-empty {alias: canonical} object")
     bad = [(k, v) for k, v in aliases.items()
@@ -95,9 +106,9 @@ def validate_alias_map(aliases) -> None:
     chains = sorted(k for k, v in aliases.items() if v in aliases)
     if selfs or chains:
         raise WellAliasError(f"self-aliases {selfs} / chains {chains}")
-    touched = sorted((set(aliases) | set(aliases.values())) & EXCLUDE_FROM_NORMALIZATION)
+    touched = sorted(set(aliases) & EXCLUDE_FROM_NORMALIZATION)
     if touched:
-        raise WellAliasError(f"alias map touches excluded non-well ids: {touched}")
+        raise WellAliasError(f"alias map would rename excluded ids: {touched}")
 
 
 _CACHE: dict[str, dict] = {}
@@ -130,6 +141,116 @@ def load_alias_map(path: Optional[str] = None) -> dict:
 
 def clear_cache() -> None:
     _CACHE.clear()
+    _REG_CACHE.clear()
+
+
+# ---------------------------------------------------------------------------
+# The well registry (ADR 068 addendum 2026-10-22)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WellRegistry:
+    """Every well-id ruling, loaded from data/well_registry.json."""
+    aliases: dict          # {alias: canonical}
+    new_wells: frozenset   # ruled new wells, kept under their own ids
+    probes: frozenset      # gas probes, by GFL's "Probe ID" label
+    sources: dict          # {id or alias: citation}
+
+    @property
+    def ruled_ids(self) -> frozenset:
+        """Ids a human has already ruled on (never a rename candidate)."""
+        return self.new_wells | self.probes | frozenset(self.aliases.values())
+
+    def point_type(self, well_id) -> str:
+        """"probe" for a GFL-labeled probe, else "well" (every other id GFL
+        prints under its "Well ID" column)."""
+        return "probe" if str(well_id or "").rstrip("*") in self.probes else "well"
+
+
+EMPTY_REGISTRY = WellRegistry({}, frozenset(), frozenset(), {})
+_REG_CACHE: dict[str, WellRegistry] = {}
+
+
+def _entries(doc: dict, key: str, fields: tuple) -> list:
+    items = doc.get(key)
+    if not isinstance(items, list):
+        raise WellAliasError(f"well registry has no '{key}' list")
+    for e in items:
+        if not isinstance(e, dict) or any(not isinstance(e.get(f), str) or not e.get(f).strip()
+                                          for f in fields + ("source",)):
+            raise WellAliasError(f"well registry '{key}' entry lacks {fields + ('source',)}: {e!r:.120}")
+    return items
+
+
+def validate_registry(doc) -> WellRegistry:
+    """Raise WellAliasError unless `doc` is a clean registry; return it parsed.
+    Checks: schema version and counts; every id AH-form; every entry cites a
+    source; the alias map passes validate_alias_map (no self-alias, chain or
+    excluded key); no id listed twice; a ruled new well is never an alias KEY
+    (it may be a target: GFL prints AHWW0CS9 as AHWWCS09's alias); a probe is
+    never an alias key or target; no id is both a new well and a probe."""
+    if not isinstance(doc, dict):
+        raise WellAliasError("well registry must be a JSON object")
+    if doc.get("schema_version") != REGISTRY_SCHEMA_VERSION:
+        raise WellAliasError(f"well registry schema_version {doc.get('schema_version')!r} "
+                             f"!= {REGISTRY_SCHEMA_VERSION}")
+    al = _entries(doc, "aliases", ("alias", "canonical"))
+    nw = _entries(doc, "new_wells", ("id",))
+    pr = _entries(doc, "probes", ("id",))
+    counts = doc.get("counts") or {}
+    got = {"aliases": len(al), "new_wells": len(nw), "probes": len(pr)}
+    if counts != got:
+        raise WellAliasError(f"well registry counts {counts!r} != {got}")
+    aliases = {e["alias"]: e["canonical"] for e in al}
+    dup = [k for k, n in collections.Counter([e["alias"] for e in al] + [e["id"] for e in nw]
+                                             + [e["id"] for e in pr]).items() if n > 1]
+    if dup:
+        raise WellAliasError(f"well registry lists an id twice: {sorted(dup)}")
+    validate_alias_map(aliases)
+    new_wells = frozenset(e["id"] for e in nw)
+    probes = frozenset(e["id"] for e in pr)
+    bad = sorted(i for i in new_wells | probes if not _AH_FORM.match(i))
+    if bad:
+        raise WellAliasError(f"well registry has non-AH-form ids: {bad}")
+    renamed = sorted(new_wells & set(aliases))
+    probe_alias = sorted(probes & (set(aliases) | set(aliases.values())))
+    if renamed or probe_alias:
+        raise WellAliasError(f"ruled new wells used as an alias key {renamed}; "
+                             f"probes used as an alias key or target {probe_alias}")
+    sources = {e["alias"]: e["source"] for e in al}
+    sources.update({e["id"]: e["source"] for e in nw + pr})
+    return WellRegistry(aliases, new_wells, probes, sources)
+
+
+def load_registry(path: Optional[str] = None) -> WellRegistry:
+    """Load + validate data/well_registry.json (cached per path). Raises
+    WellAliasError on a missing or malformed file: callers load it ONCE at run
+    start, beside load_alias_map(), so a bad registry turns the run red."""
+    path = path or REGISTRY_JSON
+    if path in _REG_CACHE:
+        return _REG_CACHE[path]
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except FileNotFoundError as e:
+        raise WellAliasError(f"well registry not found: {path}") from e
+    except (OSError, ValueError) as e:
+        raise WellAliasError(f"well registry unreadable ({type(e).__name__}): {path}") from e
+    _REG_CACHE[path] = validate_registry(doc)
+    return _REG_CACHE[path]
+
+
+def alias_json_payload(registry: WellRegistry) -> str:
+    """The generated data/well_aliases.json text for `registry` (deterministic:
+    sorted, no timestamp)."""
+    return json.dumps({
+        "_note": "GENERATED from data/well_registry.json (the source of truth for Arbor Hills "
+                 "well-id rulings, ADR 068). Do not hand-edit; change the registry by PR and "
+                 "run `python3 well_aliases.py --export`.",
+        "count": len(registry.aliases),
+        "aliases": dict(sorted(registry.aliases.items())),
+    }, indent=2, ensure_ascii=False) + "\n"
 
 
 def canonical_well_id(well_id, alias_map: Optional[dict]):
@@ -192,9 +313,13 @@ def _rename_stem(well_id: str):
     return (letters, int(m.group(2)), gen)
 
 
-def review_candidates(ids: Iterable, alias_map: Optional[dict]) -> list[str]:
+def review_candidates(ids: Iterable, alias_map: Optional[dict],
+                      ruled: Iterable = ()) -> list[str]:
     """Pure: the ids (after * strip + alias map) that look like an unresolved
-    rename or a short form. Sorted, deduplicated."""
+    rename or a short form. Sorted, deduplicated. Ids in `ruled` (a registry's
+    ruled_ids: ruled new wells, probes, canonical spellings) are never flagged:
+    a human has already ruled on them."""
+    ruled = frozenset(ruled or ())
     canon = set()
     for raw in ids:
         if not isinstance(raw, str) or not raw.strip():
@@ -214,7 +339,7 @@ def review_candidates(ids: Iterable, alias_map: Optional[dict]) -> list[str]:
     for group in by_stem.values():
         if len(group) > 1:
             flagged |= group
-    return sorted(flagged)
+    return sorted(flagged - ruled)
 
 
 _LOGGED: set[str] = set()
@@ -222,9 +347,15 @@ _LOGGED: set[str] = set()
 
 def log_review_candidates(ids: Iterable, alias_map: Optional[dict], context: str = "") -> list[str]:
     """Print each review candidate ONCE per process (`_needs_canonical_review`
-    log line) and return the newly logged ones. Never raises."""
+    log line) and return the newly logged ones. Never raises. Ids the committed
+    registry has ruled on are skipped (the registry is read here, cached, and a
+    registry that can't be read only skips that filter: QA logging never blocks)."""
     try:
-        new = [c for c in review_candidates(ids, alias_map) if c not in _LOGGED]
+        try:
+            ruled = load_registry().ruled_ids
+        except WellAliasError:
+            ruled = frozenset()
+        new = [c for c in review_candidates(ids, alias_map, ruled) if c not in _LOGGED]
     except Exception as e:  # noqa: BLE001 — QA logging must never block ingest
         print(f"[well_aliases] review-candidate scan skipped: {type(e).__name__}")
         return []
@@ -232,10 +363,36 @@ def log_review_candidates(ids: Iterable, alias_map: Optional[dict], context: str
         _LOGGED.update(new)
         where = f" ({context})" if context else ""
         print(f"[well_aliases] _needs_canonical_review{where}: {len(new)} unmapped "
-              f"id(s) look like a possible rename / short form (NOT mapped — add "
-              f"verified pairs to Lotext merge_well_aliases.py ALIASES): {', '.join(new)}")
+              f"id(s) look like a possible rename / short form (NOT mapped — rule on "
+              f"them in data/well_registry.json, by PR): {', '.join(new)}")
     return new
 
 
 def reset_review_log() -> None:
     _LOGGED.clear()
+
+
+def _main(argv: list) -> int:
+    """`--export`: regenerate data/well_aliases.json from the registry.
+    `--check`: exit 1 if the committed file differs from the registry's export."""
+    reg = load_registry()
+    payload = alias_json_payload(reg)
+    old = open(ALIAS_JSON, encoding="utf-8").read() if os.path.exists(ALIAS_JSON) else None
+    if argv[:1] == ["--export"]:
+        if old != payload:
+            with open(ALIAS_JSON, "w", encoding="utf-8") as fh:
+                fh.write(payload)
+            print(f"{ALIAS_JSON}: WRITTEN ({len(reg.aliases)} aliases)")
+        else:
+            print(f"{ALIAS_JSON}: up to date ({len(reg.aliases)} aliases)")
+        return 0
+    if argv[:1] == ["--check"]:
+        ok = old == payload
+        print(f"{ALIAS_JSON}: {'matches' if ok else 'DIFFERS FROM'} the registry")
+        return 0 if ok else 1
+    print("usage: python3 well_aliases.py --export | --check")
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(_main(sys.argv[1:]))

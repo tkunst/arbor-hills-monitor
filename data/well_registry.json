@@ -1,0 +1,590 @@
+{
+  "_note": "SOURCE OF TRUTH for Arbor Hills well-id rulings (ADR 068 addendum 2026-10-22): spelling aliases, ruled new wells and GFL-labeled gas probes, each with its citation. Edit by PR only. data/well_aliases.json is GENERATED from this file (python3 well_aliases.py --export); never hand-edit that one.",
+  "schema_version": 1,
+  "counts": {
+    "aliases": 60,
+    "new_wells": 12,
+    "probes": 31
+  },
+  "aliases": [
+    {
+      "alias": "AH148R2",
+      "canonical": "AH148AR2",
+      "source": "2026-10-19 batch (Trisha ruled 2026-10-19 on NEW-WELLS-REVIEW-2026-10-16.md in documents/arbor-hills/wellfield-auto-staging/). The CJ/VGC gas tables print a \"Well ID\" and an \"Alias\" column; the parser reads the Alias. Each pair below is printed on the SAME reading line (Well ID -> canonical), with identical readings where both are held. Canonical = the Well-ID column, through the existing alias rule where one exists; for the letter-O/zero pairs, the zero spelling the dataset already uses for most rows.; 10 staged rows, all already held under AH148AR2",
+      "ruled": "2026-10-19"
+    },
+    {
+      "alias": "AHEW0023R",
+      "canonical": "AHEW023R",
+      "source": "2026-10-10 batch (pre-publish refuter + broader same-number scan; Trisha-approved). Canonical = the spelling in the EGLE AQD Well Master List (also the tuning-locations CSV). The first five have identical readings wherever the two spellings overlap; the sixth (423R2) never shares a date, interleaving 2023-2026 (the AHWW/AHW prefix switch).",
+      "ruled": "2026-10-10"
+    },
+    {
+      "alias": "AHEWCO13",
+      "canonical": "AHEWC013",
+      "source": "2026-10-19 batch (Trisha ruled 2026-10-19 on NEW-WELLS-REVIEW-2026-10-16.md in documents/arbor-hills/wellfield-auto-staging/). The CJ/VGC gas tables print a \"Well ID\" and an \"Alias\" column; the parser reads the Alias. Each pair below is printed on the SAME reading line (Well ID -> canonical), with identical readings where both are held. Canonical = the Well-ID column, through the existing alias rule where one exists; for the letter-O/zero pairs, the zero spelling the dataset already uses for most rows.; letter O -> zero",
+      "ruled": "2026-10-19"
+    },
+    {
+      "alias": "AHEWCO14",
+      "canonical": "AHEWC014",
+      "source": "2026-10-19 batch (Trisha ruled 2026-10-19 on NEW-WELLS-REVIEW-2026-10-16.md in documents/arbor-hills/wellfield-auto-staging/). The CJ/VGC gas tables print a \"Well ID\" and an \"Alias\" column; the parser reads the Alias. Each pair below is printed on the SAME reading line (Well ID -> canonical), with identical readings where both are held. Canonical = the Well-ID column, through the existing alias rule where one exists; for the letter-O/zero pairs, the zero spelling the dataset already uses for most rows.; letter O -> zero",
+      "ruled": "2026-10-19"
+    },
+    {
+      "alias": "AHEWHW27",
+      "canonical": "AHWWHW27",
+      "source": "2026-10-10 batch (pre-publish refuter + broader same-number scan; Trisha-approved). Canonical = the spelling in the EGLE AQD Well Master List (also the tuning-locations CSV). The first five have identical readings wherever the two spellings overlap; the sixth (423R2) never shares a date, interleaving 2023-2026 (the AHWW/AHW prefix switch).",
+      "ruled": "2026-10-10"
+    },
+    {
+      "alias": "AHEWW0081",
+      "canonical": "AHEW0081",
+      "source": "2026-10-10 batch (pre-publish refuter + broader same-number scan; Trisha-approved). Canonical = the spelling in the EGLE AQD Well Master List (also the tuning-locations CSV). The first five have identical readings wherever the two spellings overlap; the sixth (423R2) never shares a date, interleaving 2023-2026 (the AHWW/AHW prefix switch).",
+      "ruled": "2026-10-10"
+    },
+    {
+      "alias": "AHW290R",
+      "canonical": "AHWW290R",
+      "source": "2026-10-12 batch (Trisha-directed review of the ADR 068 `_needs_canonical_review` candidates). Same redrill generation only; canonical = the CSV / Well Master List spelling. Verified by the HOV tables: GFL's 2026 HOV extension request prints AHW290R at 170 and AHW302R at 160; EGLE's 4/7/2026 approval lists AHWW290R 170 and AHWW302R 160.",
+      "ruled": "2026-10-12"
+    },
+    {
+      "alias": "AHW302R",
+      "canonical": "AHWW302R",
+      "source": "2026-10-12 batch (Trisha-directed review of the ADR 068 `_needs_canonical_review` candidates). Same redrill generation only; canonical = the CSV / Well Master List spelling. Verified by the HOV tables: GFL's 2026 HOV extension request prints AHW290R at 170 and AHW302R at 160; EGLE's 4/7/2026 approval lists AHWW290R 170 and AHWW302R 160.",
+      "ruled": "2026-10-12"
+    },
+    {
+      "alias": "AHWC4106",
+      "canonical": "AHC4W106",
+      "source": "2026-10-10 batch (pre-publish refuter + broader same-number scan; Trisha-approved). Canonical = the spelling in the EGLE AQD Well Master List (also the tuning-locations CSV). The first five have identical readings wherever the two spellings overlap; the sixth (423R2) never shares a date, interleaving 2023-2026 (the AHWW/AHW prefix switch).",
+      "ruled": "2026-10-10"
+    },
+    {
+      "alias": "AHWTGW12",
+      "canonical": "AHWW501R",
+      "source": "2026-10-19 batch (Trisha ruled 2026-10-19 on NEW-WELLS-REVIEW-2026-10-16.md in documents/arbor-hills/wellfield-auto-staging/). The CJ/VGC gas tables print a \"Well ID\" and an \"Alias\" column; the parser reads the Alias. Each pair below is printed on the SAME reading line (Well ID -> canonical), with identical readings where both are held. Canonical = the Well-ID column, through the existing alias rule where one exists; for the letter-O/zero pairs, the zero spelling the dataset already uses for most rows.; Well ID AHWW0501 (TGW = Temporary Groundwater Monitoring well name; gas readings)",
+      "ruled": "2026-10-19"
+    },
+    {
+      "alias": "AHWTGW16",
+      "canonical": "AHWW424R",
+      "source": "2026-10-19 batch (Trisha ruled 2026-10-19 on NEW-WELLS-REVIEW-2026-10-16.md in documents/arbor-hills/wellfield-auto-staging/). The CJ/VGC gas tables print a \"Well ID\" and an \"Alias\" column; the parser reads the Alias. Each pair below is printed on the SAME reading line (Well ID -> canonical), with identical readings where both are held. Canonical = the Well-ID column, through the existing alias rule where one exists; for the letter-O/zero pairs, the zero spelling the dataset already uses for most rows.; Well ID AHWW0424",
+      "ruled": "2026-10-19"
+    },
+    {
+      "alias": "AHWTGW17",
+      "canonical": "AHWW419R",
+      "source": "2026-10-19 batch (Trisha ruled 2026-10-19 on NEW-WELLS-REVIEW-2026-10-16.md in documents/arbor-hills/wellfield-auto-staging/). The CJ/VGC gas tables print a \"Well ID\" and an \"Alias\" column; the parser reads the Alias. Each pair below is printed on the SAME reading line (Well ID -> canonical), with identical readings where both are held. Canonical = the Well-ID column, through the existing alias rule where one exists; for the letter-O/zero pairs, the zero spelling the dataset already uses for most rows.; Well ID AHWW0419; 2 rows also in the published 10-09 set",
+      "ruled": "2026-10-19"
+    },
+    {
+      "alias": "AHWTRO22",
+      "canonical": "AHWTR022",
+      "source": "2026-10-19 batch (Trisha ruled 2026-10-19 on NEW-WELLS-REVIEW-2026-10-16.md in documents/arbor-hills/wellfield-auto-staging/). The CJ/VGC gas tables print a \"Well ID\" and an \"Alias\" column; the parser reads the Alias. Each pair below is printed on the SAME reading line (Well ID -> canonical), with identical readings where both are held. Canonical = the Well-ID column, through the existing alias rule where one exists; for the letter-O/zero pairs, the zero spelling the dataset already uses for most rows.; letter O -> zero",
+      "ruled": "2026-10-19"
+    },
+    {
+      "alias": "AHWTRO23",
+      "canonical": "AHWTR023",
+      "source": "2026-10-19 batch (Trisha ruled 2026-10-19 on NEW-WELLS-REVIEW-2026-10-16.md in documents/arbor-hills/wellfield-auto-staging/). The CJ/VGC gas tables print a \"Well ID\" and an \"Alias\" column; the parser reads the Alias. Each pair below is printed on the SAME reading line (Well ID -> canonical), with identical readings where both are held. Canonical = the Well-ID column, through the existing alias rule where one exists; for the letter-O/zero pairs, the zero spelling the dataset already uses for most rows.; letter O -> zero",
+      "ruled": "2026-10-19"
+    },
+    {
+      "alias": "AHWTRO24",
+      "canonical": "AHWTR024",
+      "source": "2026-10-19 batch (Trisha ruled 2026-10-19 on NEW-WELLS-REVIEW-2026-10-16.md in documents/arbor-hills/wellfield-auto-staging/). The CJ/VGC gas tables print a \"Well ID\" and an \"Alias\" column; the parser reads the Alias. Each pair below is printed on the SAME reading line (Well ID -> canonical), with identical readings where both are held. Canonical = the Well-ID column, through the existing alias rule where one exists; for the letter-O/zero pairs, the zero spelling the dataset already uses for most rows.; letter O -> zero",
+      "ruled": "2026-10-19"
+    },
+    {
+      "alias": "AHWW0176",
+      "canonical": "AHWW176R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0177",
+      "canonical": "AHWW177R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0262",
+      "canonical": "AHWW262R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0266",
+      "canonical": "AHWW266R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0267",
+      "canonical": "AHWW267R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0278",
+      "canonical": "AHWW278R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0280",
+      "canonical": "AHWW280R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0287",
+      "canonical": "AHWW287R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0289",
+      "canonical": "AHWW289R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0290",
+      "canonical": "AHWW290R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0294",
+      "canonical": "AHWW294R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0297",
+      "canonical": "AHWW297R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0301",
+      "canonical": "AHWW301R",
+      "source": "found + verified 2026-08-24 (Trisha)",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0302",
+      "canonical": "AHWW302R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0312",
+      "canonical": "AHWW312R",
+      "source": "index.md Sec 2b (2026-08-12); folded in here 2026-08-24",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0312R",
+      "canonical": "AHWW312R",
+      "source": "2026-10-12 batch (Trisha-directed review of the ADR 068 `_needs_canonical_review` candidates). None of these keys occurs in this dataset's CSVs (they come from AI-extracted Measurements rows in the monitor), so the dataset is unchanged. Same redrill generation only; canonical = the CSV / Well Master List spelling. Verified by identical values on the same date in the wellfield CSV:; 3 temperatures on 2024-03-13 (151.7/151.8/152.0)",
+      "ruled": "2026-10-12"
+    },
+    {
+      "alias": "AHWW0334",
+      "canonical": "AHWW334R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0400",
+      "canonical": "AHWW400R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0401",
+      "canonical": "AHWW401R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0402",
+      "canonical": "AHWW402R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0404",
+      "canonical": "AHWW404R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0408",
+      "canonical": "AHWW408R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0410",
+      "canonical": "AHWW410R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0411",
+      "canonical": "AHWW411R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0412",
+      "canonical": "AHWW412R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0419",
+      "canonical": "AHWW419R",
+      "source": "2026-09-16 alias; it lived only in apply_2026_09_16/10_09_updates.py until 2026-10-10, then moved into the alias source",
+      "ruled": "2026-09-16"
+    },
+    {
+      "alias": "AHWW0424",
+      "canonical": "AHWW424R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0437",
+      "canonical": "AHWW437R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0501",
+      "canonical": "AHWW501R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0503",
+      "canonical": "AHWW503R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).; 3 \"overlap\" dates are blank placeholders on the 0-padded side",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0508",
+      "canonical": "AHWW508R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0512",
+      "canonical": "AHWW512R",
+      "source": "Systematic scan, 2026-08-24 (later same day) -- 28 more pairs, same 0-padded-numeric -> earliest-R-suffix pattern, zero/near-zero date overlap verified for each (see Lotext merge_well_aliases.py docstring).; real 1-date overlap (93.6°F vs 94.1°F) -- merged per Trisha, 2026-08-24",
+      "ruled": "2026-08-24"
+    },
+    {
+      "alias": "AHWW0CS9",
+      "canonical": "AHWWCS09",
+      "source": "GFL's own pair: Well ID AHWWCS09, Alias AHWW0CS9 on one row (Q4 2025 CJ report, nSITE -6434168316378583072, p309). Trisha 2026-10-22",
+      "ruled": "2026-10-22"
+    },
+    {
+      "alias": "AHWW207R2",
+      "canonical": "AHW207R2",
+      "source": "2026-10-12 batch (Trisha-directed review of the ADR 068 `_needs_canonical_review` candidates). None of these keys occurs in this dataset's CSVs (they come from AI-extracted Measurements rows in the monitor), so the dataset is unchanged. Same redrill generation only; canonical = the CSV / Well Master List spelling. Verified by identical values on the same date in the wellfield CSV:; 6 of 7 CO readings, 2022-2023",
+      "ruled": "2026-10-12"
+    },
+    {
+      "alias": "AHWW237R3",
+      "canonical": "AHW237R3",
+      "source": "2026-10-12 batch (Trisha-directed review of the ADR 068 `_needs_canonical_review` candidates). None of these keys occurs in this dataset's CSVs (they come from AI-extracted Measurements rows in the monitor), so the dataset is unchanged. Same redrill generation only; canonical = the CSV / Well Master List spelling. Verified by identical values on the same date in the wellfield CSV:; O2 0% on 2023-03-24",
+      "ruled": "2026-10-12"
+    },
+    {
+      "alias": "AHWW264R3",
+      "canonical": "AHW264R3",
+      "source": "2026-10-12 batch (Trisha-directed review of the ADR 068 `_needs_canonical_review` candidates). None of these keys occurs in this dataset's CSVs (they come from AI-extracted Measurements rows in the monitor), so the dataset is unchanged. Same redrill generation only; canonical = the CSV / Well Master List spelling. Verified by identical values on the same date in the wellfield CSV:; CO 10 ppm on 2023-03-24 (x2)",
+      "ruled": "2026-10-12"
+    },
+    {
+      "alias": "AHWW286R2",
+      "canonical": "AHW286R2",
+      "source": "2026-10-12 batch (Trisha-directed review of the ADR 068 `_needs_canonical_review` candidates). None of these keys occurs in this dataset's CSVs (they come from AI-extracted Measurements rows in the monitor), so the dataset is unchanged. Same redrill generation only; canonical = the CSV / Well Master List spelling. Verified by identical values on the same date in the wellfield CSV:; 2 CO readings (2022-03-16, 2023-03-24)",
+      "ruled": "2026-10-12"
+    },
+    {
+      "alias": "AHWW301",
+      "canonical": "AHWW301R",
+      "source": "unpadded 3rd spelling of 301R, missed by AHWW0301; 45 rows each repeat a 301R reading from the same report (Nov 2022-Mar/Apr 2023). Found by the 2026-10-10 pre-publish check; merged per Trisha 2026-10-10",
+      "ruled": "2026-10-10"
+    },
+    {
+      "alias": "AHWW310R2",
+      "canonical": "AHW310R2",
+      "source": "2026-10-12 batch (Trisha-directed review of the ADR 068 `_needs_canonical_review` candidates). None of these keys occurs in this dataset's CSVs (they come from AI-extracted Measurements rows in the monitor), so the dataset is unchanged. Same redrill generation only; canonical = the CSV / Well Master List spelling. Verified by identical values on the same date in the wellfield CSV:; 9 CO readings, 2022-2023",
+      "ruled": "2026-10-12"
+    },
+    {
+      "alias": "AHWW311R2",
+      "canonical": "AHW311R2",
+      "source": "2026-10-12 batch (Trisha-directed review of the ADR 068 `_needs_canonical_review` candidates). None of these keys occurs in this dataset's CSVs (they come from AI-extracted Measurements rows in the monitor), so the dataset is unchanged. Same redrill generation only; canonical = the CSV / Well Master List spelling. Verified by identical values on the same date in the wellfield CSV:; 9 CO readings, 2024-2025",
+      "ruled": "2026-10-12"
+    },
+    {
+      "alias": "AHWW312R2",
+      "canonical": "AHW312R2",
+      "source": "2026-10-12 batch (Trisha-directed review of the ADR 068 `_needs_canonical_review` candidates). None of these keys occurs in this dataset's CSVs (they come from AI-extracted Measurements rows in the monitor), so the dataset is unchanged. Same redrill generation only; canonical = the CSV / Well Master List spelling. Verified by identical values on the same date in the wellfield CSV:; 10 CO readings, 2024-2025",
+      "ruled": "2026-10-12"
+    },
+    {
+      "alias": "AHWW423R2",
+      "canonical": "AHW423R2",
+      "source": "2026-10-10 batch (pre-publish refuter + broader same-number scan; Trisha-approved). Canonical = the spelling in the EGLE AQD Well Master List (also the tuning-locations CSV). The first five have identical readings wherever the two spellings overlap; the sixth (423R2) never shares a date, interleaving 2023-2026 (the AHWW/AHW prefix switch).",
+      "ruled": "2026-10-10"
+    },
+    {
+      "alias": "AHWW523",
+      "canonical": "AHWW0523",
+      "source": "2026-10-10 batch (pre-publish refuter + broader same-number scan; Trisha-approved). Canonical = the spelling in the EGLE AQD Well Master List (also the tuning-locations CSV). The first five have identical readings wherever the two spellings overlap; the sixth (423R2) never shares a date, interleaving 2023-2026 (the AHWW/AHW prefix switch).",
+      "ruled": "2026-10-10"
+    },
+    {
+      "alias": "AHWWTR23",
+      "canonical": "AHWTR023",
+      "source": "2026-10-19 batch (Trisha ruled 2026-10-19 on NEW-WELLS-REVIEW-2026-10-16.md in documents/arbor-hills/wellfield-auto-staging/). The CJ/VGC gas tables print a \"Well ID\" and an \"Alias\" column; the parser reads the Alias. Each pair below is printed on the SAME reading line (Well ID -> canonical), with identical readings where both are held. Canonical = the Well-ID column, through the existing alias rule where one exists; for the letter-O/zero pairs, the zero spelling the dataset already uses for most rows.",
+      "ruled": "2026-10-19"
+    },
+    {
+      "alias": "AHWWTR24",
+      "canonical": "AHWTR024",
+      "source": "2026-10-19 batch (Trisha ruled 2026-10-19 on NEW-WELLS-REVIEW-2026-10-16.md in documents/arbor-hills/wellfield-auto-staging/). The CJ/VGC gas tables print a \"Well ID\" and an \"Alias\" column; the parser reads the Alias. Each pair below is printed on the SAME reading line (Well ID -> canonical), with identical readings where both are held. Canonical = the Well-ID column, through the existing alias rule where one exists; for the letter-O/zero pairs, the zero spelling the dataset already uses for most rows.",
+      "ruled": "2026-10-19"
+    }
+  ],
+  "new_wells": [
+    {
+      "id": "AHEFLROT",
+      "source": "3 rows 2023-11-09..2024-01-19; probably the East flare outlet (cf. AHWFLROT). A flare point, not a gas well; kept as a new point, Trisha 2026-10-19",
+      "ruled": "2026-10-19"
+    },
+    {
+      "id": "AHEWPLNT",
+      "source": "2023 Q1-Q3 VGC/CJ reports; looks like a plant/header sample point. Ruled a new well, Trisha 2026-10-15 (\"the data scientist would want the AHEWPLNT data regardless\")",
+      "ruled": "2026-10-15"
+    },
+    {
+      "id": "AHWVACW2",
+      "source": "Q2 2023 VGC report. Ruled a new well, Trisha 2026-10-15",
+      "ruled": "2026-10-15"
+    },
+    {
+      "id": "AHWWCO01",
+      "source": "AHWWCO01-04: GFL gas-extraction table (2023 Q4 report, nSITE -4573140138154359966, p227), same columns as AHWWCO05/06 already held (Temp, well vacuum). Ruled new wells, Trisha 2026-10-22",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHWWCO02",
+      "source": "AHWWCO01-04: GFL gas-extraction table (2023 Q4 report, nSITE -4573140138154359966, p227), same columns as AHWWCO05/06 already held (Temp, well vacuum). Ruled new wells, Trisha 2026-10-22",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHWWCO03",
+      "source": "AHWWCO01-04: GFL gas-extraction table (2023 Q4 report, nSITE -4573140138154359966, p227), same columns as AHWWCO05/06 already held (Temp, well vacuum). Ruled new wells, Trisha 2026-10-22",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHWWCO04",
+      "source": "AHWWCO01-04: GFL gas-extraction table (2023 Q4 report, nSITE -4573140138154359966, p227), same columns as AHWWCO05/06 already held (Temp, well vacuum). Ruled new wells, Trisha 2026-10-22",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHWWCS09",
+      "source": "AHWWCS1A/1B/1C/09/12: listed under GFL's \"Well ID\" column (2023 Q4 report p235; Q4 2025 CJ report pp287, 309), same family as AHWWCS1D already held. GFL does not define \"CS\". Ruled new wells, Trisha 2026-10-22 (rule: GFL's column label decides well vs probe).",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHWWCS12",
+      "source": "AHWWCS1A/1B/1C/09/12: listed under GFL's \"Well ID\" column (2023 Q4 report p235; Q4 2025 CJ report pp287, 309), same family as AHWWCS1D already held. GFL does not define \"CS\". Ruled new wells, Trisha 2026-10-22 (rule: GFL's column label decides well vs probe).",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHWWCS1A",
+      "source": "AHWWCS1A/1B/1C/09/12: listed under GFL's \"Well ID\" column (2023 Q4 report p235; Q4 2025 CJ report pp287, 309), same family as AHWWCS1D already held. GFL does not define \"CS\". Ruled new wells, Trisha 2026-10-22 (rule: GFL's column label decides well vs probe).",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHWWCS1B",
+      "source": "AHWWCS1A/1B/1C/09/12: listed under GFL's \"Well ID\" column (2023 Q4 report p235; Q4 2025 CJ report pp287, 309), same family as AHWWCS1D already held. GFL does not define \"CS\". Ruled new wells, Trisha 2026-10-22 (rule: GFL's column label decides well vs probe).",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHWWCS1C",
+      "source": "AHWWCS1A/1B/1C/09/12: listed under GFL's \"Well ID\" column (2023 Q4 report p235; Q4 2025 CJ report pp287, 309), same family as AHWWCS1D already held. GFL does not define \"CS\". Ruled new wells, Trisha 2026-10-22 (rule: GFL's column label decides well vs probe).",
+      "ruled": "2026-10-22"
+    }
+  ],
+  "probes": [
+    {
+      "id": "AHETGP19",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHETGP20",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHETGP21",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHETGP22",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP0002",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP0003",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP0004",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP0005",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP0006",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP0007",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP0011",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP0013",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP0017",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP001R",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP0029",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP0030",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP0031",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP0032",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP0033",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP008R",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP012R",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP014R",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP016R",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP018R",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP09R2",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP15R2",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHMP28R2",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHTGP17D",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHTGP17S",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHTGP18D",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    },
+    {
+      "id": "AHTGP18S",
+      "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
+      "ruled": "2026-10-22"
+    }
+  ]
+}

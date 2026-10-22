@@ -184,6 +184,7 @@ def run() -> int:
     # per-doc try — so a missing/malformed map fails the run red instead of
     # becoming per-doc poison strikes or a silent WOI-routing fallback.
     well_alias_map = well_aliases.load_alias_map()
+    well_registry = well_aliases.load_registry()  # ADR 068 addendum 2026-10-22; fails loudly
 
     sheets = dc.sheets_service()
     sw.ensure_tabs(sheets, sheet_id)
@@ -222,7 +223,8 @@ def run() -> int:
         print(f"[watcher] {len(new_docs)} new document(s).")
     ctx = dp.RunContext(
         cfg=cfg, sheets=sheets, sheet_id=sheet_id, session=session, model=model,
-        well_alias_map=well_alias_map, parse=parse_document, now=_now,
+        well_alias_map=well_alias_map, well_registry=well_registry, parse=parse_document,
+        now=_now,
         generic_exact=generic_exact, generic_prefixes=generic_prefixes,
         title_overrides=title_overrides)
     # The watcher's half of the shared per-document pipeline (doc_pipeline.py):

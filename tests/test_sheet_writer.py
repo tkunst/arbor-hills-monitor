@@ -419,8 +419,9 @@ def test_woi_summary_rows_shape_and_none_blanks():
     assert rows[0][1] == "AHW272R4"
     assert rows[0][2] == "yes"                     # is_woi -> yes
     assert rows[0][3] == 177.0
-    assert rows[0][-2] == "WOI Status Report"      # document_name
-    assert rows[0][-1] == LINK
+    assert rows[0][-3] == "WOI Status Report"      # document_name
+    assert rows[0][-2] == LINK
+    assert rows[0][-1] == ""                       # Point Type: blank when the summary has none
     assert rows[1][2] == "no"
     assert rows[1][3] == "" and rows[1][5] == ""   # None numerics render blank
 

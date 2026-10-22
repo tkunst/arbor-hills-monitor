@@ -52,7 +52,9 @@ def test_committed_map_loads_and_is_clean():
 def test_committed_map_never_pairs_redrill_generations_or_excluded_ids():
     amap = wa.load_alias_map()
     assert "AHWTS01R" not in amap and "AHWWTS01" not in amap
-    assert not (set(amap) | set(amap.values())) & wa.EXCLUDE_FROM_NORMALIZATION
+    # an excluded id is never renamed (never a key); it may be a target (a
+    # spelling mapped onto it, e.g. AHWTRO22 -> AHWTR022, Trisha 2026-10-19)
+    assert not set(amap) & wa.EXCLUDE_FROM_NORMALIZATION
     for k, v in amap.items():
         # a curated pair may respell an R2 (AHWW423R2 -> AHW423R2) but never change
         # the redrill generation (R2 vs R3 are different physical wells).
