@@ -139,8 +139,9 @@ counted probes as wells (553 "wells" for the 2025 Q4 CJ report, `97d39ba7`).
 - `data/well_registry.json` is the source of truth: `aliases`
   [{alias, canonical, source, ruled}], `new_wells` and `probes` [{id, source,
   ruled}] (exactly those fields; `ruled` a YYYY-MM-DD date), `schema_version`
-  and `counts`; unknown keys are refused, since the file is allowlisted past
-  the data guard. It was migrated from the Lotext
+  and `counts`; unknown keys are refused, and the file is capped (256 KB,
+  2,000 entries, 1,000-character sources and `_note`), since it is
+  allowlisted past the data guard. It was migrated from the Lotext
   source exactly (60 / 12 / 31; every set checked equal), each entry with the
   citation its comment carried there. The probes are labeled only by GFL's own
   heading: the "Probe Monitoring Site Report" lists them under "Probe ID" (Q4
@@ -166,9 +167,11 @@ counted probes as wells (553 "wells" for the 2025 Q4 CJ report, `97d39ba7`).
   renames the excluded id. Under the old rule, exporting those pairs would
   have failed the loader. The list's comment no longer says what the ids are: the registry does.
 - The monitor uses it:
-  - `review_candidates` skips ruled ids (`ruled=`); `log_review_candidates`
-    reads the committed registry itself through the same cache (a registry
-    it can't read only skips that filter: QA logging never blocks).
+  - `review_candidates` skips ruled ids (`ruled=`). The WOI router passes the
+    run's `registry.ruled_ids` to `log_review_candidates`; the Measurements
+    path (Part B) and callers without a registry fall back to the committed
+    registry through the same cache (one it can't read only skips that
+    filter: QA logging never blocks).
   - `per_well_summary(probe_ids=)` gives each row a `point_type`; the WOI Well
     Summary tab appends a `Point Type` column (rows written before are blank).
     Probes stay in the summary, marked, rather than being dropped: their gas

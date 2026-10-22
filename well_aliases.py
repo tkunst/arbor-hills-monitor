@@ -177,6 +177,9 @@ EMPTY_REGISTRY = WellRegistry(types.MappingProxyType({}), frozenset(), frozenset
                               types.MappingProxyType({}))
 _DATE_RE = re.compile(r"^20\d\d-\d\d-\d\d$")
 _MAX_SOURCE_CHARS = 1000  # a citation, not a payload (the file passes the data guard)
+_MAX_NOTE_CHARS = 1000
+_MAX_REGISTRY_BYTES = 256 * 1024
+_MAX_ENTRIES = 2000
 _TOP_KEYS = {"_note", "schema_version", "counts", "aliases", "new_wells", "probes"}
 _REG_CACHE: dict[str, WellRegistry] = {}
 
@@ -224,6 +227,11 @@ def validate_registry(doc) -> WellRegistry:
     extra = sorted(set(doc) - _TOP_KEYS)
     if extra:
         raise WellAliasError(f"well registry has unknown top-level keys: {extra}")
+    note = doc.get("_note", "")
+    if not isinstance(note, str) or len(note) > _MAX_NOTE_CHARS:
+        raise WellAliasError(f"well registry _note must be a string of <= {_MAX_NOTE_CHARS} chars")
+    if sum(len(doc.get(k) or []) for k in ("aliases", "new_wells", "probes")) > _MAX_ENTRIES:
+        raise WellAliasError(f"well registry has more than {_MAX_ENTRIES} entries")
     if doc.get("schema_version") != REGISTRY_SCHEMA_VERSION:
         raise WellAliasError(f"well registry schema_version {doc.get('schema_version')!r} "
                              f"!= {REGISTRY_SCHEMA_VERSION}")
@@ -283,6 +291,8 @@ def load_registry(path: Optional[str] = None) -> WellRegistry:
     if path in _REG_CACHE:
         return _REG_CACHE[path]
     try:
+        if os.path.getsize(path) > _MAX_REGISTRY_BYTES:
+            raise WellAliasError(f"well registry over {_MAX_REGISTRY_BYTES} bytes: {path}")
         with open(path, encoding="utf-8") as fh:
             doc = json.load(fh)
     except FileNotFoundError as e:
