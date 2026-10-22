@@ -214,13 +214,11 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
     # Peak-temp preservation (see docstring). On a hot report the peak is already
     # in the >= watch_f set; on an all-cool report this adds the one peak row so
     # is_urgent never reaches its permitted-ceiling-matching free-text fallback.
-    # The peak anchor is a WELL's reading when there is one: a GFL-labeled
-    # probe (the well registry, ADR 068 addendum 2026-10-22) is never the
-    # site peak. Probes print no temperature in the corpus; the fallback keeps
-    # the anchor if one ever does and no well has a temperature.
+    # (The anchor is the hottest as-found reading of ANY point, probes
+    # included, so the registry never changes what reaches Measurements; the
+    # headline is the hottest WELL, see build_key_data_point.)
     probes = registry.probes if registry is not None else frozenset()
-    wells_af = [r for r in asfound if r.well_id not in probes] or asfound
-    peak = max(wells_af, key=lambda r: r.temp) if wells_af else None
+    peak = max(asfound, key=lambda r: r.temp) if asfound else None
     if peak is not None and peak.temp < watch_f:
         measurements.extend(wtp.to_measurements(peak))
 
@@ -263,7 +261,8 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
     # auto-mapped (ADR 068 _needs_canonical_review).
     well_aliases.log_review_candidates(
         [r.raw_well_id for r in readings], alias_map,
-        context=f"WOI report {metadata.get('doc_id', '?')}")
+        context=f"WOI report {metadata.get('doc_id', '?')}",
+        ruled=registry.ruled_ids if registry is not None else None)
     summary = wtp.per_well_summary(valid, woi_set=woi_set,
                                    probe_ids=set(probes) if registry is not None else None)
     n_probes = sum(1 for d in summary if d.get("point_type") == "probe")
@@ -281,9 +280,10 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
     n_hot_wells = sum(1 for d in summary if (d["max_temp_f"] or 0) >= watch_f
                       and d.get("point_type") != "probe")
     print(f"[woi_router] ROUTED {metadata.get('document_name')!r}: {len(readings)} "
-          f"readings ({validity:.1f}% valid), {len(summary) - n_probes} wells "
-          f"+ {n_probes} probes "
-          f"({len(woi_set)} on the WOI list), {n_hot} as-found readings "
+          f"readings ({validity:.1f}% valid), "
+          + (f"{len(summary) - n_probes} wells + {n_probes} probes "
+             if registry is not None else f"{len(summary)} points (probes not known) ")
+          + f"({len(woi_set)} on the WOI list), {n_hot} as-found readings "
           f">= {watch_f:.0f}F -> {len(measurements)} measurements "
           f"({len(co_measurements)} of them CO; {n_hot_wells} wells "
           f">= {watch_f:.0f}F). Replaced the windowed set.")
