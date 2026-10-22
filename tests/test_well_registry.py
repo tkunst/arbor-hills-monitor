@@ -3,7 +3,6 @@ the single source of truth for well-id rulings (aliases, ruled new wells,
 GFL-labeled probes). Loader + validation, the generated alias map, and the
 monitor's use of it (rename check, per-well summary, headline, well_watch).
 Hermetic: synthetic maps and PDFs."""
-import copy
 import json
 import os
 
@@ -41,9 +40,9 @@ def _mini():
     return {
         "schema_version": 1,
         "counts": {"aliases": 1, "new_wells": 1, "probes": 1},
-        "aliases": [{"alias": "AHWW0CS9", "canonical": "AHWWCS09", "source": "p309", "ruled": None}],
-        "new_wells": [{"id": "AHWWCS09", "source": "Well ID column", "ruled": None}],
-        "probes": [{"id": "AHMP0002", "source": "Probe ID column", "ruled": None}],
+        "aliases": [{"alias": "AHWW0CS9", "canonical": "AHWWCS09", "source": "p309", "ruled": "2026-10-22"}],
+        "new_wells": [{"id": "AHWWCS09", "source": "Well ID column", "ruled": "2026-10-22"}],
+        "probes": [{"id": "AHMP0002", "source": "Probe ID column", "ruled": "2026-10-22"}],
     }
 
 
@@ -111,21 +110,28 @@ def _bad(fn):
     (_bad(lambda d: d.update(schema_version=2)), "schema_version"),
     (_bad(lambda d: d["counts"].update(probes=2)), "counts"),
     (_bad(lambda d: d.pop("probes")), "no 'probes'"),
-    (_bad(lambda d: d["probes"][0].update(source="")), "lacks"),
-    (_bad(lambda d: (d["probes"].append({"id": "AHWWCS09", "source": "x"}),
+    (_bad(lambda d: d["probes"][0].update(source="")), "exactly"),
+    (_bad(lambda d: d["probes"][0].update(ruled=None)), "exactly"),
+    (_bad(lambda d: d["probes"][0].update(ruled="10/22/2026")), "exactly"),
+    (_bad(lambda d: d["probes"][0].update(note="extra")), "exactly"),
+    (_bad(lambda d: d.update(blob=[1, 2, 3])), "unknown top-level"),
+    (_bad(lambda d: d["aliases"].__setitem__(0, {"alias": "AHWW0312R2", "canonical": "AHWW312R3",
+                                                  "source": "x", "ruled": "2026-10-22"})),
+     "redrill generation"),
+    (_bad(lambda d: (d["probes"].append({"id": "AHWWCS09", "source": "x", "ruled": "2026-10-22"}),
                      d["counts"].update(probes=2))), "twice"),
-    (_bad(lambda d: (d["new_wells"].append({"id": "AHWW0CS9", "source": "x"}),
+    (_bad(lambda d: (d["new_wells"].append({"id": "AHWW0CS9", "source": "x", "ruled": "2026-10-22"}),
                      d["counts"].update(new_wells=2))), "twice"),
-    (_bad(lambda d: d["new_wells"].__setitem__(0, {"id": "AHWW0CS9X", "source": "x"})
+    (_bad(lambda d: d["new_wells"].__setitem__(0, {"id": "AHWW0CS9X", "source": "x", "ruled": "2026-10-22"})
           or d["aliases"].__setitem__(0, {"alias": "AHWW0CS9X", "canonical": "AHWWCS09",
-                                           "source": "x"})), "twice"),
+                                           "source": "x", "ruled": "2026-10-22"})), "twice"),
     (_bad(lambda d: d["aliases"].__setitem__(0, {"alias": "AHMP0002", "canonical": "AHWWCS09",
-                                                  "source": "x"})), "twice"),
+                                                  "source": "x", "ruled": "2026-10-22"})), "twice"),
     (_bad(lambda d: d["aliases"].__setitem__(0, {"alias": "AHWW0CS9", "canonical": "AHMP0002",
-                                                  "source": "x"})), "probes used"),
-    (_bad(lambda d: d["probes"].__setitem__(0, {"id": "MP-2", "source": "x"})), "non-AH"),
+                                                  "source": "x", "ruled": "2026-10-22"})), "probes used"),
+    (_bad(lambda d: d["probes"].__setitem__(0, {"id": "MP-2", "source": "x", "ruled": "2026-10-22"})), "non-AH"),
     (_bad(lambda d: d["aliases"].__setitem__(0, {"alias": "AHWTS01R", "canonical": "AHWWTS01",
-                                                  "source": "x"})), "excluded"),
+                                                  "source": "x", "ruled": "2026-10-22"})), "excluded"),
 ])
 def test_malformed_registry_raises(tmp_path, doc, match):
     with pytest.raises(wa.WellAliasError, match=match):
@@ -134,7 +140,7 @@ def test_malformed_registry_raises(tmp_path, doc, match):
 
 def test_ruled_new_well_as_alias_key_raises(tmp_path):
     doc = _mini()
-    doc["aliases"] = [{"alias": "AHWWCS09", "canonical": "AHWWCS9X", "source": "x"}]
+    doc["aliases"] = [{"alias": "AHWWCS09", "canonical": "AHWWCS9X", "source": "x", "ruled": "2026-10-22"}]
     with pytest.raises(wa.WellAliasError, match="twice"):
         wa.load_registry(_write(tmp_path, doc))
 
@@ -182,7 +188,7 @@ def test_per_well_summary_marks_probes():
           w.WOIReading("AHMP0002", "AHMP0002", "1/2/2025 10:00", False, 1, 0, 0, 21, 79)]
     rows = w.per_well_summary(rs, probe_ids={"AHMP0002"})
     assert {d["well"]: d["point_type"] for d in rows} == {"AHW1": "well", "AHMP0002": "probe"}
-    assert all(d["point_type"] == "well" for d in w.per_well_summary(rs))
+    assert all(d["point_type"] is None for d in w.per_well_summary(rs))   # no registry: unknown
 
 
 def test_headline_never_names_a_probe():
@@ -211,5 +217,39 @@ def test_route_measurements_without_a_registry_is_unchanged(tmp_path):
     pdf = _build_pdf(tmp_path / "woi.pdf", _many(60))
     a = woi_router.route_measurements(_parsed(), pdf, META, CFG)
     b = woi_router.route_measurements(_parsed(), pdf, META, CFG, registry=wa.EMPTY_REGISTRY)
-    assert [copy.deepcopy(d) for d in a["summary"]] == b["summary"]
+    strip = [{k: v for k, v in d.items() if k != "point_type"} for d in a["summary"]]
+    assert strip == [{k: v for k, v in d.items() if k != "point_type"} for d in b["summary"]]
     assert a["n_probes"] == b["n_probes"] == 0
+    # no registry: the point type is unknown (blank in the Sheet), never "well"
+    assert {d["point_type"] for d in a["summary"]} == {None}
+    assert {d["point_type"] for d in b["summary"]} == {"well"}
+
+
+def test_registry_is_read_only():
+    reg = wa.load_registry()
+    with pytest.raises(TypeError):
+        reg.aliases["AHWW9999"] = "AHWW999R"
+
+
+def test_alias_map_must_match_the_registry():
+    reg = wa.load_registry()
+    wa.check_alias_map_matches(wa.load_alias_map(), reg)
+    stale = dict(reg.aliases)
+    stale.pop("AHWW0CS9")
+    with pytest.raises(wa.WellAliasError, match="--export"):
+        wa.check_alias_map_matches(stale, reg)
+
+
+@pytest.mark.parametrize("modname", ["watcher", "backfill"])
+def test_run_fails_loudly_when_the_alias_map_drifts_from_the_registry(monkeypatch, modname):
+    import importlib
+    mod = importlib.import_module(modname)
+    monkeypatch.setenv("GSHEET_ID", "sid")
+    monkeypatch.setattr(mod, "load_config", lambda: {
+        "anthropic_model": "m", "backfill_batch_size": 1,
+        "large_doc_page_threshold": 30, "large_doc_max_keyword_pages": 10})
+    monkeypatch.setattr(mod.well_aliases, "load_alias_map", lambda *a, **k: {"AHWW0177": "AHWW177R"})
+    monkeypatch.setattr(mod.dc, "sheets_service",
+                        lambda: pytest.fail("touched the Sheet with a drifted alias map"))
+    with pytest.raises(wa.WellAliasError, match="differs"):
+        mod.run()

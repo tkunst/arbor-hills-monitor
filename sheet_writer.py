@@ -776,7 +776,7 @@ def woi_summary_rows(summary: list[dict], metadata: dict, link: str) -> list[lis
             cell(d.get("n_readings")),
             metadata.get("document_name", ""),
             link,
-            d.get("point_type", ""),
+            d.get("point_type") or "",
         ])
     return rows
 
