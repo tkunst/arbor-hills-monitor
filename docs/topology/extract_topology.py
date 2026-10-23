@@ -94,6 +94,7 @@ DOMAIN = {
     "gfl_air_episodes": "processing",  # Stream E episode state machine + ET time helpers (ADR 039)
     "gfl_air_emails": "processing",    # Stream E exceedance / SCREENING / CLOSEOUT email rendering
     "gfl_air_liveness": "processing",  # Stream E liveness decision + body (ADR 014 addendum)
+    "doc_pipeline_liveness": "processing",  # document-pipeline stall guard: health update + decision + body (stall-hardening)
     "gfl_info_site_client": "ingestion",  # GFL info-site fetch + <main> normalize (ADR 041)
     "pfas_pws_client": "ingestion",    # EGLE PWS PFAS ArcGIS fetch + classify (ADR 042)
     "ridgewood_client": "ingestion",   # Ridge Wood H2S report scrape + fail-safe extract (ADR 016)
@@ -124,8 +125,8 @@ DOMAIN = {
     "archive_client": "persistence", "email_alerts": "persistence",
     "snapshot_exporter": "persistence",  # snapshot -> immutable Drive file for ROP/MMD/Submissions/PFAS (ADR 072, default off)
     "owner_notices": "persistence",    # owner-only weekly email + same-day owner alerts (ADR 070)
+    "dataset_provenance": "persistence",  # Dataset Provenance tab + annotation columns (coder:dataset-provenance-sheet)
     "upcoming": "persistence",         # private Sheet "Upcoming" tab for the Sunday digest
-    "dataset_provenance": "persistence",  # Dataset Provenance tab + annotation columns, public Sheet (coder:dataset-provenance-sheet)
     # Public site publishing (GitHub Pages)
     "findings_feed": "publishing",     # public-records pages + search index renderer (pure)
     "public_comment_feed": "publishing",  # public comment periods page renderer (ADR 035)
@@ -229,6 +230,7 @@ DATA_EDGES = [
     ("ride_docs_watcher", "ds:private-sheet", "read"), ("ride_docs_watcher", "ds:private-sheet", "write"),
     ("upcoming", "ds:private-sheet", "read"),
     ("owner_notices", "ds:private-sheet", "write"),
+    ("dataset_provenance", "ds:case-file-sheet", "write"),
     ("review_flags", "ds:private-sheet", "write"),
     # Drive mirrors (via archive_client)
     ("civicclerk_archiver", "ds:drive-archive", "write"),
