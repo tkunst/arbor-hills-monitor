@@ -70,6 +70,7 @@ CONFIDENCE = ("primary", "secondary")
 KIND_PROPOSED = "proposed_match"
 KIND_UNMATCHED = "unmatched_periodic"
 KIND_BAD_ROW = "bad_row"
+KIND_AGENCY_SKIPPED = "agency_skipped_periodic"
 
 REVIEW_SUBJECT = "[Arbor Hills monitor] Report tracker review (for Trisha only)"
 
@@ -372,19 +373,26 @@ def _regex_is_fast(pat: "re.Pattern", budget_s: float = 0.5) -> bool:
     def _timeout(signum, frame):
         raise TimeoutError
 
+    prior_timer = signal.getitimer(signal.ITIMER_REAL)
     old = signal.signal(signal.SIGALRM, _timeout)
+    slow = False
     try:
         signal.setitimer(signal.ITIMER_REAL, budget_s)
         try:
             for probe in _PROBE_STRINGS:
                 pat.search(probe)
         except TimeoutError:
-            return False
+            slow = True
         finally:
             signal.setitimer(signal.ITIMER_REAL, 0)
+    except TimeoutError:          # the alarm landed after the loop, before it was cancelled
+        pass
     finally:
-        signal.signal(signal.SIGALRM, old)
-    return True
+        if old is not None:
+            signal.signal(signal.SIGALRM, old)
+        if prior_timer[0] > 0:    # a caller's own watchdog stays armed
+            signal.setitimer(signal.ITIMER_REAL, *prior_timer)
+    return not slow
 
 
 def parse_match_rule(s: str) -> MatchRule:
@@ -462,7 +470,8 @@ _MON = r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?
 _MONTH_RANGE_RE = re.compile(
     r"\b" + _MON + r"\.?\s*(?:\d{1,2},?\s*)?(?:" + _YEAR + r"\s*)?(?:[-–—]|to|through|thru|and)\s*"
     + _MON + r"\.?\s*(?:\d{1,2},?\s*)?" + _YEAR + r"\b", re.I)
-_MONTH_YEAR_RE = re.compile(r"(?<![-–—])(?<![-–—] )(?<!\bto )(?<!and )\b" + _MON + r"\s+" + _YEAR + r"\b", re.I)
+_MONTH_YEAR_RE = re.compile(r"(?<![-–—])(?<![-–—] )(?<!\bto )(?<!and )(?<!through )(?<!thru )\b"
+                            + _MON + r"\s+" + _YEAR + r"\b", re.I)
 _DATE_RANGE_RE = re.compile(r"\b(\d{6})\s*(?:through|thru|to|[-–—])\s*(\d{6})\b")
 _DATED_RE = re.compile(r"\b(?:dated|due)\s+(\d{1,2})/(\d{1,2})/((?:19|20)\d\d)\b", re.I)
 _YEAR_RE = re.compile(r"(?<![\d-])((?:19|20)\d\d)(?![\d-])")
@@ -556,7 +565,10 @@ def extract_period(name: str, rec: Record) -> Optional[Period]:
             m = _LABELED_YEAR_RE.search(t)
             if m:
                 return Period("Y", int(m.group(1)), 1)
-            years = _YEAR_RE.findall(t)   # a "2020-0593-CE" case number never counts
+            # A hyphen-adjacent year never counts: that excludes a "2020-0593-CE"
+            # case number, and deliberately also "Annual Report 2024-2025"
+            # (ambiguous: proposed, not guessed).
+            years = _YEAR_RE.findall(t)
             return Period("Y", int(years[-1]), 1) if years else None
         if name == "record_period":
             return parse_period(rec.period_hint) if rec.period_hint else None
@@ -975,8 +987,12 @@ def resolve_facility(rec: Record, facilities: list) -> list:
     active facility that lists the stream."""
     hits = [f.facility_id for f in facilities
             if f.active and (f.matches_text(rec.facility_text) or f.matches_text(rec.title))]
-    if not hits and rec.stream in SINGLE_SITE_STREAMS:
-        hits = [f.facility_id for f in facilities if f.active and rec.stream in f.streams]
+    if not hits and (rec.stream in SINGLE_SITE_STREAMS
+                     or (rec.stream == "nsite" and not (rec.facility_text or "").strip())):
+        # Single-site streams, and nSITE feed rows predating the Facility
+        # column (blank cell): the one active facility that lists the stream.
+        owners = [f.facility_id for f in facilities if f.active and rec.stream in f.streams]
+        hits = owners if len(owners) == 1 or rec.stream in SINGLE_SITE_STREAMS else []
     return hits
 
 
@@ -1294,9 +1310,10 @@ def build_review_email(review_rows: list, since: date, runs_row: Optional[dict])
         by_kind.setdefault(r["kind"], []).append(r)
     titles = {KIND_PROPOSED: "PROPOSED MATCHES (not applied; add a hand Report Arrivals row or fix the rule)",
               KIND_UNMATCHED: "UNMATCHED PERIODIC TITLES (no schedule rule matched; fix the schedule)",
-              KIND_BAD_ROW: "HAND-TABLE ROWS SKIPPED (fix the row; it is not expanded)"}
+              KIND_BAD_ROW: "HAND-TABLE ROWS SKIPPED (fix the row; it is not expanded)",
+              KIND_AGENCY_SKIPPED: "AGENCY-SKIPPED TITLES THAT READ PERIODIC (Decision 4; add a hand row if one is a filing)"}
     n = 1
-    for kind in (KIND_PROPOSED, KIND_UNMATCHED, KIND_BAD_ROW):
+    for kind in (KIND_PROPOSED, KIND_UNMATCHED, KIND_BAD_ROW, KIND_AGENCY_SKIPPED):
         rows = by_kind.get(kind)
         if not rows:
             continue
@@ -1397,15 +1414,28 @@ def run(today: Optional[date] = None, send_email: bool = False, cfg: Optional[di
         a = arrival_by_key.get(lr["instance_key"])
         if a is None or lr["date_received"] or idx >= len(log_rownums):
             continue
+        # ADR step 4: filed_date if known, else the date we first saw it —
+        # never doc_date (the report's own date, years before a FOIA release).
         received = (a["filed_date"][:10] if _ymd(a["filed_date"]) else
-                    a["doc_date"][:10] if _ymd(a["doc_date"]) else
                     a["first_seen_at"][:10] if _ymd(a["first_seen_at"]) else today.isoformat())
         lr["date_received"], lr["received_via"] = received, a["arrival_id"] or "hand"
-        fills.append((log_rownums[idx], received, lr["received_via"]))
+        fills.append((log_rownums[idx], received, lr["received_via"], lr["instance_key"]))
     streams_in_use = {s for f in facilities if f.active for s in f.streams}
     records = load_stream_records(service, public_id, private_id, streams_in_use)
     for rec in records:
-        if (rec.stream, rec.ref) in arrived_refs or agency_re.search(rec.title or ""):
+        if (rec.stream, rec.ref) in arrived_refs:
+            continue
+        if agency_re.search(rec.title or ""):
+            # Decision 4 skip — but a skipped title that READS periodic is
+            # shown once, so an over-broad agency regex can't silently turn a
+            # real filing into a "missing" report.
+            if looks_periodic(rec.title, periodic_re) and resolve_facility(rec, facilities):
+                k = (KIND_AGENCY_SKIPPED, rec.stream, rec.ref)
+                if k not in review_seen:
+                    review_seen.add(k)
+                    review_new.append([now, KIND_AGENCY_SKIPPED, ",".join(resolve_facility(rec, facilities)),
+                                       rec.stream, rec.ref, rec.title[:200],
+                                       "skipped by agency_title_regex (Decision 4); not an arrival"])
             continue
         m = match_record(rec, schedules, facilities)
         if m is None:
@@ -1432,10 +1462,10 @@ def run(today: Optional[date] = None, send_email: bool = False, cfg: Optional[di
             if idx < len(log_rownums) and lr["instance_key"] == key and not lr["date_received"]:
                 received = rec.filed_date[:10] if _ymd(rec.filed_date) else today.isoformat()
                 lr["date_received"], lr["received_via"] = received, arrival_id(rec.stream, rec.ref)
-                fills.append((log_rownums[idx], received, lr["received_via"]))
+                fills.append((log_rownums[idx], received, lr["received_via"], lr["instance_key"]))
     if new_arrivals:
         sw.append_rows(service, private_id, sw.TAB_REPORT_ARRIVALS, new_arrivals)
-    for rownum, received, via in fills:
+    for rownum, received, via, _key in fills:
         _update_cells(service, private_id, sw.TAB_MISSING_OVERDUE, f"I{rownum}:J{rownum}", [[received, via]])
 
     # 5. Find missing (never a duplicate instance_key).
@@ -1460,7 +1490,7 @@ def run(today: Optional[date] = None, send_email: bool = False, cfg: Optional[di
     # before today) that this run filled, plus hand-filled rows whose
     # date_received falls on/after the previous run's date (the entered date
     # is the only signal of WHEN a hand entry was made).
-    filled_keys = {lr["instance_key"] for lr in log_rows if lr["received_via"] in {f[2] for f in fills}}
+    filled_keys = {f[3] for f in fills}
     completed: dict = {}
     for r in log_rows:
         if not is_complete(r, today):
@@ -1517,7 +1547,6 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument("--today", help="run as of this ISO date (tests/replays)")
     ap.add_argument("--email", action="store_true", help="send the owner-only review email this run")
     args = ap.parse_args(argv)
-    today = date.fromisoformat(args.today) if args.today else None
     email = args.email or str(os.environ.get("REPORT_TRACKER_EMAIL", "")).lower() == "true"
     # stdout is public: googleapiclient's retry logger would print each
     # retried request URI (which carries the private spreadsheet id), and an
@@ -1525,6 +1554,7 @@ def main(argv: Optional[list] = None) -> int:
     # ride_docs_watcher.
     logging.getLogger("googleapiclient.http").setLevel(logging.ERROR)
     try:
+        today = date.fromisoformat(args.today) if args.today else None
         return run(today=today, send_email=email)
     except Exception as e:  # noqa: BLE001 — class + scrubbed message only
         print(f"[report_tracker] failed: {type(e).__name__}: {scrub(e)}")

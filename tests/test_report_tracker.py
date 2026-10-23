@@ -533,7 +533,7 @@ def test_open_log_row_is_reconciled_against_a_hand_arrival(world):
     assert rt.run(today=date(2026, 10, 25), cfg=_cfg()) == 0
     log = {r["instance_key"]: r for r in _rows(fake, sw.TAB_MISSING_OVERDUE)}
     row = log["carleton-farms|hov-aoi-semiannual|2024H1"]
-    assert row["date_received"] == "2024-08-10" and row["received_via"] == "Ahand000001"
+    assert row["date_received"] == "2026-10-24" and row["received_via"] == "Ahand000001"   # first_seen_at, never doc_date
     assert _rows(fake, sw.TAB_REPORT_TRACKER_RUNS)[-1]["completed_today"] == "1"
 
 
@@ -578,6 +578,61 @@ def test_month_year_ignores_a_spaced_range_and_periodic_regex_word_boundary():
 def test_pathological_regex_is_rejected_at_load():
     with pytest.raises(ValueError, match="too slow"):
         rt.parse_match_rule(r"stream=nsite; title_regex=(\w+\s?)+Report$; period_from=auto")
+
+
+def test_seed_text_passes_the_name_denylist():
+    import name_check
+    for table, rows in seed.TABLES.items():
+        for row in rows:
+            hits = [h for h in name_check.find_denylist_hits(" ".join(str(c) for c in row))
+                    if h.get("kind") != "internal_marker"]   # names only; "hand-curated" is a marker
+            assert not hits, (table, row[0], hits)
+    assert "E700318" not in open(seed.__file__, encoding="utf-8").read()
+
+
+def test_blank_facility_nsite_row_resolves_to_the_nsite_facility():
+    facs, scheds = _schedules()
+    rec = rt.Record("nsite", "123", "Fourth Quarter Report CJ 2024", facility_text="")
+    assert rt.resolve_facility(rec, facs) == ["arbor-hills"]
+    m = rt.match_record(rec, scheds, facs)
+    assert m is not None and (m.confidence, m.period) == ("high", "2024Q4")
+    # A hand-curated row with a blank facility still needs its text.
+    assert rt.resolve_facility(rt.Record("hand-curated", "x", "Fourth Quarter Report CJ 2024"), facs) == []
+
+
+def test_agency_skipped_periodic_title_is_reviewed_once(world):
+    fake = world
+    fake.books["PUB"].tabs[sw.TAB_NEW].append(_feed_row(
+        "Compliance Communication re Second Semi-Annual 2025 NESHAP report", "2026-10-01",
+        "https://mienviro.michigan.gov/ncore/downloadpdf/222222222222222222"))
+    assert rt.run(today=TODAY, cfg=_cfg()) == 0
+    assert rt.run(today=TODAY, cfg=_cfg()) == 0
+    review = [r for r in _rows(fake, sw.TAB_REPORT_TRACKER_REVIEW) if r["kind"] == rt.KIND_AGENCY_SKIPPED]
+    assert len(review) == 1 and "Compliance Communication" in review[0]["title"]
+    assert "222222222222222222" not in {a["source_ref"] for a in _rows(fake, sw.TAB_REPORT_ARRIVALS)}
+
+
+def test_agency_regex_is_anchored_for_common_operator_words():
+    from config_loader import load_config
+    agency = re.compile(load_config()["report_tracking"]["agency_title_regex"], re.I)
+    assert not agency.search("GFL email transmitting the 2025 Second Semi-Annual NESHAP report")
+    assert not agency.search("Quarterly Consent Judgment report (evaluation of probes)")
+    assert agency.search("Email follow-up on CJ report review comments") and agency.search("Consent Order 115-05-2023")
+
+
+def test_regex_probe_restores_a_callers_timer():
+    import signal
+    signal.setitimer(signal.ITIMER_REAL, 30)
+    try:
+        assert rt._regex_is_fast(re.compile(r"Status Report"))
+        remaining = signal.getitimer(signal.ITIMER_REAL)[0]
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert 20 < remaining <= 30
+
+
+def test_month_year_ignores_through():
+    assert rt.extract_period("month_year", rt.Record("nsite", "r", "October through December 2025")) is None
 
 
 def test_scrub_strips_urls_and_long_ids():
@@ -869,7 +924,7 @@ def test_tracker_never_writes_a_public_tab(world):
     before = {t: [list(r) for r in rows] for t, rows in fake.books["PUB"].tabs.items()}
     assert rt.run(today=TODAY, cfg=_cfg()) == 0
     assert fake.books["PUB"].tabs == before
-    assert all(t == "PRIV" or False for t, _ in fake.books["PUB"].updates) if fake.books["PUB"].updates else True
+    assert not fake.books["PUB"].updates
 
 
 def test_seed_apply_is_idempotent(world):

@@ -209,8 +209,9 @@ EXPECTED = [
          report_name="R 299.4433(4) boundary-methane notification to MMD",
          obligation_source="Part 115 Rule 433(4) (verify notification timing when activating)",
          citation_confidence="secondary", recipient="MMD", cadence="event", active="N",
-         notes="FOIA E700318-100826 (granted 10/15/2026, deposit pending) covers these notifications; "
-               "pre-fill foia_request_id on any instance that is later logged."),
+         notes="An open FOIA request (granted 10/15/2026, deposit pending) covers these notifications; "
+               "pre-fill foia_request_id by hand on any instance that is later logged (the id lives "
+               "only on the private Sheet)."),
     # ---- Carleton Farms ----
     _exp(schedule_id="cf-hov-traditional-monthly", facility_id="carleton-farms", report_type="hov-traditional-monthly",
          report_name="HOV Traditional Well Monthly Status Report",
@@ -341,10 +342,10 @@ ARRIVALS = [
     # WOI status reports: all 17 from Jan-Feb 2022 through 2026 H1 (HOV index §2 / §7c).
     _arr(_AH, "woi-status", "2022B1", "email-hand", _LX + "source-docs/egle-aqd-records-2026-10-08/WOI-status-report-2022-Jan-Feb.pdf", "2022-03-15", "", "March 15, 2022 Bi-Monthly WOI Status Report (EGLE records 10/8/2026)"),
     _arr(_AH, "woi-status", "2022B2", "nsite", "603180310030693456", "2022-05-12", "2026-10-08", "bi-monthly, March-April 2022"),
-    _arr(_AH, "woi-status", "2022B3", "email-hand", _LX + "source-docs/egle-woi-downhole-2026-08-20/ (May-June 2022)", "2022-07-20", "", "from Kovalchick 2026-08-20; also Hand-Curated"),
+    _arr(_AH, "woi-status", "2022B3", "email-hand", _LX + "source-docs/egle-woi-downhole-2026-08-20/ (May-June 2022)", "2022-07-20", "", "EGLE AQD records obtained 2026-08-20; also Hand-Curated"),
     _arr(_AH, "woi-status", "2022B4", "email-hand", _LX + "source-docs/egle-aqd-records-2026-10-08/WOI-status-report-2022-Jul-Aug.pdf", "2022-09-15", "", "filed 9/15/2022"),
     _arr(_AH, "woi-status", "2022B5", "nsite", "6318109379845527354", "2022-11-15", "2026-02-05", "bi-monthly, September-October 2022"),
-    _arr(_AH, "woi-status", "2022B6", "email-hand", _LX + "source-docs/egle-woi-downhole-2026-08-20/ (Nov-Dec 2022)", "2023-01-15", "", "from Kovalchick 2026-08-20; also Hand-Curated"),
+    _arr(_AH, "woi-status", "2022B6", "email-hand", _LX + "source-docs/egle-woi-downhole-2026-08-20/ (Nov-Dec 2022)", "2023-01-15", "", "EGLE AQD records obtained 2026-08-20; also Hand-Curated"),
     _arr(_AH, "woi-status", "2023B1", "email-hand", _LX + "source-docs/egle-aqd-records-2026-10-08/WOI-status-report-2023-Jan-Feb.pdf", "2023-03-15", "", "March 15, 2023 Bi-Monthly WOI Report"),
     _arr(_AH, "woi-status", "2023B2", "nsite", "6899614001871945975", "2023-05-11", "2026-02-05", "bi-monthly, March-April 2023"),
     _arr(_AH, "woi-status", "2023Q2", "nsite", "-2136493721019571731", "2023-07-14", "2026-02-05", "quarterly, Q2 2023"),
