@@ -459,7 +459,7 @@ def render_page(open_entries: list[dict], closed_entries: list[dict],
 {_COUNTDOWN_SCRIPT}
 
 <footer class="site-footer">
-<p>Generated {_esc(generated_at)} from Michigan EGLE's public notices. This is an informational summary, not a legal notice; always confirm the deadline and details on EGLE's own portal before relying on them. An independent project. All source data is public regulatory filings from Michigan EGLE.</p>
+<p>Generated {_esc(generated_at)} from Michigan EGLE's public notices. This is an informational summary, not a legal notice; always confirm the deadline and details on EGLE's own portal before relying on them. An independent project of Landfill Records Project LLC. All source data is public regulatory filings from Michigan EGLE.</p>
 </footer>
 
 </div>
