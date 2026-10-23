@@ -287,8 +287,13 @@ def test_review_log_uses_the_runs_registry_when_given():
 
 
 def test_ruled_ids_include_canonical_spellings():
-    # a canonical id beside a new unmapped spelling: only the new one is flagged
-    reg = wa.validate_registry(_mini())
+    # a canonical id beside a new unmapped spelling: only the new one is flagged.
+    # The canonical is NOT also a ruled new well here, so only aliases.values()
+    # can suppress it.
+    doc = _mini()
+    doc["new_wells"] = []
+    doc["counts"]["new_wells"] = 0
+    reg = wa.validate_registry(doc)
     assert "AHWWCS09" in reg.ruled_ids
     ids = ["AHWWCS09", "AHWWCS9"]              # same stem
     assert wa.review_candidates(ids, dict(reg.aliases), reg.ruled_ids) == ["AHWWCS9"]
@@ -301,13 +306,36 @@ def test_router_passes_the_runs_ruled_ids_to_the_review_log(tmp_path, monkeypatc
                         lambda ids, amap, context="", ruled=None: seen.append(ruled)
                         or real(ids, amap, context, ruled))
     pdf = _build_pdf(tmp_path / "woi.pdf", _many(60))
-    woi_router.route_measurements(_parsed(), pdf, META, CFG, registry=wa.EMPTY_REGISTRY)
+    reg = wa.validate_registry(_mini())
+    woi_router.route_measurements(_parsed(), pdf, META, CFG, registry=reg)
     woi_router.route_measurements(_parsed(), pdf, META, CFG)
-    assert seen == [wa.EMPTY_REGISTRY.ruled_ids, None]
+    assert seen == [reg.ruled_ids, None] and reg.ruled_ids
 
 
 def test_oversized_registry_file_raises(tmp_path):
     path = tmp_path / "well_registry.json"
-    path.write_text(json.dumps(_mini()) + " " * (300 * 1024))
+    path.write_text(json.dumps(_mini()) + " " * (2_600_000))
     with pytest.raises(wa.WellAliasError, match="bytes"):
         wa.load_registry(str(path))
+
+
+def test_entry_cap(tmp_path):
+    doc = _mini()
+    doc["probes"] = [{"id": f"AHMP{k:05d}", "source": "x", "ruled": "2026-10-22"} for k in range(2000)]
+    doc["counts"]["probes"] = 2000
+    with pytest.raises(wa.WellAliasError, match="more than 2000"):
+        wa.validate_registry(doc)
+
+
+def test_a_non_list_section_is_a_registry_error_not_a_type_error():
+    doc = _mini()
+    doc["aliases"] = 5
+    with pytest.raises(wa.WellAliasError, match="no 'aliases' list"):
+        wa.validate_registry(doc)
+
+
+def test_committed_registry_has_room_under_the_caps():
+    size = os.path.getsize(wa.REGISTRY_JSON)
+    doc = _committed()
+    assert size < wa._MAX_REGISTRY_BYTES * 0.25
+    assert sum(len(doc[k]) for k in ("aliases", "new_wells", "probes")) < wa._MAX_ENTRIES * 0.25
