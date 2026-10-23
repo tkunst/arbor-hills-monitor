@@ -9,7 +9,8 @@ stubbing the exporter itself):
                  and the Drive payload is byte-identical to the Sheet cell;
   2. flag ON  -> a Drive failure never blocks the row or the alert;
   3. flag OFF (the default; the existing suites' own cfgs) -> the exporter
-                 never reaches Drive, OAuth, or even the env.
+                 never reaches archive_client at all (is_configured, the
+                 OAuth service, upload_file).
 
 The existing per-watcher suites are reused as-is via their `_wire` helpers and
 stay unmodified — that is the default-off regression guard the handoff asks
@@ -37,12 +38,13 @@ def _on(cfg):
 
 
 def _boom(*a, **k):
-    raise AssertionError("snapshot exporter must not reach Drive/OAuth/env while off")
+    raise AssertionError("snapshot exporter must not reach archive_client while off")
 
 
 @pytest.fixture(autouse=True)
 def _fresh_service_cache(monkeypatch):
     monkeypatch.setattr(se, "_drive", None)
+    monkeypatch.setattr(se, "_tripped", None)
 
 
 def _arm_drive(monkeypatch, log, fail=False):

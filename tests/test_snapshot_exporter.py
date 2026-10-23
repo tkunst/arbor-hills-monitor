@@ -2,6 +2,7 @@
 never-raises contract of export_snapshot() against a mocked archive_client."""
 import json
 import os
+import re
 
 import pytest
 
@@ -13,6 +14,7 @@ ON = {"data_lifecycle": {"snapshot_export": {"enabled": True}}}
 @pytest.fixture(autouse=True)
 def _fresh_service_cache(monkeypatch):
     monkeypatch.setattr(se, "_drive", None)
+    monkeypatch.setattr(se, "_tripped", None)
 
 
 def _configure(monkeypatch):
@@ -44,6 +46,21 @@ def test_is_enabled_true_only_on_explicit_true():
     assert se.is_enabled(ON) is True
 
 
+@pytest.mark.parametrize("cfg", [
+    {"data_lifecycle": True},                       # scalar where a mapping belongs
+    {"data_lifecycle": "yes"},
+    {"data_lifecycle": {"snapshot_export": True}},  # the activation-day typo
+    {"data_lifecycle": {"snapshot_export": "on"}},
+    {"data_lifecycle": ["enabled"]},
+    "not a config at all",
+    42,
+])
+def test_is_enabled_reads_a_config_shape_typo_as_off_not_a_crash(cfg):
+    """is_enabled() runs in the watchers BEFORE their Sheet row; a typo must
+    degrade to 'no export', never raise there."""
+    assert se.is_enabled(cfg) is False
+
+
 def test_snapshot_name_embeds_stream_key_date_and_hash():
     assert se.snapshot_name("rop", "csv:N2688", "2026-10-23", "abc123") == \
         "rop_csv-N2688_2026-10-23_abc123.json"
@@ -58,7 +75,24 @@ def test_snapshot_name_sanitizes_and_caps_the_key():
     assert len(key) <= se._MAX_KEY_CHARS
     assert key.startswith("a-b-c-d-e-f-g")
     assert se.snapshot_name("x", "", "d", "h") == "x_item_d_h.json"
+    assert se.snapshot_name("x", None, "d", "h") == "x_item_d_h.json"
     assert se.snapshot_name("x", "???", "d", "h") == "x_item_d_h.json"
+    assert se.snapshot_name("x", 475946, "d", "h") == "x_475946_d_h.json"   # non-str key
+
+
+def test_snapshot_name_truncated_keys_never_alias():
+    """Two long keys sharing a 60-char prefix must map to two names —
+    upload_file() dedupes by name, so an alias would silently drop a snapshot."""
+    prefix = "https://www.michigan.gov/egle/about/organization/remediation-and-redevelopment/"
+    a = se.snapshot_name("pfas", prefix + "arbor-hills-landfill", "d", "h", "txt")
+    b = se.snapshot_name("pfas", prefix + "arbor-hills-energy", "d", "h", "txt")
+    assert a != b
+    for n in (a, b):
+        key = n[len("pfas_"):-len("_d_h.txt")]
+        assert len(key) <= se._MAX_KEY_CHARS
+        assert re.fullmatch(r"[A-Za-z0-9._-]+", key)
+    # a short key is untouched (no hash suffix)
+    assert se.snapshot_name("rop", "csv:N2688", "d", "h") == "rop_csv-N2688_d_h.json"
 
 
 # ---------------------------------------------------------------------------
@@ -127,14 +161,16 @@ def test_success_uploads_str_payload_verbatim_and_returns_link(monkeypatch):
     assert not os.path.exists(u["path"])      # temp file cleaned up
 
 
-def test_success_serializes_a_dict_payload_as_sorted_json(monkeypatch):
+def test_success_serializes_a_dict_payload_exactly_as_the_watchers_do(monkeypatch):
     _configure(monkeypatch)
     uploads = []
     _arm_upload(monkeypatch, uploads)
-    assert se.export_snapshot({"b": 2, "a": [1, "é"]}, "n.json", ON)
+    snap = {"b": 2, "a": [1, "é"]}
+    assert se.export_snapshot(snap, "n.json", ON)
+    # byte-identical to the watchers' own snap_json form, so a dict payload's
+    # file still matches the hash its Sheet row carries
+    assert uploads[0]["content"] == json.dumps(snap, sort_keys=True, ensure_ascii=False)
     assert json.loads(uploads[0]["content"]) == {"a": [1, "é"], "b": 2}
-    assert uploads[0]["content"].index('"a"') < uploads[0]["content"].index('"b"')
-    assert "é" in uploads[0]["content"]        # ensure_ascii=False, like the watchers
 
 
 def test_txt_extension_uploads_text_plain(monkeypatch):
@@ -199,6 +235,76 @@ def test_dead_oauth_token_returns_none(monkeypatch):
     monkeypatch.setattr(se.ac, "oauth_drive_service", _svc)
     monkeypatch.setattr(se.ac, "upload_file", _boom)
     assert se.export_snapshot("x", "n.json", ON) is None
+
+
+# ---------------------------------------------------------------------------
+# per-run circuit breaker
+# ---------------------------------------------------------------------------
+
+def test_first_failure_trips_the_breaker_for_the_rest_of_the_run(monkeypatch, capsys):
+    """After one failure, later items in the same process skip Drive entirely
+    (no refresh, no upload, no retry backoff) and log nothing more — a Drive
+    outage costs one timeout per run, not one per item."""
+    _configure(monkeypatch)
+    service_calls, upload_calls = [], []
+
+    def _svc():
+        service_calls.append(1)
+        return "fake-drive"
+
+    def _upload(*a, **k):
+        upload_calls.append(1)
+        raise TimeoutError("drive down")
+    monkeypatch.setattr(se.ac, "oauth_drive_service", _svc)
+    monkeypatch.setattr(se.ac, "upload_file", _upload)
+
+    assert se.export_snapshot("a", "a.json", ON) is None
+    assert se._tripped == "TimeoutError"
+    out1 = capsys.readouterr().out
+    assert "FAILED (TimeoutError)" in out1
+
+    assert se.export_snapshot("b", "b.json", ON) is None
+    assert se.export_snapshot("c", "c.json", ON) is None
+    assert len(service_calls) == 1 and len(upload_calls) == 1
+    assert capsys.readouterr().out == ""          # silent skips after the one log line
+
+
+def test_dead_token_fails_once_not_once_per_item(monkeypatch):
+    _configure(monkeypatch)
+    refreshes = []
+
+    def _svc():
+        refreshes.append(1)
+        raise RuntimeError("invalid_grant")
+    monkeypatch.setattr(se.ac, "oauth_drive_service", _svc)
+    monkeypatch.setattr(se.ac, "upload_file", _boom)
+    for n in ("a", "b", "c"):
+        assert se.export_snapshot(n, f"{n}.json", ON) is None
+    assert len(refreshes) == 1
+
+
+def test_not_configured_logs_once_per_run(monkeypatch, capsys):
+    for k in se.ac.CREDENTIAL_ENV + (se.FOLDER_ENV,):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(se.ac, "oauth_drive_service", _boom)
+    for n in ("a", "b", "c"):
+        assert se.export_snapshot(n, f"{n}.json", ON) is None
+    out = capsys.readouterr().out
+    assert out.count("not configured") == 1
+
+
+def test_breaker_is_not_consulted_while_disabled(monkeypatch):
+    """A tripped breaker is irrelevant with the flag off (still a pure no-op),
+    and a success never trips it."""
+    _configure(monkeypatch)
+    uploads = []
+    _arm_upload(monkeypatch, uploads)
+    assert se.export_snapshot("a", "a.json", ON)
+    assert se.export_snapshot("b", "b.json", ON)
+    assert se._tripped is None and len(uploads) == 2
+    monkeypatch.setattr(se, "_tripped", "X")
+    monkeypatch.setattr(se.ac, "is_configured", _boom)
+    assert se.export_snapshot("c", "c.json", {}) is None
 
 
 def test_unserializable_payload_returns_none(monkeypatch):

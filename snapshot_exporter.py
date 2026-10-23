@@ -21,7 +21,11 @@ BEST-EFFORT, NEVER RAISES. An archive upload is a nicety, not a blocker (the
 same convention as archiver.mirror_one_now() and wds_archiver's per-page
 isolation): export_snapshot() returns the Drive webViewLink on success and
 None on ANY failure — flag off, Drive not configured, dead OAuth token,
-network, quota. The caller's own Sheet row and alert are never affected.
+network, quota. The caller's own Sheet row and alert are never affected. A
+PER-RUN CIRCUIT BREAKER (see `_tripped`) turns the first failure in a process
+into a skip for every later item that run, so a Drive outage costs one
+timeout, not one per item — latency, not just exceptions, must never hold a
+Sheet row hostage.
 
 GATED, DEFAULT OFF. `data_lifecycle.snapshot_export.enabled` in config.yml is
 cross-cutting (one switch for all four streams), so it lives in its own
@@ -57,6 +61,7 @@ watcher importing this module gains no new import-time dependency.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -76,29 +81,52 @@ _MAX_KEY_CHARS = 60
 # once per item. Dropped on any failure so the next call rebuilds it fresh.
 _drive = None
 
+# PER-RUN CIRCUIT BREAKER. "Never blocks the row" is true for exceptions but
+# not for latency: upload_file() makes two Drive calls, each with the shared
+# exponential-backoff retry on a 60 s socket timeout, so under a sustained
+# Drive/OAuth outage ONE item can sit for minutes — and ROP's baseline run has
+# seven items inside a 15-minute job. A runner kill is not an exception, so the
+# except-envelope below would never fire and the remaining items' Sheet rows
+# would go unwritten that run. So the FIRST failure in a process trips this
+# breaker and every later export_snapshot() call in the same run skips
+# straight to the Sheet row (one line logged, once). A dead token likewise
+# fails once, not once per item. Reset only by a new process (= the next run).
+_tripped: str | None = None
 
-def is_enabled(cfg: dict | None) -> bool:
+
+def is_enabled(cfg) -> bool:
     """The cross-cutting flag: `data_lifecycle.snapshot_export.enabled`.
-    Missing block, missing key, None, false -> off. Pure."""
-    dl = (cfg or {}).get("data_lifecycle") or {}
-    se = dl.get("snapshot_export") or {}
-    return bool(se.get("enabled"))
+    Missing block, missing key, None, false -> off. A scalar where a mapping
+    is expected (`data_lifecycle: true`, a config typo) also reads as OFF
+    rather than raising — this runs before the caller's Sheet row. Pure."""
+    dl = cfg.get("data_lifecycle") if isinstance(cfg, dict) else None
+    se = dl.get("snapshot_export") if isinstance(dl, dict) else None
+    return bool(se.get("enabled")) if isinstance(se, dict) else False
 
 
-def snapshot_name(stream: str, key: str, date: str, digest: str, ext: str = "json") -> str:
+def snapshot_name(stream: str, key, date: str, digest: str, ext: str = "json") -> str:
     """`<stream>_<key>_<date>_<digest>.<ext>` with the key reduced to a safe
-    filename fragment (anything outside [A-Za-z0-9._-] collapses to `-`,
-    capped so a long PFAS label can't produce an unwieldy name). Pure."""
-    safe_key = _SAFE_RE.sub("-", key or "").strip("-")[:_MAX_KEY_CHARS].strip("-") or "item"
-    return f"{stream}_{safe_key}_{date}_{digest}.{ext}"
+    filename fragment (anything outside [A-Za-z0-9._-] collapses to `-`). A
+    key longer than the cap is truncated AND suffixed with a short hash of the
+    full key, so two long keys sharing a prefix can never alias to one name
+    (upload_file() dedupes by name — an alias would silently drop the second
+    snapshot). Pure; accepts any key (str()'d)."""
+    raw = "" if key is None else str(key)
+    safe_key = _SAFE_RE.sub("-", raw).strip("-")
+    if len(safe_key) > _MAX_KEY_CHARS:
+        tag = hashlib.sha1(raw.encode("utf-8", "ignore"), usedforsecurity=False).hexdigest()[:8]
+        safe_key = safe_key[:_MAX_KEY_CHARS - 9].rstrip("-") + "-" + tag
+    return f"{stream}_{safe_key or 'item'}_{date}_{digest}.{ext}"
 
 
 def _serialize(payload) -> str:
     """A str payload is written verbatim (it IS the Sheet cell); anything else
-    is JSON with sorted keys, the same canonical form the watchers hash."""
+    is compact sorted-keys JSON — byte-identical to the form the four watchers
+    build with `json.dumps(snap, sort_keys=True, ensure_ascii=False)` and hash,
+    so a dict payload's file still matches its row's hash."""
     if isinstance(payload, str):
         return payload
-    return json.dumps(payload, sort_keys=True, ensure_ascii=False, indent=2)
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
 
 def _service():
@@ -113,23 +141,32 @@ def _reset_service() -> None:
     _drive = None
 
 
-def export_snapshot(payload, name: str, cfg: dict | None,
+def _trip(reason: str) -> None:
+    global _tripped
+    _tripped = reason
+
+
+def export_snapshot(payload, name: str, cfg,
                     folder_env: str = FOLDER_ENV) -> str | None:
     """Upload one snapshot payload as an immutable Drive file named `name`.
 
     Returns the file's webViewLink, or None when the export did not happen for
     ANY reason — never raises. Order of checks: the config flag first (off ->
-    no env read, no network), then Drive configuration (missing creds or
+    no env read, no network), then the per-run breaker (a prior failure this
+    process -> skip silently), then Drive configuration (missing creds or
     folder -> None, no network), then the upload itself (any exception ->
-    None, logged by class only, service cache dropped).
+    None, logged by class only, service cache dropped, breaker tripped).
 
     Logging is count/class-only — the payload is public regulatory data but
     an exception message can carry a URL or a token fragment (SEC-001)."""
     if not is_enabled(cfg):
         return None
+    if _tripped is not None:
+        return None
     if not ac.is_configured(folder_env):
         print(f"[snapshot-export] {folder_env} / GOAUTH_* not configured — "
-              f"skipping Drive copy of {name} (Sheet row still written).")
+              "skipping Drive copies this run (Sheet rows still written).")
+        _trip("not configured")
         return None
 
     tmp = None
@@ -145,8 +182,9 @@ def export_snapshot(payload, name: str, cfg: dict | None,
         return link
     except Exception as e:  # noqa: BLE001 — best-effort by contract; class only
         _reset_service()
+        _trip(type(e).__name__)
         print(f"[snapshot-export] FAILED ({type(e).__name__}) for {name} — "
-              "Sheet row still written; no Drive copy this run.")
+              "Sheet row still written; skipping further Drive copies this run.")
         return None
     finally:
         if tmp and os.path.exists(tmp):
