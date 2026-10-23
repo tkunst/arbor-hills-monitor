@@ -665,23 +665,6 @@ def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds
         registry_available = False
         print(f"[gfl-air]   station coords unavailable (using dashboard link): {e}")
 
-    # Roster vs. what was actually seen (readings ∪ registry) — reconciled and logged
-    # loudly on EVERY run that fetched the registry (open or close), and named in
-    # the screening email below; never absorbed into the count.
-    latest = latest_per_station(readings, prefix)
-    monitor_rows = _monitor_rows(latest, watch_thresholds, sentinels, registry=coords)
-    unexpected, missing = roster_mismatch(roster, (r["station"] for r in monitor_rows))
-    if unexpected:
-        print("[gfl-air]   ROSTER MISMATCH: station(s) seen in the source but not in "
-              f"gfl_air.expected_stations: {', '.join(unexpected)} (listed in the "
-              "screening email, not counted toward the expected total)")
-    if missing:
-        why = ("no reading this run, and the station list could not be retrieved"
-               if not registry_available
-               else "neither a reading this run nor a station-list entry")
-        print("[gfl-air]   ROSTER MISMATCH: roster station(s) unaccounted for this "
-              f"run: {', '.join(missing)} ({why})")
-
     # Durable log rows for CLOSED episodes FIRST (Sheet row before state entry — the
     # crash-safe invariant: a kill re-writes the row, never drops it).
     if result.closed:
@@ -706,6 +689,25 @@ def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds
         sw.set_gfl_air_episode_state(sheets, sheet_id, result.state)
     except Exception as e:  # noqa: BLE001 — best-effort; see the caveat above
         print(f"[gfl-air]   episode-state write FAILED: {e}")
+
+    # Roster vs. what was actually seen (readings ∪ registry) — reconciled and logged
+    # loudly on EVERY run that fetched the registry (open or close), and named in
+    # the screening email below; never absorbed into the count. Placed AFTER the
+    # durable row + state writes above, like every other email-only step, so it can
+    # never sit between a close and its log row.
+    latest = latest_per_station(readings, prefix)
+    monitor_rows = _monitor_rows(latest, watch_thresholds, sentinels, registry=coords)
+    unexpected, missing = roster_mismatch(roster, (r["station"] for r in monitor_rows))
+    if unexpected:
+        print("[gfl-air]   ROSTER MISMATCH: station(s) seen in the source but not in "
+              f"gfl_air.expected_stations: {', '.join(unexpected)} (listed in the "
+              "screening email, not counted toward the expected total)")
+    if missing:
+        why = ("no reading this run, and the station list could not be retrieved"
+               if not registry_available
+               else "neither a reading this run nor a station-list entry")
+        print("[gfl-air]   ROSTER MISMATCH: roster station(s) unaccounted for this "
+              f"run: {', '.join(missing)} ({why})")
 
     # SCREENING (open) email — one consolidated email listing all monitors + the
     # newly-detected + continuing episodes. Best-effort.

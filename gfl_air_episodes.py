@@ -307,6 +307,7 @@ def station_roster(cfg_gfl: dict, station_prefix: str = gc.DEFAULT_STATION_PREFI
             "only be named once the roster is configured.")
         return None, warnings
     roster: list[str] = []
+    seen: set[str] = set()          # every name met, dropped ones included: one warning per cause
     for item in raw:
         if not isinstance(item, str):
             warnings.append(f"gfl_air.expected_stations entry {item!r} is not a string "
@@ -316,10 +317,11 @@ def station_roster(cfg_gfl: dict, station_prefix: str = gc.DEFAULT_STATION_PREFI
         if not name:
             warnings.append("gfl_air.expected_stations has a blank entry (ignored).")
             continue
-        if name in roster:
+        if name in seen:
             warnings.append(f"gfl_air.expected_stations lists {name} more than once "
                             "(counted once).")
             continue
+        seen.add(name)
         if station_prefix and not name.startswith(station_prefix):
             warnings.append(
                 f"gfl_air.expected_stations entry {name!r} does not start with "
