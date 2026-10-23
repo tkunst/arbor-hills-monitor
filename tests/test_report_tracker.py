@@ -587,7 +587,9 @@ def test_seed_text_passes_the_name_denylist():
             hits = [h for h in name_check.find_denylist_hits(" ".join(str(c) for c in row))
                     if h.get("kind") != "internal_marker"]   # names only; "hand-curated" is a marker
             assert not hits, (table, row[0], hits)
-    assert "E700318" not in open(seed.__file__, encoding="utf-8").read()
+    # No FOIA request id of any shape in the public seed (they live only in the
+    # private Sheet's foia_request_id column).
+    assert not re.search(r"\bE\d{6}-\d{6}\b", open(seed.__file__, encoding="utf-8").read())
 
 
 def test_blank_facility_nsite_row_resolves_to_the_nsite_facility():

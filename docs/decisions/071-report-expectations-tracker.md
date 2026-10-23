@@ -289,7 +289,11 @@ today ≤ that date the Runs row's `mode` is `shadow` and the briefing line
 carries `[shadow]`. Set it to activation day + 14.
 
 **Seed.** `report_tracker_seed.py` (dry run; `--apply` writes only into
-EMPTY private tabs). 2 facilities, 27 Expected Reports rows (14 active),
+EMPTY private tabs). The seed carries no FOIA request id and no person's
+name (a test scans every row against `name_check`'s denylist); the request
+id quoted in the Seed-data section above stays as written in the approved
+draft, and is otherwise entered only in the private Sheet's
+`foia_request_id` column. 2 facilities, 27 Expected Reports rows (14 active),
 4 trigger rules (all inactive), 46 hand Report Arrivals rows (every WOI, CJ
 semi-annual, CJ quarterly and NESHAP report held on 2026-10-23, plus
 Carleton's two monthly reports). Expected first-run open items from the
