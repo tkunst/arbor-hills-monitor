@@ -323,10 +323,11 @@ or one physical station shows twice (silent under one name, reporting under the 
 seen, at two points. On EVERY poll, against the batch's readings (no extra fetch): a
 reading from a station not on the roster, or a roster station with no reading this
 poll, is logged — so a new monitor quietly coming online is in the run log even on a
-perimeter where no screening email fires for months. At screening-email time, against
-the monitor-table rows (readings ∪ registry entries), since that is the only point the
-best-effort layer-0 fetch happens; the registry side is therefore reconciled only when
-an episode opens. The SCREENING email's denominator is `len(roster)`; "reporting" counts
+perimeter where no screening email fires for months. And on every run that fetches the
+layer-0 registry (an episode opened or closed), against the monitor-table rows (readings
+∪ registry entries), logged either way and named in the screening email when one fires;
+a run with no episode activity does not fetch the registry, so the registry side is
+reconciled only on those runs. The SCREENING email's denominator is `len(roster)`; "reporting" counts
 only non-silent rows whose station is ON the roster, derived from the rows alone (the
 caller-supplied `stations_reporting` count was removed — it could have bypassed that
 filter). A station seen but not on the roster is

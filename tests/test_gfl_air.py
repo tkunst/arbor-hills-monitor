@@ -1625,7 +1625,8 @@ def test_silent_station_is_listed_not_dropped():
     assert ms1["silent"] is True and ms1["as_of"] == ""
     opened = [_opened("MS-3", "h2s", 45.0, BATCH_MS)]
     _, body = gw.format_screening_email(opened, [], rows, WT, link="L",
-                                        retrieved_iso="2026-10-06T13:00:00Z")
+                                        retrieved_iso="2026-10-06T13:00:00Z",
+                                        expected_stations=STATIONS)
     table = body.split("ALL PERIMETER MONITORS", 1)[1].split("NEWLY DETECTED", 1)[0]
     line = next(ln for ln in table.splitlines() if ln.strip().startswith("MS-1"))
     assert "no data since 2026-09-17 12:00 PM ET" in line
@@ -1641,8 +1642,9 @@ def test_silent_station_count_is_reporting_rows_only():
     latest = {s: _elev(i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"}
     rows = gw._monitor_rows(latest, WT, SENT, registry=_registry())
     _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
-                                        link="L", retrieved_iso="2026-10-06T13:00:00Z")
-    assert "stations reporting 5/6" in body
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z",
+                                        expected_stations=STATIONS)
+    assert "stations reporting 5/6" in body and "legacy default" not in body
 
 
 def test_silent_station_without_last_read_says_no_reading_in_batch():
@@ -1917,8 +1919,8 @@ def test_unexpected_registry_station_is_named_and_never_counted():
     table = body.split("ALL PERIMETER MONITORS", 1)[1].split("NEWLY DETECTED", 1)[0]
     assert any(ln.strip().startswith("MS-7") for ln in table.splitlines())
     assert ("(1 station(s) not in this monitor's configured roster — MS-7: listed above "
-            "but NOT counted toward the 6 expected; if this is a real new or renamed "
-            "monitor, update gfl_air.expected_stations.)") in body
+            "but NOT counted toward the 6 expected; if this is a real new, renamed, or "
+            "retired-but-still-listed monitor, update gfl_air.expected_stations.)") in body
     assert "not listed" not in body                          # every roster station has a row
 
 
@@ -2014,6 +2016,30 @@ def test_run_without_roster_warns_every_run_and_uses_fallback(monkeypatch, capsy
     assert "CONFIG WARNING: gfl_air.expected_stations is missing" in capsys.readouterr().out
     assert len(sent) == 1
     assert "stations reporting 5/6 (expected count is the legacy default" in sent[0][1]
+
+
+def test_close_only_run_reconciles_registry_side_too(monkeypatch, capsys):
+    # A run that only CLOSES an episode still fetches layer 0 (closeout coords), so
+    # the registry-side reconciliation is logged there too, not just when one opens.
+    fake, sent = _wire_with_recipients(monkeypatch, _watch_cfg())
+    _baseline_then(monkeypatch)
+    reg = _registry()
+    reg["MS-7"] = {"last_read_iso": gc.reading_iso({"Date": DAY0})}
+    monkeypatch.setattr(gw.gc, "fetch_station_coords", lambda *a, **k: reg)
+
+    def poll(oid, ch4, ms):
+        rows = [_elev(oid, "MS-3", 0.0, ch4, ms)]
+        monkeypatch.setattr(gw.gc, "fetch_readings",
+                            lambda c, since, limit=None: [r for r in rows if r["OBJECTID"] > since])
+        return gw.run()
+
+    assert poll(106, 45.0, DAY1) == 0                           # opens
+    capsys.readouterr()
+    assert poll(107, 10.0, DAY1 + 3600_000) == 0                # closes, nothing opens
+    assert len(sent) == 2 and "returned below" in sent[1][0]
+    out = capsys.readouterr().out
+    assert ("ROSTER MISMATCH: station(s) seen in the source but not in "
+            "gfl_air.expected_stations: MS-7") in out
 
 
 def test_config_yml_roster_is_well_formed():

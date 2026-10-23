@@ -553,8 +553,9 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
         if unexpected:
             body.append(f"  ({len(unexpected)} station(s) not in this monitor's configured "
                         f"roster — {', '.join(unexpected)}: listed above but NOT counted "
-                        f"toward the {n_stations_expected} expected; if this is a real new "
-                        "or renamed monitor, update gfl_air.expected_stations.)")
+                        f"toward the {n_stations_expected} expected; if this is a real new, "
+                        "renamed, or retired-but-still-listed monitor, update "
+                        "gfl_air.expected_stations.)")
     elif len(monitor_rows) < n_stations_expected:
         # No roster: names are unknown, so the pre-roster count-only note.
         body.append(f"  ({n_stations_expected - len(monitor_rows)} station(s) not listed: "
