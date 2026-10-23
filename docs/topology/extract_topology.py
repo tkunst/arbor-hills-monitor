@@ -124,6 +124,7 @@ DOMAIN = {
     "archive_client": "persistence", "email_alerts": "persistence",
     "owner_notices": "persistence",    # owner-only weekly email + same-day owner alerts (ADR 070)
     "upcoming": "persistence",         # private Sheet "Upcoming" tab for the Sunday digest
+    "dataset_provenance": "persistence",  # Dataset Provenance tab + annotation columns, public Sheet (coder:dataset-provenance-sheet)
     # Public site publishing (GitHub Pages)
     "findings_feed": "publishing",     # public-records pages + search index renderer (pure)
     "public_comment_feed": "publishing",  # public comment periods page renderer (ADR 035)
@@ -140,6 +141,7 @@ DOMAIN = {
     "check_handcurated_sources": "ops", "create_oauth_folder": "ops",
     "gen_stream_status": "ops", "recheck_key_data_points": "ops",
     "route_hand_curated": "ops", "send_scoped_test": "ops", "term_search": "ops",
+    "sync_dataset_provenance": "ops",  # one-time provenance seed, dry-run by default
 }
 DOMAIN_NAME = {
     "orchestration": "Orchestration / Runners",
@@ -157,7 +159,8 @@ JOB_MODULES = {"seed_wds_state", "verify_state", "smoke_one", "oauth_setup",
                "check_handcurated_sources", "create_oauth_folder", "gen_stream_status",
                "recheck_key_data_points", "route_hand_curated", "send_scoped_test",
                "term_search", "backfill_well_aliases", "gen_findings_feed", "gen_public_comment_feed",
-               "gen_sitemap", "check_publish_safety", "sync_data_notes"}
+               "gen_sitemap", "check_publish_safety", "sync_data_notes",
+               "sync_dataset_provenance"}
 
 # Data stores — LOGICAL identifiers only. The physical binding (Sheet ID, SA key,
 # SMTP host, API key) is the external code<->storage join: it lives in GitHub
@@ -193,6 +196,8 @@ DATASTORES = [
 DATA_EDGES = [
     ("sheet_writer", "ds:case-file-sheet", "read"),
     ("sheet_writer", "ds:case-file-sheet", "write"),
+    ("dataset_provenance", "ds:case-file-sheet", "read"),   # provenance tab = the upsert's key index (raises)
+    ("dataset_provenance", "ds:case-file-sheet", "write"),  # provenance rows + annotation cells
     ("archive_client", "ds:drive-archive", "write"),
     ("nsite_client", "ds:nsite", "read"),
     ("wds_client", "ds:wds", "read"),
@@ -264,10 +269,14 @@ OBSERVATIONS = [
     "pages, GFL perimeter air, Ridge Wood, RIDE status + documents, ROP, MMD, PFAS "
     "PWS, MPART, GovQA, EGLE newsroom) and its own runner on its own cron + "
     "concurrency group, so streams never race one another's state.",
-    "The low-level nSITE client still pulls in the PDF stack: nsite_client imports "
-    "poison_doc_extractor at module level, so all seven nSITE profile watchers "
-    "(K-Q) load fitz/defusedxml although none parses a PDF. The six L-Q watchers "
-    "share nsite_watch_common.run_profile_watch.",
+    "The nsite_client -> poison_doc_extractor edge is DEFERRED, not a "
+    "module-load edge: since 2026-10-23 the import sits inside download_pdf() "
+    "(its only user), so the seven nSITE profile watchers (K-Q), which only poll "
+    "the JSON profiles, no longer load fitz/defusedxml by importing the client "
+    "(tests/test_nsite_import_isolation.py pins this). The ast-derived call graph "
+    "still draws the edge because ast.walk sees function-level imports too — read "
+    "it as 'reachable from download_pdf()', not 'loaded on import'. The six L-Q "
+    "watchers share nsite_watch_common.run_profile_watch.",
     "Two Sheets with different visibility: the public case-file Sheet, and a "
     "private Sheet (owner only) that the GovQA / RIDE-document watchers, the "
     "Upcoming reader, owner_notices and review_flags target; the writers fail "
