@@ -8,7 +8,10 @@ import datetime
 import pytest
 
 import woi_table_parser as w
-from tests.test_woi_parser import HDR_ALIAS, HDR_FULL, HDR_FULL_NO_ADJ, L
+from tests.test_woi_parser import HDR_ALIAS, HDR_FULL, HDR_FULL_NO_ADJ, HDR_NO_DIFF, L
+
+HDR_UNKNOWN = ["Well ID", "Date/Time", "CH4 (%)", "CO2 (%)", "O2 (%)", "Temp.", "Comments"]
+HDR_CO = ["Well ID", "Date", "ppm"]
 from tests.test_woi_split_join import build, row
 
 CELLS = ["47.8", "36", "1.8", "14.4", "0", "59.1", "1096", "0.56", "0.01"]
@@ -295,7 +298,10 @@ def _twin_seq(rnd):
     seq, hdr = [], None
     for page in range(1, rnd.randint(1, 3) + 1):
         if page == 1 or rnd.random() < 0.8:
-            hdr = rnd.choice([HDR_FULL, HDR_FULL_NO_ADJ, HDR_ALIAS])
+            # any header: labeled, unlabeled, Alias, another layout, an
+            # unrecognized gas layout, a non-gas table
+            hdr = rnd.choice([HDR_FULL, HDR_FULL_NO_ADJ, HDR_FULL_NO_ADJ, HDR_ALIAS, HDR_NO_DIFF,
+                              HDR_UNKNOWN, HDR_CO])
             seq += [(h, page) for h in hdr]
         for k in range(rnd.randint(1, 30)):
             ts = (f"{rnd.randint(1, 12)}/{rnd.randint(1, 28)}/25 {rnd.randint(0, 23)}:"
@@ -328,7 +334,8 @@ def test_two_digit_tables_read_like_their_four_digit_twins():
     # of the same table printed with four-digit years. Multi-page UNLABELED
     # headers with mixed ADJ tokens included (ADR 005 addendum 2026-10-23:
     # the two-digit rows' table has its own boundary, from the header text
-    # their four-digit twin would read).
+    # their four-digit twin would read), and unrecognized / non-gas headers
+    # (their reject entry follows the same boundary; review round 1).
     import random
     rnd = random.Random(20261021)
     n_unlabeled_multipage = 0
@@ -485,6 +492,43 @@ def test_a_column_shift_main_finds_takes_the_two_digit_rows_printed_under_it():
     assert [(t.first_page, t.last_page, t.n_rows, t.reason) for t in g.rejected_tables] == [
         (2, 2, 20, "column-shift signature: 100% of rows have a negative flow"),
         (2, 2, 3, "rows started by a two-digit-year timestamp, in a column-shift rejected table")]
+
+
+def test_a_main_shift_after_a_two_digit_only_boundary_takes_every_row_under_it():
+    # Review round 1 (medium). Pages 1-2 leave the two-digit table open across
+    # a main-only boundary (page 2's ADJ line makes main's header labeled);
+    # page 3's first row is a one-line "timestamp ADJ", which labels the
+    # two-digit table too, so only the two-digit table ends there. Main's
+    # table (labeled on pages 2-3) is then column-shift rejected by page 3's
+    # 20 negative rows: EVERY two-digit row printed under it on page 3 goes
+    # with it, not just those past a stale index.
+    p1 = [[f"AHX{k}", f"10/1/25 7:{k:02d}", *CELLS] for k in range(3)]
+    p2 = [["AHX3", "10/2/25 7:03", *CELLS], ["AHX4", "10/2/25 7:04", "ADJ", *CELLS]]
+    p3 = ([["AHX7", "10/3/25 6:00 ADJ", *CELLS]]
+          + [[f"AHW{k}", f"10/3/2025 9:{k:02d}", *NEG] for k in range(20)]
+          + [[f"AHX{k}", f"10/3/25 7:{k:02d}", *CELLS] for k in range(4)])
+    g = w._parse_table_lines(_pages(p1, p2, p3))
+    assert [(r.well_id, r.page) for r in g.readings] == [
+        ("AHX0", 1), ("AHX1", 1), ("AHX2", 1), ("AHX3", 2), ("AHX4", 2)]
+    assert [(t.first_page, t.last_page, t.n_rows) for t in g.rejected_tables] == [
+        (3, 3, 20), (3, 3, 5)]
+    assert g.rejected_tables[0].reason.startswith("column-shift signature: 100%")
+    assert g.rejected_tables[1].reason == (
+        "rows started by a two-digit-year timestamp, in a column-shift rejected table")
+
+
+def test_an_unrecognized_header_rejects_a_two_digit_table_as_one_entry():
+    # Review round 1 (low): the reject entry of an unrecognized-layout table
+    # follows the two-digit table's boundary too. Page 1: 3 two-digit rows,
+    # the second with an ADJ line (main reads the page as labeled); page 2:
+    # 3 bare rows (unlabeled). One entry over both pages, as for the twin.
+    p1 = [[f"AHX{k}", f"10/1/25 7:{k:02d}", *CELLS[:5]] for k in range(3)]
+    p1[1] = p1[1][:2] + ["ADJ"] + p1[1][2:]
+    p2 = [[f"AHX{k}", f"10/2/25 7:{k:02d}", *CELLS[:5]] for k in range(3)]
+    two, four = _assert_twins(_pages(p1, p2, hdr=HDR_UNKNOWN))
+    assert two.readings == []
+    assert [(t.first_page, t.last_page, t.n_rows, t.reason) for t in two.rejected_tables] == [
+        (1, 2, 6, "column layout not recognized")]
 
 
 def test_readings_keep_line_order_when_the_two_digit_table_ends_first():
