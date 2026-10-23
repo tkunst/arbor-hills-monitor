@@ -387,8 +387,9 @@ external users but no sensitive data). Public repo.
   `last_read_iso`; fetched fresh each run, best-effort) — distinct from the
   human-maintained station **ROSTER** in `config.yml`
   (`gfl_air.expected_stations`, coder:h2s-roster-count 2026-10-23: which
-  stations are SUPPOSED to exist). The two are reconciled every screening
-  run (see the `gfl_air_episodes.py` entry below); neither is trusted alone.
+  stations are SUPPOSED to exist). The roster is reconciled against the
+  readings on every poll and against the registry on every run that fetches
+  it (see the `gfl_air_episodes.py` entry below); neither is trusted alone.
 - `gfl_air_watcher.py` — daily poll of the GFL air feed: incremental OBJECTID
   cursor (in the `GFL Air` tab), readings → Measurements (`basis=measured`),
   same-day exceedance alerts via its own classifier. Gated on `gfl_air.enabled`.
@@ -439,9 +440,9 @@ external users but no sensitive data). Public repo.
   and the email's data-quality line says the count is the legacy default.
   `roster_mismatch(roster, seen)` reconciles the roster against what was
   seen — on EVERY poll against the batch's readings (logged: a reading from a
-  station not on the roster, a roster station with no reading), and at
-  screening-email time against readings ∪ the layer-0 registry (the only
-  point that best-effort fetch happens): a station seen but not on the
+  station not on the roster, a roster station with no reading), and on
+  every run that fetches the layer-0 registry (an episode opened or closed)
+  against readings ∪ registry: a station seen but not on the
   roster (a new MS-7, an "MS-01" beside "MS-1") is logged as ROSTER MISMATCH
   and named in the email as "not in this monitor's configured roster", listed
   but NEVER counted toward the expected N (so it can't mask a silent roster
