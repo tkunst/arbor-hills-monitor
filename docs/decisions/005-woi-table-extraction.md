@@ -1114,7 +1114,11 @@ own `ADJ` line is cut off the header in both forms, as before.
   and an independent reproduction of the corpus regression) found the
   parked-rows gap above and nothing else; after the fix all of its counts
   are 0 except item 3 of its report (a pre-existing four-digit-date
-  non-validation, not changed here).
+  non-validation, not changed here). The round-3 reviewer (13,000 mixed
+  sequences with a victims oracle, 13,000 twin sequences, 20,000 crash
+  probes) found no medium or high defect; its three lows (this bullet's
+  wording, the two-digit unrecognized-layout entry's header text, the twin
+  test's coverage counter) are fixed in the last commit, unreviewed.
 - 91-file corpus regression vs `origin/main` (`b8a610c`; every PDF under
   the wellfield staging doc-cache and the VGC cache that `is_woi_report`
   accepts, 644,093 readings): the two parse dumps are byte-identical. 0
@@ -1129,10 +1133,11 @@ own `ADJ` line is cut off the header in both forms, as before.
 - In a mixed table (both year forms under one header), the order of the
   reject entries of the two tables' pools can differ from before (the
   two-digit table's entries are written when it ends), and a mixed table
-  under an unrecognized or non-gas header now gets two entries with the same
-  reason (main's rows; the two-digit rows) where it got one. Review-flag
-  granularity only (`review_flags.woi_flags` writes one flag per entry and
-  matches no reason text); no corpus file prints a mixed table.
+  under an unrecognized or non-gas header now gets one entry for its
+  two-digit rows (over the two-digit table's range) plus main's own entries
+  (one per main table, as before) where its rows were all counted in main's.
+  Review-flag granularity only (`review_flags.woi_flags` writes one flag per
+  entry and matches no reason text); no corpus file prints a mixed table.
 - The layout, Alias label and column set of a two-digit table still come from
   main's over-long header text (the 2026-10-21 addendum's first accepted
   item); only the ADJ label and the boundary read the cut text.
