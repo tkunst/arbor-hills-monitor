@@ -349,6 +349,25 @@ gfl_air:
   readings_layer: 4
   dashboard_url: "https://barrgisonline.maps.arcgis.com/apps/dashboards/ac08a03f8018403ba6ae1c2243c00e99"
   station_prefix: "MS-"             # perimeter gas stations; excludes the stale "10-Meter MET Tower" row
+  # Station ROSTER (coder:h2s-roster-count, 2026-10-23): the human-maintained list of
+  # perimeter stations that are SUPPOSED to exist. This is the single source of truth
+  # for the SCREENING email's "stations reporting N/<len>" count and its "not listed"
+  # note — adding or removing a monitor is a one-line edit here, not a code change.
+  # Distinct from the live layer-0 REGISTRY (gfl_air_client.fetch_station_coords:
+  # what the source lists right now, fetched every run): a registry/reading station
+  # NOT on this list is logged + named in the email as "not in this monitor's
+  # configured roster" (never silently counted as one of the expected N, never
+  # silently dropped); a roster station the source doesn't list at all is named as
+  # "not listed". Names must carry station_prefix exactly as the feed spells them.
+  # Six names as of PR #107's 2026-10-06 live specimen (MS-1..MS-6); re-check against
+  # the live service before changing.
+  expected_stations:
+    - MS-1
+    - MS-2
+    - MS-3
+    - MS-4
+    - MS-5
+    - MS-6
   max_record_count: 2000            # page size for the incremental OBJECTID query (service cap is 10000)
   # Which readings land in the shared Measurements tab. The feed is hourly (~288
   # rows/day at 'all'), so the default 'digest' keeps every exceedance + a per-

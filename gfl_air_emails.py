@@ -7,8 +7,8 @@ gfl_air_watcher re-exports every name.
 from __future__ import annotations
 
 import gfl_air_client as gc
-from gfl_air_episodes import (_CH4_FLAMMABLE_PCT, _GAS_LABEL, _episode_key, _num,
-                              et_date, et_label)
+from gfl_air_episodes import (_CH4_FLAMMABLE_PCT, _GAS_LABEL, FALLBACK_N_STATIONS_EXPECTED,
+                              _episode_key, _num, et_date, et_label, roster_mismatch)
 
 _MAX_ALERT_LINES = 20  # cap the per-poll email; the tab/dashboard has the rest
 
@@ -444,16 +444,26 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
                            watch_thresholds: dict, *, link: str, retrieved_iso: str,
                            coords: dict | None = None, context: dict | None = None,
                            historical: bool = False, stations_reporting: int | None = None,
-                           n_stations_expected: int = 6,
+                           expected_stations: list[str] | None = None,
                            registry_available: bool = True) -> tuple[str, str]:
     """The consolidated per-run SCREENING (OPEN) email — Model A. ONE email listing ALL
     monitors' verbatim per-station readings for BOTH gases (▲ = strictly above the
     benchmark), the newly-detected + continuing episodes, a ±2h context block per
     flagged (station, gas), and the full fixed legal framing. Returns (subject, body).
     Fired iff >=1 episode OPENED this run; a continuing-only run sends nothing (no
-    re-alert). Pure — all <data> slotted into a static template, no per-send LLM."""
+    re-alert). Pure — all <data> slotted into a static template, no per-send LLM.
+
+    `expected_stations` is the configured ROSTER (gfl_air_episodes.station_roster):
+    its length is the "stations reporting N/<len>" denominator, a roster station with
+    no row (neither a reading nor a registry entry) is NAMED in the "not listed" note,
+    and a row whose station is NOT on the roster is named as unexpected and never
+    counted toward the expected N. With no roster (None — the caller logs that) the
+    pre-roster behaviour applies: FALLBACK_N_STATIONS_EXPECTED and a count-only note."""
     coords = coords or {}
     context = context or {}
+    roster = list(expected_stations) if expected_stations else None
+    n_stations_expected = len(roster) if roster else FALLBACK_N_STATIONS_EXPECTED
+    unexpected, missing = roster_mismatch(roster, (r["station"] for r in monitor_rows))
     opened_isos = [o.get("opened_at", "") for o in opened]
     stations = [o["station"] for o in opened]
     gases = {o["gas"] for o in opened}
@@ -472,9 +482,17 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
     period = (f"{et_label(min(opened_isos))} to {et_label(max(period_isos))}"
               if opened_isos else "n/a")
 
-    n_report = (stations_reporting if stations_reporting is not None
-                else sum(1 for r in monitor_rows if not r.get("silent")))
-    dq = (f"stations reporting {n_report}/{n_stations_expected} · 999/99999 "
+    # Reporting = a non-silent row; with a roster, only ROSTER stations count toward
+    # the expected N (an unexpected MS-7 reporting must not mask a silent MS-1).
+    if stations_reporting is not None:
+        n_report = stations_reporting
+    else:
+        n_report = sum(1 for r in monitor_rows
+                       if not r.get("silent") and (roster is None or r["station"] in roster))
+    expected_note = ("" if roster else
+                     " (expected count is the legacy default — gfl_air.expected_stations "
+                     "not configured)")
+    dq = (f"stations reporting {n_report}/{n_stations_expected}{expected_note} · 999/99999 "
           "no-data & TEST-marker readings excluded from flagging · calibration "
           "status: not published by the source")
 
@@ -489,7 +507,7 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
     body += _benchmark_definition_lines()
     body.append("")
 
-    # The all-six-monitors table.
+    # The all-monitors table (every reading / registry station this run).
     body.append("ALL PERIMETER MONITORS (latest reading this run; ▲ = public "
                 "hourly value STRICTLY ABOVE the benchmark):")
     body.append("  Station  H2S (ppb)        CH4 (ppm)        Wind            As-Of (ET)")
@@ -527,9 +545,20 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
             return txt or "·"
         body.append(f"  {row['station']:<7}  {cell('h2s'):<15}  {cell('ch4'):<15}  "
                     f"{_wind_str(row):<14}  {et_label(row.get('as_of',''))}")
-    if len(monitor_rows) < n_stations_expected:
-        why = ("the station list could not be retrieved this run" if not registry_available
-               else "not in the source's station list")
+    why = ("the station list could not be retrieved this run" if not registry_available
+           else "not in the source's station list")
+    if roster:
+        # Roster/registry reconciliation — a mismatch is never invisible.
+        if missing:
+            body.append(f"  ({len(missing)} station(s) not listed — {', '.join(missing)}: "
+                        f"{why}.)")
+        if unexpected:
+            body.append(f"  ({len(unexpected)} station(s) not in this monitor's configured "
+                        f"roster — {', '.join(unexpected)}: listed above but NOT counted "
+                        f"toward the {n_stations_expected} expected; if this is a real new "
+                        "or renamed monitor, update gfl_air.expected_stations.)")
+    elif len(monitor_rows) < n_stations_expected:
+        # No roster: names are unknown, so the pre-roster count-only note.
         body.append(f"  ({n_stations_expected - len(monitor_rows)} station(s) not listed: "
                     f"{why}.)")
     if near:

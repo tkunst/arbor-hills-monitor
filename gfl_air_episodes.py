@@ -1,12 +1,13 @@
 """
 gfl_air_episodes.py — Stream E (ADR 039): the per-(station, gas) action-level
-episode state machine, its America/Detroit time helpers and the six-monitor
-snapshot rows. Pure. Split out of gfl_air_watcher.py (consolidation PR 3) as a
+episode state machine, its America/Detroit time helpers, the per-monitor
+snapshot rows and the station roster/registry reconciliation. Pure. Split out of gfl_air_watcher.py (consolidation PR 3) as a
 pure move; gfl_air_watcher re-exports every name.
 """
 from __future__ import annotations
 
 from collections import Counter, namedtuple
+from collections.abc import Iterable
 from datetime import datetime
 
 try:
@@ -273,9 +274,76 @@ def perimeter_episode_rows(closed: list[dict], logged_utc: str) -> list[list]:
 
 
 # ---------------------------------------------------------------------------
-# The "all six monitors" snapshot rows the SCREENING email shows — raw verbatim
+# The "all monitors" snapshot rows the SCREENING email shows — raw verbatim
 # readings + a strictly-above-benchmark flag + no-data/BDL qualifiers. Pure.
 # ---------------------------------------------------------------------------
+
+# The pre-roster count the SCREENING email assumed before `gfl_air.expected_stations`
+# existed (six perimeter stations, MS-1..MS-6). Used ONLY when that config key is
+# missing or empty, and the watcher logs loudly whenever it is — a magic number
+# must never be the quiet default again (coder:h2s-roster-count).
+FALLBACK_N_STATIONS_EXPECTED = 6
+
+
+def station_roster(cfg_gfl: dict, station_prefix: str = gc.DEFAULT_STATION_PREFIX
+                   ) -> tuple[list[str] | None, list[str]]:
+    """The human-maintained station ROSTER from config (`gfl_air.expected_stations`):
+    which perimeter stations are SUPPOSED to exist, as distinct from the live layer-0
+    REGISTRY (gc.fetch_station_coords: what the source lists right now). Returns
+    (roster, warnings). `roster` is the de-duplicated list in config order, or None
+    when the key is missing/empty/not a list — the caller then falls back to
+    FALLBACK_N_STATIONS_EXPECTED and must log every warning returned here. A roster
+    entry that doesn't carry `station_prefix` can never match a reading (both the
+    readings and the registry are prefix-filtered), so it is warned about but kept
+    (it still counts toward "expected", and will show as not listed). Pure."""
+    raw = (cfg_gfl or {}).get("expected_stations")
+    warnings: list[str] = []
+    if not isinstance(raw, (list, tuple)) or not raw:
+        warnings.append(
+            "gfl_air.expected_stations is missing or empty in config.yml — the "
+            f"SCREENING email falls back to the legacy count of "
+            f"{FALLBACK_N_STATIONS_EXPECTED} expected stations; a silent station can "
+            "only be named once the roster is configured.")
+        return None, warnings
+    roster: list[str] = []
+    for item in raw:
+        name = str(item).strip() if item is not None else ""
+        if not name:
+            warnings.append("gfl_air.expected_stations has a blank entry (ignored).")
+            continue
+        if name in roster:
+            warnings.append(f"gfl_air.expected_stations lists {name} more than once "
+                            "(counted once).")
+            continue
+        if station_prefix and not name.startswith(station_prefix):
+            warnings.append(
+                f"gfl_air.expected_stations entry {name!r} does not start with "
+                f"station_prefix {station_prefix!r} — no reading or registry entry can "
+                "ever match it, so it will always show as not listed.")
+        roster.append(name)
+    if not roster:
+        warnings.append("gfl_air.expected_stations has no usable entries — falling back "
+                        f"to the legacy count of {FALLBACK_N_STATIONS_EXPECTED}.")
+        return None, warnings
+    return roster, warnings
+
+
+def roster_mismatch(expected_stations: list[str] | None, seen: Iterable[str]
+                    ) -> tuple[list[str], list[str]]:
+    """Reconcile the configured roster against the stations SEEN this run (every
+    station with a reading in the batch OR a layer-0 registry entry — i.e. the
+    monitor-table rows). Returns (unexpected, missing): `unexpected` = seen but not
+    in the roster (a genuinely new MS-7, or a naming variant such as "MS-01" beside
+    "MS-1" — never silently counted as one of the expected N, never silently
+    dropped); `missing` = in the roster but not seen at all (neither a reading nor a
+    registry entry — distinct from "silent", which is a registry station with no
+    reading). Both sorted; both empty when there is no roster. Pure."""
+    if not expected_stations:
+        return [], []
+    roster = set(expected_stations)
+    seen_set = {s for s in seen if s}
+    return sorted(seen_set - roster), [s for s in expected_stations if s not in seen_set]
+
 
 def latest_per_station(readings: list[dict],
                        station_prefix: str = gc.DEFAULT_STATION_PREFIX) -> dict:
@@ -297,14 +365,17 @@ def latest_per_station(readings: list[dict],
 
 def _monitor_rows(latest: dict, watch_thresholds: dict, sentinels: dict | None,
                   registry: dict | None = None) -> list[dict]:
-    """Per-station display rows for the six-monitor table, built from raw latest rows.
+    """Per-station display rows for the all-monitors table, built from raw latest rows.
 
     `registry` is the station layer (gc.fetch_station_coords: {station: {..,
     'last_read_iso'}}). Every registry station with NO reading this run still gets a
     row, marked `silent` with its `last_read_iso`, so a station that stopped sending
     data is listed as "no data since ..." rather than vanishing from the table
     (MS-1, silent from 2026-09-17, dropped out this way). A silent row's `as_of` is
-    '' so its stale time never widens the email's reporting period."""
+    '' so its stale time never widens the email's reporting period. The configured
+    ROSTER (station_roster) is deliberately NOT a row source here: a roster station
+    with neither a reading nor a registry entry is named by the email's own "not
+    listed" note (roster_mismatch), not invented as a row."""
     wt = watch_thresholds or {}
     rows = []
     for st in sorted(set(latest) | set(registry or {})):

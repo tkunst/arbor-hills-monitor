@@ -295,3 +295,57 @@ layer 0 through the new `fetch_station_coords` (MS-1 `last_read_iso` =
 `2026-09-17T16:00Z`) and the 2026-10-05 layer-4 readings. The table listed all six
 stations, MS-1 as `no data since 2026-09-17 12:00 PM ET (16:00 UTC)`, and the header
 read `stations reporting 5/6`.
+
+## Addendum 2026-10-23: the expected-station count comes from a configured roster
+
+**Problem.** The 2026-10-06 addendum's "stations reporting N/6" and "N station(s) not
+listed" wording compared the monitor-table row count to a hard-coded
+`n_stations_expected: int = 6` in `format_screening_email()`'s signature, and no call
+site passed anything else. PR #107's own follow-up note named the risk: an extra `MS-`
+feature in layer 0 (a new MS-7, or a naming variant such as "MS-01" beside "MS-1")
+makes the row count reach 6 again, so a genuinely missing expected station is hidden,
+or one physical station shows twice (silent under one name, reporting under the other).
+
+**Decision.** Two station lists, held apart on purpose:
+
+- the **roster** — `gfl_air.expected_stations` in `config.yml`, human-maintained, the
+  single source of truth for how many stations are supposed to exist. Adding or
+  removing a monitor is a one-line edit there, never a code change. Read by
+  `gfl_air_episodes.station_roster()` (de-duplicated, config order; a name without
+  `station_prefix` is warned about, since nothing can ever match it);
+- the **registry** — layer 0 through `fetch_station_coords()`, what the source lists
+  right now, fetched fresh every run and still best-effort (`registry_available`
+  keeps its fallback path).
+
+`gfl_air_episodes.roster_mismatch(roster, seen)` reconciles the roster against every
+station seen this run (readings in the batch ∪ registry entries, i.e. the monitor-table
+rows). The SCREENING email's denominator is `len(roster)`; "reporting" counts only
+non-silent rows whose station is ON the roster. A station seen but not on the roster is
+listed in the table as before, but is also named in a note ("not in this monitor's
+configured roster — MS-7: listed above but NOT counted toward the 6 expected; if this is
+a real new or renamed monitor, update gfl_air.expected_stations") and logged as
+`ROSTER MISMATCH`. A roster station with neither a reading nor a registry entry — a
+different case from "silent" (registry entry, no reading), e.g. the station was removed
+from the service — gets no invented table row; the "not listed" note now NAMES it
+("1 station(s) not listed — MS-1: not in the source's station list" / "...the station
+list could not be retrieved this run") and the run log carries the same names. Chosen
+over inventing a row because the table's rows are things the source said this run; the
+note is the monitor's own reconciliation, labeled as such.
+
+The magic 6 survives only as `FALLBACK_N_STATIONS_EXPECTED`, used when the config key
+is missing or empty: `run()` prints a `CONFIG WARNING` on every run that happens (quiet
+runs included, so a typo'd roster is visible without waiting for an episode), and the
+email's data-quality line reads "stations reporting N/6 (expected count is the legacy
+default — gfl_air.expected_stations not configured)". The pre-roster count-only note is
+kept for that path, since the names are unknown without a roster.
+
+**Scope.** Email display + run-log only. The episode engine, the EXCEEDANCE tier,
+`station_snapshot`, and the `GFL Air` tab/cursor are untouched. The roster shipped with
+the six names PR #107's 2026-10-06 live specimen showed (MS-1..MS-6); this build ran
+in a cloud session with no access to the live service, so the real roster value needs
+a human check against layer 0 before merge.
+
+**Real-specimen check (live path).** Pending — Trisha, locally, before merge: render
+the screening email against a live `fetch_station_coords()` result and confirm the
+registry names match the roster exactly (no `ROSTER MISMATCH` line in the log, no
+"not in this monitor's configured roster" note in the email).
