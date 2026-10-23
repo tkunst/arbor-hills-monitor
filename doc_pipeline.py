@@ -137,12 +137,16 @@ def _mark_processed(ctx: RunContext, state: dict, d: dict, payload: dict, job: J
 
 
 def process_one_doc(ctx: RunContext, state: dict, d: dict, job: Job, local: str,
-                    purge_first: bool = False) -> str:
+                    purge_first: bool = False, purge_cache=None) -> str:
     """Run one document through the pipeline. Returns 'processed', 'retry'
     (transient failure: no strike) or 'error' (a strike; stubbed on the
     MAX_ERRORS_PER_DOC-th). A per-document failure is handled here; a failure
     inside that handling (e.g. mark_error hitting an exhausted 429) propagates
-    and fails the run, exactly as before the consolidation."""
+    and fails the run, exactly as before the consolidation.
+
+    `purge_cache` (a `sheet_writer.PurgeReadCache`, backfill's FORCE_REPROCESS
+    apply path) lets the purge read each tab once per run instead of once per
+    doc; None reads fresh, as before."""
     did = d["doc_id"]
     try:
         parsed, link = _parse_and_resolve(ctx, d, local)
@@ -152,7 +156,7 @@ def process_one_doc(ctx: RunContext, state: dict, d: dict, job: Job, local: str,
         # urgent alert, no digest entry, no review flags. Row, then state.
         if sw.is_related(d):
             if purge_first:
-                _purge(ctx, did)
+                _purge(ctx, did, purge_cache)
             sw.write_related_document(ctx.sheets, ctx.sheet_id, parsed, d, link)
             _mark_processed(ctx, state, d, job.payload(parsed, d), job)
             tag = "related" if job.related_log_tag else f"{parsed.doc_type}/{parsed.severity}"
@@ -190,7 +194,7 @@ def process_one_doc(ctx: RunContext, state: dict, d: dict, job: Job, local: str,
         # FORCE_REPROCESS (apply): remove this doc's stale rows BEFORE writing
         # the fresh ones, only after a successful download+parse+route.
         if purge_first:
-            _purge(ctx, did)
+            _purge(ctx, did, purge_cache)
 
         # Crash-safe order: durable Sheet row first, the 'processed' state event
         # last (a crash before it re-processes the doc next run — a duplicate
@@ -264,7 +268,7 @@ def process_one_doc(ctx: RunContext, state: dict, d: dict, job: Job, local: str,
             os.remove(local)
 
 
-def _purge(ctx: RunContext, did: str) -> None:
-    purged = sw.purge_doc_rows(ctx.sheets, ctx.sheet_id, did)
+def _purge(ctx: RunContext, did: str, cache=None) -> None:
+    purged = sw.purge_doc_rows(ctx.sheets, ctx.sheet_id, did, cache=cache)
     print(f"  [FORCE] purged {sum(purged.values())} stale row(s) {purged} "
           f"for {did} before re-extract")
