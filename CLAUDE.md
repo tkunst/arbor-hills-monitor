@@ -1120,8 +1120,10 @@ external users but no sensitive data). Public repo.
   facility lists (nSITE feed tabs, WDS, Hand-Curated, GovQA `file-listed`
   rows, Ridge Wood) with each schedule's `match_rule` (`stream=..;
   title_regex=..; [exclude_regex=..;] period_from=<extractors>`; a HIGH match
-  needs one answer with the period inside the schedule's window and the
-  facility resolved; anything else is PROPOSED and only reviewed) and fill
+  needs one answer with the period extracted and the facility resolved — a
+  title-named period outside the schedule's window is still an arrival,
+  noted; a date-fallback period outside it, or any ambiguity, is PROPOSED
+  and only reviewed) and fill
   `date_received` on the log -> append newly missing instances (due + grace
   < today; `report_tracking.default_grace_days` 7, per-row override) ->
   Runs row. Decision 4: titles matching `agency_title_regex` (inspections,

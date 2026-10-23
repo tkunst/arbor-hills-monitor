@@ -2083,7 +2083,10 @@ report_tracking:
   # enforcement records only: EGLE's HOV approval letters are deliberately
   # NOT here, because `hov-approval` / `hov-plan-approval` are expected
   # one-time instances in the ADR's vocabulary and need to be matchable.
-  agency_title_regex: "On-Site Inspection|Inspection \\(|Inspection Report|Violation Notice|Enforcement Notice|Consent Order|Compliance Communication|\\bEvaluation\\b|Air Quality Test Observation|^Schedule - |\\bEmail\\b"
+  # Anchored where a word is common in operator titles (an operator's
+  # "Email ... transmitting the NESHAP report" is a filing). A skipped title
+  # that still reads periodic is shown once in Report Tracker Review.
+  agency_title_regex: "On-Site Inspection|Inspection \\(|Inspection Report|Violation Notice|Enforcement Notice|^Consent Order|Compliance Communication|Evaluation Report|Air Quality Test Observation|^Schedule - |^Email\\b"
   # A record no rule matched is reported for a schedule fix (owner review)
   # when its title reads as a PERIODIC report (ADR 071 match_rule section):
   # a cadence word, not a bare "Report" (lab reports, test reports and
