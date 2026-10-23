@@ -31,8 +31,9 @@ verified the same way but are not in the approved design; they are for Trisha
 to approve first. Rollback: delete the tab and clear the three annotation
 columns (L on the feed tabs, J on Archived PDFs, N on Hand-Curated Files).
 
-Don't run it while a backfill FORCE_REPROCESS purge is running (rows are
-addressed by number). Credentials: GDRIVE_SA_KEY + GSHEET_ID (a .env in the
+Don't run it while a backfill FORCE_REPROCESS purge is running, or while anyone
+is sorting or inserting rows in Hand-Curated Files by hand: rows are addressed
+by number, and only the pointer formulas check their own row. Credentials: GDRIVE_SA_KEY + GSHEET_ID (a .env in the
 current directory is loaded if present).
 """
 from __future__ import annotations
@@ -133,6 +134,8 @@ def build_seed_rows(map_rows: list[dict], hc_drive_ids: list[str],
             row["document_title"] = (f"{row['source_report']}: {doc_id[4:]} "
                                      f"(source file in the {row['dataset']} release bundle)")
             row["link"] = dp.RELEASE_URL.format(tag=row["dataset"])
+            if not dp._clean(row["document_title"]):
+                raise dp.ProvenanceError(f"title fails name_check: {row['document_title']!r}")
         out.append(row)
     # Two copies feeding one label together (Exceedance Apr 2024: PDF + xlsx):
     # the map's row count is their combined contribution, so say so on both.
@@ -183,7 +186,13 @@ def main(argv=None) -> int:
         print(f"  {r['doc_id']:<42} {r['source_report'][:28]:<28} {r['rows_contributed']:<12} {r['status']}")
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     dp.plan_upsert([], seed, now)       # duplicate keys / bad ids stop here, before any write
+    # Every header cell this run may write, checked before anything is created.
     dp.check_feed_headers(service, sheet_id)
+    dp.ensure_header_cell(service, sheet_id, dp.sw.TAB_ARCHIVE,
+                          dp.sw.ARCHIVE_TAB_HEADERS.index(dp.ARCHIVE_SAME_HEADER), dp.ARCHIVE_SAME_HEADER,
+                          apply=False)
+    dp.ensure_header_cell(service, sheet_id, dp.sw.TAB_HANDCURATED, dp.HC_WIDTH, dp.HC_SAME_HEADER,
+                          apply=False)
     if args.apply:
         dp.ensure_tab(service, sheet_id)
     print("provenance upsert:", dp.upsert(service, sheet_id, seed, now, apply=args.apply))
