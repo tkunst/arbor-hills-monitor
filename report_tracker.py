@@ -1152,6 +1152,27 @@ def _hov_wells(cfg: dict) -> set:
     return {str(k) for k in ceilings} if isinstance(ceilings, dict) else set()
 
 
+def _rows_with_rownums(service, sheet_id: str, tab: str, a1: str) -> list:
+    """[(sheet_row_number, row)] for the NON-EMPTY rows of a range, keeping
+    each row's real position. `_tab_rows_strict` drops blank rows, so an
+    index into its result would shift every later in-place cell update up
+    one row the moment a hand-edited tab holds a cleared row or a spacer;
+    the Missing & Overdue Log's `date_received` fill needs the true row
+    number. Same strictness as `_tab_rows_strict`: a genuinely absent tab is
+    [], any other failure raises."""
+    try:
+        resp = (service.spreadsheets().values()
+                .get(spreadsheetId=sheet_id, range=f"'{tab}'!{a1}")
+                .execute(num_retries=sw.GOOGLE_API_NUM_RETRIES))
+    except Exception as e:  # noqa: BLE001 — duck-typed absent-tab check
+        if sw._is_absent_tab_error(e):
+            return []
+        raise
+    m = re.match(r"[A-Z]+(\d+)", a1)
+    first = int(m.group(1)) if m else 1
+    return [(first + i, r) for i, r in enumerate(resp.get("values", [])) if r]
+
+
 def _update_cells(service, sheet_id: str, tab: str, a1: str, values: list) -> None:
     service.spreadsheets().values().update(
         spreadsheetId=sheet_id, range=f"'{tab}'!{a1}", valueInputOption="RAW",
@@ -1238,8 +1259,9 @@ def run(today: Optional[date] = None, send_email: bool = False, cfg: Optional[di
     # Existing tracker state (all three are this job's own tabs).
     arrivals = [_rowdict(sw.REPORT_ARRIVAL_HEADERS, r)
                 for r in sw._tab_rows_strict(service, private_id, sw.TAB_REPORT_ARRIVALS, "A2:M")]
-    log_raw = sw._tab_rows_strict(service, private_id, sw.TAB_MISSING_OVERDUE, "A2:K")
-    log_rows = [_rowdict(sw.MISSING_OVERDUE_HEADERS, r) for r in log_raw]
+    log_raw = _rows_with_rownums(service, private_id, sw.TAB_MISSING_OVERDUE, "A2:K")
+    log_rows = [_rowdict(sw.MISSING_OVERDUE_HEADERS, r) for _, r in log_raw]
+    log_rownums = [n for n, _ in log_raw]
     review_seen = {(r["kind"], r["source_stream"], r["source_ref"]) for r in
                    (_rowdict(sw.REPORT_TRACKER_REVIEW_HEADERS, x)
                     for x in sw._tab_rows_strict(service, private_id, sw.TAB_REPORT_TRACKER_REVIEW, "A2:G"))}
@@ -1278,10 +1300,10 @@ def run(today: Optional[date] = None, send_email: bool = False, cfg: Optional[di
         new_arrivals.append(arrival_row(m, now, notes=note))
         arrived_keys.add(key)
         for idx, lr in enumerate(log_rows):
-            if lr["instance_key"] == key and not lr["date_received"]:
+            if idx < len(log_rownums) and lr["instance_key"] == key and not lr["date_received"]:
                 received = rec.filed_date[:10] if _ymd(rec.filed_date) else today.isoformat()
                 lr["date_received"], lr["received_via"] = received, arrival_id(rec.stream, rec.ref)
-                fills.append((idx + 2, received, lr["received_via"]))
+                fills.append((log_rownums[idx], received, lr["received_via"]))
     if new_arrivals:
         sw.append_rows(service, private_id, sw.TAB_REPORT_ARRIVALS, new_arrivals)
     for rownum, received, via in fills:
