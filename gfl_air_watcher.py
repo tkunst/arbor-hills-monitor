@@ -96,6 +96,9 @@ from gfl_air_episodes import (  # noqa: F401 — pure move; re-exported for call
     latest_per_station,
     _monitor_rows,
     _num,
+    FALLBACK_N_STATIONS_EXPECTED,
+    station_roster,
+    roster_mismatch,
 )
 from gfl_air_emails import (  # noqa: F401 — pure move; re-exported for callers + tests
     _MAX_ALERT_LINES,
@@ -431,6 +434,12 @@ def run() -> int:
 
     for _w in gc.watch_config_warnings(thresholds, watch_thresholds):
         print(f"[gfl-air] CONFIG WARNING: {_w}")
+    # The configured station ROSTER (what should exist) — resolved + warned about on
+    # EVERY run, not just when a screening email fires, so a missing/typo'd roster
+    # is visible in a quiet run's log too. None => legacy fallback count (logged).
+    roster, roster_warnings = station_roster(cfg_gfl, prefix)
+    for _w in roster_warnings:
+        print(f"[gfl-air] CONFIG WARNING: {_w}")
 
     sheet_id = os.environ["GSHEET_ID"]
     sheets = dc.sheets_service()
@@ -575,7 +584,7 @@ def run() -> int:
     if watch_thresholds and watch_recipients:
         _run_action_level_episodes(
             sheets, sheet_id, cfg, readings, watch_thresholds, sentinels, prefix,
-            link, watch_recipients, cfg_gfl)
+            link, watch_recipients, cfg_gfl, roster)
 
     return 0
 
@@ -587,12 +596,16 @@ def _open_episode_from_state(key: str, ep: dict) -> dict:
 
 
 def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds,
-                               sentinels, prefix, link, watch_recipients, cfg_gfl) -> None:
+                               sentinels, prefix, link, watch_recipients, cfg_gfl,
+                               roster: list[str] | None = None) -> None:
     """Advance the per-(station,gas) episode state on this poll's readings, write the
     durable episode-log ROW before the state entry (repo ordering), and send AT MOST
     one consolidated SCREENING (open) email and one CLOSEOUT (close) email. Coords +
     ±2h context are best-effort; a failure there degrades the email but never blocks
-    it. Emails are best-effort (like the exceedance email).
+    it. Emails are best-effort (like the exceedance email). `roster` is the configured
+    expected-station list from station_roster() (None = legacy fallback count, already
+    warned about by run()); it drives the SCREENING email's N/<len> count and the
+    roster-vs-registry reconciliation logged below.
 
     ⚠️ Crash-safety caveat: the OBJECTID cursor is committed UPSTREAM (write_gfl_air
     _summary in run(), before this function), independent of the column-O episode
@@ -682,10 +695,22 @@ def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds
                 print(f"[gfl-air]   ±2h context for {st} unavailable: {e}")
         latest = latest_per_station(readings, prefix)
         monitor_rows = _monitor_rows(latest, watch_thresholds, sentinels, registry=coords)
+        # Roster vs. what was actually seen (readings ∪ registry) — a mismatch is
+        # logged loudly here AND named in the email; never absorbed into the count.
+        unexpected, missing = roster_mismatch(roster, (r["station"] for r in monitor_rows))
+        if unexpected:
+            print("[gfl-air]   ROSTER MISMATCH: station(s) seen in the source but not in "
+                  f"gfl_air.expected_stations: {', '.join(unexpected)} (listed in the "
+                  "email, not counted toward the expected total)")
+        if missing:
+            why = ("station list could not be retrieved this run" if not registry_available
+                   else "neither a reading this run nor a station-list entry")
+            print("[gfl-air]   ROSTER MISMATCH: roster station(s) absent from the source "
+                  f"this run: {', '.join(missing)} ({why})")
         subject, body = format_screening_email(
             result.opened, continuing, monitor_rows, watch_thresholds, link=link,
             retrieved_iso=retrieved_iso, coords=coords, context=context, historical=hist,
-            stations_reporting=len(latest), registry_available=registry_available)
+            expected_stations=roster, registry_available=registry_available)
         try:
             ea.send_email(subject, body, cfg, recipients=watch_recipients)
             print(f"[gfl-air]   SCREENING emailed: {subject}")

@@ -382,6 +382,13 @@ external users but no sensitive data). Public repo.
 - `gfl_air_client.py` — Stream E: GFL's public ArcGIS perimeter-air FeatureServer
   (H2S/CH4 fenceline readings). Fetch + pure ADR-004 mapping; structured-API
   source, never goes through `egle_doc_parser`. See ADR 014.
+  `fetch_station_coords()` is the live station **REGISTRY** (layer 0: every
+  `MS-*` station the source lists right now, with coordinates and
+  `last_read_iso`; fetched fresh each run, best-effort) — distinct from the
+  human-maintained station **ROSTER** in `config.yml`
+  (`gfl_air.expected_stations`, coder:h2s-roster-count 2026-10-23: which
+  stations are SUPPOSED to exist). The two are reconciled every screening
+  run (see the `gfl_air_episodes.py` entry below); neither is trusted alone.
 - `gfl_air_watcher.py` — daily poll of the GFL air feed: incremental OBJECTID
   cursor (in the `GFL Air` tab), readings → Measurements (`basis=measured`),
   same-day exceedance alerts via its own classifier. Gated on `gfl_air.enabled`.
@@ -422,6 +429,24 @@ external users but no sensitive data). Public repo.
   liveness decision + body. `gfl_air_watcher.py` keeps the orchestration
   (run, capture, measurements, the liveness wrapper) and re-exports every
   moved name, so `gfl_air_watcher.<name>` still works.
+  **Station roster (coder:h2s-roster-count, 2026-10-23):** the SCREENING
+  email's "stations reporting N/<len>" denominator comes from
+  `gfl_air_episodes.station_roster()` reading `gfl_air.expected_stations`
+  (adding/removing a monitor is a one-line config edit), not from the
+  hard-coded 6 PR #107 left in `format_screening_email()`'s signature. That
+  6 survives only as `FALLBACK_N_STATIONS_EXPECTED`, used when the config key
+  is missing/empty — `run()` logs a CONFIG WARNING on EVERY run that happens,
+  and the email's data-quality line says the count is the legacy default.
+  `roster_mismatch(roster, seen)` reconciles the roster against everything
+  seen this run (readings ∪ layer-0 registry): a station seen but not on the
+  roster (a new MS-7, an "MS-01" beside "MS-1") is logged as ROSTER MISMATCH
+  and named in the email as "not in this monitor's configured roster", listed
+  but NEVER counted toward the expected N (so it can't mask a silent roster
+  station); a roster station with neither a reading nor a registry entry
+  (distinct from PR #107's "silent": registry entry, no reading) gets no
+  invented row — it is named in the "(N station(s) not listed — MS-1: …)" note
+  and logged. A mismatch is never invisible. See ADR 039's 2026-10-23
+  addendum.
 - `gfl_air_hourly_capture.py` — ADR 026 addendum (2026-10-06): a SEPARATE
   hourly durable-capture job alongside the daily Stream E poll above, shrinking
   the window in which a reading could sit in GFL's feed (and be silently

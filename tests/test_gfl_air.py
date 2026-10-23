@@ -1213,6 +1213,7 @@ def _watch_cfg():
     cfg = copy.deepcopy(CFG)
     cfg["gfl_air"]["watch_thresholds"] = {"h2s_ppb": 30, "ch4_ppm": 40}
     cfg["gfl_air"]["watch_alert_recipients"] = list(_WATCH_RECIPIENTS)
+    cfg["gfl_air"]["expected_stations"] = list(STATIONS)   # the roster (coder:h2s-roster-count)
     return cfg
 
 
@@ -1729,8 +1730,8 @@ def test_run_registry_fetch_failure_notes_unlisted_station(monkeypatch):
                         lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
     assert gw.run() == 0
     assert len(sent) == 1
-    assert ("(1 station(s) not listed: the station list could not be retrieved this run.)"
-            in sent[0][1])
+    assert ("(1 station(s) not listed — MS-1: the station list could not be retrieved "
+            "this run.)" in sent[0][1])
 
 
 def test_run_screening_email_lists_silent_station(monkeypatch):
@@ -1786,5 +1787,198 @@ def test_run_empty_station_list_counts_as_unavailable(monkeypatch):
     monkeypatch.setattr(gw.gc, "fetch_readings",
                         lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
     assert gw.run() == 0
-    assert ("(1 station(s) not listed: the station list could not be retrieved this run.)"
-            in sent[0][1])
+    assert ("(1 station(s) not listed — MS-1: the station list could not be retrieved "
+            "this run.)" in sent[0][1])
+
+
+# ----- station roster vs. live registry (coder:h2s-roster-count) ---------------
+# The configured ROSTER (gfl_air.expected_stations: what should exist) is the count's
+# source of truth; the layer-0 REGISTRY (fetch_station_coords: what the source lists
+# now) and this run's readings are reconciled against it, never trusted blindly.
+
+ROSTER_CFG = {"expected_stations": list(STATIONS), "station_prefix": "MS-"}
+
+
+def _five_reporting(exclude="MS-1"):
+    return {s: _elev(i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != exclude}
+
+
+def test_station_roster_reads_config_in_order_without_warnings():
+    roster, warns = gw.station_roster(ROSTER_CFG, "MS-")
+    assert roster == STATIONS and warns == []
+
+
+def test_station_roster_missing_key_is_none_and_warned():
+    for cfg in ({}, {"expected_stations": []}, {"expected_stations": None},
+                {"expected_stations": "MS-1"}):
+        roster, warns = gw.station_roster(cfg, "MS-")
+        assert roster is None
+        assert len(warns) == 1 and "expected_stations is missing or empty" in warns[0]
+        assert str(gw.FALLBACK_N_STATIONS_EXPECTED) in warns[0]   # the fallback is named
+
+
+def test_station_roster_warns_on_duplicates_blanks_and_prefix_mismatch():
+    roster, warns = gw.station_roster(
+        {"expected_stations": ["MS-1", "MS-1", "", "MS1", " MS-2 "]}, "MS-")
+    assert roster == ["MS-1", "MS1", "MS-2"]                 # deduped, stripped, kept in order
+    assert any("more than once" in w for w in warns)
+    assert any("blank entry" in w for w in warns)
+    assert any("'MS1' does not start with station_prefix 'MS-'" in w for w in warns)
+
+
+def test_station_roster_all_blank_is_none():
+    roster, warns = gw.station_roster({"expected_stations": ["", None]}, "MS-")
+    assert roster is None and any("no usable entries" in w for w in warns)
+
+
+def test_roster_mismatch_pure():
+    assert gw.roster_mismatch(STATIONS, STATIONS) == ([], [])
+    assert gw.roster_mismatch(STATIONS, ["MS-2", "MS-7", "MS-01", "MS-3"]) == (
+        ["MS-01", "MS-7"], ["MS-1", "MS-4", "MS-5", "MS-6"])   # missing keeps roster order
+    assert gw.roster_mismatch(None, ["MS-7"]) == ([], [])    # no roster: nothing to reconcile
+    assert gw.roster_mismatch([], ["MS-7"]) == ([], [])
+
+
+def test_screening_count_is_roster_driven_not_hardcoded_six():
+    roster = STATIONS[:5]                                    # MS-6 retired from the roster
+    reg = {s: _registry()[s] for s in roster}
+    latest = {s: _elev(i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(roster) if s != "MS-1"}
+    rows = gw._monitor_rows(latest, WT, SENT, registry=reg)
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z",
+                                        expected_stations=roster)
+    assert "stations reporting 4/5" in body and "/6" not in body
+    assert "not listed" not in body                          # five rows, five expected
+    assert "legacy default" not in body
+    # the same roster with MS-1 absent from the registry too: named, count stays /5
+    del reg["MS-1"]
+    rows = gw._monitor_rows(latest, WT, SENT, registry=reg)
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z",
+                                        expected_stations=roster)
+    assert "stations reporting 4/5" in body
+    assert "(1 station(s) not listed — MS-1: not in the source's station list.)" in body
+
+
+def test_unexpected_registry_station_is_named_and_never_counted():
+    # The registry grew an MS-7 (and MS-1 is silent). MS-7 reports, but it must NOT be
+    # folded into the expected six — "6/6" here would mask MS-1 going dark.
+    reg = _registry()
+    reg["MS-7"] = {"last_read_iso": gc.reading_iso({"Date": DAY0})}
+    latest = _five_reporting()
+    latest["MS-7"] = _elev(9, "MS-7", 1.0, 5.0, BATCH_MS)
+    rows = gw._monitor_rows(latest, WT, SENT, registry=reg)
+    assert [r["station"] for r in rows] == STATIONS + ["MS-7"]   # listed, not dropped
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z",
+                                        expected_stations=STATIONS)
+    assert "stations reporting 5/6" in body
+    table = body.split("ALL PERIMETER MONITORS", 1)[1].split("NEWLY DETECTED", 1)[0]
+    assert any(ln.strip().startswith("MS-7") for ln in table.splitlines())
+    assert ("(1 station(s) not in this monitor's configured roster — MS-7: listed above "
+            "but NOT counted toward the 6 expected; if this is a real new or renamed "
+            "monitor, update gfl_air.expected_stations.)") in body
+    assert "not listed" not in body                          # every roster station has a row
+
+
+def test_naming_variant_cannot_hide_a_missing_roster_station():
+    # "MS-01" appears beside the roster's MS-1, which itself has vanished from the
+    # registry: the pre-roster count (6 rows vs 6) would have said nothing at all.
+    reg = _registry()
+    del reg["MS-1"]
+    reg["MS-01"] = {"last_read_iso": gc.reading_iso({"Date": DAY0})}
+    latest = _five_reporting()
+    latest["MS-01"] = _elev(9, "MS-01", 1.0, 5.0, BATCH_MS)
+    rows = gw._monitor_rows(latest, WT, SENT, registry=reg)
+    assert len(rows) == 6
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z",
+                                        expected_stations=STATIONS)
+    assert "stations reporting 5/6" in body                  # MS-01 is not one of the six
+    assert "(1 station(s) not listed — MS-1: not in the source's station list.)" in body
+    assert "not in this monitor's configured roster — MS-01" in body
+
+
+def test_roster_station_absent_from_registry_is_named_not_crashed():
+    # Distinct from "silent" (registry entry, no reading): MS-1 is in the roster but the
+    # registry fetch succeeded WITHOUT it and it sent nothing. No row is invented for
+    # it; the "not listed" note names it. Documented choice (see ADR 039 addendum).
+    reg = _registry()
+    del reg["MS-1"]
+    rows = gw._monitor_rows(_five_reporting(), WT, SENT, registry=reg)
+    assert [r["station"] for r in rows] == STATIONS[1:]
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z",
+                                        expected_stations=STATIONS)
+    assert "stations reporting 5/6" in body
+    assert "(1 station(s) not listed — MS-1: not in the source's station list.)" in body
+    assert "could not be retrieved" not in body
+    # ...and when the registry fetch itself failed, the reason says so instead.
+    rows = gw._monitor_rows(_five_reporting(), WT, SENT)
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z",
+                                        expected_stations=STATIONS, registry_available=False)
+    assert ("(1 station(s) not listed — MS-1: the station list could not be retrieved "
+            "this run.)" in body)
+
+
+def test_no_roster_falls_back_to_legacy_count_and_says_so():
+    rows = gw._monitor_rows(_five_reporting(), WT, SENT, registry=_registry())
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z")
+    assert gw.FALLBACK_N_STATIONS_EXPECTED == 6
+    assert ("stations reporting 5/6 (expected count is the legacy default — "
+            "gfl_air.expected_stations not configured)") in body
+
+
+def test_run_logs_roster_mismatch_and_names_unexpected_station(monkeypatch, capsys):
+    fake, sent = _wire_with_recipients(monkeypatch, _watch_cfg())
+    _baseline_then(monkeypatch)
+    reg = _registry()
+    del reg["MS-1"]                                          # roster station gone from layer 0
+    reg["MS-7"] = {"last_read_iso": gc.reading_iso({"Date": DAY0})}   # ...and a new one
+    monkeypatch.setattr(gw.gc, "fetch_station_coords", lambda *a, **k: reg)
+    new = [_elev(106 + i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"]
+    new[1] = _elev(108, "MS-3", 0.0, 45.0, BATCH_MS)                # MS-3 CH4 opens (>40)
+    new.append(_elev(120, "MS-7", 1.0, 5.0, BATCH_MS))
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0
+    out = capsys.readouterr().out
+    assert ("ROSTER MISMATCH: station(s) seen in the source but not in "
+            "gfl_air.expected_stations: MS-7") in out
+    assert "ROSTER MISMATCH: roster station(s) absent from the source this run: MS-1" in out
+    assert "CONFIG WARNING: gfl_air.expected_stations" not in out
+    assert len(sent) == 1
+    _, body, _ = sent[0]
+    assert "stations reporting 5/6" in body                  # MS-7 never counted as one of six
+    assert "(1 station(s) not listed — MS-1: not in the source's station list.)" in body
+    assert "not in this monitor's configured roster — MS-7" in body
+
+
+def test_run_without_roster_warns_every_run_and_uses_fallback(monkeypatch, capsys):
+    cfg = _watch_cfg()
+    del cfg["gfl_air"]["expected_stations"]
+    fake, sent = _wire_with_recipients(monkeypatch, cfg)
+    _baseline_then(monkeypatch)                              # a quiet run warns too
+    assert ("CONFIG WARNING: gfl_air.expected_stations is missing or empty"
+            in capsys.readouterr().out)
+    monkeypatch.setattr(gw.gc, "fetch_station_coords", lambda *a, **k: _registry())
+    new = [_elev(106 + i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"]
+    new[1] = _elev(108, "MS-3", 0.0, 45.0, BATCH_MS)
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0
+    assert "CONFIG WARNING: gfl_air.expected_stations is missing" in capsys.readouterr().out
+    assert len(sent) == 1
+    assert "stations reporting 5/6 (expected count is the legacy default" in sent[0][1]
+
+
+def test_config_yml_roster_is_well_formed():
+    """The committed roster: non-empty, unique, every name carries station_prefix (a
+    pin on SHAPE only — the names themselves are Trisha's one-line config edit)."""
+    import config_loader
+    g = config_loader.load_config()["gfl_air"]
+    roster, warns = gw.station_roster(g, g.get("station_prefix", gc.DEFAULT_STATION_PREFIX))
+    assert roster and warns == []
+    assert len(roster) == len(set(roster))
