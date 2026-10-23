@@ -63,18 +63,12 @@ def _is_rate_limited(exc: BaseException) -> bool:
     return _http_status(exc) == 429
 
 
-def _seconds_until_next_minute(now: datetime | None = None) -> int:
-    """How long to sleep so the Sheets per-minute quota window has rolled over:
-    to one second past the next wall-clock minute, but never a wait so short it
-    could land inside the same window (floor of 15 s -> wait for the one after).
-    `execute(num_retries=...)` only backs off for seconds; the read quota
-    ("Read requests per minute per user", 60) needs the minute."""
-    now = now or datetime.now()
-    wait = 61 - now.second
-    if wait < 15:
-        wait += 60
-    return wait
-
+# How long to sleep so the Sheets per-minute read quota ("Read requests per
+# minute per user", 60) has rolled over. A full minute plus one second covers
+# the window whether Google counts it from the wall-clock minute or as a
+# sliding 60 s behind the last request; `execute(num_retries=...)` alone only
+# backs off for seconds.
+QUOTA_WAIT_S = 61
 
 _sleep = time.sleep  # module attribute so tests can stub the minute-long wait
 
@@ -90,10 +84,9 @@ def _waiting_out_quota(fn, *args, **kwargs):
     except Exception as e:  # noqa: BLE001 — only a 429 is handled; the rest re-raise
         if not _is_rate_limited(e):
             raise
-        wait = _seconds_until_next_minute()
         print(f"[backfill] Sheets quota hit (HTTP 429) in {getattr(fn, '__name__', fn)}: "
-              f"waiting {wait}s for the next minute window, then retrying once.")
-        _sleep(wait)
+              f"waiting {QUOTA_WAIT_S}s for the next minute window, then retrying once.")
+        _sleep(QUOTA_WAIT_S)
         return fn(*args, **kwargs)
 
 
