@@ -27,19 +27,22 @@ _TEMP_RE = re.compile(r"(?<!\d)(?<!\d,)(\d{1,3}(?:,\d{3})+|\d{2,4})\s*(?:°|deg(
 
 # An EPA Method 19 F-factor label: "F-factor", "Fd factor", "F (factor)", and the
 # OCR forms of a subscripted F, "Fy (factor)", "F,, (factor)", "F, (factor)", "F d
-# factor". A lab sheet prints them as a column ("Fd (factor) 9340 Fw (factor) 11356
-# Fc (factor) 1729"), so a bare _TEMP_RE read "9340 F" from the NEXT label's F as
-# 9340°F (the 2026-10-16 N1504 ICT sulfur report, nSITE doc 4935451998137733993).
+# factor". A lab sheet prints them as a column, which OCR reads as "Fy (factor) 9340
+# F,, (factor) 11356 F, (factor) 1729", so a bare _TEMP_RE read "9340 F" from the
+# NEXT label's F as 9340°F (the 2026-10-16 N1504 ICT sulfur report, nSITE doc
+# 4935451998137733993).
 # Case-sensitive capital F with at most a subscript (d/w/c, OCR y, or one or two
 # OCR commas), so "a few factor" or "Fan factor" is never a label.
 _F_SUB = r"(?<![A-Za-z])F(?:\s?[dwcy]|,{1,2})?"
 # The match's own F starting a label: only the unambiguous "(factor)" / "-factor"
 # forms, so "180°F, factor in" or "180 F (factor 2)" stays a temperature.
-_F_FACTOR_LABEL_RE = re.compile(_F_SUB + r"\s*(?:\(\s*(?i:factor)\s*\)|-\s*(?i:factor)\b)")
+# Any hyphen or dash: OCR often prints "F-factor" with an en dash.
+_DASH = r"[-\u2010-\u2015]"
+_F_FACTOR_LABEL_RE = re.compile(_F_SUB + r"\s*(?:\(\s*(?i:factor)\s*\)|" + _DASH + r"\s*(?i:factor)\b)")
 # The label right before a number ("Fd (factor) 9340", "F-factor = 9,340",
 # "Fd factor = 9340").
 _F_FACTOR_BEFORE_RE = re.compile(
-    _F_SUB + r"(?:\s*\(\s*(?i:factor)\s*\)|\s*-\s*(?i:factor)|\s+(?i:factor))\s*[=:]?\s*$")
+    _F_SUB + r"(?:\s*\(\s*(?i:factor)\s*\)|\s*" + _DASH + r"\s*(?i:factor)|\s+(?i:factor))\s*[=:]?\s*$")
 # Method 19 F-factors are never below this (Fc runs ~1,000-2,000 scf/MMBtu; Fd and
 # Fw ~8,700-11,400). Below it the guard never applies, so the 50-250°F urgency
 # window reads exactly as a bare _TEMP_RE does: the guard can only remove an

@@ -31,19 +31,27 @@ def _values(text):
 @pytest.mark.parametrize("text", [
     QUEUE_OCR_LINE,
     *SPECIMEN_OCR_BLOCKS,
-    "F-factor 9,340",
     "F-factor 9,340 F",
-    "Fd factor = 9340",
     "Fd factor = 9340 F",
-    "Fd (factor) 9340 Fw (factor) 11356 Fc (factor) 1729",
-    "Fc 1729",
     "9340 F-factor",
+    "9340 F\u2013factor",
     "9340 F (factor)",
+    "9340 F (Factor)",
     "F d factor 9340 F w factor 11356",
 ])
 def test_f_factor_values_are_not_temperatures(text):
+    # Each fixture is a real failing input: the bare regex reads a >1,000 value.
+    assert [m for m in ea._TEMP_RE.finditer(text) if int(m.group(1).replace(",", "")) > 1000]
     assert [v for v in _values(text) if v > 1000] == []
     assert rf.implausible_text_temps(text, 250) == []
+
+
+@pytest.mark.parametrize("text", ["F-factor 9,340", "Fd factor = 9340", "Fc 1729",
+                                  "Fd (factor) 9340 Fw (factor) 11356 Fc (factor) 1729"])
+def test_f_factor_forms_without_a_trailing_f_never_matched(text):
+    # The queue's other forms: no F after the number, so neither regex reads them.
+    assert list(ea._TEMP_RE.finditer(text)) == []
+    assert _values(text) == []
 
 
 def test_the_bare_regex_still_matches_the_specimen_line():
