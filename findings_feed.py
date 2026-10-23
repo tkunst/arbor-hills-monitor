@@ -734,7 +734,7 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
 <p class="findings-nav" id="pr-browse-nav">{nav}</p>
 
 <footer class="site-footer">
-<p>Generated {_esc(generated_at)} from the monitor's case file. An independent project. All source data is public regulatory records from Michigan EGLE and other public sources.</p>
+<p>Generated {_esc(generated_at)} from the monitor's case file. An independent project of Landfill Records Project LLC. All source data is public regulatory records from Michigan EGLE and other public sources.</p>
 </footer>
 
 </div>
