@@ -9,6 +9,7 @@
 The monitor logs everything that arrives (nSITE documents, WDS records, hand-curated files, GovQA releases, Ridge Wood reports, perimeter episodes). The project also keeps hand-built lists of what *should* arrive. Nothing compares the two.
 
 What that cost us, found in one session on 2026-10-20:
+
 - Two Consent Judgment quarterly boundary-probe reports (2024 Q1, 2025 Q4) and two CJ semi-annual reports (2025 H2, 2026 H1) were missing, and no system had flagged them.
 - For a peer landfill (Carleton Farms, N5986), about 70 scheduled reports were due 8/19/2019 to 10/20/2026 and 2 were held. Counting that took hours of hand work.
 - The same Arbor Hills report series are counted by hand in four Lotext files, on different dates, and one (the HOV index §7c) was already wrong.
@@ -32,6 +33,7 @@ One row per report *type* per facility.
 `schedule_id` · `facility_id` · `report_type` (controlled vocabulary, below) · `report_name` (as the regulator titles it) · `obligation_source` (permit/order/letter + section, e.g. "CJ 2020-0593-CE ¶5.12(D)", "ROP GC 23", "HOV Plan rev. Feb 2025 p.2") · `citation_confidence` (`primary` = we read the obligation text; `secondary` = from a summary) · `recipient` (AQD / MMD / WRD / EPA) · `cadence` (`monthly`, `bimonthly`, `quarterly`, `semiannual`, `annual`, `one-time`, `event`) · `period_basis` (`calendar`, `fiscal`, `rolling`) · `due_rule` (machine-readable, below) · `grace_days` (blank = use the global default, `report_tracking.default_grace_days`, set to **7** in config.yml; a number here overrides it for that report type; both can be changed at any time and take effect on the next run) · `first_period` · `last_period` or `end_condition` · `match_rule` (how an arrival is recognized, below) · `active` (Y/N; N = known obligation with unverified cadence, kept visible but not expanded) · `notes` · `edited_by` · `edited_at`.
 
 `due_rule` grammar (small and explicit; reject anything else at load):
+
 - `period_end+Nd` (e.g. `period_end+45d`)
 - `fixed:MM-DD` per period half (e.g. `fixed:03-15,09-15` for the federal semi-annual)
 - `next_month_day:D` (e.g. `next_month_day:15`)
@@ -47,6 +49,7 @@ One row per report *type* per facility.
 **5. `Missing & Overdue Log`** (written by the job; FOIA and date columns hand-edited).
 `instance_key` · `facility_id` · `report_name` · `period` · `due_date` · `date_added` · `foia_request_id` · `foia_date_filed` · `date_received` · `received_via` (arrival_id or `hand`) · `notes`.
 Rules:
+
 - **Never delete a row.** An item is **complete for collection purposes when `date_received` holds a real date before today.** "Subtractions" in reports mean rows that became complete since the last run.
 - The FOIA columns are held for hand entry (and later automation from GovQA Archive Watch, matching our own E-numbers).
 - One row per `instance_key`, ever. Re-running never duplicates.
@@ -56,6 +59,7 @@ Rules:
 ### Daily job (`report_tracker.py`, its own workflow, own concurrency group)
 
 Order matters:
+
 1. **Load** the four hand tables; validate every `due_rule`, `match_rule` and `condition`. A bad row is logged to the owner weekly email and skipped, never guessed.
 2. **Expand** every active `Expected Reports` row into instances with due dates from `first_period` through today (+30 days for the "coming due" view).
 3. **Evaluate triggers** against the existing tables (Measurements, WOI Well Summary, Perimeter Action-Level Episodes, Compliance Deadlines) and add triggered instances with their due dates.
@@ -94,6 +98,7 @@ So "weekly" is right for wells over 145°F without an HOV (and that weekly list 
 ## Seed data (from the 2026-10-20 inventories)
 
 The coder seeds the hand tables from these Lotext files and marks every row `citation_confidence` honestly:
+
 - `documents/arbor-hills/SET-report/C6-peer-carleton-farms-N5986.md` §7 (Carleton) and §7b (Arbor Hills): counts, schedules and held/missing for 8/19/2019 to 10/20/2026.
 - `documents/arbor-hills/analysis/semcog-landfill-etlf-comparison-2026-09-21/carleton-hov-timeline-2026-10-20.md`: Carleton plan dates (approved 6/12/2023, revised 2/3/2025), report contents and due rules.
 - `documents/arbor-hills/arbor-hills-HOV-ETLF-CO-index.md` §1, §2, §7a, §7b: Arbor Hills WOI cadence history and HOV letters.
@@ -101,6 +106,7 @@ The coder seeds the hand tables from these Lotext files and marks every row `cit
 - `documents/arbor-hills/arbor-hills-monitoring-obligations-inventory.md`: obligation sources and end dates.
 
 Seed rules:
+
 - Rows whose cadence isn't verified (Arbor Hills WOI 2019–2021, Gas Extraction Exceedance reports, pre-plan Carleton HOV letters) go in with `active = N` and a note. They don't expand into instances until a human sets `active = Y`.
 - Backfill `Report Arrivals` for everything we already hold, so the first run's Missing & Overdue Log lists only real gaps. Expected first-run open items (approximate; the job's count wins): Arbor Hills: CJ semi-annual 2025 H2 + 2026 H1; CJ quarterly 2024 Q1 + 2025 Q4; NSPS/NESHAP semi-annual 2019 H1 through 2024 H1 (12); annual certifications not yet checked (7). Carleton: monthly HOV reports (38), AOI semi-annual (**6, from 2023-H2**, with the note "AOI tier may have begun with the Feb 2025 revision; if EGLE confirms, set 2023-H2 to 2024-H2 to no-record"), NSPS/NESHAP semi-annual (15), annual certifications (7), plan approvals (2).
 - Known FOIA links to pre-fill: Arbor Hills boundary-methane notifications → `E700318-100826` (granted 10/15/2026, deposit pending).
@@ -193,3 +199,116 @@ In one line: build report_tracker.py + its own workflow (ships disabled behind r
 ## Roadmap (add to `docs/roadmap.md` in the same PR)
 
 - **Violation-closure tracking (future ADR).** Track every violation EGLE records, whether from a Violation Notice or cited in an inspection report, through to its closure: violation date, citation, source document, what EGLE required (response, corrective action, deadline), the operator's response date, and EGLE's closure (date and document, e.g. "Compliance Communication discretionary" or a return-to-compliance date). Flag violations with no closure past their response deadline, the same way this ADR flags missing reports. Inputs already exist: the Violations Watch, Compliance Actions Watch and Evaluations Watch tabs (nSITE), the WDS compliance-action records, and Compliance Deadlines. Multi-landfill like this ADR (facility_id keyed). Example gap it would catch: Carleton's 9/14/2021 R 299.4432 violation, still listed open on EGLE's WDS portal.
+
+---
+
+## Implementation notes (as built, 2026-10-23 — coder:report-expectations-tracker)
+
+The build follows the Decision above; these are the places where the code
+is more specific than the draft, or deviates from it, so the ADR matches
+what shipped.
+
+**Tabs and columns.** Seven PRIVATE-Sheet tabs
+(`sheet_writer.REPORT_TRACKER_TABS`, never in `_TAB_HEADERS`): the five in
+the Decision plus `Report Tracker Review` (proposed matches, unmatched
+periodic titles, rejected hand-table rows — the owner's weekly review
+list) and `Report Tracker Runs`. Two columns are appended LAST, the repo's
+convention: `name_aliases` on `Report Facilities` (`;`-separated strings a
+record's facility text or title must contain to resolve to that facility)
+and `active` on `Trigger Rules`. Headers are reconciled on every run.
+
+**Period strings.** `YYYY-MM` (month), `YYYYBn` (bi-month, n = 1..6 —
+Arbor Hills' 2022–2023 WOI cadence needed a kind of its own), `YYYYQn`,
+`YYYYHn`, `YYYY` (annual), `YYYY-MM-DD` (one-time / event). The
+`instance_key` is as specified.
+
+**`due_rule`.** The grammar is as specified. `fixed:` picks the first fixed
+date strictly after the period's last day, rolling into the next year
+(`fixed:03-15,09-15`: H1 → 9/15 same year, H2 → 3/15 next year);
+`next_month_day:D` clamps D to the month's length; `within:Nh` rounds up to
+whole days (the hour count is kept for the note). For a TRIGGERED instance
+`period_end+Nd` anchors on the trigger year's end and the other rules on the
+trigger date.
+
+**`match_rule`.** `stream=a|b; title_regex=...; [exclude_regex=...;]
+[doc_type=...;] period_from=e1,e2,...`. Extractors: `year_quarter_words`,
+`year_half_words` (incl. `1H26`, "first half 2024"), `month_year`,
+`month_range` ("July–December 2025", "May and June 2022", "Jan 1 - Jun 30
+2025"), `date_range` (`070125 through 123125`), `year_in_title` (`FY2024`,
+`CY2024`), `date_in_title`, `record_period` (Ridge Wood's Month),
+`record_date`, and `prior_{month,bimonth,quarter,half,year}_from_date`
+(anchored on a "dated m/d/yyyy" / "(due m/d/yyyy)" in the title first,
+then the record's own dates — nSITE's Document Date column was found to
+be wrong often enough that the title's date wins). A period must be of the
+schedule's own kind. **Window rule (added from the live pass):** a schedule
+answers for a period inside its `first_period`/`last_period` window; a
+period named in the title's own words outside every window is still a HIGH
+arrival, noted "outside the schedule's window" (a 2004 QMR is a QMR, and
+nothing is expected for it); a period that only a date-fallback extractor
+produced outside the window is PROPOSED. Match rules were checked against
+every record on the live case-file Sheet on 2026-10-23 (2,620 records: 277
+high, 1 proposed, 26 unmatched periodic titles — DMRs, the SEP annual
+report, the EPA ACO monthly reports, candidates for future rows).
+
+**Decision 4 in code.** `report_tracking.agency_title_regex` (inspections,
+Violation/Enforcement Notices, Consent Orders, Compliance Communications,
+Evaluations, nSITE "Schedule - ..." placeholders, emails) is applied before
+any rule. EGLE's HOV approval letters are deliberately NOT in it: the
+`hov-approval` / `hov-plan-approval` rows need them as arrivals.
+`periodic_title_regex` requires a cadence word (a bare "Report" is not a
+schedule).
+
+**Triggers (v1 subset).** `condition` terms: `wellhead_temp_f <op> N`,
+`co_ppmv <op> N` (joined to the well's carbon_monoxide readings in the same
+calendar month) and `no_hov(well)` (the well id's absence from
+`temperature_thresholds.hov_ceilings`); `input` must be `Measurements`;
+`repeat` is blank / `once per well` / `annual while condition holds`;
+`stop_condition` is text for the reader, not evaluated. `probe_lel_pct` is
+not in v1 (no Measurements metric carries it). **Every seeded trigger rule
+ships `active = N`** — enabling one is a hand step after reviewing what it
+would create against Measurements, the same bar the draft set for seeding.
+
+**nSITE arrivals** come from the New/Historical Documents feed tabs (the
+title there is the resolved display name; the doc id is read from an nSITE
+Link or looked up through Archived PDFs when the Link was rewritten to the
+Drive copy). **GovQA arrivals** are the `file-listed` rows of the private
+GovQA Archive Watch tab. **WDS Historical Documents** turned out to carry
+real QMR and Annual Landfill Report rows (2002 / FY1996 onward), so those
+two rows have working match rules but stay `active = N` until WDS coverage
+of recent periods and the annual report's due date are confirmed.
+
+**Owner weekly email.** Rather than editing the live `owner_notices`
+weekly (a path already enabled in production), the tracker sends its OWN
+owner-only review email on Sundays (or `--email`), through
+`owner_notices.send_owner_email`, gated on
+`report_tracking.review_email_enabled` (ships false). Folding it into the
+housekeeping email is a later, separate change.
+
+**Shadow mode.** `report_tracking.shadow_until` (blank = live): while
+today ≤ that date the Runs row's `mode` is `shadow` and the briefing line
+carries `[shadow]`. Set it to activation day + 14.
+
+**Seed.** `report_tracker_seed.py` (dry run; `--apply` writes only into
+EMPTY private tabs). 2 facilities, 27 Expected Reports rows (14 active),
+4 trigger rules (all inactive), 46 hand Report Arrivals rows (every WOI, CJ
+semi-annual, CJ quarterly and NESHAP report held on 2026-10-23, plus
+Carleton's two monthly reports). Expected first-run open items from the
+seed + the live Sheet, computed 2026-10-23: Arbor Hills 20 (CJ semi-annual
+2025 H2 + 2026 H1; NESHAP 2019 H1–2024 H1 = 11 halves, not the draft's 12,
+plus 2026 H1 is on nSITE; annual certifications 7; CJ quarterly 0 — 2024 Q1
+and 2025 Q4 both arrived on nSITE after the 10/20 inventory), Carleton 68
+(38 monthly, 6 AOI, 15 NESHAP, 7 certifications, 2 plan approvals). The
+job's count wins.
+
+**Morning briefing.** Check 16 in `run_infra_checks.sh` calls
+`scripts/report_tracker_summary.py --json` (status `ok | stale | no-runs |
+disabled | skipped | error`, always exit 0). `GSHEET_ID_PRIVATE` is not in
+the Mac's `.env` today, so the check reports `skipped` until it is added.
+`run_infra_checks.sh` lives under `~/Library/Application Support` and is not
+git-tracked; only the SKILL.md half of that edit is a Lotext commit.
+
+**Activation (Trisha's steps, in order):** `python3 report_tracker_seed.py`
+(dry run) → `--apply` → set `shadow_until` → flip `enabled: true` → add
+`GSHEET_ID_PRIVATE` to the Mac `.env` for Check 16 → after two clean weeks,
+`review_email_enabled: true` and retire the Lotext held/missing tables to
+pointers per the table above.

@@ -1100,6 +1100,39 @@ external users but no sensitive data). Public repo.
   `alert_recipients` list. Gated on `egle_newsroom.enabled` (shipped `true` at
   build, 2026-10-01, on Trisha's explicit request — not the overnight-coder
   new-source `false` default).
+- `report_tracker.py` — **ADR 071** (coder:report-expectations-tracker,
+  2026-10-23): expected reports vs. arrivals, for any number of landfills.
+  Seven PRIVATE-Sheet tabs (`sheet_writer.REPORT_TRACKER_TABS`; never in
+  `_TAB_HEADERS`): the hand-edited `Report Facilities` / `Expected Reports` /
+  `Trigger Rules`, the job-written `Report Arrivals`, the never-deleted
+  `Missing & Overdue Log` (one row per `instance_key` =
+  `facility|report_type|period`, ever; FOIA + `date_received` columns are
+  hand-edited; complete when `date_received` < today), `Report Tracker
+  Review` (proposed matches / unmatched periodic titles / rejected hand rows)
+  and `Report Tracker Runs` (the one row the morning briefing's Check 16,
+  `scripts/report_tracker_summary.py --json`, reads). Daily, in the ADR's
+  order: load + validate (a bad row is logged, never guessed) -> expand every
+  active schedule (`due_rule` grammar: `period_end+Nd` / `fixed:MM-DD,..` /
+  `next_month_day:D` / `on:YYYY-MM-DD` / `within:Nh|Nd`; period strings
+  `YYYY-MM`, `YYYYBn`, `YYYYQn`, `YYYYHn`, `YYYY`, `YYYY-MM-DD`) -> evaluate
+  trigger rules over Measurements (`wellhead_temp_f` / `co_ppmv` /
+  `no_hov(well)` terms only in v1) -> match every record from the streams a
+  facility lists (nSITE feed tabs, WDS, Hand-Curated, GovQA `file-listed`
+  rows, Ridge Wood) with each schedule's `match_rule` (`stream=..;
+  title_regex=..; [exclude_regex=..;] period_from=<extractors>`; a HIGH match
+  needs one answer with the period inside the schedule's window and the
+  facility resolved; anything else is PROPOSED and only reviewed) and fill
+  `date_received` on the log -> append newly missing instances (due + grace
+  < today; `report_tracking.default_grace_days` 7, per-row override) ->
+  Runs row. Decision 4: titles matching `agency_title_regex` (inspections,
+  VNs, consent orders, nSITE schedule placeholders, emails) are never
+  arrivals. Read-only on every existing tab; fails closed with no usable
+  private Sheet. `report_tracker_seed.py` holds the Arbor Hills + Carleton
+  Farms seed (dry run; `--apply` writes empty private tabs only, Trisha's to
+  run; unverified cadences and every trigger rule ship `active=N`). Gated on
+  `report_tracking.enabled` (ships `false`; `review_email_enabled` false too);
+  workflow `report-tracker.yml`, 7pm ET. Owner-only Sunday review email via
+  `owner_notices.send_owner_email`.
 - `public_comment_feed.py` — **ADR 035**: pure render logic (no I/O, same
   shape as `findings_feed.py`) for the public "Public Comment Periods" page
   (`site/public-comment/`) — an Open table and a Closed table, sourced from
@@ -1158,6 +1191,8 @@ answers "is it live right now."
 | `mpart.enabled` | yes |
 | `owner_weekly.enabled` | yes |
 | `owner_weekly.enforcement_alert_enabled` | yes |
+| `report_tracking.enabled` | no |
+| `report_tracking.review_email_enabled` | no |
 | `egle_newsroom.enabled` | yes |
 <!-- stream-status:end -->
 
