@@ -173,6 +173,26 @@ archive:
   batch_size: 100
   folder_name: "Arbor Hills Case File Mirror"
 
+# --- Data lifecycle: snapshot -> immutable Drive exporter (ADR 071) ---
+# OFF BY DEFAULT. Cross-cutting (not inside any one watcher's block): when
+# enabled, rop_watcher / mmd_watcher / nsite_submissions_watcher / pfas_watcher
+# each upload the raw snapshot payload they are about to append to their Sheet
+# tab as an immutable file in ONE shared app-only Drive folder (secret
+# GOAUTH_SNAPSHOT_FOLDER_ID), BEFORE the Sheet row is written — the Tier-1
+# copy docs/data-lifecycle-architecture.md asks for. Best-effort: a failed or
+# unconfigured upload never blocks the row or the alert. See snapshot_exporter.py.
+#
+# ACTIVATION (Trisha's; mirrors ADR 026's three steps):
+#   1. create the app-only folder — run the `create-oauth-folder` workflow
+#      (identity `kunst`, e.g. FOLDER_NAME "Arbor Hills Watch Snapshots"),
+#   2. add its id as the GOAUTH_SNAPSHOT_FOLDER_ID repo secret (the four
+#      workflows already pass it through),
+#   3. set enabled: true here and commit.
+# Until enabled: true is on main, the four watchers behave exactly as before.
+data_lifecycle:
+  snapshot_export:
+    enabled: false
+
 # --- Watcher (daily) ---
 # The daily watcher handles INCREMENTAL new filings only (normal volume is 0-5).
 # If it ever sees more unprocessed docs than this, the historical backlog is not

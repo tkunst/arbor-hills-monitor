@@ -43,6 +43,11 @@ facts from analyst judgement:
 
 ## Snapshot
 
+Regenerated 2026-10-23 (ADR 071) — adds `snapshot_exporter` (Persistence; a
+write edge to the Drive archive, called by the ROP / MMD / nSITE Submissions /
+PFAS watchers before their Sheet append). The PFAS persona flow gained a step
+for the exporter.
+
 Regenerated 2026-10-23 (coder:poison-import-move) — `nsite_client` now imports
 `poison_doc_extractor` lazily inside `download_pdf()`, so the seven nSITE
 profile watchers (K–Q) no longer load the PDF stack on import. The `ast`-derived

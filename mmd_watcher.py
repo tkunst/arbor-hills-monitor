@@ -66,6 +66,7 @@ import drive_client as dc
 import sheet_writer as sw
 import mmd_client as mc
 import email_alerts as ea
+import snapshot_exporter as se
 from config_loader import load_config
 
 # Human-readable names for the default watched wdsids (label context only —
@@ -223,6 +224,9 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg,
     last = sw.last_mmd_snapshot(sheets, sheet_id, key)
 
     if last is None:
+        # Tier-1 Drive copy BEFORE the Tier-2 row (ADR 071 write order; a
+        # best-effort no-op unless data_lifecycle.snapshot_export is enabled).
+        se.export_snapshot(snap_json, se.snapshot_name("mmd", key, today, new_hash), cfg)
         sw.append_mmd_watch_row(sheets, sheet_id, today, key, label, "baseline",
                                 new_hash, "initial snapshot (no alert)", _now(), snap_json)
         print(f"[mmd-watch] {label}: baseline recorded ({new_hash}).")
@@ -235,6 +239,7 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg,
 
     old_snap = _load_json(last_snap_json, {})
     note, body = summarize_change(old_snap, snap)
+    se.export_snapshot(snap_json, se.snapshot_name("mmd", key, today, new_hash), cfg)
     sw.append_mmd_watch_row(sheets, sheet_id, today, key, label, "changed",
                             new_hash, note, _now(), snap_json)
     print(f"[mmd-watch] {label}: CHANGED ({last_hash} -> {new_hash}; {note}).")

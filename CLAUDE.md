@@ -265,6 +265,28 @@ external users but no sensitive data). Public repo.
   `parse_document()`'s own OCR step — **ADR 069** identifies this as the
   likely primary source of the mirror's pre-fix scan-only PDFs; now covered
   by `archive_client.upload_file()`'s own OCR wiring regardless.
+- `snapshot_exporter.py` — **ADR 071 (2026-10-23; ships OFF)**: the ONE
+  generic snapshot → immutable Drive exporter for the four snapshot-diff
+  watchers whose only durable record was a Tier-2 append-only tab:
+  `rop_watcher.py`, `mmd_watcher.py`, `nsite_submissions_watcher.py` (each
+  exports its `snap_json`) and `pfas_watcher.py` (its normalized `content`,
+  as `.txt`). Each calls `export_snapshot()` immediately BEFORE every
+  snapshot append (baseline and changed rows alike) so the write order is
+  the data-lifecycle doc's invariant, Drive (Tier 1) → Sheet row → alert.
+  Best-effort by contract: returns the webViewLink or `None` and NEVER raises
+  (flag off, not configured, dead token, network, quota — class-only log),
+  so it can never block a row or an alert. Gated on the cross-cutting
+  `data_lifecycle.snapshot_export.enabled` (its own top-level block, not any
+  one watcher's; `is_enabled()` is checked before any env read); one SHARED
+  app-only folder for all four streams, `GOAUTH_SNAPSHOT_FOLDER_ID`, with
+  the `rop_`/`mmd_`/`subm_`/`pfas_` filename prefix keeping them apart.
+  `snapshot_name()` = `<stream>_<key>_<date>_<hash>.<ext>` — the hash is
+  load-bearing because `archive_client.upload_file()` dedupes BY NAME. Sheet
+  row schemas are unchanged (the filename's date/key/hash IS the row's join
+  key). The four workflows already pass the OAuth creds + folder secret
+  through, so activation is folder → secret → flag (see `config.yml`).
+  RIDE, PDF rendering, and `wds_archiver`/`gfl_feed_snapshot` are out of
+  scope by ruling.
 - `email_alerts.py` — SMTP urgent alerts + weekly digest; urgency is pure.
   **ADR 065** added `is_correspondence_letter` (EGLE's own letterhead marker
   plus a substantive-signal phrase, both pure/unit-tested): a doc already
@@ -1001,6 +1023,7 @@ answers "is it live right now."
 <!-- stream-status:begin -->
 | Config flag | Live |
 | --- | --- |
+| `data_lifecycle.snapshot_export.enabled` | no |
 | `wds.enabled` | yes |
 | `mmpc_archive.enabled` | yes |
 | `civicclerk_archive.enabled` | yes |

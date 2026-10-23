@@ -9,8 +9,9 @@ name: rop-watch
 # Safe to leave scheduled from day one: rop.enabled is false by default, so
 # rop_watcher._should_run() makes every run a quiet no-op (exit 0) until Trisha
 # reviews it and flips it on. No Anthropic (a deterministic extractor, not the
-# Claude classifier) and no Drive/OAuth (the deliverable is the alert + the
-# durable Sheet row, same scope call as pfas_watcher — ADR 012). 10am ET keeps it
+# Claude classifier); Drive/OAuth only for the OPTIONAL, default-off snapshot
+# exporter (ADR 071) — the deliverable is the alert + the durable Sheet row,
+# same scope call as pfas_watcher (ADR 012). 10am ET keeps it
 # clear of the 3–9am cluster; state is the "ROP Watch" tab, NOT _meta, so it
 # never races the other jobs.
 on:
@@ -48,7 +49,10 @@ jobs:
       - name: Watch ROP sources for changes
         env:
           # Sheets I/O uses the service account; the change alert uses SMTP.
-          # No Anthropic (nothing to classify) and no OAuth (no Drive mirror).
+          # No Anthropic (nothing to classify). OAuth is passed ONLY for the
+          # optional snapshot -> Drive exporter (ADR 071, snapshot_exporter.py):
+          # inert until data_lifecycle.snapshot_export.enabled is true AND
+          # GOAUTH_SNAPSHOT_FOLDER_ID is set; an unset secret is an empty string.
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -56,4 +60,8 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID_KUNST }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET_KUNST }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN_KUNST }}
+          GOAUTH_SNAPSHOT_FOLDER_ID: ${{ secrets.GOAUTH_SNAPSHOT_FOLDER_ID }}
         run: python rop_watcher.py
