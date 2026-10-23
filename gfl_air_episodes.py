@@ -291,23 +291,28 @@ def station_roster(cfg_gfl: dict, station_prefix: str = gc.DEFAULT_STATION_PREFI
     which perimeter stations are SUPPOSED to exist, as distinct from the live layer-0
     REGISTRY (gc.fetch_station_coords: what the source lists right now). Returns
     (roster, warnings). `roster` is the de-duplicated list in config order, or None
-    when the key is missing/empty/not a list — the caller then falls back to
-    FALLBACK_N_STATIONS_EXPECTED and must log every warning returned here. A roster
-    entry that doesn't carry `station_prefix` can never match a reading (both the
-    readings and the registry are prefix-filtered), so it is warned about but kept
-    (it still counts toward "expected", and will show as not listed). Pure."""
+    when the key is missing, empty or not a list — the caller then falls back to
+    FALLBACK_N_STATIONS_EXPECTED and must log every warning returned here. An entry
+    that is not a string, is blank, or doesn't carry `station_prefix` is DROPPED with
+    a warning: a prefix-less name can never match a reading or a registry entry (both
+    are prefix-filtered), and keeping it would have the email state a config typo as
+    a fact about the source ("MS1: not in the source's station list"). Pure."""
     raw = (cfg_gfl or {}).get("expected_stations")
     warnings: list[str] = []
     if not isinstance(raw, (list, tuple)) or not raw:
         warnings.append(
-            "gfl_air.expected_stations is missing or empty in config.yml — the "
-            f"SCREENING email falls back to the legacy count of "
+            "gfl_air.expected_stations is missing, empty, or not a list in config.yml — "
+            f"the SCREENING email falls back to the legacy count of "
             f"{FALLBACK_N_STATIONS_EXPECTED} expected stations; a silent station can "
             "only be named once the roster is configured.")
         return None, warnings
     roster: list[str] = []
     for item in raw:
-        name = str(item).strip() if item is not None else ""
+        if not isinstance(item, str):
+            warnings.append(f"gfl_air.expected_stations entry {item!r} is not a string "
+                            "(ignored).")
+            continue
+        name = item.strip()
         if not name:
             warnings.append("gfl_air.expected_stations has a blank entry (ignored).")
             continue
@@ -319,7 +324,8 @@ def station_roster(cfg_gfl: dict, station_prefix: str = gc.DEFAULT_STATION_PREFI
             warnings.append(
                 f"gfl_air.expected_stations entry {name!r} does not start with "
                 f"station_prefix {station_prefix!r} — no reading or registry entry can "
-                "ever match it, so it will always show as not listed.")
+                "ever match it (ignored; fix the spelling in config.yml).")
+            continue
         roster.append(name)
     if not roster:
         warnings.append("gfl_air.expected_stations has no usable entries — falling back "
@@ -330,14 +336,15 @@ def station_roster(cfg_gfl: dict, station_prefix: str = gc.DEFAULT_STATION_PREFI
 
 def roster_mismatch(expected_stations: list[str] | None, seen: Iterable[str]
                     ) -> tuple[list[str], list[str]]:
-    """Reconcile the configured roster against the stations SEEN this run (every
-    station with a reading in the batch OR a layer-0 registry entry — i.e. the
-    monitor-table rows). Returns (unexpected, missing): `unexpected` = seen but not
-    in the roster (a genuinely new MS-7, or a naming variant such as "MS-01" beside
-    "MS-1" — never silently counted as one of the expected N, never silently
-    dropped); `missing` = in the roster but not seen at all (neither a reading nor a
-    registry entry — distinct from "silent", which is a registry station with no
-    reading). Both sorted; both empty when there is no roster. Pure."""
+    """Reconcile the configured roster against the stations SEEN — a reading set
+    (every poll: the stations with a reading in this batch) or the monitor-table rows
+    (screening-email time: readings ∪ layer-0 registry). Returns (unexpected,
+    missing): `unexpected` = seen but not in the roster (a genuinely new MS-7, or a
+    naming variant such as "MS-01" beside "MS-1" — never silently counted as one of
+    the expected N, never silently dropped), sorted; `missing` = in the roster but
+    not seen, in roster order (against the table rows this means neither a reading
+    nor a registry entry — distinct from "silent", a registry station with no
+    reading). Both empty when there is no roster. Pure."""
     if not expected_stations:
         return [], []
     roster = set(expected_stations)

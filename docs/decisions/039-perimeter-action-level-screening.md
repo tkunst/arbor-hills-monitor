@@ -311,16 +311,25 @@ or one physical station shows twice (silent under one name, reporting under the 
 - the **roster** — `gfl_air.expected_stations` in `config.yml`, human-maintained, the
   single source of truth for how many stations are supposed to exist. Adding or
   removing a monitor is a one-line edit there, never a code change. Read by
-  `gfl_air_episodes.station_roster()` (de-duplicated, config order; a name without
-  `station_prefix` is warned about, since nothing can ever match it);
+  `gfl_air_episodes.station_roster()` (de-duplicated, config order; an entry that is
+  blank, not a string, or lacks `station_prefix` is dropped with a CONFIG WARNING —
+  nothing can ever match it, and keeping it would have the email state a config typo
+  as a fact about the source);
 - the **registry** — layer 0 through `fetch_station_coords()`, what the source lists
   right now, fetched fresh every run and still best-effort (`registry_available`
   keeps its fallback path).
 
-`gfl_air_episodes.roster_mismatch(roster, seen)` reconciles the roster against every
-station seen this run (readings in the batch ∪ registry entries, i.e. the monitor-table
-rows). The SCREENING email's denominator is `len(roster)`; "reporting" counts only
-non-silent rows whose station is ON the roster. A station seen but not on the roster is
+`gfl_air_episodes.roster_mismatch(roster, seen)` reconciles the roster against what was
+seen, at two points. On EVERY poll, against the batch's readings (no extra fetch): a
+reading from a station not on the roster, or a roster station with no reading this
+poll, is logged — so a new monitor quietly coming online is in the run log even on a
+perimeter where no screening email fires for months. At screening-email time, against
+the monitor-table rows (readings ∪ registry entries), since that is the only point the
+best-effort layer-0 fetch happens; the registry side is therefore reconciled only when
+an episode opens. The SCREENING email's denominator is `len(roster)`; "reporting" counts
+only non-silent rows whose station is ON the roster, derived from the rows alone (the
+caller-supplied `stations_reporting` count was removed — it could have bypassed that
+filter). A station seen but not on the roster is
 listed in the table as before, but is also named in a note ("not in this monitor's
 configured roster — MS-7: listed above but NOT counted toward the 6 expected; if this is
 a real new or renamed monitor, update gfl_air.expected_stations") and logged as

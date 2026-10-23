@@ -1625,8 +1625,7 @@ def test_silent_station_is_listed_not_dropped():
     assert ms1["silent"] is True and ms1["as_of"] == ""
     opened = [_opened("MS-3", "h2s", 45.0, BATCH_MS)]
     _, body = gw.format_screening_email(opened, [], rows, WT, link="L",
-                                        retrieved_iso="2026-10-06T13:00:00Z",
-                                        stations_reporting=len(latest))
+                                        retrieved_iso="2026-10-06T13:00:00Z")
     table = body.split("ALL PERIMETER MONITORS", 1)[1].split("NEWLY DETECTED", 1)[0]
     line = next(ln for ln in table.splitlines() if ln.strip().startswith("MS-1"))
     assert "no data since 2026-09-17 12:00 PM ET" in line
@@ -1638,7 +1637,7 @@ def test_silent_station_is_listed_not_dropped():
     assert "2026-09-17" not in body.split("WHAT TRIGGERED THIS", 1)[0]
 
 
-def test_silent_station_count_defaults_to_reporting_rows_only():
+def test_silent_station_count_is_reporting_rows_only():
     latest = {s: _elev(i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"}
     rows = gw._monitor_rows(latest, WT, SENT, registry=_registry())
     _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
@@ -1813,22 +1812,64 @@ def test_station_roster_missing_key_is_none_and_warned():
                 {"expected_stations": "MS-1"}):
         roster, warns = gw.station_roster(cfg, "MS-")
         assert roster is None
-        assert len(warns) == 1 and "expected_stations is missing or empty" in warns[0]
+        assert len(warns) == 1
+        assert "expected_stations is missing, empty, or not a list" in warns[0]
         assert str(gw.FALLBACK_N_STATIONS_EXPECTED) in warns[0]   # the fallback is named
 
 
-def test_station_roster_warns_on_duplicates_blanks_and_prefix_mismatch():
+def test_station_roster_drops_bad_entries_with_a_warning_each():
     roster, warns = gw.station_roster(
-        {"expected_stations": ["MS-1", "MS-1", "", "MS1", " MS-2 "]}, "MS-")
-    assert roster == ["MS-1", "MS1", "MS-2"]                 # deduped, stripped, kept in order
+        {"expected_stations": ["MS-1", "MS-1", "", "MS1", " MS-2 ", {"name": "MS-7"}, 3]},
+        "MS-")
+    assert roster == ["MS-1", "MS-2"]                        # deduped, stripped, in order
     assert any("more than once" in w for w in warns)
     assert any("blank entry" in w for w in warns)
-    assert any("'MS1' does not start with station_prefix 'MS-'" in w for w in warns)
+    # a prefix-less typo is DROPPED (never rendered as "MS1: not in the source's list")
+    assert any("'MS1' does not start with station_prefix 'MS-'" in w and "ignored" in w
+               for w in warns)
+    assert sum("is not a string" in w for w in warns) == 2   # the dict and the int
+    rows = gw._monitor_rows(_five_reporting(), WT, SENT, registry=_registry())
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z",
+                                        expected_stations=roster)
+    assert "MS1" not in body and "stations reporting 1/2" in body   # MS-1 silent, MS-2 reporting
 
 
-def test_station_roster_all_blank_is_none():
-    roster, warns = gw.station_roster({"expected_stations": ["", None]}, "MS-")
+def test_station_roster_all_unusable_is_none():
+    roster, warns = gw.station_roster({"expected_stations": ["", None, "MS1"]}, "MS-")
     assert roster is None and any("no usable entries" in w for w in warns)
+
+
+def test_reporting_count_cannot_be_overridden_past_the_roster():
+    # No caller-supplied count: the only way to be "reporting" is a non-silent ROW
+    # for a ROSTER station (the kwarg that could bypass that filter is gone).
+    import inspect
+    assert "stations_reporting" not in inspect.signature(gw.format_screening_email).parameters
+    latest = _five_reporting()
+    latest["MS-7"] = _elev(9, "MS-7", 1.0, 5.0, BATCH_MS)
+    rows = gw._monitor_rows(latest, WT, SENT, registry=_registry())
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z",
+                                        expected_stations=STATIONS)
+    assert "stations reporting 5/6" in body                  # six non-silent rows, five count
+
+
+def test_quiet_poll_still_reconciles_readings_against_roster(monkeypatch, capsys):
+    # No episode opens (every value below the watch tier), so no screening email and
+    # no registry fetch — the readings side is still reconciled and logged every poll.
+    fake, sent = _wire_with_recipients(monkeypatch, _watch_cfg())
+    _baseline_then(monkeypatch)
+    capsys.readouterr()
+    new = [_elev(106 + i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"]
+    new.append(_elev(120, "MS-7", 1.0, 5.0, BATCH_MS))       # a new monitor, quietly online
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0
+    out = capsys.readouterr().out
+    assert sent == []
+    assert ("ROSTER MISMATCH: reading(s) this poll from station(s) not in "
+            "gfl_air.expected_stations: MS-7") in out
+    assert "roster station(s) with no reading this poll: MS-1" in out
 
 
 def test_roster_mismatch_pure():
@@ -1947,7 +1988,8 @@ def test_run_logs_roster_mismatch_and_names_unexpected_station(monkeypatch, caps
     out = capsys.readouterr().out
     assert ("ROSTER MISMATCH: station(s) seen in the source but not in "
             "gfl_air.expected_stations: MS-7") in out
-    assert "ROSTER MISMATCH: roster station(s) absent from the source this run: MS-1" in out
+    assert ("ROSTER MISMATCH: roster station(s) unaccounted for this run: MS-1 (neither a "
+            "reading this run nor a station-list entry)") in out
     assert "CONFIG WARNING: gfl_air.expected_stations" not in out
     assert len(sent) == 1
     _, body, _ = sent[0]
@@ -1961,7 +2003,7 @@ def test_run_without_roster_warns_every_run_and_uses_fallback(monkeypatch, capsy
     del cfg["gfl_air"]["expected_stations"]
     fake, sent = _wire_with_recipients(monkeypatch, cfg)
     _baseline_then(monkeypatch)                              # a quiet run warns too
-    assert ("CONFIG WARNING: gfl_air.expected_stations is missing or empty"
+    assert ("CONFIG WARNING: gfl_air.expected_stations is missing, empty, or not a list"
             in capsys.readouterr().out)
     monkeypatch.setattr(gw.gc, "fetch_station_coords", lambda *a, **k: _registry())
     new = [_elev(106 + i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"]

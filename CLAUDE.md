@@ -437,16 +437,21 @@ external users but no sensitive data). Public repo.
   6 survives only as `FALLBACK_N_STATIONS_EXPECTED`, used when the config key
   is missing/empty — `run()` logs a CONFIG WARNING on EVERY run that happens,
   and the email's data-quality line says the count is the legacy default.
-  `roster_mismatch(roster, seen)` reconciles the roster against everything
-  seen this run (readings ∪ layer-0 registry): a station seen but not on the
+  `roster_mismatch(roster, seen)` reconciles the roster against what was
+  seen — on EVERY poll against the batch's readings (logged: a reading from a
+  station not on the roster, a roster station with no reading), and at
+  screening-email time against readings ∪ the layer-0 registry (the only
+  point that best-effort fetch happens): a station seen but not on the
   roster (a new MS-7, an "MS-01" beside "MS-1") is logged as ROSTER MISMATCH
   and named in the email as "not in this monitor's configured roster", listed
   but NEVER counted toward the expected N (so it can't mask a silent roster
   station); a roster station with neither a reading nor a registry entry
   (distinct from PR #107's "silent": registry entry, no reading) gets no
   invented row — it is named in the "(N station(s) not listed — MS-1: …)" note
-  and logged. A mismatch is never invisible. See ADR 039's 2026-10-23
-  addendum.
+  and logged. A roster entry that is blank, not a string, or lacks
+  `station_prefix` is DROPPED with a CONFIG WARNING (never rendered as a
+  fact about the source). A mismatch is never invisible. See ADR 039's
+  2026-10-23 addendum.
 - `gfl_air_hourly_capture.py` — ADR 026 addendum (2026-10-06): a SEPARATE
   hourly durable-capture job alongside the daily Stream E poll above, shrinking
   the window in which a reading could sit in GFL's feed (and be silently
