@@ -39,6 +39,7 @@ def _values(text):
     "Fc 1729",
     "9340 F-factor",
     "9340 F (factor)",
+    "F d factor 9340 F w factor 11356",
 ])
 def test_f_factor_values_are_not_temperatures(text):
     assert [v for v in _values(text) if v > 1000] == []
@@ -62,9 +63,42 @@ def test_the_bare_regex_still_matches_the_specimen_line():
     ("Temperature correction factor 1.02 applied; well read 150 F", 150),
     ("Method 19 F-factor used for stack flow. Wellhead 150°F.", 150),
     ("131°F,145°F", 145),
+    # Ordinary wording next to a reading is never an F-factor label (security
+    # review round 1, low: these were suppressed by the first draft's looser label).
+    ("Well AHW12 reached 180 F factor of safety", 180),
+    ("180°F, factor in the cover depth", 180),
+    ("Well read 180 F (factor 2)", 180),
+    ("Well read 180 F\nfactor in the cover depth", 180),
+    ("Fan factor 180 F", 180),
+    ("a few factor 180°F", 180),
+    ("Fill factor 180 F", 180),
+    # Code review round 1: real readings beside "factor" wording, and F-factor
+    # labels beside a wellhead-range value (the guard never applies below 1,000).
+    ("Wellhead temperature 150 F, factor in cover depth", 150),
+    ("Well AHW1 read 150 F - factor of safety", 150),
+    ("Temperatures reached 150 F (factor 2 above baseline)", 150),
+    ("AHW12 150F (factor: settlement)", 150),
+    ("150°F, factor", 150),
+    ("150 F Factor", 150),
+    ("Fd factor\n150 F", 150),
+    ("Feb factor 150 F", 150),
+    ("fan factor = 150 F", 150),
+    ("Fit factor: 150 F", 150),
+    ("Leaf factor:                     150 F", 150),
+    ("Fd (factor) 150 F", 150),
+    ("150 F (factor)", 150),
+    ("150 F-factor", 150),
 ])
 def test_true_positives_are_kept(text, expected):
     assert ea._max_temperature_f(text) == expected
+
+
+@pytest.mark.parametrize("label", ["F (factor) ", "Fd factor = ", "F-factor ", "F,, (factor) "])
+def test_guard_never_touches_a_value_below_the_f_factor_floor(label):
+    # Every wellhead-range value reads exactly as the bare regex reads it.
+    for v in range(50, 1000, 7):
+        for text in (f"{label}{v} F", f"{v} F (factor)", f"{v} F-factor"):
+            assert _values(text) == [int(x.group(1)) for x in ea._TEMP_RE.finditer(text)]
 
 
 def test_thousands_separator_still_read_whole():
