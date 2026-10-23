@@ -97,6 +97,7 @@ import drive_client as dc
 import sheet_writer as sw
 import nsite_client as nc
 import email_alerts as ea
+import snapshot_exporter as se
 from config_loader import load_config
 
 
@@ -263,6 +264,9 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients)
     last = sw.last_submissions_snapshot(sheets, sheet_id, key)
 
     if last is None:
+        # Tier-1 Drive copy BEFORE the Tier-2 row (ADR 071 write order; a
+        # best-effort no-op unless data_lifecycle.snapshot_export is enabled).
+        se.export_snapshot(snap_json, se.snapshot_name("subm", key, today, new_hash), cfg)
         sw.append_submissions_watch_row(sheets, sheet_id, today, key, label, "baseline",
                                          new_hash, "initial snapshot (no alert)", _now(), snap_json)
         print(f"[nsite-submissions-watch] {label}: baseline recorded ({new_hash}).")
@@ -275,6 +279,7 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients)
 
     old_snap = _load_json(last_snap_json, {})
     note, body = summarize_submissions_change(old_snap, snap)
+    se.export_snapshot(snap_json, se.snapshot_name("subm", key, today, new_hash), cfg)
     sw.append_submissions_watch_row(sheets, sheet_id, today, key, label, "changed",
                                      new_hash, note, _now(), snap_json)
     print(f"[nsite-submissions-watch] {label}: CHANGED ({last_hash} -> {new_hash}; {note}).")

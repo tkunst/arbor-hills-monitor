@@ -8,8 +8,9 @@ name: pfas-watch
 #
 # Safe to leave scheduled from day one: pfas.enabled is false by default, so
 # pfas_watcher._should_run() makes every run a quiet no-op (exit 0) until Trisha
-# flips it on. Lighter than the other jobs — no Anthropic, no OCR, no Drive/OAuth
-# (Sheets I/O via the service account + SMTP for the alert). State is the
+# flips it on. Lighter than the other jobs — no Anthropic, no OCR; Drive/OAuth
+# only for the OPTIONAL, default-off snapshot exporter (ADR 071); Sheets I/O via
+# the service account + SMTP for the alert. State is the
 # append-only PFAS Page Watch tab, NOT _meta, so this never races the other jobs
 # on the _meta cell; 7am ET simply keeps it clear of the 3–6am cluster.
 on:
@@ -47,7 +48,10 @@ jobs:
       - name: Watch PFAS page(s) for changes
         env:
           # Sheets I/O uses the service account; the change alert uses SMTP.
-          # No Anthropic (nothing to classify) and no OAuth (no Drive mirror).
+          # No Anthropic (nothing to classify). OAuth is passed ONLY for the
+          # optional snapshot -> Drive exporter (ADR 071, snapshot_exporter.py):
+          # inert until data_lifecycle.snapshot_export.enabled is true AND
+          # GOAUTH_SNAPSHOT_FOLDER_ID is set; an unset secret is an empty string.
           GSHEET_ID: ${{ secrets.GSHEET_ID }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -55,4 +59,8 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           ALERT_RECIPIENTS_EXTRA: ${{ secrets.ALERT_RECIPIENTS_EXTRA }}
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID_KUNST }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET_KUNST }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN_KUNST }}
+          GOAUTH_SNAPSHOT_FOLDER_ID: ${{ secrets.GOAUTH_SNAPSHOT_FOLDER_ID }}
         run: python pfas_watcher.py

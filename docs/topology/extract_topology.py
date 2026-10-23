@@ -122,6 +122,7 @@ DOMAIN = {
     # Persistence & notification
     "sheet_writer": "persistence", "drive_client": "persistence",
     "archive_client": "persistence", "email_alerts": "persistence",
+    "snapshot_exporter": "persistence",  # snapshot -> immutable Drive file for ROP/MMD/Submissions/PFAS (ADR 071, default off)
     "owner_notices": "persistence",    # owner-only weekly email + same-day owner alerts (ADR 070)
     "upcoming": "persistence",         # private Sheet "Upcoming" tab for the Sunday digest
     "dataset_provenance": "persistence",  # Dataset Provenance tab + annotation columns, public Sheet (coder:dataset-provenance-sheet)
@@ -236,6 +237,7 @@ DATA_EDGES = [
     ("gfl_feed_snapshot", "ds:drive-archive", "write"),
     ("govqa_watcher", "ds:drive-archive", "write"),     # private staging folder
     ("ride_docs_watcher", "ds:drive-archive", "write"), # private mirror folder
+    ("snapshot_exporter", "ds:drive-archive", "write"), # ROP/MMD/Submissions/PFAS snapshot files (ADR 071, when enabled)
     # Public site
     ("gen_findings_feed", "ds:public-site", "write"),
     ("gen_public_comment_feed", "ds:public-site", "write"),
@@ -352,6 +354,8 @@ FLOWS = [
              "nodes": ["pfas_watcher", "pfas_client", "ds:pfas"]},
             {"label": "Compare the hash to the last snapshot in the PFAS Page Watch tab",
              "nodes": ["pfas_watcher", "sheet_writer", "ds:case-file-sheet"]},
+            {"label": "On a change, export the normalized text to Drive first (ADR 071, when enabled), then append the row",
+             "nodes": ["snapshot_exporter", "archive_client", "ds:drive-archive"]},
             {"label": "Email a visible-text diff when the page has changed",
              "nodes": ["email_alerts", "ds:smtp"]},
         ],

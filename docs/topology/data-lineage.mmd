@@ -98,6 +98,8 @@ graph LR
   gfl_feed_snapshot ==>|write| ds_drive_archive
   govqa_watcher ==>|write| ds_drive_archive
   ride_docs_watcher ==>|write| ds_drive_archive
+  snapshot_exporter["snapshot_exporter"]
+  snapshot_exporter ==>|write| ds_drive_archive
   gen_findings_feed["gen_findings_feed"]
   gen_findings_feed ==>|write| ds_public_site
   gen_public_comment_feed["gen_public_comment_feed"]
