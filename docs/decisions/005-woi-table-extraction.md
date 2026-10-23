@@ -1065,11 +1065,14 @@ timestamp are a table of their own with their own boundary:
   with it, `out.readings` is in line order as it always was, and
   `merge_cross_table_duplicates` keeps the same copy it kept.
 - Kept: a column shift main finds is a property of the printed table, so the
-  two-digit rows printed under main's rejected table (those collected since
-  main's last boundary, `main_start_2d`, reset to 0 when the two-digit table
-  ends — review round 1) are rejected with it, with the same entry as
-  before. Two-digit rows under an earlier main table of the same two-digit
-  table are judged on their own.
+  two-digit rows printed under main's rejected table are rejected with it,
+  with the same entry as before: those still open (collected since main's
+  last boundary, `main_start_2d`, reset to 0 when the two-digit table ends —
+  review round 1) and those whose own table already ended under main's open
+  table, which are parked (`pending_2d`) until main's table ends and only
+  then emitted or rejected (review round 2: they were emitted at once, so
+  main's shift could not take them). Two-digit rows under an earlier main
+  table that ended cleanly are judged on their own.
 - The rows of a two-digit table under an unrecognized gas layout, a non-gas
   header or no header are counted in an entry of their own
   (`cur_rejected_2d`), written when the two-digit table ends, so that entry
@@ -1081,8 +1084,9 @@ printed as a one-line "timestamp ADJ" and takes that `ADJ` as the table's
 label (the 2026-10-21 one-line addendum's accepted case: a table that prints
 ADJ tokens needs no pairing rule). The two-digit table now does exactly the
 same, because `_header_text_2d` ends at a *bare* timestamp of either form.
-So a two-digit table reads its header as its four-digit twin would in every
-case, and the twin property holds with no exception. (Before, the two-digit
+So a two-digit table reads its ADJ label and boundary as its four-digit twin
+would in every case, and the twin property holds with no exception on those
+(the layout and Alias label still come from main's text, below). (Before, the two-digit
 header was cut at the first row of any form, so such a table read as
 unlabeled and paired a later duplicate row.) A bare first row followed by its
 own `ADJ` line is cut off the header in both forms, as before.
@@ -1104,7 +1108,13 @@ own `ADJ` line is cut off the header in both forms, as before.
   equal to their four-digit twin on this branch in all 3,000 (`origin/main`
   differs on 239 of the same 3,000). The round-1 reviewer's own fuzzer
   (eight header kinds, stray lines, duplicate rows, gas-sum failures): the
-  same 0 / 0 / 0 after the round-1 fixes, 0 crashes in 9,000 runs.
+  same 0 / 0 / 0 after the round-1 fixes, 0 crashes in 9,000 runs. The
+  round-2 reviewer (6,000 mixed sequences with forced alternating main-only
+  / two-digit-only boundaries, 6,000 twin sequences, 18,000 crash probes,
+  and an independent reproduction of the corpus regression) found the
+  parked-rows gap above and nothing else; after the fix all of its counts
+  are 0 except item 3 of its report (a pre-existing four-digit-date
+  non-validation, not changed here).
 - 91-file corpus regression vs `origin/main` (`b8a610c`; every PDF under
   the wellfield staging doc-cache and the VGC cache that `is_woi_report`
   accepts, 644,093 readings): the two parse dumps are byte-identical. 0
