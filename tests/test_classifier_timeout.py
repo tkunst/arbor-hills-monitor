@@ -32,26 +32,36 @@ def _recording_anthropic(monkeypatch, parsed=None):
 
 def test_client_is_built_with_an_explicit_timeout_under_the_sdk_default(monkeypatch):
     calls = _recording_anthropic(monkeypatch)
-    p._anthropic_client()
+    p._anthropic_client(16384)
     assert len(calls) == 1 and "timeout" in calls[0]
     t = calls[0]["timeout"]
     assert isinstance(t, anthropic.Timeout)
     assert t.read is not None and t.read < 600
-    assert t.read == p._CLASSIFY_TIMEOUT_S == 300.0
-    assert t.write == 300.0 and t.pool == 300.0
+    assert t.read == t.write == t.pool == p.classify_timeout_s(16384)
     assert t.connect == p._CLASSIFY_CONNECT_TIMEOUT_S == 10.0
     assert "max_retries" not in calls[0]       # the SDK's own retry policy is kept
 
 
-def test_timeout_is_above_the_slowest_legitimate_response_for_the_live_max_tokens():
+def test_timeout_is_sized_from_the_output_budget_with_the_sdk_estimate_plus_headroom():
     # The SDK's own non-streaming heuristic (128k output tokens/hour) estimates
-    # ~460 s for config's 16384 max_tokens; the observed output rate (~60 tok/s)
-    # ~270 s. The timeout must clear the observed rate with margin, or a large
-    # structured classification would time out and retry forever (a timeout is
-    # transient — never a poison strike).
+    # ~460 s for 16384 output tokens. A timeout BELOW the slowest legitimate
+    # response would be worse than the 600 s default: the call would time out,
+    # be retried twice, and come back as a no-strike transient every run
+    # forever. So the timeout is that estimate plus a minute, clamped under 600.
+    sdk_estimate = 3600.0 * 16384 / 128_000
+    t = p.classify_timeout_s(16384)
+    assert sdk_estimate < t < 600.0
+    assert t == sdk_estimate + p._CLASSIFY_TIMEOUT_HEADROOM_S
+    assert p.classify_timeout_s(256) == p._CLASSIFY_TIMEOUT_MIN_S == 120.0
+    assert p.classify_timeout_s(64000) == p._CLASSIFY_TIMEOUT_MAX_S == 600.0
+    assert p.classify_timeout_s(8192) < p.classify_timeout_s(16384)
+
+
+def test_live_config_max_tokens_gets_a_timeout_under_the_sdk_default():
     from config_loader import load_config
     max_tokens = load_config()["classification_max_tokens"]
-    assert max_tokens / 60.0 < p._CLASSIFY_TIMEOUT_S
+    t = p.classify_timeout_s(max_tokens)
+    assert 3600.0 * max_tokens / 128_000 < t < 600.0
 
 
 def test_document_classifier_uses_the_timeout_client_when_none_is_passed(monkeypatch):
@@ -60,15 +70,15 @@ def test_document_classifier_uses_the_timeout_client_when_none_is_passed(monkeyp
                                                  "severity": "routine", "measurements": [],
                                                  "deadlines": []})
     calls = _recording_anthropic(monkeypatch, parsed)
-    out = p._classify_with_claude("text", {"document_name": "x"}, [], "m")
+    out = p._classify_with_claude("text", {"document_name": "x"}, [], "m", max_tokens=16384)
     assert out["summary"] == "s"
-    assert len(calls) == 1 and calls[0]["timeout"].read == 300.0
+    assert len(calls) == 1 and calls[0]["timeout"].read == p.classify_timeout_s(16384)
 
 
 def test_note_metric_classifier_uses_the_timeout_client_when_none_is_passed(monkeypatch):
     calls = _recording_anthropic(monkeypatch, SimpleNamespace(metric="h2s"))
-    assert p.classify_note_metric("n", model="m") == "h2s"
-    assert len(calls) == 1 and calls[0]["timeout"].read == 300.0
+    assert p.classify_note_metric("n", model="m") == "h2s"       # max_tokens=256
+    assert len(calls) == 1 and calls[0]["timeout"].read == 120.0
 
 
 def test_an_injected_client_is_used_as_is(monkeypatch):

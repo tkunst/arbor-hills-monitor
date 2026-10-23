@@ -80,6 +80,29 @@ def parse_activity(s) -> Optional[datetime]:
         return None
 
 
+def seed_from_last_run(health: Optional[dict], last_run) -> dict:
+    """Pure. On the first run with this guard (no `last_activity_at` yet), seed
+    it from `_meta.last_run` — the watcher's last COMPLETED run, written at the
+    end of every run (naive ISO seconds, the runner's clock, i.e. UTC). That is
+    not evidence of progress, but as a one-time starting point it bounds the
+    unknown: a stall already under way when the guard ships is then alarmed
+    `max_stale_days` after that run instead of never (a stale alarm can't fire
+    from a blank timestamp). A health dict that already has a timestamp, or a
+    blank/unparseable `last_run`, is returned unchanged (as a NEW dict)."""
+    h = dict(health or {})
+    if str(h.get("last_activity_at") or "").strip():
+        return h
+    try:
+        dt = datetime.fromisoformat(str(last_run or "").strip())
+    except (TypeError, ValueError):
+        return h
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    h["last_activity_at"] = format_activity(dt)
+    h["activity_seeded_from_last_run"] = True
+    return h
+
+
 def _int(v, default: int = 0) -> int:
     try:
         return int(v)

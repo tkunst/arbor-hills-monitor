@@ -61,6 +61,11 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _now_utc() -> datetime:
+    """The liveness guard's clock (aware UTC); tests patch this."""
+    return datetime.now(timezone.utc)
+
+
 def _digest_record(parsed, d: dict, link: str) -> dict:
     return {
         "date_filed": d["date_filed"],
@@ -239,8 +244,17 @@ def _check_liveness(sheets, sheet_id: str, cfg: dict, state: dict, *, unprocesse
         max_stale = int(wcfg.get("max_stale_days", dl.DEFAULT_MAX_STALE_DAYS))
         max_def = int(wcfg.get("max_consecutive_deferrals",
                                dl.DEFAULT_MAX_CONSECUTIVE_DEFERRALS))
-        now_utc = now_utc or datetime.now(timezone.utc)
-        prev = state.get(dl.META_KEY) or {}
+        now_utc = now_utc or _now_utc()
+        stored = state.get(dl.META_KEY)      # what the cell held at run start
+        prev = stored
+        if not isinstance(prev, dict):
+            # A corrupt/foreign cell value must not disable the guard forever
+            # (it would otherwise raise here on every run and be re-persisted).
+            if prev not in (None, "", [], {}):
+                print("[watcher] liveness: doc_pipeline_health cell was not an object — "
+                      "starting over from empty.")
+            prev = {}
+        prev = dl.seed_from_last_run(prev, state.get("last_run"))
         health = dl.update_health(prev, now_utc=now_utc, unprocessed=unprocessed,
                                   processed=processed, struck=struck, deferred=deferred)
         state[dl.META_KEY] = health
@@ -254,11 +268,14 @@ def _check_liveness(sheets, sheet_id: str, cfg: dict, state: dict, *, unprocesse
         if deferral_rearmed or stale_rearmed:
             print("[watcher] liveness: document pipeline made progress again — "
                   "health notice re-armed (log only, no email).")
-        try:
-            sw.write_meta(sheets, sheet_id, state)
-        except Exception as we:  # noqa: BLE001 — the end-of-run write_meta carries it
-            print(f"[watcher] liveness: health write deferred to end of run: "
-                  f"{type(we).__name__}")
+        if health != stored:
+            # Persist the counter/timestamp now (crash-safe) — but only when it
+            # changed, so a healthy run with nothing new costs no extra write.
+            try:
+                sw.write_meta(sheets, sheet_id, state)
+            except Exception as we:  # noqa: BLE001 — the end-of-run write_meta carries it
+                print(f"[watcher] liveness: health write deferred to end of run: "
+                      f"{type(we).__name__}")
         decision = dl.liveness_decision(health, now_utc, max_stale, max_def)
         if decision.unquantifiable and unprocessed and not processed and not struck:
             print("[watcher] liveness: no parseable last_activity_at on record while "

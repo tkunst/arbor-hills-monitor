@@ -111,3 +111,77 @@ def test_sdk_authentication_errors_are_transient():
 def test_generic_400_and_404_still_strike():
     assert rp.is_transient(_HttpError(400, "malformed request")) is False
     assert rp.is_transient(_HttpError(404)) is False
+
+
+# --- the cause chain: an nSITE download wrapped `from` a 5xx/connection error --
+
+
+def test_wrapped_download_failure_with_a_5xx_cause_is_transient():
+    class _Resp:
+        status_code = 503
+    inner = Exception("503 Server Error: Service Unavailable for url")
+    inner.response = _Resp()
+    try:
+        raise RuntimeError("download failed for doc 123: 503 Server Error") from inner
+    except RuntimeError as exc:
+        assert rp.is_transient(exc) is True
+
+
+def test_wrapped_download_failure_with_a_requests_connection_error_is_transient():
+    requests = __import__("requests")
+    try:
+        try:
+            raise requests.exceptions.ConnectionError("Max retries exceeded with url")
+        except requests.exceptions.ConnectionError as inner:
+            raise RuntimeError(f"download failed for doc 123: {inner}") from inner
+    except RuntimeError as exc:
+        assert rp.is_transient(exc) is True
+    try:
+        try:
+            raise requests.exceptions.ReadTimeout("Read timed out")
+        except requests.exceptions.Timeout as inner:
+            raise RuntimeError(f"download failed for doc 123: {inner}") from inner
+    except RuntimeError as exc:
+        assert rp.is_transient(exc) is True
+
+
+def test_wrapped_download_failure_with_a_404_or_non_pdf_cause_still_strikes():
+    class _Resp:
+        status_code = 404
+    inner = Exception("404 Client Error: Not Found for url")
+    inner.response = _Resp()
+    try:
+        raise RuntimeError("download failed for doc 123: 404 Client Error") from inner
+    except RuntimeError as exc:
+        assert rp.is_transient(exc) is False
+    inner = RuntimeError("non-PDF response from https://x (starts b'<html>')")
+    try:
+        raise RuntimeError(f"download failed for doc 123: {inner}") from inner
+    except RuntimeError as exc:
+        assert rp.is_transient(exc) is False
+
+
+def test_chain_is_cycle_safe():
+    a = RuntimeError("a")
+    b = RuntimeError("b")
+    a.__cause__ = b
+    b.__cause__ = a
+    assert rp.is_transient(a) is False
+
+
+def test_download_pdf_chains_the_underlying_failure(monkeypatch, tmp_path):
+    import nsite_client as nc
+    requests = __import__("requests")
+    monkeypatch.setattr(nc.time, "sleep", lambda s: None)
+
+    class _Session:
+        def get(self, url, headers=None, timeout=None):
+            raise requests.exceptions.ConnectionError("Max retries exceeded")
+    doc = {"doc_id": "123", "doc_url": "https://example.invalid/d/123"}
+    try:
+        nc.download_pdf(_Session(), doc, str(tmp_path / "x.pdf"))
+        raise AssertionError("expected a RuntimeError")
+    except RuntimeError as exc:
+        assert "download failed for doc 123" in str(exc)
+        assert isinstance(exc.__cause__, requests.exceptions.ConnectionError)
+        assert rp.is_transient(exc) is True

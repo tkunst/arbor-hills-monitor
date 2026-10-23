@@ -53,11 +53,31 @@ def _status_of(exc: BaseException):
     return None
 
 
+def _chain(exc: BaseException):
+    """`exc` and every exception behind it (`__cause__`, then `__context__`),
+    nearest first, cycle-safe. nsite_client.download_pdf wraps a requests
+    failure in a RuntimeError `from` it, so the 5xx/connection error that
+    decides transience sits one link down."""
+    seen = set()
+    cur = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        yield cur
+        cur = cur.__cause__ if cur.__cause__ is not None else cur.__context__
+
+
 def is_transient(exc: BaseException) -> bool:
     """True if `exc` is an infrastructure/quota error to retry on a later run
     WITHOUT a poison strike; False for genuine unprocessable-source errors
     (un-openable PDF, OCR failure, max_tokens truncation, generic 400), which
-    SHOULD accrue strikes toward the poison threshold."""
+    SHOULD accrue strikes toward the poison threshold. Checks `exc` and the
+    exceptions it was raised `from` (stall-hardening review, 2026-10-23): an
+    nSITE download that failed on a 503 or a dropped connection is an outage,
+    not a bad document."""
+    return any(_is_transient_one(e) for e in _chain(exc))
+
+
+def _is_transient_one(exc: BaseException) -> bool:
     # 1) HTTP status: 429 (rate limit) and any 5xx (server / overload) are
     #    transient. A 400 is usually a real bad request; the one transient 400 is
     #    the usage-cap message, caught by the marker check below — so do NOT treat
@@ -89,6 +109,17 @@ def is_transient(exc: BaseException) -> bool:
                 anthropic.PermissionDeniedError, # 403: ditto
             ),
         ):
+            return True
+    except Exception:
+        pass
+
+    # 2b) A requests-level connection failure or timeout on the nSITE download
+    #     (no HTTP status at all) is an outage, never the document's fault.
+    #     Optional import, same reasoning as above.
+    try:
+        import requests
+
+        if isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
             return True
     except Exception:
         pass
