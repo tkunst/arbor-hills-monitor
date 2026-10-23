@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 from datetime import datetime
 
 import drive_client as dc
@@ -46,6 +47,54 @@ MAX_ERRORS_PER_DOC = poison_stub.MAX_ERRORS_PER_DOC  # give up on a poison doc a
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def _http_status(exc: BaseException):
+    """The HTTP status an exception carries, duck-typed the way
+    sheet_writer._is_absent_tab_error does (googleapiclient's HttpError exposes
+    `.status_code` and `.resp.status`; a bare RuntimeError has neither)."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "resp", None), "status", None)
+    return status if isinstance(status, int) and not isinstance(status, bool) else None
+
+
+def _is_rate_limited(exc: BaseException) -> bool:
+    return _http_status(exc) == 429
+
+
+def _seconds_until_next_minute(now: datetime | None = None) -> int:
+    """How long to sleep so the Sheets per-minute quota window has rolled over:
+    to one second past the next wall-clock minute, but never a wait so short it
+    could land inside the same window (floor of 15 s -> wait for the one after).
+    `execute(num_retries=...)` only backs off for seconds; the read quota
+    ("Read requests per minute per user", 60) needs the minute."""
+    now = now or datetime.now()
+    wait = 61 - now.second
+    if wait < 15:
+        wait += 60
+    return wait
+
+
+_sleep = time.sleep  # module attribute so tests can stub the minute-long wait
+
+
+def _waiting_out_quota(fn, *args, **kwargs):
+    """Call fn(*args, **kwargs); on a Sheets 429 (and ONLY a 429) log the wait,
+    sleep to the next minute window and retry ONCE. A second 429, or any other
+    error, propagates exactly as before (coder:backfill-purge-read-cache).
+    `googleapiclient`'s own num_retries backoff runs first inside fn; this is
+    the one extra, minute-long wait layered on top of it."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as e:  # noqa: BLE001 — only a 429 is handled; the rest re-raise
+        if not _is_rate_limited(e):
+            raise
+        wait = _seconds_until_next_minute()
+        print(f"[backfill] Sheets quota hit (HTTP 429) in {getattr(fn, '__name__', fn)}: "
+              f"waiting {wait}s for the next minute window, then retrying once.")
+        _sleep(wait)
+        return fn(*args, **kwargs)
 
 
 def _retry_poisoned() -> bool:
@@ -197,9 +246,9 @@ def run() -> int:
     well_aliases.check_alias_map_matches(well_alias_map, well_registry)
 
     sheets = dc.sheets_service()
-    sw.ensure_tabs(sheets, sheet_id)
+    _waiting_out_quota(sw.ensure_tabs, sheets, sheet_id)
 
-    state = sw.read_state(sheets, sheet_id)
+    state = _waiting_out_quota(sw.read_state, sheets, sheet_id)
 
     session = nc.make_session()
     docs = nc.fetch_all_documents(session, cfg)
@@ -240,14 +289,23 @@ def run() -> int:
     # re-extracting history fires nothing stale), error count cleared on success.
     job = dp.Job(name="backfill", feed_tab=sw.TAB_HISTORICAL, payload=_backfill_payload,
                  clear_errors_on_success=True)
+    # FORCE_REPROCESS: one read cache for the whole run, so the purge preview /
+    # purge reads the metadata, the archive index and each purge tab ONCE (~8
+    # reads) instead of once per doc (~8 x 58 = the 429 of run 39699682035).
+    # It is (re)filled HERE, outside process_one_doc, so a 429 on a fill reaches
+    # the once-only quota wait instead of being swallowed as a per-doc skip.
+    purge_cache = sw.PurgeReadCache() if force_ids else None
 
     for d in batch:
         did = d["doc_id"]
         is_force = did in force_ids
+        if is_force:
+            _waiting_out_quota(purge_cache.fill, sheets, sheet_id)
         if is_force and not force_apply:
             # DRY RUN: preview which rows a purge would remove, then re-extract.
             # Download/classify nothing; mutate nothing.
-            preview = sw.purge_doc_rows(sheets, sheet_id, did, dry_run=True)
+            preview = _waiting_out_quota(sw.purge_doc_rows, sheets, sheet_id, did,
+                                         dry_run=True, cache=purge_cache)
             print(f"  [FORCE dry-run] {d['date_filed']} {d['document_name'][:40]}: "
                   f"would PURGE {sum(preview.values())} row(s) {preview}, then "
                   f"re-extract this doc.")
@@ -259,9 +317,17 @@ def run() -> int:
                   "(it indexes the unchanged Drive-mirrored PDF). "
                   "Set FORCE_REPROCESS_APPLY=1 to execute.")
             continue
+        # Not wrapped in _waiting_out_quota on purpose: process_one_doc already
+        # treats a 429 as a per-doc transient (no strike, retried next run), and
+        # its purge reads are cache hits after the fill above. A re-run here
+        # would re-download and re-classify the doc for a second strike.
         if dp.process_one_doc(ctx, state, d, job, dp.local_path(tmp, d),
-                              purge_first=is_force) == "processed":
+                              purge_first=is_force, purge_cache=purge_cache) == "processed":
             processed_this_run += 1
+
+    if purge_cache is not None:
+        print(f"[backfill] FORCE_REPROCESS purge reads this run: {purge_cache.reads} "
+              f"values().get call(s) (cached per tab; a purged tab is re-read once).")
 
     # A pure FORCE_REPROCESS dry run mutates NOTHING — skip the derived-tab
     # rebuilds below and return. (A force run's todo is only the named docs, which

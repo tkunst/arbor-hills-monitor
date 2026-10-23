@@ -309,7 +309,18 @@ external users but no sensitive data). Public repo.
   table parse doesn't support. Unrouted documents are unchanged.
 - `backfill.py` — nightly batch of 50, self-terminating, resumable. Mirrors
   each doc to Drive inline (`archiver.mirror_one_now()`) before writing its
-  Sheet row.
+  Sheet row. **FORCE_REPROCESS read cache (coder:backfill-purge-read-cache,
+  2026-10-23):** one `sheet_writer.PurgeReadCache` per run, filled in
+  `backfill.run` (outside `process_one_doc`) and threaded into
+  `purge_doc_rows(cache=)` for both the dry-run preview and the apply path, so
+  the metadata, the Archived PDFs index (read STRICTLY there) and each of the
+  six purge tabs are read once per run instead of once per doc (run
+  39699682035: ~8 reads x 58 ids vs. 60 reads/minute). A purged tab is dropped
+  from the cache before its delete and re-read on the next purge. A Sheets 429
+  on `ensure_tabs`/`read_state`/the fill/the dry-run purge is waited out once
+  (`_waiting_out_quota`: sleep to the next minute window, retry once, then
+  fail); `process_one_doc` is deliberately not wrapped (its own per-doc
+  handling already treats a 429 as a no-strike transient).
 - **Facility scope (ADR 064, 2026-10-07):** each `facilities:` entry is `core`
   (default — Arbor Hills/GFL) or `scope: related` (a neighboring/watershed site,
   e.g. the Johnson Creek drain restoration). Related docs go ONLY to the

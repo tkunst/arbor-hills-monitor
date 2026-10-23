@@ -1731,14 +1731,22 @@ def archived_doc_ids(service, sheet_id: str) -> set:
     return {r[0] for r in _tab_rows(service, sheet_id, TAB_ARCHIVE, "A2:A") if r[0]}
 
 
-def archived_doc_links(service, sheet_id: str) -> dict:
+def archived_doc_links(service, sheet_id: str, strict: bool = False) -> dict:
     """{doc_id: archive_link} for every doc already mirrored to Drive (cols A + F
     of the Archived PDFs tab). Lets a caller reuse an existing mirror link
     without re-uploading — last-write-wins if a doc_id ever appears twice,
     matching this tab's own idempotent-by-doc_id design (a duplicate row should
-    not normally occur; find_in_folder + this same lookup is what prevents it)."""
+    not normally occur; find_in_folder + this same lookup is what prevents it).
+
+    `strict=True` reads through `_tab_rows_strict` (a 429/5xx RAISES; only a
+    genuinely absent tab reads as empty). The archiver's dedup callers keep the
+    lenient default (worst case: a duplicate upload attempt). The purge read
+    cache (`PurgeReadCache.fill`) uses strict, because there a false-empty
+    index would silently miss every Drive-mirrored row of a doc and a
+    FORCE_REPROCESS apply would append fresh rows beside the stale ones."""
     out = {}
-    for r in _tab_rows(service, sheet_id, TAB_ARCHIVE, "A2:F"):
+    reader = _tab_rows_strict if strict else _tab_rows
+    for r in reader(service, sheet_id, TAB_ARCHIVE, "A2:F"):
         if r and r[0] and len(r) > 5 and r[5]:
             out[r[0]] = r[5]
     return out
@@ -2987,7 +2995,68 @@ def _link_doc_id(link) -> str:
     return str(link).split("?")[0].rstrip("/").split("/")[-1]
 
 
-def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False) -> dict:
+class PurgeReadCache:
+    """One FORCE_REPROCESS run's read cache for `purge_doc_rows()` (coder:
+    backfill-purge-read-cache, 2026-10-23). Without it every purge call re-read
+    the spreadsheet metadata, the Archived PDFs index and all six purge tabs
+    (~8 reads per doc), so a 58-id dry run cost ~460 reads against the Sheets
+    API's 60 read requests per minute per user and died on the seventh doc with
+    a 429 (run 39699682035). With it each of those ranges is read ONCE per run
+    and every doc's preview is computed from the cached values.
+
+    Apply path: a tab is dropped from the cache right before its rows are
+    deleted (the delete shifts every row below the deleted ones, so the cached
+    indices are stale from that moment), and re-read on the next purge that
+    needs it. Tabs the purge did NOT touch stay cached across docs: the rows
+    `write_document` appends for a re-extracted doc land AFTER every cached row
+    (`append_rows` appends at the table's end), so they never move a cached
+    row's index, and they belong to a doc already purged this run, so they are
+    never a stale row a later purge should match. A tab created mid-run (the
+    WOI Well Summary tab on a first route) is not in the cached metadata and is
+    skipped, which is correct: a tab that did not exist at run start holds no
+    stale rows.
+
+    `reads` counts the `values().get` calls the cache issued (logged by
+    backfill so a run's read cost is visible)."""
+
+    def __init__(self):
+        self.gid: dict | None = None            # {tab title: sheetId}
+        self.archive_links: dict | None = None  # {doc_id: Drive link}
+        self.tab_values: dict[str, list] = {}   # {tab: rows A2:Z}
+        self.reads = 0
+
+    def fill(self, service, sheet_id: str) -> int:
+        """Read whatever the cache is missing (metadata, the archive index,
+        every purge tab present in the metadata that isn't cached) and return
+        how many `values().get` calls that took. A no-op on a warm cache.
+        Backfill calls this OUTSIDE `doc_pipeline.process_one_doc` so a 429 on
+        one of these reads reaches its once-only quota wait instead of being
+        swallowed as a per-doc transient skip."""
+        before = self.reads
+        if self.gid is None:
+            meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+            self.gid = {s["properties"]["title"]: s["properties"]["sheetId"]
+                        for s in meta.get("sheets", [])}
+        if self.archive_links is None:
+            self.archive_links = archived_doc_links(service, sheet_id, strict=True)
+            self.reads += 1
+        for tab, _link_col in _PURGE_TABS:
+            if tab in self.gid and tab not in self.tab_values:
+                resp = (
+                    service.spreadsheets().values()
+                    .get(spreadsheetId=sheet_id, range=f"'{tab}'!A2:Z")
+                    .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+                )
+                self.tab_values[tab] = resp.get("values", [])
+                self.reads += 1
+        return self.reads - before
+
+    def invalidate(self, tab: str) -> None:
+        self.tab_values.pop(tab, None)
+
+
+def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False,
+                   cache: PurgeReadCache | None = None) -> dict:
     """Delete every row belonging to `doc_id` from the human feed / evidence /
     measurement / WOI-summary tabs, returning {tab: rows_matched}.
 
@@ -3014,23 +3083,25 @@ def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False) -
     operator reviews before applying. Deletes are issued bottom-up per tab so row
     indices don't shift mid-batch. Safety net: this only ever runs for an explicit
     allowlist, and Google Sheets keeps File → Version history, so a mistaken purge
-    is restorable in the UI."""
-    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    gid = {s["properties"]["title"]: s["properties"]["sheetId"]
-           for s in meta.get("sheets", [])}
-    archive_link = archived_doc_links(service, sheet_id).get(doc_id)
+    is restorable in the UI.
+
+    `cache` (a `PurgeReadCache`, see its docstring) makes a multi-doc run read
+    the metadata, the archive index and each tab ONCE instead of once per doc;
+    without one, every call reads everything fresh exactly as before. A purged
+    tab is dropped from the cache before its delete is issued, so the next call
+    that needs it re-reads the post-delete layout."""
+    if cache is None:
+        cache = PurgeReadCache()
+    cache.fill(service, sheet_id)
+    gid = cache.gid
+    archive_link = cache.archive_links.get(doc_id)
 
     requests: list[dict] = []
     counts: dict[str, int] = {}
     for tab, link_col in _PURGE_TABS:
         if tab not in gid:
             continue  # tab not created yet (e.g. WOI Summary before any route)
-        resp = (
-            service.spreadsheets().values()
-            .get(spreadsheetId=sheet_id, range=f"'{tab}'!A2:Z")
-            .execute(num_retries=GOOGLE_API_NUM_RETRIES)
-        )
-        values = resp.get("values", [])
+        values = cache.tab_values[tab]
         # values[i] is data row i, i.e. 0-based grid row (i + 1) since row 0 is the
         # header. Sheets only trims TRAILING empty rows, so interior indices stay
         # aligned for any row that actually carries a Link.
@@ -3042,7 +3113,12 @@ def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False) -
             )
         ]
         counts[tab] = len(matched)
-        if not dry_run:
+        if not dry_run and matched:
+            # The delete below shifts every row under the deleted ones, so the
+            # cached layout of this tab is stale from here on — drop it BEFORE
+            # the batchUpdate so any outcome (success, or a raise that a caller
+            # survives) forces a fresh read next time.
+            cache.invalidate(tab)
             for grid_row in sorted(matched, reverse=True):  # bottom-up within the tab
                 requests.append({"deleteDimension": {"range": {
                     "sheetId": gid[tab], "dimension": "ROWS",
