@@ -237,7 +237,7 @@ DATA_EDGES = [
     ("gfl_feed_snapshot", "ds:drive-archive", "write"),
     ("govqa_watcher", "ds:drive-archive", "write"),     # private staging folder
     ("ride_docs_watcher", "ds:drive-archive", "write"), # private mirror folder
-    ("snapshot_exporter", "ds:drive-archive", "write"), # ROP/MMD/Submissions/PFAS snapshot files (ADR 071, when enabled)
+    ("snapshot_exporter", "ds:drive-archive", "write"), # ROP/MMD/Submissions/PFAS snapshot files (ADR 072, when enabled)
     # Public site
     ("gen_findings_feed", "ds:public-site", "write"),
     ("gen_public_comment_feed", "ds:public-site", "write"),
@@ -354,7 +354,7 @@ FLOWS = [
              "nodes": ["pfas_watcher", "pfas_client", "ds:pfas"]},
             {"label": "Compare the hash to the last snapshot in the PFAS Page Watch tab",
              "nodes": ["pfas_watcher", "sheet_writer", "ds:case-file-sheet"]},
-            {"label": "On a change, export the normalized text to Drive first (ADR 071, when enabled), then append the row",
+            {"label": "On a change, export the normalized text to Drive first (ADR 072, when enabled), then append the row",
              "nodes": ["snapshot_exporter", "archive_client", "ds:drive-archive"]},
             {"label": "Email a visible-text diff when the page has changed",
              "nodes": ["email_alerts", "ds:smtp"]},

@@ -46,7 +46,7 @@ facts from analyst judgement:
 Regenerated 2026-10-23 (ADR 072) — adds `snapshot_exporter` (Persistence; a
 write edge to the Drive archive, called by the ROP / MMD / nSITE Submissions /
 PFAS watchers before their Sheet append). The PFAS persona flow gained a step
-for the exporter.
+for the exporter. With it: 99 modules · 23 data stores · 359 edges.
 
 Regenerated 2026-10-23 (coder:poison-import-move) — `nsite_client` now imports
 `poison_doc_extractor` lazily inside `download_pdf()`, so the seven nSITE
