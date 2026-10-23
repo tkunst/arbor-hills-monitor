@@ -11,6 +11,7 @@ below COUNTS reads so the test pins the cost, not just the result.
 import pytest
 
 import backfill as bf
+import doc_pipeline as dp
 import sheet_writer as sw
 import test_sheet_writer as tsw  # FakeSheets; module import keeps its tests out of this file
 
@@ -239,6 +240,24 @@ def test_apply_then_fresh_rows_appended_then_next_doc_purged():
     assert svc._values._tabs[sw.TAB_NEW][1:] == [fresh]
 
 
+def test_stale_cached_match_with_nothing_to_delete_keeps_the_fresh_read_cached():
+    ids = _doc_ids(3)
+    svc = CountingSheets(_fixture(ids))
+    cache = sw.PurgeReadCache()
+    cache.fill(svc, "SID")
+    # Someone removed ids[0]'s rows from every tab between the fill and the purge.
+    for tab, col in sw._PURGE_TABS:
+        rows = svc._values._tabs[tab]
+        svc._values._tabs[tab] = [rows[0]] + [r for r in rows[1:] if sw._link_doc_id(r[col]) != ids[0]]
+    reads_before = svc.value_reads
+    counts = sw.purge_doc_rows(svc, "SID", ids[0], cache=cache)
+    assert counts[sw.TAB_HISTORICAL] == 0 and sum(counts.values()) == 0
+    assert svc.value_reads - reads_before == 4            # one reread per tab with a cached match
+    for tab, _ in sw._PURGE_TABS:
+        assert cache.tab_values[tab] == svc._values._tabs[tab][1:]  # fresh read kept, no re-fill
+    assert cache.fill(svc, "SID") == 0
+
+
 def test_cache_is_invalidated_before_the_delete_is_issued():
     ids = _doc_ids(2)
     svc = CountingSheets(_fixture(ids))
@@ -278,6 +297,45 @@ def test_cache_reads_the_archive_index_strictly():
     # The lenient default of archived_doc_links is unchanged for its dedup callers.
     svc.raise_next = [_Http429()]
     assert sw.archived_doc_links(svc, "SID") == {}
+
+
+def test_a_429_mid_purge_on_the_apply_path_is_a_no_strike_retry(monkeypatch, tmp_path):
+    """The reason backfill does NOT wrap process_one_doc in the quota wait: a
+    429 raised by the pre-delete reread inside doc_pipeline._purge must come
+    back as a transient 'retry' (no strike, no stub, no row written) through
+    the REAL process_one_doc + retry_policy, not just by assertion in a
+    comment."""
+    ids = _doc_ids(2)
+    svc = CountingSheets(_fixture(ids))
+    cache = sw.PurgeReadCache()
+    cache.fill(svc, "SID")
+    svc.raise_next = [_Http429()]  # the next values().get is the pre-delete reread
+    written, marked = [], []
+    monkeypatch.setattr(dp.nc, "download_pdf", lambda *a: None)
+    monkeypatch.setattr(dp.av, "mirror_one_now", lambda *a, **k: "LINK")
+    monkeypatch.setattr(dp.woi_router, "route_measurements", lambda *a, **k: None)
+    monkeypatch.setattr(dp.sw, "write_document", lambda *a, **k: written.append(1))
+    monkeypatch.setattr(dp.sw, "mark_processed", lambda *a, **k: written.append("state"))
+    monkeypatch.setattr(dp.sw, "mark_error", lambda *a, **k: marked.append(1))
+    parsed = type("P", (), dict(doc_type="evidence", severity="routine", risks=["R8"],
+                               display_title="", document_date="", measurements=[], deadlines=[],
+                               key_data_point="", summary="", full_text=""))()
+    ctx = dp.RunContext(cfg={"large_doc_page_threshold": 30, "large_doc_max_keyword_pages": 10,
+                             "classification_max_tokens": 10},
+                        sheets=svc, sheet_id="SID", session=None, model="m", well_alias_map=None,
+                        parse=lambda *a, **k: parsed, now=lambda: "T")
+    job = dp.Job(name="backfill", feed_tab=sw.TAB_HISTORICAL, payload=lambda p, d: {})
+    state = {"processed": {}, "errors": {}, "skipped": {}}
+    d = {"doc_id": ids[0], "document_name": "Doc", "date_filed": "2026-01-01", "facility_scope": "core"}
+    assert dp.process_one_doc(ctx, state, d, job, str(tmp_path / "x.pdf"),
+                              purge_first=True, purge_cache=cache) == "retry"
+    assert state["errors"] == {} and marked == [] and written == []
+    # Nothing was deleted: the doc's rows are all still there for the next run.
+    assert _links_of(svc._values._tabs[sw.TAB_HISTORICAL], sw.FEED_HEADERS) == [_nsite(ids[0]), _drive(ids[1])]
+    # The cache is still only used to MATCH; the retried purge rereads before deleting.
+    counts = sw.purge_doc_rows(svc, "SID", ids[0], cache=cache)
+    assert counts[sw.TAB_HISTORICAL] == 1
+    assert _links_of(svc._values._tabs[sw.TAB_HISTORICAL], sw.FEED_HEADERS) == [_drive(ids[1])]
 
 
 # ---------------------------------------------------------------------------

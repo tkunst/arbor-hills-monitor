@@ -3146,6 +3146,12 @@ def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False,
             # decides its indices.
             fresh = cache.reread(service, sheet_id, tab)
             matched = _matches(fresh)
+            if not matched:
+                # The cached match was stale (the row went away between the
+                # fill and now): nothing to delete, and the fresh read is the
+                # tab's current layout, so it stays cached.
+                counts[tab] = 0
+                continue
             cache.invalidate(tab)
             gone = set(matched)
             after_delete[tab] = [r for i, r in enumerate(fresh) if (i + 1) not in gone]
