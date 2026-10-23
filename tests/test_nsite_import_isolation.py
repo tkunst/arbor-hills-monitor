@@ -36,7 +36,10 @@ PDF_STACK = ("poison_doc_extractor", "egle_doc_parser", "fitz", "defusedxml")
 
 def _run(snippet: str) -> dict:
     """Run `snippet` in a clean interpreter from the repo root and return the
-    JSON object it prints on its last line."""
+    JSON object it prints on its LAST stdout line. Last line, not the whole
+    stream: the installed PyMuPDF prints a one-line deprecation warning to
+    stdout on `import fitz`, so the fallback-path case below emits two lines.
+    Don't "simplify" this to `json.loads(proc.stdout)`."""
     proc = subprocess.run(  # noqa: S603 — fixed interpreter, fixed snippet, no user input
         [sys.executable, "-c", textwrap.dedent(snippet)],
         cwd=REPO, capture_output=True, text=True, timeout=120, check=False,
@@ -65,8 +68,12 @@ def test_bare_import_of_nsite_client_does_not_load_the_pdf_stack():
     "nsite_public_notices_watcher",
 ])
 def test_profile_watchers_do_not_load_the_pdf_stack(watcher):
-    """The actual beneficiaries: each Stream K-Q watcher, imported the way its
-    workflow starts it, no longer carries fitz/defusedxml/the parser."""
+    """The actual beneficiaries: each Stream K-Q watcher no longer carries
+    fitz/defusedxml/the parser once its module is imported. This pins the
+    IMPORT, not a full `main()` run (the workflows run `python <watcher>.py`);
+    a function-level import of the PDF stack inside `main()` or
+    `nsite_watch_common.run_profile_watch` would not be caught here. As of
+    2026-10-23 none of the seven watchers nor nsite_watch_common has one."""
     loaded = _run("""
         import json, sys
         import %s
