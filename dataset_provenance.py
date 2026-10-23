@@ -41,7 +41,8 @@ Write rules (the live Sheet is shared by every watcher):
 from __future__ import annotations
 
 import re
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
+from urllib.parse import urlparse
 
 import name_check
 import sheet_writer as sw
@@ -52,6 +53,8 @@ HEADERS = sw.DATASET_PROVENANCE_HEADERS
 
 NOT_IN_RELEASE = "(not yet in any release)"
 STATUS_STAGED = "staged for next release"
+WITHDRAWN_PREFIX = "withdrawn from staging"
+NSITE_HOST = "mienviro.michigan.gov"
 POINTER_LABEL = "see Dataset Provenance"
 RELEASE_URL = "https://github.com/tkunst/arbor-hills-monitor/releases/tag/{tag}"
 NSITE_LINK = "https://mienviro.michigan.gov/ncore/downloadpdf/{doc_id}"
@@ -126,13 +129,27 @@ def resolve_drive_prefix(prefix: str, drive_ids: Iterable[str]) -> str:
     return hits[0]
 
 
-def pointer_formula(doc_id: str, gid: int) -> str:
-    """The dataset_status cell. MATCH finds the doc's provenance row by id at
-    read time, so sorting or appending to the provenance tab never breaks the
-    link; IFERROR shows blank instead of #N/A if the row is ever removed."""
+_LINK_LETTER = "H"  # FEED_HEADERS "Link"; pinned by a test
+
+
+def pointer_formula(doc_id: str, gid: int, link: str, row: int) -> str:
+    """The dataset_status cell for feed row `row`, whose Link is `link`.
+
+    MATCH finds the doc's provenance row by id at read time, so sorting or
+    appending to the provenance tab never breaks the link; IFERROR shows blank
+    instead of #N/A if that row is ever removed. The outer IF checks the
+    cell's OWN row still holds `link`: rows are written by number, so if a
+    backfill purge deletes rows between the read and the write, a formula that
+    lands on another document's row shows blank instead of a false pointer.
+    (Sheets shifts the $H reference with the row when rows are deleted, so a
+    correctly placed formula stays correct.)"""
     check_doc_id(doc_id)
-    return (f'=IFERROR(HYPERLINK("#gid={int(gid)}&range=A"&MATCH("{doc_id}",'
-            f"'{TAB}'!A:A,0),\"{POINTER_LABEL}\"),\"\")")
+    if not link or len(link) > 2000 or any(c in link for c in "\r\n"):
+        raise ProvenanceError("pointer link must be one line of at most 2000 characters")
+    lit = link.replace('"', '""')
+    return (f'=IF(${_LINK_LETTER}{int(row)}="{lit}",'
+            f'IFERROR(HYPERLINK("#gid={int(gid)}&range=A"&MATCH("{doc_id}",'
+            f"'{TAB}'!A:A,0),\"{POINTER_LABEL}\"),\"\"),\"\")")
 
 
 def feed_row_doc_id(link: str, archive_link_to_id: dict) -> str:
@@ -143,7 +160,7 @@ def feed_row_doc_id(link: str, archive_link_to_id: dict) -> str:
         return ""
     if link in archive_link_to_id:
         return archive_link_to_id[link]
-    if "mienviro.michigan.gov" in link:
+    if (urlparse(link).hostname or "") == NSITE_HOST:
         did = sw._link_doc_id(link)
         return did if _NSITE_ID_RE.match(did) else ""
     return ""
@@ -153,10 +170,14 @@ def row_from(d: dict) -> list:
     return ["" if d.get(h) is None else str(d.get(h)) for h in HEADERS]
 
 
-def plan_upsert(existing: list[list], desired: list[dict], now: str) -> tuple[list, list, dict]:
+def plan_upsert(existing: list[list], desired: list[dict], now: str,
+                overwrite_if: Optional[Callable[[str], bool]] = None) -> tuple[list, list, dict]:
     """(updates [(grid_row, row)], appends [row], counts). Key (doc_id, dataset);
     the first existing row with a key wins. first_release_tag is immutable once
-    set (design §3). last_updated changes only when something else does."""
+    set (design §3). last_updated changes only when something else does.
+    `overwrite_if(existing_status)`, when given, must be true for an existing
+    row to be updated; otherwise it is kept as is (counted "kept"), so the
+    staging run never undoes a status a person set by hand."""
     index: dict = {}
     for i, r in enumerate(existing):
         r = list(r) + [""] * (len(HEADERS) - len(r))
@@ -164,7 +185,7 @@ def plan_upsert(existing: list[list], desired: list[dict], now: str) -> tuple[li
         if r[0] and key not in index:
             index[key] = (i + 2, r)
     updates, appends = [], []
-    counts = {"appended": 0, "updated": 0, "unchanged": 0}
+    counts = {"appended": 0, "updated": 0, "unchanged": 0, "kept": 0}
     seen = set()
     for d in desired:
         check_doc_id(d["doc_id"])
@@ -175,6 +196,9 @@ def plan_upsert(existing: list[list], desired: list[dict], now: str) -> tuple[li
         new = row_from(d)
         if key in index:
             grid_row, old = index[key]
+            if overwrite_if is not None and not overwrite_if(old[5]):
+                counts["kept"] += 1
+                continue
             if old[6]:
                 new[6] = old[6]
             if new[:8] == old[:8]:
@@ -246,10 +270,11 @@ def read_rows(service, sheet_id: str) -> list[list]:
     return _get(service, sheet_id, f"'{TAB}'!A2:I")
 
 
-def upsert(service, sheet_id: str, desired: list[dict], now: str, apply: bool = True) -> dict:
+def upsert(service, sheet_id: str, desired: list[dict], now: str, apply: bool = True,
+           overwrite_if: Optional[Callable[[str], bool]] = None) -> dict:
     """Insert or update provenance rows by (doc_id, dataset). RAW only."""
     existing = read_rows(service, sheet_id) if apply or _has_tab(service, sheet_id) else []
-    updates, appends, counts = plan_upsert(existing, desired, now)
+    updates, appends, counts = plan_upsert(existing, desired, now, overwrite_if)
     if apply:
         _batch_write(service, sheet_id, [
             {"range": f"'{TAB}'!A{n}:I{n}", "values": [row]} for n, row in updates], "RAW")
@@ -282,13 +307,24 @@ def archive_index(service, sheet_id: str) -> tuple[dict, dict]:
     return link_to_id, by_id
 
 
+def check_feed_headers(service, sheet_id: str) -> None:
+    """Raise if either feed tab's dataset_status header cell holds something
+    else. Checks both tabs before anything is written anywhere."""
+    idx = sw.FEED_TAB_HEADERS.index(FEED_POINTER_HEADER)
+    for tab in FEED_TABS:
+        ensure_header_cell(service, sheet_id, tab, idx, FEED_POINTER_HEADER, apply=False)
+
+
 def sync_pointers(service, sheet_id: str, apply: bool = True) -> dict:
     """Make every New/Historical Documents row's dataset_status cell match the
     provenance tab: the pointer formula when the row's doc has a provenance
-    row, blank otherwise. Writes only cells that differ."""
+    row, blank otherwise. Writes only cells that differ. The cells are read
+    with valueRenderOption=FORMULA (a formula reads back as its displayed
+    value otherwise, and every cell would look changed)."""
     gids = _tab_gids(service, sheet_id)
     if TAB not in gids:
         return {"skipped": "no Dataset Provenance tab yet"}
+    check_feed_headers(service, sheet_id)
     prov_ids = {r[0] for r in read_rows(service, sheet_id) if r and r[0]}
     link_to_id, _ = archive_index(service, sheet_id)
     idx = sw.FEED_TAB_HEADERS.index(FEED_POINTER_HEADER)
@@ -305,7 +341,7 @@ def sync_pointers(service, sheet_id: str, apply: bool = True) -> dict:
             link = r[0] if r else ""
             cur = r[idx - link_col] if len(r) > idx - link_col else ""
             did = feed_row_doc_id(link, link_to_id)
-            want = pointer_formula(did, gids[TAB]) if did in prov_ids else ""
+            want = pointer_formula(did, gids[TAB], link, i + 2) if did in prov_ids else ""
             if cur != want:
                 data.append({"range": f"'{tab}'!{letter}{i + 2}", "values": [[want]]})
                 if want:
@@ -435,22 +471,60 @@ def describe(service, sheet_id: str, doc_ids: Iterable[str]) -> dict:
     return out
 
 
-def record_staged(service, sheet_id: str, staged: list[dict], now: str) -> dict:
-    """The wellfield staging run's write (design §7 step e): one
-    "staged for next release" row per newly staged document, then a pointer
-    re-sync. `staged` = [{"doc_id", "rows_contributed"}]. Title and link come
-    from describe(). The publish step (manual) later flips status to
-    published_status(<tag>) and sets dataset to the tag."""
+def _staging_owned(status: str) -> bool:
+    """A row the staging run may rewrite: one it wrote itself. A status a
+    person set (the publish flip) is never overwritten."""
+    return status == STATUS_STAGED or status.startswith(WITHDRAWN_PREFIX)
+
+
+def withdraw_stale(service, sheet_id: str, keep: set, reason: str, now: str) -> int:
+    """Mark every "staged for next release" row whose doc is not in `keep` as
+    withdrawn (status + last_updated only, RAW). Returns how many."""
+    data = []
+    for i, r in enumerate(read_rows(service, sheet_id)):
+        r = list(r) + [""] * (len(HEADERS) - len(r))
+        if r[3] == NOT_IN_RELEASE and r[5] == STATUS_STAGED and r[0] not in keep:
+            n = i + 2
+            data.append({"range": f"'{TAB}'!F{n}", "values": [[f"{WITHDRAWN_PREFIX} {now[:10]}: {reason}"]]})
+            data.append({"range": f"'{TAB}'!I{n}", "values": [[now]]})
+    _batch_write(service, sheet_id, data, "RAW")
+    return len(data) // 2
+
+
+def record_staged(service, sheet_id: str, staged: list[dict], now: str,
+                  consumed_by: Optional[str] = None) -> dict:
+    """The wellfield staging run's write (design §7 step e), run after every
+    non-dry staging run:
+
+      * one "staged for next release" row per document in tonight's staged
+        set (`staged` = [{"doc_id", "rows_contributed"}]; title and link come
+        from describe()). A row whose status a person changed is kept.
+      * every older "staged" row whose doc is no longer staged is marked
+        withdrawn: "consumed by release <tag>" when a newer release consumed
+        the set (`consumed_by`), else "no longer in the staged set". The
+        publish step (manual) still adds the published row.
+      * a pointer re-sync, which also restores pointers a purge removed.
+
+    Every precondition (ids, feed header cells) is checked before any write."""
     for s in staged:
         check_doc_id(s["doc_id"])
-    ensure_tab(service, sheet_id)
-    info = describe(service, sheet_id, [s["doc_id"] for s in staged])
-    desired = [{
-        "doc_id": s["doc_id"], "document_title": info[s["doc_id"]][0],
-        "link": info[s["doc_id"]][1], "dataset": NOT_IN_RELEASE, "source_report": "",
-        "status": STATUS_STAGED, "first_release_tag": "",
-        "rows_contributed": s.get("rows_contributed", ""),
-    } for s in staged]
-    counts = upsert(service, sheet_id, desired, now)
+    gids = _tab_gids(service, sheet_id)
+    if not staged and TAB not in gids:
+        return {"appended": 0, "updated": 0, "unchanged": 0, "kept": 0, "withdrawn": 0,
+                "pointers": {"skipped": "no Dataset Provenance tab yet"}}
+    check_feed_headers(service, sheet_id)
+    counts = {"appended": 0, "updated": 0, "unchanged": 0, "kept": 0}
+    if staged:
+        ensure_tab(service, sheet_id)
+        info = describe(service, sheet_id, [s["doc_id"] for s in staged])
+        desired = [{
+            "doc_id": s["doc_id"], "document_title": info[s["doc_id"]][0],
+            "link": info[s["doc_id"]][1], "dataset": NOT_IN_RELEASE, "source_report": "",
+            "status": STATUS_STAGED, "first_release_tag": "",
+            "rows_contributed": s.get("rows_contributed", ""),
+        } for s in staged]
+        counts = upsert(service, sheet_id, desired, now, overwrite_if=_staging_owned)
+    reason = f"consumed by release {consumed_by}" if consumed_by else "no longer in the staged set"
+    counts["withdrawn"] = withdraw_stale(service, sheet_id, {s["doc_id"] for s in staged}, reason, now)
     counts["pointers"] = sync_pointers(service, sheet_id)
     return counts

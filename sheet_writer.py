@@ -649,11 +649,13 @@ PERIMETER_EPISODE_HEADERS = [
 ]
 
 # coder:dataset-provenance-sheet (2026-10-22): one annotation column after the
-# row-builder columns on three tabs. The row builders (feed_row,
-# append_archive_row) still write only FEED_HEADERS / ARCHIVE_HEADERS, so an
-# appended row leaves the annotation cell blank; dataset_provenance.py fills it.
-# Listed here only so ensure_tabs() keeps the header cell and a future column
-# appended to FEED_HEADERS / ARCHIVE_HEADERS can't silently overwrite it.
+# row-builder columns on three tabs, owned by dataset_provenance.py (it writes
+# the header cell only when blank, and rollback is clearing the column). The
+# row builders (feed_row, append_archive_row) write only FEED_HEADERS /
+# ARCHIVE_HEADERS, so an appended row leaves the cell blank. NOT in
+# _TAB_HEADERS on purpose. Appending a column to FEED_HEADERS or
+# ARCHIVE_HEADERS would collide with these (L on New/Historical, J on
+# Archived PDFs) and needs a migration that moves them; a test pins both.
 # Related Documents gets no pointer (never a dataset source, ADR 064).
 FEED_TAB_HEADERS = FEED_HEADERS + ["dataset_status"]
 ARCHIVE_TAB_HEADERS = ARCHIVE_HEADERS + ["same_content_as"]
@@ -671,13 +673,13 @@ DATASET_PROVENANCE_HEADERS = [
 ]
 
 _TAB_HEADERS = {
-    TAB_NEW: FEED_TAB_HEADERS,
-    TAB_HISTORICAL: FEED_TAB_HEADERS,
+    TAB_NEW: FEED_HEADERS,
+    TAB_HISTORICAL: FEED_HEADERS,
     TAB_RELATED: FEED_HEADERS,
     TAB_EVIDENCE: EVIDENCE_HEADERS,
     TAB_REGISTER: REGISTER_HEADERS,
     TAB_MEASUREMENTS: MEASUREMENTS_HEADERS,
-    TAB_ARCHIVE: ARCHIVE_TAB_HEADERS,
+    TAB_ARCHIVE: ARCHIVE_HEADERS,
     TAB_COMPLIANCE_DEADLINES: COMPLIANCE_DEADLINE_HEADERS,
     TAB_STATE: STATE_HEADERS,
     TAB_META: META_HEADERS,
