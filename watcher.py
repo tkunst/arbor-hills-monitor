@@ -241,9 +241,9 @@ def _check_liveness(sheets, sheet_id: str, cfg: dict, state: dict, *, unprocesse
     write_meta persists it even if the write here fails."""
     try:
         wcfg = cfg.get("watcher") or {}
-        max_stale = int(wcfg.get("max_stale_days", dl.DEFAULT_MAX_STALE_DAYS))
-        max_def = int(wcfg.get("max_consecutive_deferrals",
-                               dl.DEFAULT_MAX_CONSECUTIVE_DEFERRALS))
+        max_stale = dl.as_int(wcfg.get("max_stale_days"), dl.DEFAULT_MAX_STALE_DAYS)
+        max_def = dl.as_int(wcfg.get("max_consecutive_deferrals"),
+                            dl.DEFAULT_MAX_CONSECUTIVE_DEFERRALS)
         now_utc = now_utc or _now_utc()
         stored = state.get(dl.META_KEY)      # what the cell held at run start
         prev = stored
