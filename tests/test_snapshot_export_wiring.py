@@ -1,4 +1,4 @@
-"""ADR 071 wiring tests for the four watchers that call snapshot_exporter
+"""ADR 072 wiring tests for the four watchers that call snapshot_exporter
 (rop_watcher, mmd_watcher, nsite_submissions_watcher, pfas_watcher).
 
 Three properties per watcher, all through the REAL export_snapshot() with only

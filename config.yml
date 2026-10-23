@@ -173,7 +173,7 @@ archive:
   batch_size: 100
   folder_name: "Arbor Hills Case File Mirror"
 
-# --- Data lifecycle: snapshot -> immutable Drive exporter (ADR 071) ---
+# --- Data lifecycle: snapshot -> immutable Drive exporter (ADR 072) ---
 # OFF BY DEFAULT. Cross-cutting (not inside any one watcher's block): when
 # enabled, rop_watcher / mmd_watcher / nsite_submissions_watcher / pfas_watcher
 # each upload the raw snapshot payload they are about to append to their Sheet

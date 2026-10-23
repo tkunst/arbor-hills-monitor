@@ -122,7 +122,7 @@ DOMAIN = {
     # Persistence & notification
     "sheet_writer": "persistence", "drive_client": "persistence",
     "archive_client": "persistence", "email_alerts": "persistence",
-    "snapshot_exporter": "persistence",  # snapshot -> immutable Drive file for ROP/MMD/Submissions/PFAS (ADR 071, default off)
+    "snapshot_exporter": "persistence",  # snapshot -> immutable Drive file for ROP/MMD/Submissions/PFAS (ADR 072, default off)
     "owner_notices": "persistence",    # owner-only weekly email + same-day owner alerts (ADR 070)
     "upcoming": "persistence",         # private Sheet "Upcoming" tab for the Sunday digest
     "dataset_provenance": "persistence",  # Dataset Provenance tab + annotation columns, public Sheet (coder:dataset-provenance-sheet)

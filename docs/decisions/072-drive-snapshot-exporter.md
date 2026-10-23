@@ -1,4 +1,4 @@
-# ADR 071 — One generic snapshot → immutable Drive exporter (ROP, MMD, nSITE Submissions, PFAS)
+# ADR 072 — One generic snapshot → immutable Drive exporter (ROP, MMD, nSITE Submissions, PFAS)
 
 Date: 2026-10-23
 Status: accepted (ships disabled)

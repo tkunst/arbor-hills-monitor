@@ -265,7 +265,7 @@ external users but no sensitive data). Public repo.
   `parse_document()`'s own OCR step — **ADR 069** identifies this as the
   likely primary source of the mirror's pre-fix scan-only PDFs; now covered
   by `archive_client.upload_file()`'s own OCR wiring regardless.
-- `snapshot_exporter.py` — **ADR 071 (2026-10-23; ships OFF)**: the ONE
+- `snapshot_exporter.py` — **ADR 072 (2026-10-23; ships OFF)**: the ONE
   generic snapshot → immutable Drive exporter for the four snapshot-diff
   watchers whose only durable record was a Tier-2 append-only tab:
   `rop_watcher.py`, `mmd_watcher.py`, `nsite_submissions_watcher.py` (each

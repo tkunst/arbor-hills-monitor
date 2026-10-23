@@ -32,9 +32,9 @@ other failure on ONE page is logged (class-only, never the raw exception
 string) and the run continues to the next page, returning exit 1 at the end.
 
 DRIVE / OAUTH ONLY VIA THE OPTIONAL EXPORTER (ADR 012 scope call, amended by
-ADR 071): the deliverable is the ALERT. The tab row carries the full normalized
+ADR 072): the deliverable is the ALERT. The tab row carries the full normalized
 text, which is both the diff basis and a durable dated snapshot — so SMTP +
-Sheets (both already live) are all this needs. ADR 071 adds a best-effort
+Sheets (both already live) are all this needs. ADR 072 adds a best-effort
 Tier-1 copy of that same normalized text to Drive (snapshot_exporter.py),
 called right BEFORE each snapshot row and gated on
 data_lifecycle.snapshot_export.enabled (default off) — a no-op until Trisha
@@ -176,7 +176,7 @@ def run() -> int:
 
             if last is None:
                 # Tier-1 Drive copy of the normalized text BEFORE the Tier-2 row
-                # (ADR 071 write order; a best-effort no-op unless
+                # (ADR 072 write order; a best-effort no-op unless
                 # data_lifecycle.snapshot_export is enabled).
                 se.export_snapshot(content, se.snapshot_name("pfas", label, today, new_hash, "txt"), cfg)
                 sw.append_pfas_snapshot_row(

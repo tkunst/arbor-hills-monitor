@@ -97,7 +97,7 @@ jobs:
           GOAUTH_MMPC_FOLDER_ID: ${{ secrets.GOAUTH_MMPC_FOLDER_ID }}
           GOAUTH_RIDGEWOOD_FOLDER_ID: ${{ secrets.GOAUTH_RIDGEWOOD_FOLDER_ID }}
           GOAUTH_RRD_FOLDER_ID: ${{ secrets.GOAUTH_RRD_FOLDER_ID }}
-          GOAUTH_SNAPSHOT_FOLDER_ID: ${{ secrets.GOAUTH_SNAPSHOT_FOLDER_ID }}   # ADR 071 watch-snapshot exporter folder — same guard
+          GOAUTH_SNAPSHOT_FOLDER_ID: ${{ secrets.GOAUTH_SNAPSHOT_FOLDER_ID }}   # ADR 072 watch-snapshot exporter folder — same guard
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}          # the (vestigial) public PDF archive folder — same guard
         run: |
           if [ "$PROBE" = "true" ]; then
