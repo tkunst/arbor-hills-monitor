@@ -105,8 +105,8 @@ def woi_flags(above_ceiling: list, rejected_tables: list, skipped_pages: list,
 _CONTEXT_CHARS = 150
 
 
-# The urgency fallback's own pattern: one regex for both (it reads "1,500°F" as 1500).
-_TEMP_RE = ea._TEMP_RE
+# The urgency fallback's own matcher (ea.temperature_matches): one pattern for both
+# (it reads "1,500°F" as 1500 and skips EPA Method 19 F-factor values).
 
 
 def implausible_text_temps(text: str, max_f: float) -> list[int]:
@@ -115,7 +115,7 @@ def implausible_text_temps(text: str, max_f: float) -> list[int]:
     if not text:
         return []
     vals = set()
-    for m in _TEMP_RE.finditer(text):
+    for m in ea.temperature_matches(text):
         v = int(m.group(1).replace(",", ""))
         if v <= max_f:
             continue
