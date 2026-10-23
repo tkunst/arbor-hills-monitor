@@ -9,8 +9,14 @@ thermal-map copyright-holder comments all stay as they were.
 Three sources emit a `site-footer`: the committed HTML under site/, the two
 Python renderers that regenerate site/public-records/ and site/public-comment/
 on a schedule (findings_feed.py, public_comment_feed.py), and the data-notes
-YAML that scripts/sync_data_notes.py copies into the perimeter-air footer. All
-three are pinned here so a regeneration can never silently drop the entity.
+YAML that scripts/sync_data_notes.py copies into the perimeter-air footer. The
+first two are pinned here directly; the YAML is covered transitively, since the
+perimeter-air page's footer is asserted here and tests/test_sync_data_notes.py
+fails if that page and the YAML ever disagree.
+
+Pages whose footer is not a `site-footer` (the thermal-map pages' CC BY-4.0
+`license-foot`, the wellfield explorer's bare <footer>) carry a source credit,
+not a publisher statement, and are outside this file's scope on purpose.
 
 schema.org defines `publisher` on CreativeWork (WebSite, Dataset, DataCatalog,
 FAQPage), not on Organization: a `publisher` nested inside an Organization is
@@ -59,8 +65,11 @@ JSONLD_PAGES = (
     "faq/index.html",
 )
 
-# schema.org types on which `publisher` is defined (all CreativeWork subtypes).
-CREATIVE_WORK_TYPES = {"WebSite", "DataCatalog", "Dataset", "FAQPage"}
+# The types this site puts `publisher` on. schema.org defines `publisher` on
+# CreativeWork (and Event); these four are the CreativeWork subtypes in use.
+# An Organization is deliberately absent: a `publisher` nested in one is valid
+# JSON that validators flag and consumers drop.
+PUBLISHER_HOLDER_TYPES = {"WebSite", "DataCatalog", "Dataset", "FAQPage"}
 
 _FOOTER_RE = re.compile(
     r'<footer[^>]*\bclass="[^"]*\bsite-footer\b[^"]*"[^>]*>(.*?)</footer>', re.DOTALL)
@@ -90,21 +99,32 @@ def _walk(node):
             yield from _walk(v)
 
 
+def _types(node: dict) -> list[str]:
+    """@type as a list (JSON-LD allows a single string or a list)."""
+    t = node.get("@type", [])
+    return [t] if isinstance(t, str) else list(t)
+
+
 def _nodes_by_id(data) -> dict:
-    """Real nodes keyed by @id; a bare {"@id": ...} reference never shadows one."""
-    return {d["@id"]: d for d in _walk(data) if "@id" in d and "@type" in d}
+    """Full nodes keyed by @id. A reference stub (bare {"@id"} or {"@id", "@type"}
+    only) carries no properties of its own and never shadows the node it names."""
+    return {d["@id"]: d for d in _walk(data) if "@id" in d and set(d) - {"@id", "@type"}}
 
 
 def _resolve(value, by_id: dict, where: str) -> dict:
-    """A node or an @id reference to one; a reference that resolves nowhere fails."""
-    if "@type" in value:
-        return value
-    assert value.get("@id") in by_id, f"{where}: dangling @id reference {value!r}"
-    return by_id[value["@id"]]
+    """The node a `publisher` value denotes: a plain-text name, an inline node,
+    or an @id reference. Any @id (typed stub or bare) must resolve in-document."""
+    if isinstance(value, str):  # schema.org allows Text for publisher
+        return {"name": value}
+    assert isinstance(value, dict), f"{where}: unexpected publisher value {value!r}"
+    if "@id" in value:
+        assert value["@id"] in by_id, f"{where}: dangling @id reference {value!r}"
+        return by_id[value["@id"]]
+    return value
 
 
-def _publishers(data, where: str) -> list[tuple[str, dict]]:
-    """(holder @type, resolved publisher node) for every `publisher`, list-valued too."""
+def _publishers(data, where: str) -> list[tuple[list[str], dict]]:
+    """(holder @types, resolved publisher node) for every `publisher`, list-valued too."""
     by_id = _nodes_by_id(data)
     out = []
     for d in _walk(data):
@@ -112,8 +132,14 @@ def _publishers(data, where: str) -> list[tuple[str, dict]]:
         if pub is None:
             continue
         for p in (pub if isinstance(pub, list) else [pub]):
-            out.append((d.get("@type"), _resolve(p, by_id, where)))
+            out.append((_types(d), _resolve(p, by_id, where)))
     return out
+
+
+def test_jsonld_page_list_is_current():
+    found = sorted(
+        os.path.relpath(p, SITE) for p in _site_pages() if _JSONLD_RE.search(_read(p)))
+    assert found == sorted(JSONLD_PAGES), "update JSONLD_PAGES when a page gains or loses JSON-LD"
 
 
 def test_every_jsonld_page_names_the_llc_as_publisher_on_a_creative_work():
@@ -124,14 +150,15 @@ def test_every_jsonld_page_names_the_llc_as_publisher_on_a_creative_work():
             data = json.loads(block)  # a syntax error here fails silently in browsers
             pubs = _publishers(data, rel)
             assert any(p.get("name") == LLC for _, p in pubs), f"{rel}: no publisher named {LLC!r}"
-            for holder, _ in pubs:
-                assert holder in CREATIVE_WORK_TYPES, (
-                    f"{rel}: `publisher` is a CreativeWork property, not one of {holder!r}")
-            # Every other @id reference in the graph (parentOrganization, ...) resolves too.
+            for holder_types, _ in pubs:
+                assert set(holder_types) & PUBLISHER_HOLDER_TYPES, (
+                    f"{rel}: `publisher` sits on {holder_types!r}, not one of the "
+                    f"types this site puts it on ({sorted(PUBLISHER_HOLDER_TYPES)})")
+            # Every @id reference in the graph (parentOrganization, ...) resolves too.
             by_id = _nodes_by_id(data)
             for d in _walk(data):
-                if "@id" in d and "@type" not in d:
-                    _resolve(d, by_id, rel)
+                if "@id" in d:
+                    assert d["@id"] in by_id, f"{rel}: dangling @id reference {d['@id']!r}"
 
 
 def test_every_jsonld_block_anywhere_parses():
@@ -148,7 +175,7 @@ def test_every_site_footer_names_the_llc():
             pages_with_footer.add(os.path.relpath(page, SITE))
     missing = set(FOOTER_PAGES) - pages_with_footer
     assert not missing, f"pages lost their site-footer: {sorted(missing)}"
-    assert "public-records/index.html" in pages_with_footer
+    assert "public-records/index.html" in pages_with_footer, "public-records index lost its footer"
 
 
 def test_findings_feed_renderer_footer_names_the_llc():
