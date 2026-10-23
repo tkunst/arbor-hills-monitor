@@ -500,21 +500,49 @@ def test_a_main_shift_after_a_two_digit_only_boundary_takes_every_row_under_it()
     # page 3's first row is a one-line "timestamp ADJ", which labels the
     # two-digit table too, so only the two-digit table ends there. Main's
     # table (labeled on pages 2-3) is then column-shift rejected by page 3's
-    # 20 negative rows: EVERY two-digit row printed under it on page 3 goes
-    # with it, not just those past a stale index.
+    # 20 negative rows: EVERY two-digit row printed under it (pages 2-3: the
+    # two parked when their own table ended, and the five still open) goes
+    # with it, as on main before this addendum; page 1's three were under a
+    # main table that ended cleanly and are kept. (Review round 2: the rows
+    # whose table ended under main's open table were emitted at once.)
     p1 = [[f"AHX{k}", f"10/1/25 7:{k:02d}", *CELLS] for k in range(3)]
     p2 = [["AHX3", "10/2/25 7:03", *CELLS], ["AHX4", "10/2/25 7:04", "ADJ", *CELLS]]
     p3 = ([["AHX7", "10/3/25 6:00 ADJ", *CELLS]]
           + [[f"AHW{k}", f"10/3/2025 9:{k:02d}", *NEG] for k in range(20)]
           + [[f"AHX{k}", f"10/3/25 7:{k:02d}", *CELLS] for k in range(4)])
     g = w._parse_table_lines(_pages(p1, p2, p3))
-    assert [(r.well_id, r.page) for r in g.readings] == [
-        ("AHX0", 1), ("AHX1", 1), ("AHX2", 1), ("AHX3", 2), ("AHX4", 2)]
+    assert [(r.well_id, r.page) for r in g.readings] == [("AHX0", 1), ("AHX1", 1), ("AHX2", 1)]
     assert [(t.first_page, t.last_page, t.n_rows) for t in g.rejected_tables] == [
-        (3, 3, 20), (3, 3, 5)]
+        (3, 3, 20), (2, 3, 7)]
     assert g.rejected_tables[0].reason.startswith("column-shift signature: 100%")
     assert g.rejected_tables[1].reason == (
         "rows started by a two-digit-year timestamp, in a column-shift rejected table")
+
+
+def test_a_two_digit_row_whose_table_ended_under_an_open_main_table_waits_for_its_verdict():
+    # Review round 2. Page 1 (unlabeled header): a one-line two-digit ADJ
+    # row (main's header text reads it as a label; the two-digit table's
+    # does too), then 20 negative main rows; page 2 (labeled header): one
+    # clean main row. Main's table runs over both pages; the two-digit
+    # table ends at page 2's header. Its row is printed under main's open
+    # table, so it waits: main is column-shift rejected at the end and the
+    # row goes with it, exactly as before this addendum.
+    p1 = ([["AHX0", "10/1/25 7:00 ADJ", *CELLS]]
+          + [[f"AHW{k}", f"10/1/2025 9:{k:02d}", *NEG] for k in range(20)])
+    seq = _pages(p1) + [(h, 2) for h in HDR_FULL] + [
+        (x, 2) for x in ["AHW0", "10/2/2025 9:00", *CELLS]]
+    g = w._parse_table_lines(seq)
+    assert g.readings == []
+    assert [(t.first_page, t.last_page, t.n_rows, t.reason) for t in g.rejected_tables] == [
+        (1, 2, 21, "column-shift signature: 95% of rows have a negative flow"),
+        (1, 1, 1, "rows started by a two-digit-year timestamp, in a column-shift rejected table")]
+    # ... and with a clean main table it is emitted, in line order
+    p1[1:] = [[f"AHW{k}", f"10/1/2025 9:{k:02d}", *CELLS] for k in range(20)]
+    seq = _pages(p1) + [(h, 2) for h in HDR_FULL] + [
+        (x, 2) for x in ["AHW0", "10/2/2025 9:00", *CELLS]]
+    g = w._parse_table_lines(seq)
+    assert [(r.well_id, r.page) for r in g.readings][:2] == [("AHX0", 1), ("AHW0", 1)]
+    assert len(g.readings) == 22 and g.rejected_tables == []
 
 
 def test_an_unrecognized_header_rejects_a_two_digit_table_as_one_entry():
