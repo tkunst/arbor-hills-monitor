@@ -127,6 +127,8 @@ def build_seed_rows(map_rows: list[dict], hc_drive_ids: list[str],
             row["status"] = dp.published_status(row["first_release_tag"])
             if doc_id in STATUS_NOTES:
                 row["status"] += "; " + STATUS_NOTES[doc_id]
+        if not dp._clean(row["source_report"]):
+            raise dp.ProvenanceError(f"source_report fails name_check: {row['source_report']!r}")
         if doc_id.startswith("REL-"):
             row["document_title"] = (f"{row['source_report']}: {doc_id[4:]} "
                                      f"(source file in the {row['dataset']} release bundle)")
@@ -180,6 +182,8 @@ def main(argv=None) -> int:
     for r in seed:
         print(f"  {r['doc_id']:<42} {r['source_report'][:28]:<28} {r['rows_contributed']:<12} {r['status']}")
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    dp.plan_upsert([], seed, now)       # duplicate keys / bad ids stop here, before any write
+    dp.check_feed_headers(service, sheet_id)
     if args.apply:
         dp.ensure_tab(service, sheet_id)
     print("provenance upsert:", dp.upsert(service, sheet_id, seed, now, apply=args.apply))

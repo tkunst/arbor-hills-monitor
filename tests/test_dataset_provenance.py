@@ -60,7 +60,11 @@ class FakeSheets:
             raise RuntimeError(f"Unable to parse range: {range}")
         grid = self.tabs[tab]
         rows = grid[r1:(r2 + 1 if r2 is not None else None)]
-        out = [[(r[c] if c < len(r) else "") for c in range_(c1, c2)] for r in rows]
+        # Like the real API: a formula reads back as its displayed value unless
+        # valueRenderOption=FORMULA is asked for.
+        shown = (lambda v: v) if valueRenderOption == "FORMULA" else (
+            lambda v: "(displayed value)" if str(v).startswith("=") else v)
+        out = [[shown(r[c] if c < len(r) else "") for c in range_(c1, c2)] for r in rows]
         out = [_rstrip(r) for r in out]
         while out and not out[-1]:
             out.pop()
@@ -165,11 +169,15 @@ def base_sheet(**extra):
 def test_annotation_columns_follow_the_row_builder_columns():
     assert sw.FEED_TAB_HEADERS == sw.FEED_HEADERS + ["dataset_status"]
     assert sw.ARCHIVE_TAB_HEADERS == sw.ARCHIVE_HEADERS + ["same_content_as"]
-    assert sw._TAB_HEADERS[sw.TAB_NEW] == sw.FEED_TAB_HEADERS
-    assert sw._TAB_HEADERS[sw.TAB_HISTORICAL] == sw.FEED_TAB_HEADERS
-    assert sw._TAB_HEADERS[sw.TAB_ARCHIVE] == sw.ARCHIVE_TAB_HEADERS
-    assert sw._TAB_HEADERS[sw.TAB_RELATED] == sw.FEED_HEADERS     # no pointer on Related
+    # Not owned by ensure_tabs: the daily pipeline never rewrites these
+    # headers, so clearing the column is a complete rollback.
+    for tab in (sw.TAB_NEW, sw.TAB_HISTORICAL, sw.TAB_RELATED):
+        assert sw._TAB_HEADERS[tab] == sw.FEED_HEADERS
+    assert sw._TAB_HEADERS[sw.TAB_ARCHIVE] == sw.ARCHIVE_HEADERS
     assert sw.TAB_DATASET_PROVENANCE not in sw._TAB_HEADERS          # created on demand only
+    # A new FEED_HEADERS / ARCHIVE_HEADERS column would collide with L / J.
+    assert len(sw.FEED_HEADERS) == 11 and len(sw.ARCHIVE_HEADERS) == 9
+    assert dp.col_letter(sw.FEED_HEADERS.index("Link")) == dp._LINK_LETTER
 
 
 def test_hand_curated_annotation_column_is_after_the_published_columns():
@@ -193,13 +201,17 @@ def test_valid_doc_ids(good):
 def test_doc_id_guard_rejects_anything_formula_unsafe(bad):
     assert not dp.valid_doc_id(bad)
     with pytest.raises(dp.ProvenanceError):
-        dp.pointer_formula(bad, 5)
+        dp.pointer_formula(bad, 5, NSITE + "1", 2)
 
 
-def test_pointer_formula_matches_by_id_and_hides_a_missing_row():
-    f = dp.pointer_formula(D2, 42)
-    assert f == (f'=IFERROR(HYPERLINK("#gid=42&range=A"&MATCH("{D2}",'
-                 "'Dataset Provenance'!A:A,0),\"see Dataset Provenance\"),\"\")")
+def test_pointer_formula_checks_its_own_row_and_hides_a_missing_row():
+    f = dp.pointer_formula(D2, 42, NSITE + D2, 7)
+    assert f == (f'=IF($H7="{NSITE}{D2}",IFERROR(HYPERLINK("#gid=42&range=A"&MATCH("{D2}",'
+                 "'Dataset Provenance'!A:A,0),\"see Dataset Provenance\"),\"\"),\"\")")
+    assert '$H3="a""b"' in dp.pointer_formula(D2, 1, 'a"b', 3)    # quotes escaped
+    for bad_link in ("", "a\nb", "x" * 2001):
+        with pytest.raises(dp.ProvenanceError):
+            dp.pointer_formula(D2, 1, bad_link, 3)
 
 
 def test_resolve_drive_prefix_needs_exactly_one_match():
@@ -219,6 +231,9 @@ def test_feed_row_doc_id_reads_mirror_and_nsite_links_only():
     assert dp.feed_row_doc_id(NSITE + D2 + "?x=1", idx) == D2
     assert dp.feed_row_doc_id("https://drive.google.com/file/d/OTHER/view", idx) == ""
     assert dp.feed_row_doc_id("https://example.com/12345", idx) == ""
+    # exact host only (CodeQL py/incomplete-url-substring-sanitization)
+    assert dp.feed_row_doc_id("https://evil.example/mienviro.michigan.gov/123", idx) == ""
+    assert dp.feed_row_doc_id("https://mienviro.michigan.gov.evil.example/x/123", idx) == ""
     assert dp.feed_row_doc_id("", idx) == ""
 
 
@@ -261,7 +276,7 @@ def test_upsert_writes_ids_raw_and_is_idempotent():
     assert svc.tabs[dp.TAB][1][0] == D2                           # string, all 19 digits
     assert all(mode == "RAW" for _, _, mode in svc.writes)
     n = len(svc.writes)
-    assert dp.upsert(svc, "S", [_row(doc_id=D2)], "T2") == {"appended": 0, "updated": 0, "unchanged": 1}
+    assert dp.upsert(svc, "S", [_row(doc_id=D2)], "T2") == {"appended": 0, "updated": 0, "unchanged": 1, "kept": 0}
     assert len(svc.writes) == n
 
 
@@ -280,8 +295,9 @@ def test_sync_pointers_sets_clears_and_is_a_noop_second_time():
     hist = svc.tabs[sw.TAB_HISTORICAL]
     gid = svc.gids[dp.TAB]
     assert hist[0][11] == "dataset_status"
-    assert hist[1][11] == dp.pointer_formula(D1, gid)             # via the Drive mirror link
-    assert hist[2][11] == dp.pointer_formula(D2, gid)             # via the nSITE link
+    assert hist[1][11] == dp.pointer_formula(                      # via the Drive mirror link
+        D1, gid, "https://drive.google.com/file/d/MIRROR1/view", 2)
+    assert hist[2][11] == dp.pointer_formula(D2, gid, NSITE + D2, 3)   # via the nSITE link
     assert hist[3][11] == ""                                      # stale pointer cleared
     assert counts[sw.TAB_HISTORICAL] == {"set": 2, "cleared": 1}
     assert counts[sw.TAB_NEW] == {"set": 0, "cleared": 0}
@@ -292,9 +308,24 @@ def test_sync_pointers_sets_clears_and_is_a_noop_second_time():
     assert svc.writes == []
 
 
-def test_sync_pointers_refuses_an_occupied_header_before_writing_data():
+def test_sync_pointers_needs_the_formula_render_to_stay_idempotent(monkeypatch):
     svc = base_sheet()
-    svc.tabs[sw.TAB_NEW][0] = sw.FEED_HEADERS + ["Someone else's column"]
+    dp.ensure_tab(svc, "S")
+    dp.upsert(svc, "S", [_row(doc_id=D2)], "T")
+    dp.sync_pointers(svc, "S")
+    real_get = dp._get
+    monkeypatch.setattr(dp, "_get", lambda s, i, a1, render=None: real_get(s, i, a1))
+    assert dp.sync_pointers(svc, "S", apply=False)[sw.TAB_HISTORICAL]["set"] == 1
+
+
+def test_a_pointer_on_the_wrong_row_points_nowhere():
+    f = dp.pointer_formula(D2, 9, NSITE + D2, 3)
+    assert f.startswith(f'=IF($H3="{NSITE}{D2}",')                 # blank unless row 3 is D2's
+
+
+def test_sync_pointers_refuses_an_occupied_header_before_writing_anything():
+    svc = base_sheet()
+    svc.tabs[sw.TAB_HISTORICAL][0] = sw.FEED_HEADERS + ["Someone else's column"]
     dp.ensure_tab(svc, "S")
     dp.upsert(svc, "S", [_row(doc_id=D2)], "T")
     svc.writes.clear()
@@ -355,9 +386,43 @@ def test_record_staged_takes_titles_from_the_sheet_and_points_the_feed():
     assert rows[D2][7] == "7"
     assert rows["HC-" + HC_FULL][1] == "WOI Jan-Feb 2022"         # the Hand-Curated title
     assert counts["appended"] == 2
-    assert svc.tabs[sw.TAB_HISTORICAL][2][11] == dp.pointer_formula(D2, svc.gids[dp.TAB])
-    again = dp.record_staged(svc, "S", [{"doc_id": D2, "rows_contributed": 7}], "T2")
+    assert svc.tabs[sw.TAB_HISTORICAL][2][11] == dp.pointer_formula(D2, svc.gids[dp.TAB], NSITE + D2, 3)
+    again = dp.record_staged(svc, "S", [{"doc_id": D2, "rows_contributed": 7}], "2026-10-24T01:00:00Z")
     assert again["unchanged"] == 1 and again["appended"] == 0
+    rows = {r[0]: r for r in svc.tabs[dp.TAB][1:]}
+    assert again["withdrawn"] == 1                                # HC copy dropped out of the set
+    assert rows["HC-" + HC_FULL][5] == "withdrawn from staging 2026-10-24: no longer in the staged set"
+    assert rows[D2][5] == dp.STATUS_STAGED
+
+
+def test_record_staged_never_undoes_a_hand_set_status_and_marks_consumed():
+    svc = base_sheet()
+    dp.record_staged(svc, "S", [{"doc_id": D2, "rows_contributed": 7}, {"doc_id": D3}], "T1")
+    svc.tabs[dp.TAB][1][5] = "published (since wellfield-data-2026-11-01)"   # Trisha's flip
+    out = dp.record_staged(svc, "S", [{"doc_id": D2, "rows_contributed": 9}, {"doc_id": D3}], "T2")
+    assert out["kept"] == 1 and svc.tabs[dp.TAB][1][5].startswith("published")
+    assert svc.tabs[dp.TAB][1][7] == "7"
+    out = dp.record_staged(svc, "S", [], "2026-11-02T00:00:00Z", consumed_by="wellfield-data-2026-11-01")
+    assert out["withdrawn"] == 1
+    assert svc.tabs[dp.TAB][2][5] == ("withdrawn from staging 2026-11-02: "
+                                      "consumed by release wellfield-data-2026-11-01")
+    # a document staged again later is back to "staged"
+    dp.record_staged(svc, "S", [{"doc_id": D3}], "T4")
+    assert svc.tabs[dp.TAB][2][5] == dp.STATUS_STAGED
+
+
+def test_record_staged_with_nothing_staged_and_no_tab_writes_nothing():
+    svc = base_sheet()
+    assert dp.record_staged(svc, "S", [], "T")["withdrawn"] == 0
+    assert svc.writes == [] and dp.TAB not in svc.tabs
+
+
+def test_record_staged_checks_both_feed_headers_before_any_write():
+    svc = base_sheet()
+    svc.tabs[sw.TAB_HISTORICAL][0] = sw.FEED_HEADERS + ["Someone else's column"]
+    with pytest.raises(dp.ProvenanceError):
+        dp.record_staged(svc, "S", [{"doc_id": D2}], "T")
+    assert svc.writes == [] and dp.TAB not in svc.tabs
 
 
 def test_record_staged_refuses_a_bad_id_before_writing():
@@ -400,6 +465,11 @@ def test_seed_rows_apply_the_verified_corrections():
     assert by[("-6975595422894935530", "Q2 2024")]["status"].endswith(
         "needs review: 114 rows validation_ok=no")
     assert by[(D1, "Apr")]["rows_contributed"] == f"10 (combined with HC-{HC_FULL})"
+
+
+def test_seed_rows_refuse_a_name_in_source_report():
+    with pytest.raises(dp.ProvenanceError):
+        seed.build_seed_rows([_map(source_report="Letter from Scott Miller", nsite_doc_id=D1)], [])
 
 
 def test_seed_rows_take_counts_from_the_release_csv():
