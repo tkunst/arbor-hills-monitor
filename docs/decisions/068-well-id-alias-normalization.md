@@ -139,7 +139,7 @@ counted probes as wells (553 "wells" for the 2025 Q4 CJ report, `97d39ba7`).
 - `data/well_registry.json` is the source of truth: `aliases`
   [{alias, canonical, source, ruled}], `new_wells` and `probes` [{id, source,
   ruled}] (exactly those fields; `ruled` a YYYY-MM-DD date), `schema_version`
-  and `counts`; unknown keys are refused, and the file is capped (256 KB,
+  and `counts`; unknown keys are refused, and the file is capped (2.5 MB,
   2,000 entries, 1,000-character sources and `_note`), since it is
   allowlisted past the data guard. It was migrated from the Lotext
   source exactly (60 / 12 / 31; every set checked equal), each entry with the
