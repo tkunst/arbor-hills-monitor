@@ -16,12 +16,15 @@ never the document's fault, so it must not poison the document.
 Detection is duck-typed (a status_code attribute plus a narrow set of message
 substrings) so callers need not import anthropic. An optional isinstance check
 catches the SDK's connection/timeout/rate-limit/server/authentication errors,
-which may carry no status_code. A 401/403 (a revoked, expired or mis-scoped
-key) is transient too: a key problem is never the document's fault, and
-treating it as a strike would stub every real filing within three runs. The
-message set is kept deliberately narrow: a genuine bad-document 400
-(malformed request, un-openable PDF, max_tokens truncation) must still accrue
-strikes so truly poison docs stay self-terminating.
+which may carry no status_code. An Anthropic 401/403 (a revoked, expired or
+mis-scoped key) is transient too: a key problem is never the document's fault,
+and treating it as a strike would stub every real filing within three runs —
+but an nSITE download 401/403 (a requests.HTTPError behind download_pdf's
+RuntimeError) is per-document and still strikes, since nSITE refuses specific
+documents on referer grounds. The message set is kept deliberately narrow: a
+genuine bad-document 400 (malformed request, un-openable PDF, max_tokens
+truncation) must still accrue strikes so truly poison docs stay
+self-terminating.
 """
 from __future__ import annotations
 
@@ -82,14 +85,23 @@ def _is_transient_one(exc: BaseException) -> bool:
     #    transient. A 400 is usually a real bad request; the one transient 400 is
     #    the usage-cap message, caught by the marker check below — so do NOT treat
     #    all 400s as transient here.
-    #    A 401/403 (revoked, expired or mis-scoped key) is likewise never the
-    #    document's fault (stall-hardening review, 2026-10-23): counting it as
-    #    a strike would stub every real filing "skipped" within three runs of a
-    #    key problem — the same false-poison shape as the 2026-07-07 cap — and
-    #    would read to the liveness guard as the pipeline working through its
-    #    queue instead of as the stall it is.
+    #    A 401/403 from the ANTHROPIC API (revoked, expired or mis-scoped key)
+    #    is likewise never the document's fault (stall-hardening review,
+    #    2026-10-23): counting it as a strike would stub every real filing
+    #    "skipped" within three runs of a key problem — the same false-poison
+    #    shape as the 2026-07-07 cap — and would read to the liveness guard as
+    #    the pipeline working through its queue instead of as the stall it is.
+    #    That is read ONLY from a direct `status_code` attribute (the SDK's
+    #    APIStatusError shape). A 401/403 carried on `.response.status_code`
+    #    is a requests.HTTPError from the nSITE DOWNLOAD (reachable through
+    #    download_pdf's cause chain), and nSITE does 403 a specific document
+    #    on referer grounds — that is per-document, so it must still strike
+    #    and stub rather than retry silently forever (round-3 review).
     status = _status_of(exc)
-    if status is not None and (status in (401, 403, 429) or status >= 500):
+    if status is not None and (status == 429 or status >= 500):
+        return True
+    direct = getattr(exc, "status_code", None)
+    if isinstance(direct, int) and not isinstance(direct, bool) and direct in (401, 403):
         return True
 
     # 2) The anthropic SDK's connection/timeout/rate-limit/server errors may carry

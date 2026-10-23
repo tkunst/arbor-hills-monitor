@@ -185,3 +185,33 @@ def test_download_pdf_chains_the_underlying_failure(monkeypatch, tmp_path):
         assert "download failed for doc 123" in str(exc)
         assert isinstance(exc.__cause__, requests.exceptions.ConnectionError)
         assert rp.is_transient(exc) is True
+
+
+# --- round-3 review: an nSITE per-document 401/403 must still strike ----------
+
+
+def test_nsite_download_401_403_behind_the_wrapper_still_strikes():
+    # nSITE refuses specific documents on referer grounds (a 403). Before the
+    # cause chain existed this struck and stubbed after three runs; it must
+    # not become a silent forever-retry just because the chain is visible.
+    requests = __import__("requests")
+    for code in (401, 403):
+        resp = requests.Response()
+        resp.status_code = code
+        try:
+            try:
+                resp.raise_for_status()
+            except requests.exceptions.HTTPError as inner:
+                raise RuntimeError(f"download failed for doc 123: {inner}") from inner
+        except RuntimeError as exc:
+            assert rp.is_transient(exc) is False, code
+
+
+def test_anthropic_shaped_401_403_direct_status_code_is_transient_but_requests_shaped_is_not():
+    assert rp.is_transient(_HttpError(403)) is True          # direct .status_code
+
+    class _Resp:
+        status_code = 403
+    exc = Exception("403 Client Error")
+    exc.response = _Resp()                                   # requests shape
+    assert rp.is_transient(exc) is False

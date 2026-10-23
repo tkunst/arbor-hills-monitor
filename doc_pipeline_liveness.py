@@ -103,11 +103,16 @@ def seed_from_last_run(health: Optional[dict], last_run) -> dict:
     return h
 
 
-def _int(v, default: int = 0) -> int:
+def as_int(v, default: int = 0) -> int:
+    """`int(v)`, or `default` for None / blank / garbage (a YAML `null`
+    threshold must fall back, never raise and silently disable the guard)."""
     try:
         return int(v)
     except (TypeError, ValueError):
         return default
+
+
+_int = as_int
 
 
 def update_health(health: Optional[dict], *, now_utc: datetime, unprocessed: int,
@@ -125,6 +130,7 @@ def update_health(health: Optional[dict], *, now_utc: datetime, unprocessed: int
         h.pop("warned_deferrals", None)       # episode over: re-arm the gate
     if unprocessed == 0 or processed > 0 or struck > 0:
         h["last_activity_at"] = format_activity(now_utc)
+        h.pop("activity_seeded_from_last_run", None)   # a real stamp now
     else:
         h.setdefault("last_activity_at", "")
     return h

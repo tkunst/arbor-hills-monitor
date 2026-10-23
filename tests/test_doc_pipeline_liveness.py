@@ -414,3 +414,20 @@ def test_live_config_carries_the_two_thresholds():
     wcfg = load_config()["watcher"]
     assert wcfg["max_consecutive_deferrals"] == 3
     assert wcfg["max_stale_days"] == 3
+
+
+def test_seed_marker_is_cleared_by_real_activity():
+    h = dl.seed_from_last_run({}, "2026-10-19T11:02:10")
+    assert h["activity_seeded_from_last_run"] is True
+    h = dl.update_health(h, now_utc=NOW, unprocessed=3, processed=0, struck=0, deferred=0)
+    assert h["activity_seeded_from_last_run"] is True        # no progress: still seeded
+    h = dl.update_health(h, now_utc=NOW, unprocessed=1, processed=1, struck=0, deferred=0)
+    assert "activity_seeded_from_last_run" not in h
+
+
+def test_null_thresholds_fall_back_to_defaults_instead_of_disabling_the_guard(monkeypatch):
+    state, sent, metas, calls = _wire(monkeypatch, _docs(30), cap=25, max_def=None, max_stale=None)
+    for _ in range(3):
+        assert w.run() == 0
+    assert state["doc_pipeline_health"]["consecutive_deferrals"] == 3
+    assert len(sent) == 1                                    # default threshold 3 applied

@@ -703,9 +703,11 @@ def _wrap_untrusted_document(text: str) -> str:
 # one document in bounded time. The read timeout is sized from the OUTPUT
 # budget, not the job: a non-streaming call sends nothing until generation is
 # done, so the read timeout IS the generation time. We use the SDK's own
-# non-streaming estimate (`_calculate_nonstreaming_timeout`: 128k output
-# tokens/hour, ~35.6 tok/s — deliberately conservative) plus a minute of
-# headroom, clamped to [120 s, the 600 s default]. For config's
+# expected-generation-time formula (the 128k output tokens/hour, ~35.6 tok/s
+# figure `_calculate_nonstreaming_timeout` uses to decide when streaming is
+# REQUIRED — deliberately conservative; note an explicit client timeout makes
+# `Messages.parse` skip that helper, so its refusal guard no longer applies)
+# plus a minute of headroom, clamped to [120 s, the 600 s default]. For config's
 # `classification_max_tokens` = 16384 that is ~521 s; for the 256-token note
 # classifier, 120 s. Why not shorter (the handoff suggested 60-120 s): a
 # timeout BELOW the slowest legitimate response is worse than the default —
@@ -720,7 +722,7 @@ _CLASSIFY_TIMEOUT_MIN_S = 120.0
 _CLASSIFY_TIMEOUT_MAX_S = 600.0        # never above the SDK default
 _CLASSIFY_TIMEOUT_HEADROOM_S = 60.0
 _CLASSIFY_CONNECT_TIMEOUT_S = 10.0
-_SDK_OUTPUT_TOKENS_PER_HOUR = 128_000  # the SDK's own non-streaming estimate
+_SDK_OUTPUT_TOKENS_PER_HOUR = 128_000  # the SDK's streaming-required formula
 
 
 def classify_timeout_s(max_tokens: int) -> float:

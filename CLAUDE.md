@@ -102,8 +102,10 @@ external users but no sensitive data). Public repo.
   classifier call sites build their client through
   `_anthropic_client(max_tokens)`, which sets an explicit per-attempt
   `timeout` instead of the SDK's 600 s default: `classify_timeout_s()` (pure)
-  = the SDK's own non-streaming generation estimate (128k output tokens/hour)
-  for that `max_tokens` plus 60 s headroom, clamped to [120 s, 600 s] — ~521 s
+  = the SDK's own expected-generation-time formula (the 128k output
+  tokens/hour figure it uses to decide when streaming is required; an
+  explicit client timeout bypasses that guard) for that `max_tokens` plus
+  60 s headroom, clamped to [120 s, 600 s] — ~521 s
   for `classification_max_tokens` = 16384, 120 s for the 256-token note
   classifier — with a 10 s connect timeout. Sized from the OUTPUT budget on
   purpose: a timeout below the slowest legitimate response would be worse
@@ -148,10 +150,12 @@ external users but no sensitive data). Public repo.
   entirely and instead builds its own `ref` via
   `reference_from_config()`, passed straight to `check_fields()`.
 - `retry_policy.py` — classifies a per-document processing exception as
-  TRANSIENT (infra/quota — a 429, a 5xx, a 401/403 (a revoked, expired or
-  mis-scoped key is never the document's fault — stall-hardening review,
-  2026-10-23; before that a dead key would have stubbed every real filing
-  "skipped" within three runs), the 2026-07-07 workspace API cap's
+  TRANSIENT (infra/quota — a 429, a 5xx, an ANTHROPIC 401/403 read from a
+  direct `status_code` attribute (a revoked, expired or mis-scoped key is
+  never the document's fault — stall-hardening review, 2026-10-23; before
+  that a dead key would have stubbed every real filing "skipped" within
+  three runs; an nSITE download 401/403, carried on `.response.status_code`,
+  is per-document and still strikes), the 2026-07-07 workspace API cap's
   400 "usage limit" message, the `anthropic` SDK's own connection/timeout/
   rate-limit/server/authentication error types, and a `requests`
   connection error/timeout) — checked on the exception AND everything it
