@@ -3004,17 +3004,21 @@ class PurgeReadCache:
     a 429 (run 39699682035). With it each of those ranges is read ONCE per run
     and every doc's preview is computed from the cached values.
 
-    Apply path: a tab is dropped from the cache right before its rows are
-    deleted (the delete shifts every row below the deleted ones, so the cached
-    indices are stale from that moment), and re-read on the next purge that
-    needs it. Tabs the purge did NOT touch stay cached across docs: the rows
-    `write_document` appends for a re-extracted doc land AFTER every cached row
-    (`append_rows` appends at the table's end), so they never move a cached
-    row's index, and they belong to a doc already purged this run, so they are
-    never a stale row a later purge should match. A tab created mid-run (the
-    WOI Well Summary tab on a first route) is not in the cached metadata and is
-    skipped, which is correct: a tab that did not exist at run start holds no
-    stale rows.
+    Apply path: the cached values decide WHICH tabs hold the doc's rows, but
+    never which row INDICES get deleted. A tab with at least one cached match
+    is re-read immediately before its deleteDimension is built (the same
+    millisecond-scale read-to-delete window the uncached code had; minutes
+    can pass between backfill's fill and `doc_pipeline._purge` — download,
+    OCR, classification, WOI routing — and a human sort/insert/delete in the
+    Sheet during that window would otherwise shift the cached indices under
+    an index-based delete), then dropped from the cache (the delete shifts
+    every row under it). So the cache never has to assume anything about
+    where `append_rows` lands a fresh row: a cached tab is only ever used to
+    match rows (a fresh row belongs to a doc already purged this run, never
+    to a later one), and a tab with zero cached matches is skipped without a
+    read. A tab created mid-run (the WOI Well Summary tab on a first route) is
+    not in the cached metadata and is skipped, which is correct: a tab that
+    did not exist at run start holds no stale rows.
 
     `reads` counts the `values().get` calls the cache issued (logged by
     backfill so a run's read cost is visible)."""
@@ -3050,6 +3054,18 @@ class PurgeReadCache:
                 self.tab_values[tab] = resp.get("values", [])
                 self.reads += 1
         return self.reads - before
+
+    def reread(self, service, sheet_id: str, tab: str) -> list:
+        """Read one tab fresh now (one `values().get`), replacing its cached
+        rows — the pre-delete read the apply path takes."""
+        resp = (
+            service.spreadsheets().values()
+            .get(spreadsheetId=sheet_id, range=f"'{tab}'!A2:Z")
+            .execute(num_retries=GOOGLE_API_NUM_RETRIES)
+        )
+        self.tab_values[tab] = resp.get("values", [])
+        self.reads += 1
+        return self.tab_values[tab]
 
     def invalidate(self, tab: str) -> None:
         self.tab_values.pop(tab, None)
@@ -3087,43 +3103,58 @@ def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False,
 
     `cache` (a `PurgeReadCache`, see its docstring) makes a multi-doc run read
     the metadata, the archive index and each tab ONCE instead of once per doc;
-    without one, every call reads everything fresh exactly as before. A purged
-    tab is dropped from the cache before its delete is issued, so the next call
-    that needs it re-reads the post-delete layout."""
+    without one, every call reads everything fresh exactly as before, with ONE
+    deliberate difference from the pre-cache code: the Archived PDFs index is
+    now read STRICTLY (a throttled read raises; see `archived_doc_links`),
+    because a false-empty index here would miss every Drive-linked row and an
+    apply would append fresh rows beside the stale ones. A tab about to be
+    purged is re-read immediately before its delete is built and dropped from
+    the cache afterwards (see the class docstring)."""
     if cache is None:
         cache = PurgeReadCache()
     cache.fill(service, sheet_id)
     gid = cache.gid
     archive_link = cache.archive_links.get(doc_id)
 
-    requests: list[dict] = []
-    counts: dict[str, int] = {}
-    for tab, link_col in _PURGE_TABS:
-        if tab not in gid:
-            continue  # tab not created yet (e.g. WOI Summary before any route)
-        values = cache.tab_values[tab]
-        # values[i] is data row i, i.e. 0-based grid row (i + 1) since row 0 is the
-        # header. Sheets only trims TRAILING empty rows, so interior indices stay
-        # aligned for any row that actually carries a Link.
-        matched = [
+    def _matches(values: list) -> list[int]:
+        # values[i] is data row i, i.e. 0-based grid row (i + 1) since row 0 is
+        # the header. Sheets only trims TRAILING empty rows, so interior indices
+        # stay aligned for any row that actually carries a Link.
+        return [
             i + 1 for i, r in enumerate(values)
             if len(r) > link_col and r[link_col] and (
                 _link_doc_id(r[link_col]) == doc_id
                 or (archive_link and r[link_col] == archive_link)
             )
         ]
-        counts[tab] = len(matched)
+
+    requests: list[dict] = []
+    counts: dict[str, int] = {}
+    after_delete: dict[str, list] = {}  # tab -> the rows the Sheet will hold post-delete
+    for tab, link_col in _PURGE_TABS:
+        if tab not in gid:
+            continue  # tab not created yet (e.g. WOI Summary before any route)
+        matched = _matches(cache.tab_values[tab])
         if not dry_run and matched:
-            # The delete below shifts every row under the deleted ones, so the
-            # cached layout of this tab is stale from here on — drop it BEFORE
-            # the batchUpdate so any outcome (success, or a raise that a caller
-            # survives) forces a fresh read next time.
+            # Index-based delete: take the indices from a read made NOW, not
+            # from the cache (which may be minutes old on the apply path), then
+            # drop the tab from the cache BEFORE the batchUpdate so a raise a
+            # caller survives forces a fresh read next time. On success the
+            # cache gets the post-delete layout (the fresh rows minus the
+            # deleted ones — exactly what deleteDimension leaves), so the
+            # next doc's match costs no read; its own pre-delete read still
+            # decides its indices.
+            fresh = cache.reread(service, sheet_id, tab)
+            matched = _matches(fresh)
             cache.invalidate(tab)
+            gone = set(matched)
+            after_delete[tab] = [r for i, r in enumerate(fresh) if (i + 1) not in gone]
             for grid_row in sorted(matched, reverse=True):  # bottom-up within the tab
                 requests.append({"deleteDimension": {"range": {
                     "sheetId": gid[tab], "dimension": "ROWS",
                     "startIndex": grid_row, "endIndex": grid_row + 1,
                 }}})
+        counts[tab] = len(matched)
 
     if requests:
         # no-retry: this is an index-based deleteDimension batch whose startIndex
@@ -3137,4 +3168,5 @@ def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False,
         service.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id, body={"requests": requests}
         ).execute(num_retries=0)  # no-retry: index-based delete, unsafe to replay (see above)
+        cache.tab_values.update(after_delete)
     return counts

@@ -8,8 +8,6 @@ values().get per purge tab (+ the Archived PDFs index), ~8 reads per doc, and
 the seventh doc hit "Read requests per minute per user" (60). The fake service
 below COUNTS reads so the test pins the cost, not just the result.
 """
-from datetime import datetime
-
 import pytest
 
 import backfill as bf
@@ -117,8 +115,7 @@ def test_dry_run_58_ids_reads_each_tab_once_and_matches_the_uncached_preview():
         assert with_cache == without  # identical per-doc preview
         assert with_cache[sw.TAB_HISTORICAL] == 1 and with_cache[sw.TAB_MEASUREMENTS] == 2
     n_tabs = len(sw._PURGE_TABS)
-    assert cached.value_reads == n_tabs + 1          # six tabs + the archive index
-    assert cached.value_reads <= n_tabs + 1          # the spec's bound, stated as written
+    assert cached.value_reads == n_tabs + 1          # six tabs + the archive index: the spec's bound
     assert cached.meta_reads == 1
     assert cache.reads == cached.value_reads
     assert fresh.value_reads == N_DOCS * (n_tabs + 1)  # the pre-fix cost, for contrast
@@ -166,24 +163,62 @@ def test_apply_with_cache_deletes_the_same_rows_as_uncached_sequential_purges():
         assert cached._values._tabs[tab][0] == fresh._values._tabs[tab][0]  # header intact
     survivors = _links_of(cached._values._tabs[sw.TAB_HISTORICAL], sw.FEED_HEADERS)
     assert survivors == [_drive(d) for d in ids[1::2]]  # the odd (mirrored) docs remain
-    # Read cost: one fill (7) + after each purge, only the 4 purged tabs are
-    # re-read for the next doc (New/Related/archive index stay cached).
-    assert cached.value_reads == (len(sw._PURGE_TABS) + 1) + 4 * (len(ids[::2]) - 1)
+    # Read cost: one fill (7) + per doc one pre-delete read of each of the 4
+    # tabs that hold its rows (New/Related/archive index/metadata stay cached).
+    assert cached.value_reads == (len(sw._PURGE_TABS) + 1) + 4 * len(ids[::2])
     assert cached.meta_reads == 1
 
 
 def test_apply_rereads_a_purged_tab_even_when_the_caller_never_refills():
-    """purge_doc_rows itself re-fills on demand: a stale layout is never reused."""
+    """purge_doc_rows never deletes from cached indices: the apply path reads the
+    tab right before building the delete, whatever the caller did in between."""
     ids = _doc_ids(4)
     svc = CountingSheets(_fixture(ids))
     cache = sw.PurgeReadCache()
     sw.purge_doc_rows(svc, "SID", ids[0], cache=cache)
-    assert sw.TAB_HISTORICAL not in cache.tab_values  # invalidated by the delete
+    # After a successful delete the cache holds the post-delete layout (== the Sheet).
+    assert cache.tab_values[sw.TAB_HISTORICAL] == svc._values._tabs[sw.TAB_HISTORICAL][1:]
     assert sw.TAB_NEW in cache.tab_values             # untouched tab stays cached
     counts = sw.purge_doc_rows(svc, "SID", ids[2], cache=cache)
     assert counts[sw.TAB_HISTORICAL] == 1
     assert _links_of(svc._values._tabs[sw.TAB_HISTORICAL], sw.FEED_HEADERS) == \
         [_drive(ids[1]), _drive(ids[3])]
+
+
+def test_apply_takes_delete_indices_from_a_read_made_now_not_the_cache():
+    """Between backfill's fill and doc_pipeline's purge, minutes pass (download,
+    OCR, classification). If someone inserts a row above the doc's rows in
+    that window, the cached indices point one row too high; the pre-delete
+    re-read must catch it so the right rows are deleted."""
+    ids = _doc_ids(3)
+    svc = CountingSheets(_fixture(ids))
+    cache = sw.PurgeReadCache()
+    cache.fill(svc, "SID")
+    stranger = _row(sw.FEED_HEADERS, "999", _nsite("999"), "inserted-by-hand")
+    svc._values._tabs[sw.TAB_HISTORICAL].insert(1, stranger)  # shifts every row down
+    counts = sw.purge_doc_rows(svc, "SID", ids[2], cache=cache)
+    assert counts[sw.TAB_HISTORICAL] == 1
+    assert _links_of(svc._values._tabs[sw.TAB_HISTORICAL], sw.FEED_HEADERS) == \
+        [_nsite("999"), _nsite(ids[0]), _drive(ids[1])]  # the stranger survives, ids[2] is gone
+
+
+def test_apply_keeps_an_untouched_tab_with_real_matches_cached_across_docs():
+    """A tab holding rows for LATER docs but none for the doc being purged is
+    served from the cache (no read) and still purged correctly later."""
+    ids = _doc_ids(4)
+    tabs = _fixture(ids)
+    tabs[sw.TAB_NEW] = [sw.FEED_HEADERS, _row(sw.FEED_HEADERS, ids[2], _nsite(ids[2])),
+                        _row(sw.FEED_HEADERS, ids[3], _drive(ids[3]))]
+    svc = CountingSheets(tabs)
+    cache = sw.PurgeReadCache()
+    sw.purge_doc_rows(svc, "SID", ids[0], cache=cache)      # New Documents: 0 matches
+    reads_after_first = svc.value_reads
+    assert sw.TAB_NEW in cache.tab_values
+    counts = sw.purge_doc_rows(svc, "SID", ids[2], cache=cache)
+    assert counts[sw.TAB_NEW] == 1
+    assert svc._values._tabs[sw.TAB_NEW][1:] == [_row(sw.FEED_HEADERS, ids[3], _drive(ids[3]))]
+    # Second doc: a pre-delete read for each of the 5 tabs holding its rows, no more.
+    assert svc.value_reads - reads_after_first == 5
 
 
 def test_apply_then_fresh_rows_appended_then_next_doc_purged():
@@ -230,11 +265,16 @@ def test_dry_run_never_invalidates():
 def test_cache_reads_the_archive_index_strictly():
     """A throttled Archived PDFs read must RAISE (so backfill's quota wait sees
     it), never read as "nothing mirrored" — that would miss every Drive-linked
-    row and an apply would append fresh rows beside the stale ones."""
+    row and an apply would append fresh rows beside the stale ones. This holds
+    for an UNCACHED purge_doc_rows call too (the one deliberate behaviour
+    change for callers that pass no cache)."""
     svc = CountingSheets(_fixture(_doc_ids(2)))
     svc.raise_next = [_Http429()]
     with pytest.raises(_Http429):
         sw.PurgeReadCache().fill(svc, "SID")
+    svc.raise_next = [_Http429()]
+    with pytest.raises(_Http429):
+        sw.purge_doc_rows(svc, "SID", _doc_ids(2)[0], dry_run=True)
     # The lenient default of archived_doc_links is unchanged for its dedup callers.
     svc.raise_next = [_Http429()]
     assert sw.archived_doc_links(svc, "SID") == {}
@@ -253,12 +293,8 @@ def test_is_rate_limited_duck_types_a_429():
     assert bf._is_rate_limited(resp_only) is True
 
 
-def test_seconds_until_next_minute_crosses_the_boundary_with_a_floor():
-    assert bf._seconds_until_next_minute(datetime(2026, 10, 21, 20, 26, 0)) == 61
-    assert bf._seconds_until_next_minute(datetime(2026, 10, 21, 20, 26, 30)) == 31
-    assert bf._seconds_until_next_minute(datetime(2026, 10, 21, 20, 26, 46)) == 15
-    assert bf._seconds_until_next_minute(datetime(2026, 10, 21, 20, 26, 47)) == 74  # floor -> next window
-    assert bf._seconds_until_next_minute(datetime(2026, 10, 21, 20, 26, 59)) == 62
+def test_quota_wait_covers_a_full_minute_window():
+    assert bf.QUOTA_WAIT_S >= 61  # a sliding 60 s window needs the whole minute
 
 
 def test_waiting_out_quota_retries_once_after_a_429(monkeypatch, capsys):
@@ -272,7 +308,7 @@ def test_waiting_out_quota_retries_once_after_a_429(monkeypatch, capsys):
             raise _Http429()
         return "ok"
     assert bf._waiting_out_quota(flaky, 1, k=2) == "ok"
-    assert calls == [(1, 2), (1, 2)] and len(slept) == 1 and 15 <= slept[0] <= 121
+    assert calls == [(1, 2), (1, 2)] and slept == [bf.QUOTA_WAIT_S]
     assert "HTTP 429" in capsys.readouterr().out
 
 

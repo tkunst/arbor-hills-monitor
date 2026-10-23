@@ -347,12 +347,16 @@ external users but no sensitive data). Public repo.
   `purge_doc_rows(cache=)` for both the dry-run preview and the apply path, so
   the metadata, the Archived PDFs index (read STRICTLY there) and each of the
   six purge tabs are read once per run instead of once per doc (run
-  39699682035: ~8 reads x 58 ids vs. 60 reads/minute). A purged tab is dropped
-  from the cache before its delete and re-read on the next purge. A Sheets 429
-  on `ensure_tabs`/`read_state`/the fill/the dry-run purge is waited out once
-  (`_waiting_out_quota`: sleep to the next minute window, retry once, then
-  fail); `process_one_doc` is deliberately not wrapped (its own per-doc
-  handling already treats a 429 as a no-strike transient).
+  39699682035: ~8 reads x 58 ids vs. 60 reads/minute). The cache decides
+  WHICH tabs hold a doc's rows, never which row indices get deleted: on apply
+  a tab with matches is re-read immediately before its `deleteDimension` is
+  built (minutes pass between the fill and `doc_pipeline._purge`), and after
+  a successful delete the cache keeps the post-delete layout. A Sheets 429 on
+  `ensure_tabs`/`read_state`/the fill/the dry-run purge is waited out once
+  (`_waiting_out_quota`: a flat `QUOTA_WAIT_S` = 61 s, which covers a sliding
+  window too, retry once, then fail); `process_one_doc` is deliberately not
+  wrapped (its own per-doc handling already treats a 429 as a no-strike
+  transient).
 - **Facility scope (ADR 064, 2026-10-07):** each `facilities:` entry is `core`
   (default — Arbor Hills/GFL) or `scope: related` (a neighboring/watershed site,
   e.g. the Johnson Creek drain restoration). Related docs go ONLY to the
