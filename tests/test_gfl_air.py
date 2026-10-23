@@ -1830,6 +1830,10 @@ def test_station_roster_drops_bad_entries_with_a_warning_each():
     assert any("'MS1' does not start with station_prefix 'MS-'" in w and "ignored" in w
                for w in warns)
     assert sum("is not a string" in w for w in warns) == 2   # the dict and the int
+    # one warning per cause: a repeated typo is a prefix warning, then a duplicate
+    _, warns2 = gw.station_roster({"expected_stations": ["MS1", "MS1", "MS-1"]}, "MS-")
+    assert sum("does not start with" in w for w in warns2) == 1
+    assert sum("more than once" in w for w in warns2) == 1
     rows = gw._monitor_rows(_five_reporting(), WT, SENT, registry=_registry())
     _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
                                         link="L", retrieved_iso="2026-10-06T13:00:00Z",
@@ -1854,6 +1858,11 @@ def test_reporting_count_cannot_be_overridden_past_the_roster():
                                         link="L", retrieved_iso="2026-10-06T13:00:00Z",
                                         expected_stations=STATIONS)
     assert "stations reporting 5/6" in body                  # six non-silent rows, five count
+    # a direct caller's duplicated roster can't inflate the denominator either
+    _, body = gw.format_screening_email([_opened("MS-3", "h2s", 45.0, BATCH_MS)], [], rows, WT,
+                                        link="L", retrieved_iso="2026-10-06T13:00:00Z",
+                                        expected_stations=STATIONS + ["MS-1"])
+    assert "stations reporting 5/6" in body
 
 
 def test_quiet_poll_still_reconciles_readings_against_roster(monkeypatch, capsys):
@@ -1862,6 +1871,8 @@ def test_quiet_poll_still_reconciles_readings_against_roster(monkeypatch, capsys
     fake, sent = _wire_with_recipients(monkeypatch, _watch_cfg())
     _baseline_then(monkeypatch)
     capsys.readouterr()
+    monkeypatch.setattr(gw.gc, "fetch_station_coords",
+                        lambda *a, **k: pytest.fail("registry fetched on a quiet poll"))
     new = [_elev(106 + i, s, 0.0, 5.0, BATCH_MS) for i, s in enumerate(STATIONS) if s != "MS-1"]
     new.append(_elev(120, "MS-7", 1.0, 5.0, BATCH_MS))       # a new monitor, quietly online
     monkeypatch.setattr(gw.gc, "fetch_readings",

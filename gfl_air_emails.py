@@ -461,7 +461,9 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
     pre-roster behaviour applies: FALLBACK_N_STATIONS_EXPECTED and a count-only note."""
     coords = coords or {}
     context = context or {}
-    roster = list(expected_stations) if expected_stations else None
+    # De-duplicated here too (station_roster already does), so a direct caller can't
+    # inflate the denominator or double-name a missing station.
+    roster = list(dict.fromkeys(expected_stations)) if expected_stations else None
     n_stations_expected = len(roster) if roster else FALLBACK_N_STATIONS_EXPECTED
     unexpected, missing = roster_mismatch(roster, (r["station"] for r in monitor_rows))
     opened_isos = [o.get("opened_at", "") for o in opened]
