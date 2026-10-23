@@ -425,7 +425,19 @@ external users but no sensitive data). Public repo.
   to `_check_liveness()` (the orchestration wrapper, mirroring
   `gfl_air_watcher._check_liveness`) right after the doc loop — see
   `doc_pipeline_liveness.py` below. Best-effort and isolated: it can never
-  fail the run.
+  fail the run. **Anti-stampede cap (stall-hardening part (c)):** over
+  `watcher.max_new_docs_per_run`, `_split_by_history()` (pure) separates the
+  unprocessed documents of ESTABLISHED facilities (one with any `processed`
+  or `skipped` document in state) from those of facilities with NO
+  processing history (just added to `facilities:`). The history-less backlog
+  is deferred to backfill exactly as before; the established facilities'
+  documents are still processed when they alone fit under the cap, so a
+  new facility can never again freeze live monitoring of every other one
+  (2026-07-24). An established facility's own over-cap burst, or an
+  established share that itself exceeds the cap, keeps the old whole-run
+  deferral — now alarmed by the liveness guard. Under the cap nothing
+  changed. A partial deferral still counts toward `consecutive_deferrals`
+  (the backlog is not draining), while `last_activity_at` advances.
 - `doc_pipeline_liveness.py` — **stall-hardening part (a)** (handoff
   `docs/overnight-coder-handoffs/stall-hardening.md`; the 2026-08-02
   digest-recovery lesson, when two newly added facilities pushed the backlog
