@@ -209,6 +209,20 @@ external users but no sensitive data). Public repo.
   **ADR 065** appended `Document Date`/`EGLE Title` at the END of
   `FEED_HEADERS`/`EVIDENCE_HEADERS`/`ARCHIVE_HEADERS`/`ALL_EVIDENCE_HEADERS`
   (WDS rows in All Evidence get blanks — not a filed nSITE document).
+- `dataset_provenance.py` — **coder:dataset-provenance-sheet (2026-10-22)**: the
+  public Sheet's `Dataset Provenance` tab (one row per document copy and dataset
+  version: published / staged / covered) plus three annotation columns after the
+  row-builder columns: `dataset_status` on New/Historical Documents (a
+  HYPERLINK/MATCH formula to the doc's provenance row), `same_content_as` on
+  Archived PDFs, `same_as_monitor_doc` on Hand-Curated Files (`sheet_writer`
+  lists the first two in `FEED_TAB_HEADERS`/`ARCHIVE_TAB_HEADERS`; row builders
+  still write only the old widths). Written only by
+  `scripts/sync_dataset_provenance.py` (one-time seed from the Lotext
+  `provenance-map.csv`, dry run by default) and the Lotext wellfield staging run
+  (`record_staged()`), never by the daily pipeline. Doc ids are written RAW;
+  annotation cells fill only when blank; the tab read raises (it is the upsert's
+  key index); titles pass `name_check`. A backfill purge deletes a feed row's
+  pointer with the row; the next staging run's `sync_pointers()` puts it back.
 - `mmpc_client.py` — CivicClerk JSON API: enumerate + fetch MMPC event PDFs.
 - `mmpc_archiver.py` — Mirror D: auto-archive MMPC Agenda/Minutes PDFs (ADR 010).
   (The old in-watcher "go check the minutes" reminder was retired; see ADR 013.)
