@@ -49,7 +49,8 @@ def _fresh_service_cache(monkeypatch):
 
 def _arm_drive(monkeypatch, log, fail=False):
     """Fake the OAuth Drive side so the real export_snapshot() runs; every
-    upload records ("drive", name, payload) into the shared ordered log."""
+    upload records ("drive", name, payload) into the shared ordered log. With
+    fail=True every upload raises and is counted as ("attempt",) instead."""
     for k in se.ac.CREDENTIAL_ENV:
         monkeypatch.setenv(k, "x")
     monkeypatch.setenv(se.FOLDER_ENV, "SNAPFOLDER")
@@ -57,6 +58,7 @@ def _arm_drive(monkeypatch, log, fail=False):
 
     def _upload(service, local_path, name, mimetype, folder_id):
         if fail:
+            log.append(("attempt", name))
             raise ConnectionError("drive down")
         with open(local_path, encoding="utf-8") as fh:
             log.append(("drive", name, fh.read()))
@@ -132,6 +134,11 @@ def test_rop_drive_failure_never_blocks_row_or_alert(monkeypatch):
     fake, sent = rop_wire(monkeypatch, _on(ROP_CFG))
     _arm_drive(monkeypatch, log, fail=True)
     assert rw.run() == 0
+    # The per-run breaker at the WATCHER level: seven baseline items, but after
+    # the first failed upload the other six skip Drive entirely (one attempt,
+    # not seven retry-backoff timeouts), and every row is still written.
+    assert [e[0] for e in log] == ["attempt"]
+    assert len(fake._values._tabs[sw.TAB_ROP][1:]) == 7
     _rop_change(monkeypatch)
     assert rw.run() == 0
     rows = fake._values._tabs[sw.TAB_ROP][1:]
