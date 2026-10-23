@@ -88,7 +88,7 @@ class ProvenanceError(RuntimeError):
 
 
 def valid_doc_id(doc_id: str) -> bool:
-    return bool(_DOC_ID_RE.match(doc_id or ""))
+    return bool(_DOC_ID_RE.fullmatch(doc_id or ""))   # fullmatch: "$" would allow a trailing newline
 
 
 def check_doc_id(doc_id: str) -> str:
@@ -162,7 +162,7 @@ def feed_row_doc_id(link: str, archive_link_to_id: dict) -> str:
         return archive_link_to_id[link]
     if (urlparse(link).hostname or "") == NSITE_HOST:
         did = sw._link_doc_id(link)
-        return did if _NSITE_ID_RE.match(did) else ""
+        return did if _NSITE_ID_RE.fullmatch(did) else ""
     return ""
 
 
@@ -360,7 +360,7 @@ def annotate_archive_duplicates(service, sheet_id: str, pairs: dict, apply: bool
     for a, b in pairs.items():
         check_doc_id(a)
         check_doc_id(b)
-        if not (_NSITE_ID_RE.match(a) and _NSITE_ID_RE.match(b)) or a == b:
+        if not (_NSITE_ID_RE.fullmatch(a) and _NSITE_ID_RE.fullmatch(b)) or a == b:
             raise ProvenanceError(f"same_content_as needs two different nSITE ids: {a} -> {b}")
     idx = sw.ARCHIVE_TAB_HEADERS.index(ARCHIVE_SAME_HEADER)
     letter = col_letter(idx)
@@ -392,7 +392,7 @@ def annotate_hand_curated(service, sheet_id: str, matches: dict, apply: bool = T
     A row is annotated only when its origin_url names that same doc id (the
     evidence the two are the same document); otherwise it is a conflict."""
     for doc_id in matches.values():
-        if not _NSITE_ID_RE.match(check_doc_id(doc_id)):
+        if not _NSITE_ID_RE.fullmatch(check_doc_id(doc_id)):
             raise ProvenanceError(f"same_as_monitor_doc needs an nSITE id: {doc_id}")
     letter = col_letter(HC_WIDTH)
     ensure_header_cell(service, sheet_id, sw.TAB_HANDCURATED, HC_WIDTH, HC_SAME_HEADER, apply=apply)
@@ -455,7 +455,7 @@ def describe(service, sheet_id: str, doc_ids: Iterable[str]) -> dict:
                 hc.setdefault(fid, (title, link))
     out = {}
     for d in want:
-        if _NSITE_ID_RE.match(d):
+        if _NSITE_ID_RE.fullmatch(d):
             name, arch = by_id.get(d, ("", ""))
             out[d] = (feed_names.get(d) or _clean(name) or f"nSITE document {d}",
                       arch or NSITE_LINK.format(doc_id=d))
@@ -471,10 +471,16 @@ def describe(service, sheet_id: str, doc_ids: Iterable[str]) -> dict:
     return out
 
 
+_WITHDRAWN_RE = re.compile(
+    re.escape(WITHDRAWN_PREFIX) + r" \d{4}-\d{2}-\d{2}: "
+    r"(?:consumed by release [A-Za-z0-9._-]+|no longer in the staged set)")
+
+
 def _staging_owned(status: str) -> bool:
-    """A row the staging run may rewrite: one it wrote itself. A status a
-    person set (the publish flip) is never overwritten."""
-    return status == STATUS_STAGED or status.startswith(WITHDRAWN_PREFIX)
+    """A row the staging run may rewrite: one whose status is exactly what it
+    writes itself. Any other status (the publish flip, a note typed by hand,
+    even one that starts "withdrawn from staging") is never overwritten."""
+    return status == STATUS_STAGED or bool(_WITHDRAWN_RE.fullmatch(status))
 
 
 def withdraw_stale(service, sheet_id: str, keep: set, reason: str, now: str) -> int:

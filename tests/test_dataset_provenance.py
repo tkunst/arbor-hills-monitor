@@ -196,7 +196,7 @@ def test_valid_doc_ids(good):
     assert dp.valid_doc_id(good)
 
 
-@pytest.mark.parametrize("bad", ["", "abc", 'x")&HYPERLINK("evil', "HC-short", "1 2",
+@pytest.mark.parametrize("bad", ["", "abc", 'x")&HYPERLINK("evil', "HC-short", "1 2", "123\n",
                                  "REL-a b.pdf", "=1+1", "1" * 21])
 def test_doc_id_guard_rejects_anything_formula_unsafe(bad):
     assert not dp.valid_doc_id(bad)
@@ -502,3 +502,11 @@ def test_describe_never_copies_a_listed_name():
     assert dp.describe(svc, "S", [D2])[D2][0] == f"nSITE document {D2}"
     svc.tabs[sw.TAB_HANDCURATED][2][1] = "Letter from Scott Miller"
     assert dp.describe(svc, "S", ["HC-" + HC_FULL])["HC-" + HC_FULL][0] == "jan-feb-2022.pdf"
+
+
+def test_only_the_scripts_own_status_text_counts_as_staging_owned():
+    assert dp._staging_owned(dp.STATUS_STAGED)
+    assert dp._staging_owned("withdrawn from staging 2026-11-02: no longer in the staged set")
+    assert dp._staging_owned("withdrawn from staging 2026-11-02: consumed by release wellfield-data-2026-11-01")
+    assert not dp._staging_owned("withdrawn from staging: wrong doc (Trisha)")
+    assert not dp._staging_owned("published (since wellfield-data-2026-11-01)")
