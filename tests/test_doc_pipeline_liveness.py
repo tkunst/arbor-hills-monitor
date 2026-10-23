@@ -209,6 +209,7 @@ def _wire(monkeypatch, docs, cap=25, outcome="processed", max_def=3, max_stale=3
     monkeypatch.setenv("GSHEET_ID", "SID")
     monkeypatch.setattr(w, "load_config", lambda: cfg)
     monkeypatch.setattr(w, "_today", lambda: datetime(2026, 10, 21).date())   # a Wednesday
+    monkeypatch.setattr(w, "_now_utc", lambda: NOW)                            # 2026-10-23T11:00Z
     monkeypatch.setattr(w.dc, "sheets_service", lambda: object())
     monkeypatch.setattr(w.sw, "ensure_tabs", lambda *a: None)
     monkeypatch.setattr(w.sw, "read_state", lambda *a: state)
@@ -354,6 +355,52 @@ def test_liveness_exception_never_breaks_the_run(monkeypatch):
     monkeypatch.setattr(w.dl, "update_health",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     assert w.run() == 0
+
+
+def test_first_run_seeds_the_activity_clock_from_last_run_so_an_existing_stall_is_alarmed(monkeypatch):
+    # The guard ships into an ongoing dead-key stall: no last_activity_at yet,
+    # but _meta.last_run says the watcher last completed 4 days ago. The stale
+    # alarm fires on this first run instead of never.
+    state, sent, metas, calls = _wire(monkeypatch, _docs(2), cap=25, outcome="retry")
+    state["doc_pipeline_health"] = {}
+    state["last_run"] = "2026-10-19T11:02:10"
+    assert w.run() == 0
+    assert len(sent) == 1 and "No document-pipeline activity" in sent[0][1]
+    h = state["doc_pipeline_health"]
+    assert h["last_activity_at"] == "2026-10-19T11:02:10Z"
+    assert h["activity_seeded_from_last_run"] is True
+
+
+def test_seed_from_last_run_is_pure_and_never_overrides_a_real_stamp():
+    assert dl.seed_from_last_run({}, "") == {}
+    assert dl.seed_from_last_run({}, "garbage") == {}
+    assert dl.seed_from_last_run(None, None) == {}
+    h = {"last_activity_at": "2026-10-22T11:00:00Z"}
+    assert dl.seed_from_last_run(h, "2026-10-01T00:00:00") == h
+    seeded = dl.seed_from_last_run({}, "2026-10-19T11:02:10+00:00")
+    assert seeded["last_activity_at"] == "2026-10-19T11:02:10Z"
+
+
+def test_a_corrupt_health_cell_is_replaced_not_fatal(monkeypatch, capsys):
+    state, sent, metas, calls = _wire(monkeypatch, _docs(1), cap=25)
+    state["doc_pipeline_health"] = ["not", "a", "dict"]
+    assert w.run() == 0
+    assert isinstance(state["doc_pipeline_health"], dict)
+    assert state["doc_pipeline_health"]["last_activity_at"]
+    assert "was not an object" in capsys.readouterr().out
+
+
+def test_unchanged_health_costs_no_extra_write(monkeypatch):
+    # A quiet day whose health already says "healthy today": the only _meta
+    # writes are the ones the run made before this guard existed.
+    state, sent, metas, calls = _wire(monkeypatch, _docs(2), cap=25)
+    state["processed"] = {"d0": {}, "d1": {}}
+    state["doc_pipeline_health"] = {"last_activity_at": "2026-10-23T11:00:00Z",
+                                    "consecutive_deferrals": 0}
+    before = len(metas)
+    assert w.run() == 0
+    # exactly one write: the unconditional end-of-run one
+    assert len(metas) - before == 1
 
 
 def test_health_meta_key_is_persisted_by_write_meta():

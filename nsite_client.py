@@ -1487,4 +1487,8 @@ def download_pdf(session: requests.Session, doc: dict, dest_path: str, timeout: 
                     native_mimetype=native_mimetype,
                 ) from e
 
-    raise RuntimeError(f"download failed for doc {doc_id}: {last_exc}")
+    # Chain the underlying error (stall-hardening review, 2026-10-23) so
+    # retry_policy.is_transient can see a 5xx / 429 / connection failure behind
+    # the wrapper and NOT count an nSITE outage as a poison strike. The message
+    # is unchanged; a non-PDF body or an empty response still strikes as before.
+    raise RuntimeError(f"download failed for doc {doc_id}: {last_exc}") from last_exc

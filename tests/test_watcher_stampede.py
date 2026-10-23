@@ -12,7 +12,7 @@ remaining years-old filings must not stampede into the live feed either.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 
 import watcher as w
 
@@ -184,4 +184,3 @@ def test_live_config_carries_the_window():
     from config_loader import load_config
     assert load_config()["watcher"]["live_filing_window_days"] == 30
     assert w.DEFAULT_LIVE_FILING_WINDOW_DAYS == 30
-    assert isinstance(datetime.now().date(), date)

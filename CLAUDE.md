@@ -99,15 +99,22 @@ external users but no sensitive data). Public repo.
   (a page `classify()`'s 12-page sample misses) is fail-open — a document that
   classifies fine on `main` can never become a poison strike over this.
   **Classifier timeout (stall-hardening part (b), 2026-10-23):** both
-  classifier call sites build their client through `_anthropic_client()`,
-  which sets an explicit per-attempt `timeout` (300 s read/write/pool, 10 s
-  connect; `_CLASSIFY_TIMEOUT_S`) instead of the SDK's 600 s default. The
-  SDK still retries a timeout twice (its default `max_retries`), and
-  `retry_policy.is_transient` treats `APITimeoutError` as a no-strike retry
-  on a later run. 300 s is sized from `classification_max_tokens` (16384),
-  not the job: it clears the slowest legitimate full-length response.
-  `scripts/term_search.py` and `backfill_metric_taxonomy.py` construct their
-  own clients and are NOT covered.
+  classifier call sites build their client through
+  `_anthropic_client(max_tokens)`, which sets an explicit per-attempt
+  `timeout` instead of the SDK's 600 s default: `classify_timeout_s()` (pure)
+  = the SDK's own non-streaming generation estimate (128k output tokens/hour)
+  for that `max_tokens` plus 60 s headroom, clamped to [120 s, 600 s] — ~521 s
+  for `classification_max_tokens` = 16384, 120 s for the 256-token note
+  classifier — with a 10 s connect timeout. Sized from the OUTPUT budget on
+  purpose: a timeout below the slowest legitimate response would be worse
+  than the default (a timeout is `APITimeoutError`, retried twice by the SDK
+  and a no-strike transient to `retry_policy`, so a large WOI classification
+  that always exceeded it would be retried every run forever, never stubbed,
+  invisible to the liveness guard while other documents process). Lowering
+  `classification_max_tokens` lowers the timeout automatically; streaming is
+  the real lever on run time. `scripts/term_search.py` and
+  `backfill_metric_taxonomy.py` construct their own clients and are NOT
+  covered.
 - `ocr_util.py` — **ADR 069**: the shared OCR module. `classify()`/
   `ocr_in_place()` (moved from `egle_doc_parser.py`, unchanged) plus the NEW
   `needs_ocr()`/`ensure_searchable()` pair, used by both the Drive-mirror
@@ -146,7 +153,12 @@ external users but no sensitive data). Public repo.
   2026-10-23; before that a dead key would have stubbed every real filing
   "skipped" within three runs), the 2026-07-07 workspace API cap's
   400 "usage limit" message, the `anthropic` SDK's own connection/timeout/
-  rate-limit/server/authentication error types) vs. PERMANENT (a genuinely unprocessable
+  rate-limit/server/authentication error types, and a `requests`
+  connection error/timeout) — checked on the exception AND everything it
+  was raised `from`, since `nsite_client.download_pdf` wraps its last
+  failure in a `RuntimeError ... from` it (so an nSITE 503 or dropped
+  connection is an outage, not a strike; a 404 or a non-PDF body still
+  strikes) vs. PERMANENT (a genuinely unprocessable
   source — bad PDF, OCR failure, truncation, generic 400). `watcher.py`/
   `backfill.py` both call `is_transient()` (confirmed at their respective
   poison-strike sites) before accruing a strike, so an API-cap or infra blip
@@ -473,8 +485,13 @@ external users but no sensitive data). Public repo.
   (`owner_notices.send_owner_email`), is labeled a pipeline-health notice
   (never `[URGENT]`, never an exceedance), and the markers are set only after
   a successful send. An unparseable timestamp never fires a quantified stale
-  alarm; the deferral counter needs no timestamp, so it still fires on the
-  first stalled run after deploy.
+  alarm; on the first run with the guard (no timestamp yet)
+  `seed_from_last_run()` seeds it from `_meta.last_run` (the last COMPLETED
+  watcher run — not proof of progress, but it bounds the unknown so a stall
+  already under way is alarmed `max_stale_days` later instead of never),
+  and the deferral counter needs no timestamp at all. A corrupt (non-object)
+  cell is replaced, logged, never fatal; the mid-run `write_meta` is skipped
+  when nothing in the cell changed.
 - `well_watch.py` — **ADR 058**: named single-well temperature trip-wires.
   `email_alerts.is_urgent` already fires on any measured wellhead temperature
   ≥145°F, but several wells hold an EGLE HOV above that, so the generic alert

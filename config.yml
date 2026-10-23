@@ -208,8 +208,11 @@ data_lifecycle:
 # — a facility just added to `facilities:`, or the historical remainder of one
 # whose backfill has only partly drained — is the backlog and defers as
 # before. So a new facility can't freeze live monitoring of every other one
-# (the 2026-07-24 stall), and a half-backfilled one can't stampede years-old
-# filings into the live feed either.
+# (the 2026-07-24 stall), and while the backlog is over the cap a
+# half-backfilled facility can't stampede years-old filings into the live feed
+# either. UNDER the cap nothing is filtered (as before): the last <= 25
+# historical documents of a manual backfill are processed live by the next
+# watcher run, alerts included — finish a facility's backfill in one sitting.
 watcher:
   max_new_docs_per_run: 25
   live_filing_window_days: 30
