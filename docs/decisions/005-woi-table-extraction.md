@@ -1066,9 +1066,15 @@ timestamp are a table of their own with their own boundary:
   `merge_cross_table_duplicates` keeps the same copy it kept.
 - Kept: a column shift main finds is a property of the printed table, so the
   two-digit rows printed under main's rejected table (those collected since
-  main's last boundary, `main_start_2d`) are rejected with it, with the same
-  entry as before. Two-digit rows under an earlier main table of the same
-  two-digit table are judged on their own.
+  main's last boundary, `main_start_2d`, reset to 0 when the two-digit table
+  ends — review round 1) are rejected with it, with the same entry as
+  before. Two-digit rows under an earlier main table of the same two-digit
+  table are judged on their own.
+- The rows of a two-digit table under an unrecognized gas layout, a non-gas
+  header or no header are counted in an entry of their own
+  (`cur_rejected_2d`), written when the two-digit table ends, so that entry
+  too has the twin's page range and row count (review round 1: it used to
+  follow main's boundary). Main's entry counts main's rows only.
 
 **The "related" point, decided.** Main's header text runs over a first row
 printed as a one-line "timestamp ADJ" and takes that `ADJ` as the table's
@@ -1085,15 +1091,20 @@ own `ADJ` line is cut off the header in both forms, as before.
 
 - Hermetic: review round 3's cases A and C, the one-line-first-row decision,
   the header-text ordering, a main boundary inside a two-digit table, main's
-  column shift taking the two-digit rows under it, and line order; the seeded
-  twin test now draws any of the three headers, or none, on each of up to
-  three pages (multi-page unlabeled headers with mixed ADJ tokens included).
+  column shift taking the two-digit rows under it (also after a two-digit-only
+  boundary), an unrecognized header over a two-page two-digit table, and line
+  order; the seeded twin test now draws any of seven headers (labeled,
+  unlabeled, Alias, another layout, an unrecognized gas layout, a non-gas
+  table), or none, on each of up to three pages (multi-page unlabeled headers
+  with mixed ADJ tokens included).
 - Differential fuzz vs `origin/main` (`b8a610c`), 3,000 sequences each, with
   and without page positions and an initial layout: four-digit-only
   sequences identical (readings and reject entries); mixed-form sequences
   0 main readings lost or changed, line order kept; two-digit-only sequences
   equal to their four-digit twin on this branch in all 3,000 (`origin/main`
-  differs on 239 of the same 3,000).
+  differs on 239 of the same 3,000). The round-1 reviewer's own fuzzer
+  (eight header kinds, stray lines, duplicate rows, gas-sum failures): the
+  same 0 / 0 / 0 after the round-1 fixes, 0 crashes in 9,000 runs.
 - 91-file corpus regression vs `origin/main` (`b8a610c`; every PDF under
   the wellfield staging doc-cache and the VGC cache that `is_woi_report`
   accepts, 644,093 readings): the two parse dumps are byte-identical. 0
@@ -1107,8 +1118,11 @@ own `ADJ` line is cut off the header in both forms, as before.
 
 - In a mixed table (both year forms under one header), the order of the
   reject entries of the two tables' pools can differ from before (the
-  two-digit table's entries are written when it ends). Review-flag text
-  only; no corpus file prints a mixed table.
+  two-digit table's entries are written when it ends), and a mixed table
+  under an unrecognized or non-gas header now gets two entries with the same
+  reason (main's rows; the two-digit rows) where it got one. Review-flag
+  granularity only (`review_flags.woi_flags` writes one flag per entry and
+  matches no reason text); no corpus file prints a mixed table.
 - The layout, Alias label and column set of a two-digit table still come from
   main's over-long header text (the 2026-10-21 addendum's first accepted
   item); only the ADJ label and the boundary read the cut text.
