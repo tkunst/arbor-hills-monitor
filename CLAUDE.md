@@ -275,7 +275,11 @@ external users but no sensitive data). Public repo.
   the data-lifecycle doc's invariant, Drive (Tier 1) → Sheet row → alert.
   Best-effort by contract: returns the webViewLink or `None` and NEVER raises
   (flag off, not configured, dead token, network, quota — class-only log),
-  so it can never block a row or an alert. Gated on the cross-cutting
+  so it can never block a row or an alert; a PER-RUN circuit breaker turns
+  the first failure in a process into a silent skip for every later item
+  that run, so a Drive outage costs one retry-backoff timeout per run, not
+  one per item (ROP's seven-item baseline inside a 15-minute job was the
+  case that motivated it). Gated on the cross-cutting
   `data_lifecycle.snapshot_export.enabled` (its own top-level block, not any
   one watcher's; `is_enabled()` is checked before any env read); one SHARED
   app-only folder for all four streams, `GOAUTH_SNAPSHOT_FOLDER_ID`, with

@@ -42,9 +42,28 @@ and `wds_archiver`'s per-page isolation. The OAuth Drive service is built once
 per process (the refresh-token exchange is a network round-trip) and dropped
 on any failure so the next call rebuilds it.
 
+**Per-run circuit breaker** (added after the PR's independent review).
+"Never blocks the row" is true for exceptions but not for latency:
+`upload_file()` makes two Drive calls, each with the shared retry backoff on a
+60 s socket timeout, so under a sustained Drive/OAuth outage one item can sit
+for minutes, and ROP's baseline run has seven items inside a 15-minute job. A
+runner kill is not an exception, so the remaining items' Sheet rows would go
+unwritten that run. The FIRST failure in a process (an upload exception, a
+dead token, or "not configured") therefore trips a module-level breaker and
+every later `export_snapshot()` call in the same run skips straight to the
+Sheet row, logging once. A Drive outage costs one timeout per run, not one
+per item. The breaker resets with the process (the next scheduled run).
+
+`is_enabled()` reads a scalar where a mapping belongs (`data_lifecycle: true`,
+an activation-day typo) as OFF rather than raising, because it runs in the
+watchers before their Sheet row.
+
 `snapshot_name(stream, key, date, digest, ext)` builds
 `<stream>_<key>_<date>_<hash>.<ext>` with the key reduced to a safe filename
-fragment. **The hash is load-bearing:** `archive_client.upload_file()` is
+fragment (a key over the 60-character cap is truncated AND suffixed with a
+short hash of the full key, so two long keys sharing a prefix, e.g. two
+unlabeled PFAS page URLs, can never alias to one name). **The content hash is
+load-bearing:** `archive_client.upload_file()` is
 idempotent BY NAME (it reuses an existing same-named file rather than
 uploading), so a name without the content hash would silently keep only the
 first of two distinct changes observed on the same day. With it, a re-run of an
@@ -128,5 +147,20 @@ existing Sheet history stays Tier 2 as before.
   the gap is visible in the log, not the exit code. This matches the handoff's
   "nicety, not a blocker" ruling; a louder posture (exit 1 on export failure,
   as ADR 026's capture does) can be added later if Trisha wants it.
+- **Known gap (stated, not fixed):** no durable record says which Sheet rows
+  have a Tier-1 copy. Callers discard the returned link (Rule U2 forbids a new
+  Sheet column), so a skipped or failed export lives only in the Actions log
+  (90-day retention). Re-deriving the filename from a row's `(date, key,
+  hash)` and searching the folder answers the question for any one row; a
+  tracked follow-up, if wanted, is an append-only `Snapshot Exports`
+  dedup-index tab (the `Archived PDFs` class, lenient read is fine) or an
+  end-of-run exported/skipped count line.
+- **Credential surface:** four more scheduled workflows now carry the
+  `drive.file`-scoped `GOAUTH_*_KUNST` triple (already in ~15 others). Nothing
+  reads it while the flag is off. The exporter does not guard against its own
+  folder id being a copy-paste of another mirror's folder (the private GovQA /
+  RRD watchers DO guard against it from their side); a mis-paste would
+  intermix public snapshot files with that mirror's files, not disclose
+  anything.
 - Not in scope, by ruling: PDF rendering; RIDE (`ride_watcher.py`) wiring;
   refactoring `wds_archiver.py` / `gfl_feed_snapshot.py` onto this helper.
