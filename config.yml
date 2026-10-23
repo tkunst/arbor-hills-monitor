@@ -191,7 +191,7 @@ archive:
 # Until enabled: true is on main, the four watchers behave exactly as before.
 data_lifecycle:
   snapshot_export:
-    enabled: false
+    enabled: true   # activated 2026-10-23 (Trisha); GOAUTH_SNAPSHOT_FOLDER_ID set
 
 # --- Watcher (daily) ---
 # The daily watcher handles INCREMENTAL new filings only (normal volume is 0-5).
@@ -2058,7 +2058,7 @@ owner_weekly:
 # `python3 report_tracker_seed.py --apply` (dry run by default) before
 # enabling. A brand-new job built unattended, so it ships disabled.
 report_tracking:
-  enabled: false
+  enabled: true   # activated 2026-10-23 (Trisha); shadow fortnight below
   # Days after an instance's due date before it is called missing. Blank
   # `grace_days` on an Expected Reports row means this value; a number on the
   # row overrides it for that report type. Either change takes effect on the
@@ -2071,7 +2071,7 @@ report_tracking:
   # row's mode is "shadow" and the briefing line says so (ADR 071 risk 1:
   # the first two weeks run in report-only mode). Blank = live. Set it to
   # activation day + 14 when flipping `enabled`.
-  shadow_until: ""
+  shadow_until: "2026-11-06"
   # Sunday owner-only email listing the week's review items (proposed
   # matches, unmatched periodic titles, rejected hand-table rows). Recipients
   # are the owner addresses ONLY (owner_notices.send_owner_email); empty

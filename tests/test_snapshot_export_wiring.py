@@ -323,8 +323,9 @@ def test_pfas_flag_off_never_reaches_drive(monkeypatch):
 # The committed config ships the flag OFF
 # ---------------------------------------------------------------------------
 
-def test_committed_config_ships_snapshot_export_disabled():
+def test_committed_config_has_snapshot_export_enabled():
+    # Shipped false; activated 2026-10-23 (Trisha) once GOAUTH_SNAPSHOT_FOLDER_ID was set.
     from config_loader import load_config
     cfg = load_config()
-    assert cfg["data_lifecycle"]["snapshot_export"]["enabled"] is False
-    assert se.is_enabled(cfg) is False
+    assert cfg["data_lifecycle"]["snapshot_export"]["enabled"] is True
+    assert se.is_enabled(cfg) is True
