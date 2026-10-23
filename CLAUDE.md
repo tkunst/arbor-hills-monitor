@@ -294,7 +294,7 @@ external users but no sensitive data). Public repo.
   `parse_document()`'s own OCR step — **ADR 069** identifies this as the
   likely primary source of the mirror's pre-fix scan-only PDFs; now covered
   by `archive_client.upload_file()`'s own OCR wiring regardless.
-- `snapshot_exporter.py` — **ADR 072 (2026-10-23; ships OFF)**: the ONE
+- `snapshot_exporter.py` — **ADR 072 (2026-10-23; shipped OFF, activated 2026-10-23 (Trisha) — folder created via `create-oauth-folder` as `kunst`, `GOAUTH_SNAPSHOT_FOLDER_ID` set)**: the ONE
   generic snapshot → immutable Drive exporter for the four snapshot-diff
   watchers whose only durable record was a Tier-2 append-only tab:
   `rop_watcher.py`, `mmd_watcher.py`, `nsite_submissions_watcher.py` (each
@@ -1132,7 +1132,7 @@ external users but no sensitive data). Public repo.
   private Sheet. `report_tracker_seed.py` holds the Arbor Hills + Carleton
   Farms seed (dry run; `--apply` writes empty private tabs only, Trisha's to
   run; unverified cadences and every trigger rule ship `active=N`). Gated on
-  `report_tracking.enabled` (ships `false`; `review_email_enabled` false too);
+  `report_tracking.enabled` (shipped `false`; activated 2026-10-23 (Trisha) after the seed `--apply`, `shadow_until: 2026-11-06`; `review_email_enabled` stays false until two clean weeks);
   workflow `report-tracker.yml`, 7pm ET. Owner-only Sunday review email via
   `owner_notices.send_owner_email`.
 - `public_comment_feed.py` — **ADR 035**: pure render logic (no I/O, same
@@ -1163,7 +1163,7 @@ answers "is it live right now."
 <!-- stream-status:begin -->
 | Config flag | Live |
 | --- | --- |
-| `data_lifecycle.snapshot_export.enabled` | no |
+| `data_lifecycle.snapshot_export.enabled` | yes |
 | `wds.enabled` | yes |
 | `mmpc_archive.enabled` | yes |
 | `civicclerk_archive.enabled` | yes |
@@ -1193,7 +1193,7 @@ answers "is it live right now."
 | `mpart.enabled` | yes |
 | `owner_weekly.enabled` | yes |
 | `owner_weekly.enforcement_alert_enabled` | yes |
-| `report_tracking.enabled` | no |
+| `report_tracking.enabled` | yes |
 | `report_tracking.review_email_enabled` | no |
 | `egle_newsroom.enabled` | yes |
 <!-- stream-status:end -->

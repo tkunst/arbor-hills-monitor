@@ -776,7 +776,8 @@ class _Multi:
 def _cfg(**over):
     from config_loader import load_config
     cfg = load_config()
-    cfg["report_tracking"] = dict(cfg["report_tracking"], enabled=True, **over)
+    # shadow_until blank = live mode, whatever the committed config says.
+    cfg["report_tracking"] = {**cfg["report_tracking"], "enabled": True, "shadow_until": "", **over}
     return cfg
 
 
@@ -937,7 +938,9 @@ def test_seed_apply_is_idempotent(world):
 def test_config_block_and_stream_status_pick_up_the_flags():
     from config_loader import load_config
     rtc = load_config()["report_tracking"]
-    assert rtc["enabled"] is False and rtc["default_grace_days"] == 7 and rtc["review_email_enabled"] is False
+    # Activated 2026-10-23 (Trisha); the review email stays off until two clean weeks.
+    assert rtc["enabled"] is True and rtc["default_grace_days"] == 7 and rtc["review_email_enabled"] is False
+    assert rtc["shadow_until"] == "2026-11-06"
     assert set(sw.REPORT_TRACKER_TABS) & set(sw._TAB_HEADERS) == set()   # never on the public Sheet via ensure_tabs
 
 
@@ -968,11 +971,19 @@ def test_summary_line_ok_and_stale_and_shadow():
     assert shadow["line"].startswith("Missing/overdue reports [shadow]:")
 
 
-def test_summary_main_is_disabled_on_committed_config(capsys):
-    assert rts.main(["--json"]) == 0
+def test_summary_main_disabled_and_skipped(capsys, monkeypatch):
     import json
-    out = json.loads(capsys.readouterr().out)
-    assert out["status"] == "disabled"
+    import config_loader
+    real = config_loader.load_config()
+    monkeypatch.setattr(config_loader, "load_config",
+                        lambda: {**real, "report_tracking": {**real["report_tracking"], "enabled": False}})
+    assert rts.main(["--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "disabled"
+    monkeypatch.setattr(config_loader, "load_config",
+                        lambda: {**real, "report_tracking": {**real["report_tracking"], "enabled": True}})
+    monkeypatch.delenv("GSHEET_ID_PRIVATE", raising=False)
+    assert rts.main(["--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "skipped"
 
 
 def test_workflow_file_and_flag_agree():
