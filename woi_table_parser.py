@@ -743,6 +743,9 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
     # one-line "timestamp ADJ" rows); a split candidate uses main's range only.
     cur_rejected = {"n": 0, "first": None, "last": None, "reason": "",
                     "mfirst": None, "mlast": None}
+    # the same for the two-digit-year rows: their rows under an unrecognized
+    # or non-gas header are one entry per two-digit table, not per main table
+    cur_rejected_2d = {"n": 0, "first": None, "last": None, "reason": ""}
     cur_unjoined = {"n": 0, "first": None, "last": None}  # split-table rows not joined
     page_first: dict = {}   # page -> index of its first line (split coordinates)
 
@@ -841,6 +844,12 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                            "two-digit-year rows started by a one-line timestamp ADJ",
                            header_2d, drop)
             out.readings.extend(r for r in cur_twodigit if id(r) not in drop)
+        if two_ends and cur_rejected_2d["n"]:
+            out.rejected_tables.append(RejectedTable(
+                first_page=cur_rejected_2d["first"], last_page=cur_rejected_2d["last"],
+                n_rows=cur_rejected_2d["n"], reason=cur_rejected_2d["reason"],
+                header=header if header_cols is None else "columns read: " + ",".join(header_cols)))
+            cur_rejected_2d.update(n=0, first=None, last=None, reason="")
         if main_ends and cur_rows and not main_rejected:
             drop = set()
             pool_check(cur_added, "rows read past a blank cell", header, drop)
@@ -849,6 +858,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
         if two_ends:
             cur_twodigit, cur_trusted_2d, cur_added_2d, cur_oneline_2d = [], [], [], []
             partner_2d = None
+            main_start_2d = 0  # every later two-digit row is under main's open table
         if main_ends:
             cur_rows, cur_flows, cur_added, cur_oneline = [], [], [], []
             partner = None
@@ -1064,13 +1074,14 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             # lines, or numbers read past them, must not make it look gas.
             n_numeric = main_len
             if n_numeric >= (4 if unknown_gas else 6):
-                cur_rejected["n"] += 1
-                cur_rejected["first"] = cur_rejected["first"] or page
-                cur_rejected["last"] = page
+                rej = cur_rejected_2d if dt_added == "two_digit" else cur_rejected
+                rej["n"] += 1
+                rej["first"] = rej["first"] or page
+                rej["last"] = page
                 if dt_added is None:
                     cur_rejected["mfirst"] = cur_rejected["mfirst"] or page
                     cur_rejected["mlast"] = page
-                cur_rejected["reason"] = (
+                rej["reason"] = (
                     "rows under a non-gas table header" if header == NON_GAS_HEADER
                     else "column layout not recognized" if header
                     else "rows before any recognized header")
