@@ -330,7 +330,6 @@ _A = sw.REPORT_ARRIVAL_HEADERS
 
 def _arr(facility_id: str, report_type: str, period: str, stream: str, ref: str,
          doc_date: str = "", filed_date: str = "", notes: str = "") -> list:
-    rec = rt.Record(stream, ref, "", "", doc_date, filed_date)
     return [rt.arrival_id(stream, ref), facility_id, rt.instance_key(facility_id, report_type, period),
             report_type, period, stream, ref, doc_date, filed_date, SEEDED_AT, "hand", "high", notes]
 

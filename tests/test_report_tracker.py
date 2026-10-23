@@ -488,6 +488,105 @@ def test_evaluate_triggers_once_per_well_and_annual():
 
 
 # ---------------------------------------------------------------------------
+# Round-1 review regressions
+# ---------------------------------------------------------------------------
+
+def test_hov_roster_reads_the_config_list_and_normalizes_ids():
+    """config.yml's hov_ceilings is a LIST of {well_id,...}; the roster must
+    not read as empty (no_hov(well) would then be true for every well)."""
+    from config_loader import load_config
+    roster = rt.hov_wells(load_config())
+    assert len(roster) >= 15 and "AHW272R4" in roster
+    assert rt.hov_wells({"temperature_thresholds": {"hov_ceilings": [{"well_id": "ahw263r5*"}]}}) == {"AHW263R5"}
+    assert rt.hov_wells({"temperature_thresholds": {"hov_ceilings": {"AHWW312R2": 160}}}) == {"AHWW312R2"}
+    assert rt.hov_wells({}) == set()
+
+
+def test_missing_never_emits_one_key_twice_in_a_run():
+    a = rt.Instance("f", "downhole-profile", "D", "2025", date(2025, 12, 31), 7, "rule-a", subject="W1")
+    b = rt.Instance("f", "downhole-profile", "D", "2025", date(2025, 3, 10), 7, "rule-b", subject="W1")
+    out = rt.missing_instances([a, b], set(), set(), TODAY)
+    assert [i.key for i in out] == ["f|downhole-profile|W1|2025"]
+
+
+def test_blank_facility_reading_belongs_only_to_the_nsite_facility():
+    rules, bad = rt.load_trigger_rules([
+        ["r", "*", "wellhead_temp_f >= 165", "Measurements", "downhole-profile", "period_end+0d",
+         "annual while condition holds", "", "c", "primary", "", "Y"]], {"arbor-hills", "carleton-farms"})
+    assert not bad
+    facs, _ = rt.load_facilities(seed.FACILITIES)
+    H = sw.MEASUREMENTS_HEADERS
+    r = [""] * len(H)
+    r[H.index("As-Of Date")], r[H.index("Well ID")], r[H.index("Metric")] = "2025-05-05", "AHW888", "temperature"
+    r[H.index("Value")], r[H.index("Basis")] = "172.0", "measured"          # Facility blank
+    inst = rt.evaluate_triggers(rules, [r], facs, set(), TODAY, 7)
+    assert [i.key for i in inst] == ["arbor-hills|downhole-profile|AHW888|2025"]
+
+
+def test_open_log_row_is_reconciled_against_a_hand_arrival(world):
+    fake = world
+    assert rt.run(today=TODAY, cfg=_cfg()) == 0
+    # Trisha adds a hand Report Arrivals row for a missing Carleton AOI report (received by email).
+    fake.books["PRIV"].tabs[sw.TAB_REPORT_ARRIVALS].append(
+        ["Ahand000001", "carleton-farms", "carleton-farms|hov-aoi-semiannual|2024H1", "hov-aoi-semiannual", "2024H1",
+         "email-hand", "EGLE FOIA release 2026-10-24", "2024-08-10", "", "2026-10-24", "hand", "high", "by email"])
+    assert rt.run(today=date(2026, 10, 25), cfg=_cfg()) == 0
+    log = {r["instance_key"]: r for r in _rows(fake, sw.TAB_MISSING_OVERDUE)}
+    row = log["carleton-farms|hov-aoi-semiannual|2024H1"]
+    assert row["date_received"] == "2024-08-10" and row["received_via"] == "Ahand000001"
+    assert _rows(fake, sw.TAB_REPORT_TRACKER_RUNS)[-1]["completed_today"] == "1"
+
+
+def test_typed_us_date_counts_and_unreadable_date_is_flagged(world):
+    fake = world
+    assert rt.run(today=TODAY, cfg=_cfg()) == 0
+    tab = fake.books["PRIV"].tabs[sw.TAB_MISSING_OVERDUE]
+    rows = [r for r in tab[1:] if r and r[0].startswith("carleton-farms|nsps-neshap-semiannual|")]
+    rows[0][8], rows[0][9] = "10/24/2026", "no-record"       # Sheets' own rendering of a typed date
+    rows[1][8] = "pending"                                     # not a date at all
+    assert rt.run(today=date(2026, 10, 25), cfg=_cfg()) == 0
+    runs = _rows(fake, sw.TAB_REPORT_TRACKER_RUNS)[-1]
+    assert runs["completed_today"] == "1" and runs["bad_rows"] == "1"
+    review = _rows(fake, sw.TAB_REPORT_TRACKER_REVIEW)
+    assert any(r["kind"] == rt.KIND_BAD_ROW and "date_received" in r["detail"] for r in review)
+    assert rt.is_complete({"date_received": "10/24/2026"}, date(2026, 10, 25))
+    assert str(rt.parse_period("6/12/2023")) == "2023-06-12"
+
+
+def test_year_in_title_ignores_a_case_number_and_prefers_a_labeled_year():
+    rec = lambda t: rt.Record("nsite", "r", t)  # noqa: E731
+    assert str(rt.extract_period("year_in_title", rec("Annual Compliance Certification per CJ No. 2020-0593-CE for calendar year 2025"))) == "2025"
+    assert str(rt.extract_period("year_in_title", rec("CJ No. 2020-0593-CE Annual Certification 2024"))) == "2024"
+    assert rt.extract_period("year_in_title", rec("CJ No. 2020-0593-CE")) is None
+
+
+def test_short_alias_needs_word_boundaries():
+    facs, _ = rt.load_facilities(seed.FACILITIES)
+    ah = next(f for f in facs if f.facility_id == "arbor-hills")
+    assert not ah.matches_text("Letter from J. Stahl re permit")
+    assert ah.matches_text("AHL request letter") and ah.matches_text("re: N2688 filing")
+
+
+def test_month_year_ignores_a_spaced_range_and_periodic_regex_word_boundary():
+    assert rt.extract_period("month_year", rt.Record("nsite", "r", "(October - November 2025)")) is None
+    assert str(rt.extract_period("month_range", rt.Record("nsite", "r", "(September - October 2025)"))) == "2025B5"
+    from config_loader import load_config
+    periodic = re.compile(load_config()["report_tracking"]["periodic_title_regex"], re.I)
+    assert not periodic.search("Letter to Headquarters") and periodic.search("Third Quarter Report")
+
+
+def test_pathological_regex_is_rejected_at_load():
+    with pytest.raises(ValueError, match="too slow"):
+        rt.parse_match_rule(r"stream=nsite; title_regex=(\w+\s?)+Report$; period_from=auto")
+
+
+def test_scrub_strips_urls_and_long_ids():
+    msg = "HttpError 429 https://sheets.googleapis.com/v4/spreadsheets/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/values"
+    out = rt.scrub(msg)
+    assert "googleapis" not in out and "1AbCdEfGh" not in out and "429" in out
+
+
+# ---------------------------------------------------------------------------
 # Seed
 # ---------------------------------------------------------------------------
 

@@ -2088,7 +2088,7 @@ report_tracking:
   # when its title reads as a PERIODIC report (ADR 071 match_rule section):
   # a cadence word, not a bare "Report" (lab reports, test reports and
   # staff reports are not schedules).
-  periodic_title_regex: "Semi-?Annual|Quarter|Monthly|Bi-?Monthly|\\bAnnual\\b"
+  periodic_title_regex: "Semi-?Annual|\\bQuarter|Monthly|Bi-?Monthly|\\bAnnual\\b"
 
 # --- CAN-SPAM unsubscribe for the multi-recipient alert emails (ADR 040) ---
 # Applied at the single send choke point (email_alerts.send_email), so ALL
