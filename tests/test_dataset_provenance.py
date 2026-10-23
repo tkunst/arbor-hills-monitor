@@ -395,17 +395,17 @@ def test_record_staged_takes_titles_from_the_sheet_and_points_the_feed():
     assert rows[D2][5] == dp.STATUS_STAGED
 
 
-def test_record_staged_never_undoes_a_hand_set_status_and_marks_consumed():
+def test_record_staged_never_undoes_a_hand_set_status_and_withdraws_the_rest():
     svc = base_sheet()
     dp.record_staged(svc, "S", [{"doc_id": D2, "rows_contributed": 7}, {"doc_id": D3}], "T1")
     svc.tabs[dp.TAB][1][5] = "published (since wellfield-data-2026-11-01)"   # Trisha's flip
     out = dp.record_staged(svc, "S", [{"doc_id": D2, "rows_contributed": 9}, {"doc_id": D3}], "T2")
     assert out["kept"] == 1 and svc.tabs[dp.TAB][1][5].startswith("published")
     assert svc.tabs[dp.TAB][1][7] == "7"
-    out = dp.record_staged(svc, "S", [], "2026-11-02T00:00:00Z", consumed_by="wellfield-data-2026-11-01")
+    out = dp.record_staged(svc, "S", [], "2026-11-02T00:00:00Z")   # a release cleared the set
     assert out["withdrawn"] == 1
-    assert svc.tabs[dp.TAB][2][5] == ("withdrawn from staging 2026-11-02: "
-                                      "consumed by release wellfield-data-2026-11-01")
+    assert svc.tabs[dp.TAB][2][5] == "withdrawn from staging 2026-11-02: no longer in the staged set"
+    assert svc.tabs[dp.TAB][1][5].startswith("published")          # the hand-set row is untouched
     # a document staged again later is back to "staged"
     dp.record_staged(svc, "S", [{"doc_id": D3}], "T4")
     assert svc.tabs[dp.TAB][2][5] == dp.STATUS_STAGED
@@ -507,6 +507,6 @@ def test_describe_never_copies_a_listed_name():
 def test_only_the_scripts_own_status_text_counts_as_staging_owned():
     assert dp._staging_owned(dp.STATUS_STAGED)
     assert dp._staging_owned("withdrawn from staging 2026-11-02: no longer in the staged set")
-    assert dp._staging_owned("withdrawn from staging 2026-11-02: consumed by release wellfield-data-2026-11-01")
+    assert not dp._staging_owned("withdrawn from staging 2026-11-02: consumed by release x")
     assert not dp._staging_owned("withdrawn from staging: wrong doc (Trisha)")
     assert not dp._staging_owned("published (since wellfield-data-2026-11-01)")

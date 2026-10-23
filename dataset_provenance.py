@@ -471,9 +471,9 @@ def describe(service, sheet_id: str, doc_ids: Iterable[str]) -> dict:
     return out
 
 
+WITHDRAWN_REASON = "no longer in the staged set"
 _WITHDRAWN_RE = re.compile(
-    re.escape(WITHDRAWN_PREFIX) + r" \d{4}-\d{2}-\d{2}: "
-    r"(?:consumed by release [A-Za-z0-9._-]+|no longer in the staged set)")
+    re.escape(WITHDRAWN_PREFIX) + r" \d{4}-\d{2}-\d{2}: " + re.escape(WITHDRAWN_REASON))
 
 
 def _staging_owned(status: str) -> bool:
@@ -483,7 +483,7 @@ def _staging_owned(status: str) -> bool:
     return status == STATUS_STAGED or bool(_WITHDRAWN_RE.fullmatch(status))
 
 
-def withdraw_stale(service, sheet_id: str, keep: set, reason: str, now: str) -> int:
+def withdraw_stale(service, sheet_id: str, keep: set, now: str) -> int:
     """Mark every "staged for next release" row whose doc is not in `keep` as
     withdrawn (status + last_updated only, RAW). Returns how many."""
     data = []
@@ -491,24 +491,24 @@ def withdraw_stale(service, sheet_id: str, keep: set, reason: str, now: str) -> 
         r = list(r) + [""] * (len(HEADERS) - len(r))
         if r[3] == NOT_IN_RELEASE and r[5] == STATUS_STAGED and r[0] not in keep:
             n = i + 2
-            data.append({"range": f"'{TAB}'!F{n}", "values": [[f"{WITHDRAWN_PREFIX} {now[:10]}: {reason}"]]})
+            data.append({"range": f"'{TAB}'!F{n}", "values": [[f"{WITHDRAWN_PREFIX} {now[:10]}: {WITHDRAWN_REASON}"]]})
             data.append({"range": f"'{TAB}'!I{n}", "values": [[now]]})
     _batch_write(service, sheet_id, data, "RAW")
     return len(data) // 2
 
 
-def record_staged(service, sheet_id: str, staged: list[dict], now: str,
-                  consumed_by: Optional[str] = None) -> dict:
+def record_staged(service, sheet_id: str, staged: list[dict], now: str) -> dict:
     """The wellfield staging run's write (design §7 step e), run after every
     non-dry staging run:
 
       * one "staged for next release" row per document in tonight's staged
         set (`staged` = [{"doc_id", "rows_contributed"}]; title and link come
         from describe()). A row whose status a person changed is kept.
-      * every older "staged" row whose doc is no longer staged is marked
-        withdrawn: "consumed by release <tag>" when a newer release consumed
-        the set (`consumed_by`), else "no longer in the staged set". The
-        publish step (manual) still adds the published row.
+      * every older "staged" row whose doc is no longer staged (a release took
+        it, or it was dropped) is marked "withdrawn from staging <date>: no
+        longer in the staged set". One reason on purpose: telling "consumed"
+        from "dropped" needs state across runs (PR #170 review). The publish
+        step (manual) adds the published row.
       * a pointer re-sync, which also restores pointers a purge removed.
 
     Every precondition (ids, feed header cells) is checked before any write."""
@@ -530,7 +530,6 @@ def record_staged(service, sheet_id: str, staged: list[dict], now: str,
             "rows_contributed": s.get("rows_contributed", ""),
         } for s in staged]
         counts = upsert(service, sheet_id, desired, now, overwrite_if=_staging_owned)
-    reason = f"consumed by release {consumed_by}" if consumed_by else "no longer in the staged set"
-    counts["withdrawn"] = withdraw_stale(service, sheet_id, {s["doc_id"] for s in staged}, reason, now)
+    counts["withdrawn"] = withdraw_stale(service, sheet_id, {s["doc_id"] for s in staged}, now)
     counts["pointers"] = sync_pointers(service, sheet_id)
     return counts
