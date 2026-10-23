@@ -26,32 +26,43 @@ _TEMP_RE = re.compile(r"(?<!\d)(?<!\d,)(\d{1,3}(?:,\d{3})+|\d{2,4})\s*(?:°|deg(
                       re.IGNORECASE)
 
 # An EPA Method 19 F-factor label: "F-factor", "Fd factor", "F (factor)", and the
-# OCR forms of a subscripted F, "Fy (factor)", "F,, (factor)", "F, (factor)". A lab
-# sheet prints them as a column ("Fd (factor) 9340 Fw (factor) 11356 Fc (factor)
-# 1729"), so a bare _TEMP_RE read "9340 F" from the NEXT label's F as 9340°F (the
-# 2026-10-16 N1504 ICT sulfur report, nSITE doc 4935451998137733993).
-_F_FACTOR_LABEL_RE = re.compile(r"F[a-z]{0,2}[\s,_-]{0,4}\(?\s*factor\b", re.IGNORECASE)
-# The label right before a number ("Fd (factor) 9340", "F-factor = 9,340").
-_F_FACTOR_BEFORE_RE = re.compile(r"\bF[a-z]{0,2}[\s,_-]{0,4}\(?\s*factor\)?\s*[=:]?\s*$",
-                                 re.IGNORECASE)
+# OCR forms of a subscripted F, "Fy (factor)", "F,, (factor)", "F, (factor)", "F d
+# factor". A lab sheet prints them as a column ("Fd (factor) 9340 Fw (factor) 11356
+# Fc (factor) 1729"), so a bare _TEMP_RE read "9340 F" from the NEXT label's F as
+# 9340°F (the 2026-10-16 N1504 ICT sulfur report, nSITE doc 4935451998137733993).
+# Case-sensitive capital F with at most a subscript (d/w/c, OCR y, or one or two
+# OCR commas), so "a few factor" or "Fan factor" is never a label.
+_F_SUB = r"(?<![A-Za-z])F(?:\s?[dwcy]|,{1,2})?"
+# The match's own F starting a label: only the unambiguous "(factor)" / "-factor"
+# forms, so "180°F, factor in" or "180 F (factor 2)" stays a temperature.
+_F_FACTOR_LABEL_RE = re.compile(_F_SUB + r"\s*(?:\(\s*(?i:factor)\s*\)|-\s*(?i:factor)\b)")
+# The label right before a number ("Fd (factor) 9340", "F-factor = 9,340",
+# "Fd factor = 9340").
+_F_FACTOR_BEFORE_RE = re.compile(
+    _F_SUB + r"(?:\s*\(\s*(?i:factor)\s*\)|\s*-\s*(?i:factor)|\s+(?i:factor))\s*[=:]?\s*$")
+# Method 19 F-factors are never below this (Fc runs ~1,000-2,000 scf/MMBtu; Fd and
+# Fw ~8,700-11,400). Below it the guard never applies, so the 50-250°F urgency
+# window reads exactly as a bare _TEMP_RE does: the guard can only remove an
+# implausible value, never hide a wellhead reading.
+_F_FACTOR_MIN = 1000
 
 
 def _is_f_factor(text: str, m: re.Match) -> bool:
-    """True when a _TEMP_RE match is an F-factor value, not a temperature: its
-    "F" starts an F-factor label, or an F-factor label sits right before the
-    number. Deliberately narrow (the label must touch the match): this guards
-    the urgency fallback, so a nearby "Method 19" or "factor" alone never hides
-    a real reading."""
-    f_at = m.end() - 1
-    if _F_FACTOR_LABEL_RE.match(text, f_at):
+    """True when a _TEMP_RE match is an F-factor value, not a temperature: the
+    value is F-factor sized (>= _F_FACTOR_MIN) and its "F" starts an F-factor
+    label or an F-factor label sits right before the number. The label must
+    touch the match, so a nearby "Method 19" or "factor" alone changes nothing."""
+    if int(m.group(1).replace(",", "")) < _F_FACTOR_MIN:
+        return False
+    if _F_FACTOR_LABEL_RE.match(text, m.end() - 1):
         return True
-    return bool(_F_FACTOR_BEFORE_RE.search(text[max(0, m.start() - 30):m.start()]))
+    return bool(_F_FACTOR_BEFORE_RE.search(text, max(0, m.start() - 30), m.start()))
 
 
 def temperature_matches(text: str):
-    """_TEMP_RE matches in text, minus F-factor values (_is_f_factor). The one
-    iterator for every free-text °F reader (_max_temperature_f and
-    review_flags.implausible_text_temps)."""
+    """_TEMP_RE matches in text, minus F-factor values (_is_f_factor). Used by
+    _max_temperature_f and review_flags.implausible_text_temps. (kdp_check's
+    _NUM_F_RE is a separate pattern with its own well-context rules.)"""
     for m in _TEMP_RE.finditer(text):
         if not _is_f_factor(text, m):
             yield m
