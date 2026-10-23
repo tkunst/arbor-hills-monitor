@@ -980,7 +980,8 @@ can't be reached today are left as they are: a joined split row in the
 two-digit form (two-digit timestamps never pair a split page) and the
 empty-list fallback of the two-digit reject entry.
 
-**Open (not fixed; review round 3, medium).** Under an *unlabeled* header
+**Open (review round 3, medium) — CLOSED by the 2026-10-23 addendum below.**
+Under an *unlabeled* header
 repeated on each page, a two-digit table's boundaries still come from main's
 header text, which runs on over the first two-digit rows: a page whose rows
 print an `ADJ` token reads as labeled to main, so main's rule can split one
@@ -1023,3 +1024,91 @@ two-digit table's boundary from the header cut at the first row
   partial-row counts only (above).
 - `\d` also matches non-ASCII digits, as main's four-digit rule already
   does. The stored `dt` is ASCII either way.
+
+## Addendum (2026-10-23, coder:woi-two-digit-boundary): the two-digit rows' table has its own boundary
+
+Closes the 2026-10-21 addendum's open item (review round 3, medium).
+
+**What was wrong.** A table boundary (`flush()`) was decided by main's header
+text alone. Main's text ends only at a row main's rule starts (a four-digit
+timestamp printed alone), so under a two-digit table it runs on over the
+first two-digit rows, up to `_HEADER_MAX_LINES`. Under an unlabeled header
+repeated on each page, a page whose first rows print an `ADJ` line read as
+labeled to main and the next page did not, so main's table ended between the
+pages; the two-digit rows, flushed with it, were split into two tables where
+their four-digit twin (whose header text is cut at the first row) was one.
+The reverse (two tables kept as one) was possible too. Effect: the
+column-shift verdict (two pools of 15 rows, each under the 20-row minimum,
+instead of one of 30: 30 shifted readings emitted) and the unlabeled-ADJ
+flags (the partner dropped at the boundary) of two-digit rows only. No main
+reading could move, and `97d39ba7` (labeled headers on every gas page) was
+not affected.
+
+**Change** (`_parse_table_lines_once`). The rows started by a two-digit-year
+timestamp are a table of their own with their own boundary:
+
+- `_header_text_2d()` reads the header text the two-digit table's four-digit
+  twin would read: it ends at the first row started by a bare timestamp of
+  EITHER year form (`_dt_bare_any`). The ADJ label (`adj_labeled_2d`) comes
+  from it. (Before, it came from the text cut at the first row of any form.)
+- At each gas header, main's table and the two-digit table share the layout,
+  Alias-label and column tests, and each reads its own ADJ label. Either can
+  end where the other continues: `flush(main_ends, two_ends)`. A layout,
+  alias or column change ends both; a non-gas header ends both.
+- The two-digit table keeps its own pools (`cur_twodigit`, `cur_trusted_2d`,
+  `cur_added_2d`, `cur_oneline_2d`, `partner_2d`, `header_2d`) across main's
+  boundaries, and empties them only at its own. Main's rows and pools are
+  untouched by a two-digit boundary; main's flush emits exactly what it did.
+- Readings are put back in line order after the last flush (a stable sort on
+  each row's Well ID line). Each table emits at its own end, so without it a
+  two-digit reading could precede main's earlier rows in `out.readings`;
+  with it, `out.readings` is in line order as it always was, and
+  `merge_cross_table_duplicates` keeps the same copy it kept.
+- Kept: a column shift main finds is a property of the printed table, so the
+  two-digit rows printed under main's rejected table (those collected since
+  main's last boundary, `main_start_2d`) are rejected with it, with the same
+  entry as before. Two-digit rows under an earlier main table of the same
+  two-digit table are judged on their own.
+
+**The "related" point, decided.** Main's header text runs over a first row
+printed as a one-line "timestamp ADJ" and takes that `ADJ` as the table's
+label (the 2026-10-21 one-line addendum's accepted case: a table that prints
+ADJ tokens needs no pairing rule). The two-digit table now does exactly the
+same, because `_header_text_2d` ends at a *bare* timestamp of either form.
+So a two-digit table reads its header as its four-digit twin would in every
+case, and the twin property holds with no exception. (Before, the two-digit
+header was cut at the first row of any form, so such a table read as
+unlabeled and paired a later duplicate row.) A bare first row followed by its
+own `ADJ` line is cut off the header in both forms, as before.
+
+**Measured effect.**
+
+- Hermetic: review round 3's cases A and C, the one-line-first-row decision,
+  the header-text ordering, a main boundary inside a two-digit table, main's
+  column shift taking the two-digit rows under it, and line order; the seeded
+  twin test now draws any of the three headers, or none, on each of up to
+  three pages (multi-page unlabeled headers with mixed ADJ tokens included).
+- Differential fuzz vs `origin/main` (`b8a610c`), 3,000 sequences each, with
+  and without page positions and an initial layout: four-digit-only
+  sequences identical (readings and reject entries); mixed-form sequences
+  0 main readings lost or changed, line order kept; two-digit-only sequences
+  equal to their four-digit twin on this branch in all 3,000 (`origin/main`
+  differs on 239 of the same 3,000).
+- 91-file corpus regression vs `origin/main` (`b8a610c`; every PDF under
+  the wellfield staging doc-cache and the VGC cache that `is_woi_report`
+  accepts, 644,093 readings): the two parse dumps are byte-identical. 0
+  readings lost, 0 changed, 0 added; no reject entry, counter or reading
+  order moved in any file. Expected: no corpus report prints a two-digit
+  table under an unlabeled header.
+- `97d39ba7` (labeled ADJ header on every gas page): unchanged, 7,953
+  readings (3,938 ADJ), all valid, no reject entry.
+
+**Known, accepted.**
+
+- In a mixed table (both year forms under one header), the order of the
+  reject entries of the two tables' pools can differ from before (the
+  two-digit table's entries are written when it ends). Review-flag text
+  only; no corpus file prints a mixed table.
+- The layout, Alias label and column set of a two-digit table still come from
+  main's over-long header text (the 2026-10-21 addendum's first accepted
+  item); only the ADJ label and the boundary read the cut text.
