@@ -172,6 +172,25 @@ def _processed_payload(parsed, d: dict) -> dict:
     }
 
 
+def _split_by_history(new_docs: list, docs: list, state: dict) -> tuple[list, list]:
+    """Pure (stall-hardening part (c)). Split the unprocessed documents into
+    those from ESTABLISHED facilities — a facility with at least one document
+    already `processed` or terminally `skipped` in state, i.e. one the pipeline
+    has been through before — and those from facilities with NO processing
+    history (a facility just added to `facilities:`, whose years of filings
+    are backfill's job, never the live watcher's). Order is preserved; a
+    document with no facility_srn is treated as history-less."""
+    history = set()
+    for d in docs:
+        did = d.get("doc_id")
+        if did in state.get("processed", {}) or did in state.get("skipped", {}):
+            history.add(d.get("facility_srn"))
+    history.discard(None)
+    established = [d for d in new_docs if d.get("facility_srn") in history]
+    fresh = [d for d in new_docs if d.get("facility_srn") not in history]
+    return established, fresh
+
+
 def _check_liveness(sheets, sheet_id: str, cfg: dict, state: dict, *, unprocessed: int,
                     processed: int, struck: int, deferred: int, cap: int,
                     now_utc=None) -> None:
@@ -300,10 +319,29 @@ def run() -> int:
     cap = (cfg.get("watcher") or {}).get("max_new_docs_per_run", 25)
     deferred = 0
     if len(new_docs) > cap:
-        print(f"[watcher] {len(new_docs)} unprocessed docs > cap {cap}: backfill "
-              f"still in progress — deferring doc processing to the backfill job.")
-        deferred = len(new_docs)
-        new_docs = []
+        # Stall-hardening part (c): a brand-new facility's historical backlog
+        # must never freeze live monitoring of every OTHER, already-established
+        # facility (2026-07-24: two new facilities' 73 never-seen filings
+        # deferred N2688's own new filings for two weeks). Over the cap, the
+        # documents from facilities with NO processing history are the backlog
+        # — deferred to backfill exactly as before — while the established
+        # facilities' documents are still processed when they alone fit under
+        # the cap. An established facility's own over-cap burst keeps today's
+        # conservative deferral (now alarmed by the liveness guard below).
+        established, fresh = _split_by_history(new_docs, docs, state)
+        if fresh and established and len(established) <= cap:
+            srns = sorted({str(d.get("facility_srn")) for d in fresh})
+            print(f"[watcher] {len(new_docs)} unprocessed docs > cap {cap}: {len(fresh)} "
+                  f"belong to facility(ies) with no processing history yet "
+                  f"({', '.join(srns)}) — deferring that backlog to the backfill job; "
+                  f"processing the {len(established)} from established facilities.")
+            deferred = len(fresh)
+            new_docs = established
+        else:
+            print(f"[watcher] {len(new_docs)} unprocessed docs > cap {cap}: backfill "
+                  f"still in progress — deferring doc processing to the backfill job.")
+            deferred = len(new_docs)
+            new_docs = []
     else:
         print(f"[watcher] {len(new_docs)} new document(s).")
     ctx = dp.RunContext(

@@ -201,6 +201,11 @@ data_lifecycle:
 # docs into the live feed and firing urgent alerts on years-old exceedances. The
 # daily schedule should stay disabled until backfill logs "Backfill complete"
 # anyway (see README); this cap is the belt-and-suspenders backstop.
+# Over the cap (stall-hardening part (c), 2026-10-23): documents from a
+# facility with NO processing history yet (one just added to `facilities:`)
+# are the backlog and defer as before; documents from established facilities
+# are still processed when they alone fit under the cap, so a new facility
+# can't freeze live monitoring of every other one (the 2026-07-24 stall).
 watcher:
   max_new_docs_per_run: 25
   # LIVENESS / silent-stall guard (stall-hardening, 2026-10-23; the 2026-08-02
