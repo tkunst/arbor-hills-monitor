@@ -735,6 +735,9 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
     cur_added_2d: list = []  # those whose Flow cell it would NOT have read
     cur_oneline_2d: list = []  # those printed as a one-line "timestamp ADJ"
     main_start_2d = 0  # index in cur_twodigit of the first row under main's open table
+    # two-digit rows whose own table ended under main's still-open table:
+    # emitted, or rejected as victims, with main's verdict (review round 2)
+    pending_2d: list = []
     partner = None          # the last row main would have emitted (unlabeled ADJ)
     partner_2d = None       # the same, among two-digit-year rows only
     order: dict = {}        # id(reading) -> its Well ID line: readings keep line order
@@ -772,7 +775,7 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
         moves a row of the other, and main's readings are emitted exactly
         as before."""
         nonlocal cur_rows, cur_flows, cur_added, cur_oneline, cur_twodigit, partner, partner_2d
-        nonlocal cur_trusted_2d, cur_added_2d, cur_oneline_2d, main_start_2d
+        nonlocal cur_trusted_2d, cur_added_2d, cur_oneline_2d, main_start_2d, pending_2d
         # Main's rows are judged on main's Flow cells alone, so added rows
         # can neither reject them nor dilute a shifted table. The added rows
         # (read past a blank cell; started by a one-line "timestamp ADJ") are
@@ -802,7 +805,8 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                     n_rows=len(cur_oneline), header=header,
                     reason="rows started by a one-line timestamp ADJ, in a column-shift "
                            "rejected table"))
-            victims = cur_twodigit[main_start_2d:]
+            victims = pending_2d + cur_twodigit[main_start_2d:]
+            pending_2d = []
             if victims:
                 out.rejected_tables.append(RejectedTable(
                     first_page=victims[0].page, last_page=victims[-1].page,
@@ -843,7 +847,16 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
                 pool_check(cur_oneline_2d,
                            "two-digit-year rows started by a one-line timestamp ADJ",
                            header_2d, drop)
-            out.readings.extend(r for r in cur_twodigit if id(r) not in drop)
+            keep = [r for r in cur_twodigit if id(r) not in drop]
+            if main_ends:
+                out.readings.extend(keep)
+            else:
+                # Main's table is still open: the rows printed under it wait
+                # for its verdict (a column shift it finds takes them, see
+                # above); the rows under an earlier, ended main table are free.
+                under_main = {id(r) for r in cur_twodigit[main_start_2d:]}
+                out.readings.extend(r for r in keep if id(r) not in under_main)
+                pending_2d.extend(r for r in keep if id(r) in under_main)
         if two_ends and cur_rejected_2d["n"]:
             out.rejected_tables.append(RejectedTable(
                 first_page=cur_rejected_2d["first"], last_page=cur_rejected_2d["last"],
@@ -860,6 +873,8 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             partner_2d = None
             main_start_2d = 0  # every later two-digit row is under main's open table
         if main_ends:
+            out.readings.extend(pending_2d)  # main's table ended with no shift
+            pending_2d = []
             cur_rows, cur_flows, cur_added, cur_oneline = [], [], [], []
             partner = None
             main_start_2d = len(cur_twodigit)
