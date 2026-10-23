@@ -443,7 +443,7 @@ def _subject(historical: bool, verb: str, gases, stations, isos) -> str:
 def format_screening_email(opened: list[dict], continuing: list[dict], monitor_rows: list[dict],
                            watch_thresholds: dict, *, link: str, retrieved_iso: str,
                            coords: dict | None = None, context: dict | None = None,
-                           historical: bool = False, stations_reporting: int | None = None,
+                           historical: bool = False,
                            expected_stations: list[str] | None = None,
                            registry_available: bool = True) -> tuple[str, str]:
     """The consolidated per-run SCREENING (OPEN) email — Model A. ONE email listing ALL
@@ -484,11 +484,9 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
 
     # Reporting = a non-silent row; with a roster, only ROSTER stations count toward
     # the expected N (an unexpected MS-7 reporting must not mask a silent MS-1).
-    if stations_reporting is not None:
-        n_report = stations_reporting
-    else:
-        n_report = sum(1 for r in monitor_rows
-                       if not r.get("silent") and (roster is None or r["station"] in roster))
+    # Derived from the rows only — no caller-supplied count can bypass that filter.
+    n_report = sum(1 for r in monitor_rows
+                   if not r.get("silent") and (roster is None or r["station"] in roster))
     expected_note = ("" if roster else
                      " (expected count is the legacy default — gfl_air.expected_stations "
                      "not configured)")

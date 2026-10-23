@@ -522,6 +522,18 @@ def run() -> int:
     print(f"[gfl-air] {len(readings)} new reading(s) across {len(snapshot)} "
           f"station(s); {n_rows} measurement row(s) ({mode}); cursor {cursor} -> "
           f"{new_cursor}.")
+    # Readings-side roster reconciliation on EVERY poll (free: no extra fetch), so a
+    # new monitor coming online, or a roster station gone quiet, is in the run log
+    # even on a quiet perimeter where no screening email fires for months. The
+    # registry (layer-0) side is reconciled at screening-email time, where that
+    # best-effort fetch already happens.
+    unexpected, no_reading = roster_mismatch(roster, latest_per_station(readings, prefix))
+    if unexpected:
+        print("[gfl-air]   ROSTER MISMATCH: reading(s) this poll from station(s) not in "
+              f"gfl_air.expected_stations: {', '.join(unexpected)}")
+    if no_reading:
+        print(f"[gfl-air]   roster station(s) with no reading this poll: "
+              f"{', '.join(no_reading)}")
 
     # Durable air-readings exhibit (ADR 026) — immutable Drive capture of the
     # selected readings (capture.mode "all" = every reading; "sample" = every elevated
@@ -703,10 +715,11 @@ def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds
                   f"gfl_air.expected_stations: {', '.join(unexpected)} (listed in the "
                   "email, not counted toward the expected total)")
         if missing:
-            why = ("station list could not be retrieved this run" if not registry_available
+            why = ("no reading this run, and the station list could not be retrieved"
+                   if not registry_available
                    else "neither a reading this run nor a station-list entry")
-            print("[gfl-air]   ROSTER MISMATCH: roster station(s) absent from the source "
-                  f"this run: {', '.join(missing)} ({why})")
+            print("[gfl-air]   ROSTER MISMATCH: roster station(s) unaccounted for this "
+                  f"run: {', '.join(missing)} ({why})")
         subject, body = format_screening_email(
             result.opened, continuing, monitor_rows, watch_thresholds, link=link,
             retrieved_iso=retrieved_iso, coords=coords, context=context, historical=hist,
