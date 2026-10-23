@@ -141,9 +141,12 @@ external users but no sensitive data). Public repo.
   entirely and instead builds its own `ref` via
   `reference_from_config()`, passed straight to `check_fields()`.
 - `retry_policy.py` — classifies a per-document processing exception as
-  TRANSIENT (infra/quota — a 429, a 5xx, the 2026-07-07 workspace API cap's
+  TRANSIENT (infra/quota — a 429, a 5xx, a 401/403 (a revoked, expired or
+  mis-scoped key is never the document's fault — stall-hardening review,
+  2026-10-23; before that a dead key would have stubbed every real filing
+  "skipped" within three runs), the 2026-07-07 workspace API cap's
   400 "usage limit" message, the `anthropic` SDK's own connection/timeout/
-  rate-limit/server error types) vs. PERMANENT (a genuinely unprocessable
+  rate-limit/server/authentication error types) vs. PERMANENT (a genuinely unprocessable
   source — bad PDF, OCR failure, truncation, generic 400). `watcher.py`/
   `backfill.py` both call `is_transient()` (confirmed at their respective
   poison-strike sites) before accruing a strike, so an API-cap or infra blip
@@ -426,18 +429,25 @@ external users but no sensitive data). Public repo.
   `gfl_air_watcher._check_liveness`) right after the doc loop — see
   `doc_pipeline_liveness.py` below. Best-effort and isolated: it can never
   fail the run. **Anti-stampede cap (stall-hardening part (c)):** over
-  `watcher.max_new_docs_per_run`, `_split_by_history()` (pure) separates the
-  unprocessed documents of ESTABLISHED facilities (one with any `processed`
-  or `skipped` document in state) from those of facilities with NO
-  processing history (just added to `facilities:`). The history-less backlog
-  is deferred to backfill exactly as before; the established facilities'
-  documents are still processed when they alone fit under the cap, so a
-  new facility can never again freeze live monitoring of every other one
-  (2026-07-24). An established facility's own over-cap burst, or an
-  established share that itself exceeds the cap, keeps the old whole-run
-  deferral — now alarmed by the liveness guard. Under the cap nothing
-  changed. A partial deferral still counts toward `consecutive_deferrals`
-  (the backlog is not draining), while `last_activity_at` advances.
+  `watcher.max_new_docs_per_run`, `_split_by_history()` (pure) separates
+  the LIVE new filings — from an ESTABLISHED facility (one with any
+  `processed` or `skipped` document in state) AND filed within the last
+  `watcher.live_filing_window_days` (30) — from the BACKLOG: a facility
+  with no processing history (just added to `facilities:`), or the
+  years-old remainder of a facility whose backfill has only partly drained
+  (the review-found hole: one manual backfill batch gives a new facility
+  "history," and without the recency test its leftover filings would
+  stampede into the live feed with urgent alerts). The backlog is deferred
+  to backfill exactly as before; the live filings are still processed when
+  they alone fit under the cap, so a new facility can never again freeze
+  live monitoring of every other one (2026-07-24). An established
+  facility's own over-cap burst, or a live share that itself exceeds the
+  cap, keeps the old whole-run deferral — now alarmed by the liveness
+  guard. Under the cap nothing changed (the split never runs). A partial
+  deferral still counts toward `consecutive_deferrals` (the backlog is not
+  draining), while `last_activity_at` advances. Backfill's schedule is
+  intentionally off (it raced the watcher, 2026-07-07), so draining a
+  backlog is a manual `workflow_dispatch` — the notice says so.
 - `doc_pipeline_liveness.py` — **stall-hardening part (a)** (handoff
   `docs/overnight-coder-handoffs/stall-hardening.md`; the 2026-08-02
   digest-recovery lesson, when two newly added facilities pushed the backlog
@@ -447,9 +457,13 @@ external users but no sensitive data). Public repo.
   `liveness_decision()`, `mark_warned()`, the body/subject. State is ONE
   `_meta` singleton, `doc_pipeline_health` (`_META_DEFAULTS`; persisted by
   the existing `write_meta`), holding `last_activity_at` (the last run, UTC,
-  on which the watcher processed a document, struck a poison one, or had
-  nothing unprocessed — a quiet week is NOT a stall; three daily runs that
-  each saw unprocessed documents and got through none of them is) and
+  on which the watcher processed a document, struck a genuinely
+  unprocessable one (a key or infrastructure problem is never a strike —
+  `retry_policy` now counts 401/403 as transient for exactly this reason),
+  or had nothing unprocessed — a quiet week is NOT a stall; three daily
+  runs that each saw unprocessed documents and got through none of them
+  is; staleness is counted in UTC calendar days so cron jitter can't
+  shift it) and
   `consecutive_deferrals` (runs in a row that deferred a backlog under the
   cap; reset by a run that deferred nothing), plus two once-per-episode
   warned markers (`warned_stale_for` = the activity value warned on, the

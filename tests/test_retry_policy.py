@@ -84,3 +84,30 @@ def test_missing_pdf_content_is_permanent():
 
 def test_plain_value_error_is_permanent():
     assert rp.is_transient(ValueError("unexpected classification shape")) is False
+
+
+# --- a key problem is never the document's fault (stall-hardening, 2026-10-23) --
+
+
+def test_auth_and_permission_errors_are_transient():
+    # A revoked/expired/mis-scoped key would otherwise stub every real filing
+    # "skipped" within three runs, and read to the document-pipeline liveness
+    # guard as progress instead of the stall it is.
+    assert rp.is_transient(_HttpError(401, "invalid x-api-key")) is True
+    assert rp.is_transient(_HttpError(403, "permission denied")) is True
+
+
+def test_sdk_authentication_errors_are_transient():
+    anthropic = __import__("anthropic")
+    from types import SimpleNamespace
+    resp = SimpleNamespace(status_code=401, headers={}, request=None)
+    exc = anthropic.AuthenticationError("bad key", response=resp, body=None)
+    assert rp.is_transient(exc) is True
+    resp = SimpleNamespace(status_code=403, headers={}, request=None)
+    exc = anthropic.PermissionDeniedError("no", response=resp, body=None)
+    assert rp.is_transient(exc) is True
+
+
+def test_generic_400_and_404_still_strike():
+    assert rp.is_transient(_HttpError(400, "malformed request")) is False
+    assert rp.is_transient(_HttpError(404)) is False

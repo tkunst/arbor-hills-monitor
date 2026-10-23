@@ -201,27 +201,35 @@ data_lifecycle:
 # docs into the live feed and firing urgent alerts on years-old exceedances. The
 # daily schedule should stay disabled until backfill logs "Backfill complete"
 # anyway (see README); this cap is the belt-and-suspenders backstop.
-# Over the cap (stall-hardening part (c), 2026-10-23): documents from a
-# facility with NO processing history yet (one just added to `facilities:`)
-# are the backlog and defer as before; documents from established facilities
-# are still processed when they alone fit under the cap, so a new facility
-# can't freeze live monitoring of every other one (the 2026-07-24 stall).
+# Over the cap (stall-hardening part (c), 2026-10-23): only an established
+# facility's RECENT filings (filed within live_filing_window_days, from a
+# facility with at least one processed/skipped document on record) are still
+# processed live, and only when they alone fit under the cap; everything else
+# — a facility just added to `facilities:`, or the historical remainder of one
+# whose backfill has only partly drained — is the backlog and defers as
+# before. So a new facility can't freeze live monitoring of every other one
+# (the 2026-07-24 stall), and a half-backfilled one can't stampede years-old
+# filings into the live feed either.
 watcher:
   max_new_docs_per_run: 25
+  live_filing_window_days: 30
   # LIVENESS / silent-stall guard (stall-hardening, 2026-10-23; the 2026-08-02
   # digest-recovery lesson). Two signals, one owner-only health notice each,
   # at most once per episode (doc_pipeline_liveness.py; state in
   # _meta.doc_pipeline_health). 0 disables a signal.
   #   max_consecutive_deferrals — daily runs IN A ROW that deferred unprocessed
-  #     documents to backfill under the cap above. A new facility's backlog
-  #     clears in 1-2 nightly backfill batches of 50 when backfill's schedule is
-  #     on, so 3 = "the third straight morning the backlog is still there":
-  #     backfill isn't draining it (its schedule is off, or it is failing).
-  #   max_stale_days — days since the watcher last made progress on its queue
-  #     (processed a document, struck a poison one, or had nothing unprocessed).
-  #     A quiet week with no new filings does NOT count as stale; three daily
-  #     runs that each saw unprocessed documents and got through none of them
-  #     (every one deferred, or every one a transient API failure) does. 3 keeps
+  #     documents to backfill under the cap above. backfill.yml's schedule is
+  #     INTENTIONALLY off (it raced the watcher, 2026-07-07), so a backlog only
+  #     drains when backfill is started by hand (workflow_dispatch; one or two
+  #     batches of 50 for a new facility). 3 = "the third straight morning the
+  #     backlog is still there": nobody has drained it yet. Expect this notice
+  #     ~3 days after every new facility is added unless backfill is run.
+  #   max_stale_days — calendar days since the watcher last made progress on
+  #     its queue (processed a document, struck a genuinely unprocessable one,
+  #     or had nothing unprocessed). A quiet week with no new filings does NOT
+  #     count as stale; three daily runs that each saw unprocessed documents
+  #     and got through none of them (every one deferred, or every one a
+  #     transient failure — an outage or a revoked/throttled key) does. 3 keeps
   #     the same order of magnitude as gfl_air.max_stale_days.
   max_consecutive_deferrals: 3
   max_stale_days: 3

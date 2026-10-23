@@ -172,23 +172,46 @@ def _processed_payload(parsed, d: dict) -> dict:
     }
 
 
-def _split_by_history(new_docs: list, docs: list, state: dict) -> tuple[list, list]:
-    """Pure (stall-hardening part (c)). Split the unprocessed documents into
-    those from ESTABLISHED facilities — a facility with at least one document
-    already `processed` or terminally `skipped` in state, i.e. one the pipeline
-    has been through before — and those from facilities with NO processing
-    history (a facility just added to `facilities:`, whose years of filings
-    are backfill's job, never the live watcher's). Order is preserved; a
-    document with no facility_srn is treated as history-less."""
+DEFAULT_LIVE_FILING_WINDOW_DAYS = 30
+
+
+def _filed_within(d: dict, today, window_days: int) -> bool:
+    """True iff `d["date_filed"]` (ISO YYYY-MM-DD) is within the last
+    `window_days` days of `today`. Blank/unparseable/future dates are NOT
+    recent (conservative: such a document waits for backfill)."""
+    try:
+        filed = datetime.strptime(str(d.get("date_filed", ""))[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return False
+    age = (today - filed).days
+    return 0 <= age <= window_days
+
+
+def _split_by_history(new_docs: list, docs: list, state: dict, today,
+                      window_days: int) -> tuple[list, list]:
+    """Pure (stall-hardening part (c)). Over the anti-stampede cap, split the
+    unprocessed documents into LIVE new filings — from an ESTABLISHED facility
+    (one with at least one document already `processed` or terminally
+    `skipped` in state, i.e. one the pipeline has been through before) AND
+    filed within the last `window_days` days — and the BACKLOG: everything
+    else. The backlog is a facility just added to `facilities:` (years of
+    filings, backfill's job, never the live watcher's) or the historical
+    remainder of a facility backfill has only partly drained (which would
+    otherwise stampede years-old filings, and their urgent alerts, into the
+    live feed the moment its first batch landed — the hole the review of this
+    change found). Order is preserved; a document with no facility_srn or no
+    parseable date is backlog."""
     history = set()
     for d in docs:
         did = d.get("doc_id")
         if did in state.get("processed", {}) or did in state.get("skipped", {}):
             history.add(d.get("facility_srn"))
     history.discard(None)
-    established = [d for d in new_docs if d.get("facility_srn") in history]
-    fresh = [d for d in new_docs if d.get("facility_srn") not in history]
-    return established, fresh
+    live = [d for d in new_docs
+            if d.get("facility_srn") in history and _filed_within(d, today, window_days)]
+    live_ids = {id(d) for d in live}
+    backlog = [d for d in new_docs if id(d) not in live_ids]
+    return live, backlog
 
 
 def _check_liveness(sheets, sheet_id: str, cfg: dict, state: dict, *, unprocessed: int,
@@ -221,13 +244,14 @@ def _check_liveness(sheets, sheet_id: str, cfg: dict, state: dict, *, unprocesse
         health = dl.update_health(prev, now_utc=now_utc, unprocessed=unprocessed,
                                   processed=processed, struck=struck, deferred=deferred)
         state[dl.META_KEY] = health
-        was_warned = bool(prev.get("warned_deferrals")) or (
-            bool(prev.get("warned_stale_for"))
-            and prev.get("warned_stale_for") == prev.get("last_activity_at"))
-        recovered = was_warned and (
-            health["consecutive_deferrals"] == 0
-            and health.get("last_activity_at") != prev.get("last_activity_at"))
-        if recovered:
+        # Log-only recovery note, one per re-armed gate: the deferral gate
+        # re-arms when the counter resets; the stale gate when activity
+        # re-stamps last_activity_at (mirrors liveness_decision's two gates).
+        deferral_rearmed = bool(prev.get("warned_deferrals")) and health["consecutive_deferrals"] == 0
+        stale_rearmed = (bool(prev.get("warned_stale_for"))
+                         and prev.get("warned_stale_for") == prev.get("last_activity_at")
+                         and health.get("last_activity_at") != prev.get("last_activity_at"))
+        if deferral_rearmed or stale_rearmed:
             print("[watcher] liveness: document pipeline made progress again — "
                   "health notice re-armed (log only, no email).")
         try:
@@ -322,21 +346,27 @@ def run() -> int:
         # Stall-hardening part (c): a brand-new facility's historical backlog
         # must never freeze live monitoring of every OTHER, already-established
         # facility (2026-07-24: two new facilities' 73 never-seen filings
-        # deferred N2688's own new filings for two weeks). Over the cap, the
-        # documents from facilities with NO processing history are the backlog
-        # — deferred to backfill exactly as before — while the established
-        # facilities' documents are still processed when they alone fit under
-        # the cap. An established facility's own over-cap burst keeps today's
-        # conservative deferral (now alarmed by the liveness guard below).
-        established, fresh = _split_by_history(new_docs, docs, state)
-        if fresh and established and len(established) <= cap:
-            srns = sorted({str(d.get("facility_srn")) for d in fresh})
-            print(f"[watcher] {len(new_docs)} unprocessed docs > cap {cap}: {len(fresh)} "
-                  f"belong to facility(ies) with no processing history yet "
-                  f"({', '.join(srns)}) — deferring that backlog to the backfill job; "
-                  f"processing the {len(established)} from established facilities.")
-            deferred = len(fresh)
-            new_docs = established
+        # deferred N2688's own new filings for two weeks). Over the cap, only
+        # an established facility's RECENT filings (within
+        # watcher.live_filing_window_days) are processed live, and only when
+        # they alone fit under the cap; everything else — a facility with no
+        # processing history, or the historical remainder of one whose
+        # backfill has only partly drained — is the backlog, deferred to
+        # backfill exactly as before. An established facility's own over-cap
+        # burst keeps today's conservative deferral (now alarmed by the
+        # liveness guard below).
+        window = int((cfg.get("watcher") or {}).get("live_filing_window_days",
+                                                    DEFAULT_LIVE_FILING_WINDOW_DAYS))
+        live, backlog = _split_by_history(new_docs, docs, state, today, window)
+        if live and len(live) <= cap:
+            srns = sorted({str(d.get("facility_srn")) for d in backlog})
+            print(f"[watcher] {len(new_docs)} unprocessed docs > cap {cap}: {len(backlog)} "
+                  f"are backlog (no processing history for the facility, or filed more "
+                  f"than {window} days ago; {', '.join(srns)}) — deferring that backlog "
+                  f"to the backfill job; processing the {len(live)} recent filing(s) "
+                  f"from established facilities.")
+            deferred = len(backlog)
+            new_docs = live
         else:
             print(f"[watcher] {len(new_docs)} unprocessed docs > cap {cap}: backfill "
                   f"still in progress — deferring doc processing to the backfill job.")

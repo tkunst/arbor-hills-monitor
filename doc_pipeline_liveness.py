@@ -23,17 +23,19 @@ read_state/write_meta helpers):
                          shape) trips this after `max_consecutive_deferrals`
                          runs — days, since the watcher runs daily.
   last_activity_at       the last run (UTC) on which the pipeline did its
-                         job: processed >= 1 document, made a terminal
-                         decision on one (a poison strike — the pipeline IS
-                         working through its queue), or had nothing
+                         job: processed >= 1 document, took a poison strike
+                         on one (a strike means the source itself was judged
+                         unprocessable — the pipeline IS working through its
+                         queue; an infrastructure or key problem is never a
+                         strike, see retry_policy), or had nothing
                          unprocessed at all (an honest quiet day). A run that
                          had unprocessed documents and made no progress on
                          any of them — every one deferred, or every one a
-                         transient failure (a dead or throttled API key) —
-                         does NOT advance it. So "days since last activity"
-                         measures the pipeline, not EGLE's filing rate: a
-                         quiet month never trips it, three days of a filing
-                         sitting unprocessed does.
+                         transient failure (a dead, revoked or throttled API
+                         key, an outage) — does NOT advance it. So "days
+                         since last activity" measures the pipeline, not
+                         EGLE's filing rate: a quiet month never trips it,
+                         three days of a filing sitting unprocessed does.
 
 Once-per-episode gates (the `warned_as_of` idiom in gfl_air_liveness):
   warned_stale_for       the `last_activity_at` value the stale alarm was
@@ -120,10 +122,12 @@ def liveness_decision(health: Optional[dict], now_utc: datetime, max_stale_days:
     """Pure. Whether to send the ONE pipeline-health notice this run.
 
     The stale signal trips when `last_activity_at` is at least `max_stale_days`
-    old and no notice was already sent for that exact value (the once-per-
-    episode gate — self-resetting because activity re-stamps the value). A
-    blank or unparseable `last_activity_at` never trips it: we do not fire a
-    'stale' alarm we can't quantify (the caller logs that case loudly).
+    CALENDAR days (UTC dates, so the daily cron's start-time jitter can't make
+    "three mornings ago" read as 2) old and no notice was already sent for
+    that exact value (the once-per-episode gate — self-resetting because
+    activity re-stamps the value). A blank or unparseable `last_activity_at`
+    never trips it: we do not fire a 'stale' alarm we can't quantify (the
+    caller logs that case loudly).
 
     The deferral signal trips when `consecutive_deferrals` reaches
     `max_consecutive_deferrals` and no notice was already sent for this
@@ -135,7 +139,7 @@ def liveness_decision(health: Optional[dict], now_utc: datetime, max_stale_days:
     h = health or {}
     last = str(h.get("last_activity_at") or "").strip()
     dt = parse_activity(last)
-    stale_days = None if dt is None else int((now_utc - dt).total_seconds() // 86400)
+    stale_days = None if dt is None else (now_utc.astimezone(timezone.utc).date() - dt.date()).days
     stale = (max_stale_days > 0 and stale_days is not None and stale_days >= max_stale_days)
     stale_unwarned = stale and str(h.get("warned_stale_for") or "") != last
 
@@ -181,22 +185,26 @@ def format_liveness_body(decision: Decision, health: Optional[dict], max_stale_d
             f"documents to the backfill job (alert threshold: {max_consecutive_deferrals}). "
             f"The anti-stampede cap (watcher.max_new_docs_per_run = {cap}) defers a "
             "backlog larger than the cap so historical filings don't stampede into the "
-            "live feed — but a backlog only drains if backfill actually runs. On "
-            "2026-07-24 two newly added facilities tripped this and backfill's nightly "
-            "schedule was off, so the watcher processed nothing for two weeks.\n")
+            "live feed — but a backlog only drains when the backfill job runs, and its "
+            "nightly schedule is INTENTIONALLY off (it raced the watcher; see "
+            "backfill.yml), so a backlog drains only when someone starts backfill by "
+            "hand. On 2026-07-24 two newly added facilities tripped this and nobody did, "
+            "so the watcher processed nothing for two weeks.\n")
     if decision.stale:
         lines.append(
             f"- No document-pipeline activity for {decision.stale_days} day(s) (alert "
             f"threshold: {max_stale_days}): every daily run in that window found "
             "unprocessed documents and made progress on none of them (each one deferred, "
-            "or each one a transient failure — a dead/throttled API key looks exactly like "
-            "this). A quiet week with nothing new to process does NOT count as a stall.\n")
+            "or each one a transient failure — an outage, or a revoked/throttled API key, "
+            "looks exactly like this). A quiet week with nothing new to process does NOT "
+            "count as a stall.\n")
     lines.append(f"Last recorded pipeline activity (UTC): {last}\n")
     lines.append(
         "Check: the latest `daily` workflow run's log (how many unprocessed documents it "
-        "saw and whether it said 'deferring doc processing to the backfill job' or "
-        "'RETRY (transient, no strike)'), whether the `backfill` workflow's schedule is "
-        "enabled, and the Anthropic key/usage cap.\n")
+        "saw and whether it said 'deferring ... to the backfill job' or 'RETRY (transient, "
+        "no strike)'), and the Anthropic key / usage cap. To drain a backlog, start the "
+        "`backfill` workflow manually (workflow_dispatch) — do not re-enable its "
+        "schedule.\n")
     lines.append(
         "(You will not get another notice for this same episode — each signal fires "
         "once per episode and re-arms only after the pipeline makes progress again.)")

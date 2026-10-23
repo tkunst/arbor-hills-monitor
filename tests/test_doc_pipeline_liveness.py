@@ -8,7 +8,8 @@ state so the health singleton persists across runs the way _meta does.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+import copy
+from datetime import datetime, timezone
 
 import pytest
 
@@ -79,13 +80,21 @@ def test_decision_stale_fires_when_old_and_unwarned():
 
 def test_decision_silent_when_fresh():
     d = dl.liveness_decision({"last_activity_at": "2026-10-22T12:00:00Z"}, NOW, 3, 3)
+    assert not d.should_warn and d.stale_days == 1          # yesterday = 1 calendar day
+    d = dl.liveness_decision({"last_activity_at": "2026-10-23T01:00:00Z"}, NOW, 3, 3)
     assert not d.should_warn and d.stale_days == 0
 
 
-def test_decision_stale_boundary_is_inclusive():
+def test_decision_stale_counts_calendar_days_so_cron_jitter_cannot_shift_it():
+    # Three mornings ago is 3 days whether today's run started a minute early
+    # or late (the daily cron jitters); 2026-10-21 is 2 days whatever the hour.
     d = dl.liveness_decision({"last_activity_at": "2026-10-20T11:00:00Z"}, NOW, 3, 3)
     assert d.stale and d.stale_days == 3
     d = dl.liveness_decision({"last_activity_at": "2026-10-20T11:00:01Z"}, NOW, 3, 3)
+    assert d.stale and d.stale_days == 3
+    d = dl.liveness_decision({"last_activity_at": "2026-10-20T23:59:59Z"}, NOW, 3, 3)
+    assert d.stale and d.stale_days == 3
+    d = dl.liveness_decision({"last_activity_at": "2026-10-21T00:00:00Z"}, NOW, 3, 3)
     assert not d.stale and d.stale_days == 2
 
 
@@ -203,7 +212,10 @@ def _wire(monkeypatch, docs, cap=25, outcome="processed", max_def=3, max_stale=3
     monkeypatch.setattr(w.dc, "sheets_service", lambda: object())
     monkeypatch.setattr(w.sw, "ensure_tabs", lambda *a: None)
     monkeypatch.setattr(w.sw, "read_state", lambda *a: state)
-    monkeypatch.setattr(w.sw, "write_meta", lambda svc, sid, st: metas.append(dict(st)))
+    # deepcopy: the fake must record what write_meta would have SERIALIZED,
+    # not a reference that later mutation would silently keep in sync.
+    monkeypatch.setattr(w.sw, "write_meta",
+                        lambda svc, sid, st: metas.append(copy.deepcopy(st)))
     monkeypatch.setattr(w.sw, "rebuild_risk_register_tab", lambda *a: None)
     monkeypatch.setattr(w.nc, "make_session", lambda: None)
     monkeypatch.setattr(w.nc, "fetch_all_documents", lambda s, c: [dict(d) for d in docs])
@@ -236,7 +248,17 @@ def test_three_consecutive_over_cap_deferrals_trip_the_alarm_once(monkeypatch):
     assert w.run() == 0 and w.run() == 0
     assert len(sent) == 1                                   # same episode: no re-alert
     assert state["doc_pipeline_health"]["consecutive_deferrals"] == 5
-    assert metas and metas[-1]["doc_pipeline_health"] == state["doc_pipeline_health"]
+    # the warned marker reached a write_meta call (a real serialization), not
+    # just the in-memory state
+    assert any(m["doc_pipeline_health"].get("warned_deferrals") is True for m in metas)
+    assert metas[-1]["doc_pipeline_health"]["consecutive_deferrals"] == 5
+
+
+def test_body_names_the_manual_backfill_dispatch_not_the_schedule():
+    h = {"last_activity_at": "2026-10-22T11:00:00Z", "consecutive_deferrals": 3}
+    body = dl.format_liveness_body(dl.liveness_decision(h, NOW, 3, 3), h, 3, 3, 25)
+    assert "workflow_dispatch" in body and "INTENTIONALLY off" in body
+    assert "do not re-enable" in body
 
 
 def test_a_run_that_processes_docs_resets_the_deferral_counter(monkeypatch):

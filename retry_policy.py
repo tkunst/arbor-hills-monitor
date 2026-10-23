@@ -15,10 +15,13 @@ never the document's fault, so it must not poison the document.
 
 Detection is duck-typed (a status_code attribute plus a narrow set of message
 substrings) so callers need not import anthropic. An optional isinstance check
-catches the SDK's connection/timeout/rate-limit/server errors, which may carry
-no status_code. The message set is kept deliberately narrow: a genuine
-bad-document 400 (malformed request, un-openable PDF, max_tokens truncation)
-must still accrue strikes so truly poison docs stay self-terminating.
+catches the SDK's connection/timeout/rate-limit/server/authentication errors,
+which may carry no status_code. A 401/403 (a revoked, expired or mis-scoped
+key) is transient too: a key problem is never the document's fault, and
+treating it as a strike would stub every real filing within three runs. The
+message set is kept deliberately narrow: a genuine bad-document 400
+(malformed request, un-openable PDF, max_tokens truncation) must still accrue
+strikes so truly poison docs stay self-terminating.
 """
 from __future__ import annotations
 
@@ -59,8 +62,14 @@ def is_transient(exc: BaseException) -> bool:
     #    transient. A 400 is usually a real bad request; the one transient 400 is
     #    the usage-cap message, caught by the marker check below — so do NOT treat
     #    all 400s as transient here.
+    #    A 401/403 (revoked, expired or mis-scoped key) is likewise never the
+    #    document's fault (stall-hardening review, 2026-10-23): counting it as
+    #    a strike would stub every real filing "skipped" within three runs of a
+    #    key problem — the same false-poison shape as the 2026-07-07 cap — and
+    #    would read to the liveness guard as the pipeline working through its
+    #    queue instead of as the stall it is.
     status = _status_of(exc)
-    if status is not None and (status == 429 or status >= 500):
+    if status is not None and (status in (401, 403, 429) or status >= 500):
         return True
 
     # 2) The anthropic SDK's connection/timeout/rate-limit/server errors may carry
@@ -76,6 +85,8 @@ def is_transient(exc: BaseException) -> bool:
                 anthropic.APITimeoutError,
                 anthropic.RateLimitError,
                 anthropic.InternalServerError,
+                anthropic.AuthenticationError,   # 401: the key, never the document
+                anthropic.PermissionDeniedError, # 403: ditto
             ),
         ):
             return True
