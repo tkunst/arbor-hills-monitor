@@ -129,6 +129,8 @@
     background:var(--panel);font-size:12px;color:var(--muted);text-align:center}
   footer.license-foot a{color:var(--accent);text-decoration:none}
   footer.license-foot a:hover{text-decoration:underline}
+  /* Chrome/Safari draw a focus box around a clicked Leaflet polygon's bounding box; keep it for keyboard focus only. */
+  .leaflet-interactive:focus:not(:focus-visible){outline:none}
 </style>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
