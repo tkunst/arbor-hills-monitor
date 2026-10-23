@@ -286,39 +286,224 @@ def test_two_digit_rows_never_move_mains_last_column_edge():
     assert g.readings[2].header_pres == -0.68
 
 
+def _twin_seq(rnd):
+    """A seeded random table printed in two-digit years: up to three pages,
+    each with any of the three headers or none (the table continues), ADJ
+    lines and one-line "timestamp ADJ" rows, "---" cells, negative flows,
+    comments, short rows."""
+    cells = [CELLS, NEG, CELLS[:4] + ["---"] + CELLS[5:], CELLS[:5], ["---"] * 9]
+    seq, hdr = [], None
+    for page in range(1, rnd.randint(1, 3) + 1):
+        if page == 1 or rnd.random() < 0.8:
+            hdr = rnd.choice([HDR_FULL, HDR_FULL_NO_ADJ, HDR_ALIAS])
+            seq += [(h, page) for h in hdr]
+        for k in range(rnd.randint(1, 30)):
+            ts = (f"{rnd.randint(1, 12)}/{rnd.randint(1, 28)}/25 {rnd.randint(0, 23)}:"
+                  f"{rnd.randint(0, 59):02d}")
+            adj = rnd.random()
+            row = [rnd.choice(["AHW1", "AHW2", "AHWW312R*"])]
+            row += ["EW-7"] if hdr is HDR_ALIAS else []
+            row += [ts + " ADJ"] if adj < 0.2 else [ts, "ADJ"] if adj < 0.35 else [ts]
+            row += list(rnd.choice(cells))
+            if rnd.random() < 0.3:
+                row.append(rnd.choice(["No Change: :", "Opened Valve 1/2 turn:", "581821: 0"]))
+            seq += [(x, page) for x in row]
+    return seq
+
+
+def _assert_twins(seq):
+    two = w._parse_table_lines(seq)
+    four = w._parse_table_lines([(_four(x), pg) for x, pg in seq])
+    assert [_key(r) for r in two.readings] == [_key(r) for r in four.readings], seq
+    assert [(t.first_page, t.last_page, t.n_rows) for t in two.rejected_tables] == [
+        (t.first_page, t.last_page, t.n_rows) for t in four.rejected_tables], seq
+    return two, four
+
+
 def test_two_digit_tables_read_like_their_four_digit_twins():
-    # Seeded random tables (headers with and without ADJ/Alias labels, ADJ
-    # lines and one-line "timestamp ADJ" rows, "---" cells, negative flows,
-    # comments, short rows; up to three pages, the header repeated on each,
-    # under labeled headers): printed with two-digit years they give exactly
-    # the readings and reject ranges of the same table printed with
-    # four-digit years. (A multi-page table under an unlabeled header is
-    # left out: see the ADR addendum's open item.)
+    # Seeded random tables (headers with and without ADJ/Alias labels, or
+    # none, on each of up to three pages; ADJ lines and one-line "timestamp
+    # ADJ" rows, "---" cells, negative flows, comments, short rows): printed
+    # with two-digit years they give exactly the readings and reject ranges
+    # of the same table printed with four-digit years. Multi-page UNLABELED
+    # headers with mixed ADJ tokens included (ADR 005 addendum 2026-10-23:
+    # the two-digit rows' table has its own boundary, from the header text
+    # their four-digit twin would read).
     import random
     rnd = random.Random(20261021)
-    cells = [CELLS, NEG, CELLS[:4] + ["---"] + CELLS[5:], CELLS[:5], ["---"] * 9]
+    n_unlabeled_multipage = 0
     for _ in range(600):
-        hdr = rnd.choice([HDR_FULL, HDR_FULL_NO_ADJ, HDR_ALIAS])
-        n_pages = 1 if hdr is HDR_FULL_NO_ADJ else rnd.randint(1, 3)
-        seq = []
-        for page in range(1, n_pages + 1):
-            seq += [(h, page) for h in hdr]
-            for k in range(rnd.randint(1, 30)):
-                ts = (f"{rnd.randint(1, 12)}/{rnd.randint(1, 28)}/25 {rnd.randint(0, 23)}:"
-                      f"{rnd.randint(0, 59):02d}")
-                adj = rnd.random()
-                row = [rnd.choice(["AHW1", "AHW2", "AHWW312R*"])]
-                row += ["EW-7"] if hdr is HDR_ALIAS else []
-                row += [ts + " ADJ"] if adj < 0.2 else [ts, "ADJ"] if adj < 0.35 else [ts]
-                row += list(rnd.choice(cells))
-                if rnd.random() < 0.3:
-                    row.append(rnd.choice(["No Change: :", "Opened Valve 1/2 turn:", "581821: 0"]))
-                seq += [(x, page) for x in row]
-        two = w._parse_table_lines(seq)
-        four = w._parse_table_lines([(_four(x), pg) for x, pg in seq])
-        assert [_key(r) for r in two.readings] == [_key(r) for r in four.readings], seq
-        assert [(t.first_page, t.last_page, t.n_rows) for t in two.rejected_tables] == [
-            (t.first_page, t.last_page, t.n_rows) for t in four.rejected_tables], seq
+        seq = _twin_seq(rnd)
+        pages = {pg for _, pg in seq}
+        if len(pages) > 1 and any(t == "Well ID" and pg > 1 for t, pg in seq) and not any(
+                t == "ADJ" and seq[k - 1][0] == "Date/Time" for k, (t, _) in enumerate(seq)):
+            n_unlabeled_multipage += 1
+        _assert_twins(seq)
+    assert n_unlabeled_multipage > 20  # the case this addendum is about is exercised
+
+
+# Review round 3 of the two-digit-year addendum found that a two-digit table
+# under an UNLABELED header repeated on each page took its boundary from
+# main's header text, which runs on over the first two-digit rows (ADR 005
+# addendum 2026-10-23, two-digit table boundary). Its two failing inputs:
+
+def _pages(*pages, hdr=HDR_FULL_NO_ADJ):
+    """[(text, page)]: `hdr` at the top of each page, then that page's rows."""
+    seq = []
+    for pg, rows in enumerate(pages, 1):
+        seq += [(h, pg) for h in hdr]
+        seq += [(x, pg) for r in rows for x in r]
+    return seq
+
+
+def test_case_a_a_two_digit_table_is_one_table_across_pages_main_splits():
+    # Page 1: 15 two-digit rows with a negative Flow, one followed by a
+    # literal ADJ line; page 2: 15 more, no ADJ. Main's header text runs over
+    # page 1's rows and takes that ADJ as a label, page 2's not, so main's
+    # table ends between the pages. The two-digit rows' table does not: all
+    # 30 are one table, 100% negative, rejected, as the four-digit twin is.
+    # (Before: two tables of 15, under the 20-row minimum, 30 shifted
+    # readings emitted.)
+    p1 = [[f"AHW{k}", f"10/1/25 7:{k:02d}", *NEG] for k in range(15)]
+    p1[2] = p1[2][:2] + ["ADJ"] + p1[2][2:]
+    p2 = [[f"AHW{k}", f"10/2/25 7:{k:02d}", *NEG] for k in range(15)]
+    seq = _pages(p1, p2)
+    k2 = next(k for k, (t, pg) in enumerate(seq) if pg == 2)
+    # the premise: main reads page 1's header as labeled, page 2's as not;
+    # the two-digit table reads both as unlabeled
+    assert "ADJ" in w._read_header(seq, 0)[0] and "ADJ" not in w._read_header(seq, k2)[0]
+    assert "ADJ" not in w._header_text_2d(seq, 0) and "ADJ" not in w._header_text_2d(seq, k2)
+    two, four = _assert_twins(seq)
+    assert two.readings == []
+    assert [(t.first_page, t.last_page, t.n_rows) for t in two.rejected_tables] == [(1, 2, 30)]
+
+
+def test_case_c_the_unlabeled_adj_partner_survives_mains_table_end():
+    # Page 1: "AHW1 ... ADJ" then "AHW9 10/1/25 9:00"; page 2: "AHW9
+    # 10/1/25 9:00" again. The page-2 row is AHW9's ADJ twin, paired with
+    # page 1's last row, as in the four-digit twin. (Before: main's table
+    # ended at page 2's header and the partner was dropped: adj False.)
+    p1 = [["AHW1", "10/1/25 8:00", "ADJ", *CELLS], ["AHW9", "10/1/25 9:00", *CELLS]]
+    p2 = [["AHW9", "10/1/25 9:00", *CELLS]]
+    two, four = _assert_twins(_pages(p1, p2))
+    assert [(r.well_id, r.page, r.adj) for r in two.readings] == [
+        ("AHW1", 1, True), ("AHW9", 1, False), ("AHW9", 2, True)]
+
+
+def test_a_one_line_first_row_labels_the_two_digit_table_as_it_labels_its_twin():
+    # The "related" point, decided: the two-digit table reads its header
+    # exactly as its four-digit twin's main does. Main's header text runs
+    # over a first row printed as a one-line "timestamp ADJ" and takes that
+    # ADJ as a label (the 2026-10-21 one-line addendum's accepted case), so
+    # the unlabeled-ADJ pairing is off for the table. The two-digit table
+    # does the same (_header_text_2d ends at a BARE timestamp of either
+    # form), so a later duplicate row is not paired in either form.
+    rows = [["AHW1", "10/1/25 7:56 ADJ", *CELLS], ["AHW2", "10/1/25 8:00", *CELLS],
+            ["AHW2", "10/1/25 8:00", *CELLS]]
+    seq = _pages(rows)
+    assert "ADJ" in w._header_text_2d(seq, 0)
+    two, four = _assert_twins(seq)
+    assert [r.adj for r in two.readings] == [r.adj for r in four.readings] == [True, False, False]
+    # ... while a bare first row followed by its own ADJ line is cut off the
+    # header in both forms: the table is unlabeled, and the duplicate pairs.
+    rows = [["AHW1", "10/1/25 7:56", "ADJ", *CELLS], ["AHW2", "10/1/25 8:00", *CELLS],
+            ["AHW2", "10/1/25 8:00", *CELLS]]
+    seq = _pages(rows)
+    assert "ADJ" not in w._header_text_2d(seq, 0) and "ADJ" in w._read_header(seq, 0)[0]
+    two, four = _assert_twins(seq)
+    assert [r.adj for r in two.readings] == [True, False, True]
+
+
+def test_header_text_2d_is_between_the_rows_start_and_mains_text():
+    seq = _pages([["AHW1", "10/1/25 7:56 ADJ", *CELLS], ["AHW2", "10/1/25 8:00", "ADJ", *CELLS],
+                  ["AHW3", "10/1/2025 8:00", *CELLS]])
+    main_text = w._read_header(seq, 0)[0]
+    text_2d = w._header_text_2d(seq, 0)
+    assert main_text.startswith(text_2d)
+    assert text_2d.endswith("10/1/25 7:56 ADJ " + " ".join(CELLS))  # runs over the one-line row
+    assert "AHW2" not in text_2d and "AHW2" in main_text  # ends at the bare two-digit row
+
+
+# Mixed tables (both year forms under one header): no main reading moves,
+# whichever table ends first.
+
+def test_mains_table_ending_does_not_end_the_two_digit_table_main_unchanged():
+    # Page 1: 15 negative two-digit rows (one with an ADJ line) and 5 clean
+    # main rows; page 2: 15 negative two-digit rows and 5 clean main rows,
+    # under an unlabeled header on each page. Main's table ends between the
+    # pages (its header text takes page 1's ADJ as a label); main's 10 rows
+    # read exactly as they do with no two-digit row printed at all. The 30
+    # two-digit rows are one table: rejected whole.
+    def page(day):
+        rows = [[f"AHX{k}", f"10/{day}/25 7:{k:02d}", *NEG] for k in range(15)]
+        rows += [[f"AHW{k}", f"10/{day}/2025 9:{k:02d}", *CELLS] for k in range(5)]
+        return rows
+    p1, p2 = page(1), page(2)
+    p1[1] = p1[1][:2] + ["ADJ"] + p1[1][2:]
+    seq = _pages(p1, p2)
+    g = w._parse_table_lines(seq)
+    assert [_key(r) for r in g.readings] == [_key(r) for r in w._parse_table_lines(
+        _strip_two_digit_rows(seq)).readings]
+    assert [(r.well_id[:3], r.page) for r in g.readings] == [("AHW", 1)] * 5 + [("AHW", 2)] * 5
+    assert [(t.first_page, t.last_page, t.n_rows, t.reason[:25]) for t in g.rejected_tables] == [
+        (1, 2, 30, "column-shift signature in")]
+
+
+def _strip_two_digit_rows(seq):
+    """The lines without the rows a two-digit timestamp starts (11 lines,
+    plus an ADJ line, in these fixtures)."""
+    out, k = [], 0
+    while k < len(seq):
+        t = seq[k][0]
+        if w.WELL_RE.match(t) and k + 1 < len(seq) and w._TWO_DIGIT_YEAR_RE.match(
+                seq[k + 1][0].replace(" ADJ", "")):
+            k += 2
+            while k < len(seq) and (seq[k][0] == "ADJ" or w.FLOAT_RE.match(seq[k][0])
+                                    or seq[k][0] == "---"):
+                k += 1
+            continue
+        out.append(seq[k])
+        k += 1
+    return out
+
+
+def test_a_column_shift_main_finds_takes_the_two_digit_rows_printed_under_it():
+    # Page 1: 3 clean two-digit rows (one with an ADJ line: main reads the
+    # page as labeled); page 2: 20 negative main rows, then 3 clean two-digit
+    # rows (main reads page 2 as unlabeled). Main's table ends between the
+    # pages and, at the end, is column-shift rejected: the two-digit rows
+    # printed under it (page 2's) go with it, as before. Page 1's three were
+    # under a main table that was never rejected, and the two-digit table
+    # (unlabeled on both pages) is one table: they are kept.
+    p1 = [[f"AHX{k}", f"10/1/25 7:{k:02d}", *CELLS] for k in range(3)]
+    p1[0] = p1[0][:2] + ["ADJ"] + p1[0][2:]
+    p2 = [[f"AHW{k}", f"10/2/2025 9:{k:02d}", *NEG] for k in range(20)]
+    p2 += [[f"AHX{k}", f"10/2/25 7:{k:02d}", *CELLS] for k in range(3)]
+    g = w._parse_table_lines(_pages(p1, p2))
+    assert [(r.well_id, r.page, r.adj) for r in g.readings] == [
+        ("AHX0", 1, True), ("AHX1", 1, False), ("AHX2", 1, False)]
+    assert [(t.first_page, t.last_page, t.n_rows, t.reason) for t in g.rejected_tables] == [
+        (2, 2, 20, "column-shift signature: 100% of rows have a negative flow"),
+        (2, 2, 3, "rows started by a two-digit-year timestamp, in a column-shift rejected table")]
+
+
+def test_readings_keep_line_order_when_the_two_digit_table_ends_first():
+    # Page 1 (unlabeled header): a two-digit row with an ADJ line, then two
+    # main rows: main's header text takes the ADJ as a label, the two-digit
+    # table's does not. Page 2 (labeled header): a main row, a two-digit row.
+    # Main's table continues (labeled on both pages); the two-digit table
+    # ends at page 2's header (unlabeled -> labeled) and emits its page-1 row
+    # first. The readings still come out in line order, as they always did.
+    p1 = [["AHX1", "10/1/25 7:00", "ADJ", *CELLS], ["AHW1", "10/1/2025 7:01", *CELLS],
+          ["AHW2", "10/1/2025 7:02", *CELLS]]
+    p2 = [["AHW3", "10/2/2025 7:03", *CELLS], ["AHX2", "10/2/25 7:04", *CELLS]]
+    seq = _pages(p1) + [(h, 2) for h in HDR_FULL] + [(x, 2) for r in p2 for x in r]
+    g = w._parse_table_lines(seq)
+    assert [(r.well_id, r.page, r.adj) for r in g.readings] == [
+        ("AHX1", 1, True), ("AHW1", 1, False), ("AHW2", 1, False), ("AHW3", 2, False),
+        ("AHX2", 2, False)]
+    mains = w._parse_table_lines(_strip_two_digit_rows(seq)).readings
+    assert [_key(r) for r in g.readings if r.well_id.startswith("AHW")] == [_key(r) for r in mains]
 
 
 @pytest.mark.parametrize("n_clean, n_neg_oneline", [(14, 8), (70, 20)])
