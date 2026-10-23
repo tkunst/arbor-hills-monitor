@@ -43,6 +43,10 @@ facts from analyst judgement:
 
 ## Snapshot
 
+Regenerated 2026-10-23 (coder:stall-hardening) — adds `doc_pipeline_liveness`
+(Processing; the document-pipeline stall guard `watcher.run` calls after the
+doc loop). 100 modules · 23 data stores · 361 edges.
+
 Regenerated 2026-10-23 (ADR 072) — adds `snapshot_exporter` (Persistence; a
 write edge to the Drive archive, called by the ROP / MMD / nSITE Submissions /
 PFAS watchers before their Sheet append). The PFAS persona flow gained a step
