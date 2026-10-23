@@ -313,10 +313,35 @@ def test_unserializable_payload_returns_none_without_tripping_the_breaker(monkey
     _configure(monkeypatch)
     uploads = []
     _arm_upload(monkeypatch, uploads)
+    created = []
+    real_ntf = se.tempfile.NamedTemporaryFile
+
+    def _spy_ntf(*a, **k):
+        fh = real_ntf(*a, **k)
+        created.append(fh.name)
+        return fh
+    monkeypatch.setattr(se.tempfile, "NamedTemporaryFile", _spy_ntf)
     assert se.export_snapshot({"bad": object()}, "n.json", ON) is None
     assert se._tripped is None
+    assert len(created) == 1 and not os.path.exists(created[0])   # tmp named BEFORE the write → still cleaned up
     assert se.export_snapshot("fine", "m.json", ON)
     assert [u["name"] for u in uploads] == ["m.json"]
+
+
+def test_a_stdout_failure_on_the_success_line_never_escapes(monkeypatch):
+    """The 'ok' log line sits inside the never-raises envelope: a broken stdout
+    (BrokenPipeError) is swallowed like any other failure, never raised into
+    the watcher before its Sheet row."""
+    _configure(monkeypatch)
+    uploads = []
+    _arm_upload(monkeypatch, uploads)
+    import builtins
+
+    def _bad_print(*a, **k):
+        raise BrokenPipeError("stdout closed")
+    monkeypatch.setattr(builtins, "print", _bad_print)
+    assert se.export_snapshot("x", "n.json", ON) is None   # upload happened, log failed → None, no raise
+    assert len(uploads) == 1
 
 
 def test_temp_file_is_removed_even_when_upload_fails(monkeypatch):

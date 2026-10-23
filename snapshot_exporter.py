@@ -187,21 +187,27 @@ def export_snapshot(payload, name: str, cfg,
                 tmp = fh.name
                 fh.write(_serialize(payload))
         except Exception as e:  # noqa: BLE001 — best-effort by contract; class only
-            print(f"[snapshot-export] FAILED to prepare {name} ({type(e).__name__}) — "
-                  "Sheet row still written; no Drive copy of this item.")
+            try:
+                print(f"[snapshot-export] FAILED to prepare {name} ({type(e).__name__}) — "
+                      "Sheet row still written; no Drive copy of this item.")
+            except Exception:  # noqa: BLE001 — logging itself must never raise
+                pass
             return None
         # Drive-side work (token refresh + two Drive calls). A failure here IS
         # an outage signal for the rest of the run: trip the breaker.
         try:
             link = ac.upload_file(_service(), tmp, name, mimetype, ac.folder_id(folder_env))
+            print(f"[snapshot-export] ok {name}")   # inside the envelope: a stdout error must not escape either
+            return link
         except Exception as e:  # noqa: BLE001 — best-effort by contract; class only
             _reset_service()
             _trip(type(e).__name__)
-            print(f"[snapshot-export] FAILED ({type(e).__name__}) for {name} — "
-                  "Sheet row still written; skipping further Drive copies this run.")
+            try:
+                print(f"[snapshot-export] FAILED ({type(e).__name__}) for {name} — "
+                      "Sheet row still written; skipping further Drive copies this run.")
+            except Exception:  # noqa: BLE001 — logging itself must never raise
+                pass
             return None
-        print(f"[snapshot-export] ok {name}")
-        return link
     finally:
         if tmp and os.path.exists(tmp):
             try:

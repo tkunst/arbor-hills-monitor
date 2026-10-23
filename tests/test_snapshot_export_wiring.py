@@ -50,7 +50,7 @@ def _fresh_service_cache(monkeypatch):
 def _arm_drive(monkeypatch, log, fail=False):
     """Fake the OAuth Drive side so the real export_snapshot() runs; every
     upload records ("drive", name, payload) into the shared ordered log. With
-    fail=True every upload raises and is counted as ("attempt",) instead."""
+    fail=True every upload raises and is logged as ("attempt", name) instead."""
     for k in se.ac.CREDENTIAL_ENV:
         monkeypatch.setenv(k, "x")
     monkeypatch.setenv(se.FOLDER_ENV, "SNAPFOLDER")
