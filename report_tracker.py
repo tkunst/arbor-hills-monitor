@@ -79,11 +79,23 @@ _ORDINALS = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3,
              "fourth": 4, "4th": 4}
 
 
+_US_DATE_RE = re.compile(r"^(\d{1,2})/(\d{1,2})/((?:19|20)\d\d)$")
+
+
 def _ymd(s: str) -> Optional[date]:
-    """ISO date string -> date, else None (a blank or a bad value is None)."""
+    """`YYYY-MM-DD` (what this job writes) or `m/d/yyyy` (what Sheets hands
+    back for a date someone TYPED into a hand-edited column, en_US) -> date;
+    blank or anything else -> None. Callers that need to tell "blank" from
+    "unreadable" check the raw string themselves (see run())."""
     s = (s or "").strip()
     if not s:
         return None
+    m = _US_DATE_RE.match(s)
+    if m:
+        try:
+            return date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
+        except ValueError:
+            return None
     try:
         return date.fromisoformat(s[:10])
     except ValueError:
@@ -146,6 +158,8 @@ class Period:
         return self.day, self.day
 
     def next(self) -> "Period":
+        if self.kind == "D":
+            raise ValueError("a one-time period has no next period")
         per = {"M": 12, "B": 6, "Q": 4, "H": 2, "Y": 1}[self.kind]
         if self.n < per:
             return Period(self.kind, self.year, self.n + 1)
@@ -162,6 +176,11 @@ def parse_period(s: str) -> Period:
     """`2025-10` | `2022B1` | `2025Q3` | `2025H2` | `2024` | `2023-06-12`.
     Raises ValueError on anything else."""
     s = (s or "").strip()
+    if _US_DATE_RE.match(s):
+        d = _ymd(s)
+        if d is None:
+            raise ValueError(f"unrecognized period {s!r}")
+        return Period("D", d.year, d.timetuple().tm_yday, d)
     m = _PERIOD_RE.match(s)
     if not m:
         raise ValueError(f"unrecognized period {s!r}")
@@ -333,11 +352,48 @@ class MatchRule:
                 + f"; period_from={','.join(self.period_from)}")
 
 
+# Titles are searched up to this many characters (a hand-edited regex with
+# nested quantifiers can take minutes on a long string; the period words are
+# always near the front of a title).
+TITLE_SEARCH_CHARS = 300
+_PROBE_STRINGS = ("a" * 60 + "!", "Status Report " * 12 + "!", "A-" * 40 + "Report" + " x" * 20 + "!")
+
+
+def _regex_is_fast(pat: "re.Pattern", budget_s: float = 0.5) -> bool:
+    """False when `pat` takes longer than `budget_s` on a few generic
+    pathological strings — the typo-shaped regex (`(\\w+\\s?)+Report$`) that
+    would otherwise hang the daily job silently. Uses SIGALRM when
+    available (main thread, POSIX); elsewhere the probe is skipped (True)."""
+    import signal
+    import threading
+    if not hasattr(signal, "SIGALRM") or threading.current_thread() is not threading.main_thread():
+        return True
+
+    def _timeout(signum, frame):
+        raise TimeoutError
+
+    old = signal.signal(signal.SIGALRM, _timeout)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, budget_s)
+        try:
+            for probe in _PROBE_STRINGS:
+                pat.search(probe)
+        except TimeoutError:
+            return False
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+    finally:
+        signal.signal(signal.SIGALRM, old)
+    return True
+
+
 def parse_match_rule(s: str) -> MatchRule:
     """`stream=nsite|hand-curated; title_regex=...; [exclude_regex=...;]
     [doc_type=...;] period_from=year_quarter_words[,prior_quarter_from_date]`.
     A small structure, not free code. Raises ValueError on a bad key, an
-    unknown stream/extractor or a regex that does not compile."""
+    unknown stream/extractor, a regex that does not compile, or one that
+    backtracks catastrophically. A `;` cannot appear inside a regex (the
+    rule is split on it)."""
     s = (s or "").strip()
     if not s:
         raise ValueError("empty match_rule")
@@ -363,6 +419,9 @@ def parse_match_rule(s: str) -> MatchRule:
         exclude_re = re.compile(kv["exclude_regex"], re.I) if kv.get("exclude_regex") else None
     except re.error as e:
         raise ValueError(f"match_rule regex does not compile: {e}") from e
+    for pat in (title_re, exclude_re):
+        if pat is not None and not _regex_is_fast(pat):
+            raise ValueError("match_rule regex is too slow (catastrophic backtracking); simplify it")
     period_from = tuple(x.strip() for x in kv.get("period_from", "auto").split(",") if x.strip())
     if any(x not in EXTRACTORS for x in period_from):
         raise ValueError(f"match_rule period_from must use {EXTRACTORS}")
@@ -403,10 +462,11 @@ _MON = r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?
 _MONTH_RANGE_RE = re.compile(
     r"\b" + _MON + r"\.?\s*(?:\d{1,2},?\s*)?(?:" + _YEAR + r"\s*)?(?:[-–—]|to|through|thru|and)\s*"
     + _MON + r"\.?\s*(?:\d{1,2},?\s*)?" + _YEAR + r"\b", re.I)
-_MONTH_YEAR_RE = re.compile(r"(?<![-–—])(?<!\bto )\b" + _MON + r"\s+" + _YEAR + r"\b", re.I)
+_MONTH_YEAR_RE = re.compile(r"(?<![-–—])(?<![-–—] )(?<!\bto )(?<!and )\b" + _MON + r"\s+" + _YEAR + r"\b", re.I)
 _DATE_RANGE_RE = re.compile(r"\b(\d{6})\s*(?:through|thru|to|[-–—])\s*(\d{6})\b")
 _DATED_RE = re.compile(r"\b(?:dated|due)\s+(\d{1,2})/(\d{1,2})/((?:19|20)\d\d)\b", re.I)
-_YEAR_RE = re.compile(r"\b(?:CY|FY)?((?:19|20)\d\d)\b")
+_YEAR_RE = re.compile(r"(?<![\d-])((?:19|20)\d\d)(?![\d-])")
+_LABELED_YEAR_RE = re.compile(r"\b(?:CY|FY|calendar year|fiscal year)\s*((?:19|20)\d\d)\b", re.I)
 _SLASH_DATE_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/((?:19|20)\d\d)\b")
 _LONG_DATE_RE = re.compile(r"\b" + _MON + r"\.?\s+(\d{1,2}),?\s+((?:19|20)\d\d)\b", re.I)
 
@@ -432,7 +492,7 @@ def _record_date(rec: Record) -> Optional[date]:
 def extract_period(name: str, rec: Record) -> Optional[Period]:
     """One named extractor over a record. Pure. Returns None when the pattern
     is absent; a bad year/month never raises."""
-    t = rec.title or ""
+    t = (rec.title or "")[:TITLE_SEARCH_CHARS]
     if name == "auto":
         for n in _AUTO_ORDER:
             p = extract_period(n, rec)
@@ -493,8 +553,11 @@ def extract_period(name: str, rec: Record) -> Optional[Period]:
                 return None
             return period_for_months(y2, m1, m2)
         if name == "year_in_title":
-            m = _YEAR_RE.search(t)
-            return Period("Y", int(m.group(1)), 1) if m else None
+            m = _LABELED_YEAR_RE.search(t)
+            if m:
+                return Period("Y", int(m.group(1)), 1)
+            years = _YEAR_RE.findall(t)   # a "2020-0593-CE" case number never counts
+            return Period("Y", int(years[-1]), 1) if years else None
         if name == "record_period":
             return parse_period(rec.period_hint) if rec.period_hint else None
         if name == "date_in_title":
@@ -554,12 +617,19 @@ class Facility:
     row: dict = field(default_factory=dict)
 
     def matches_text(self, text: str) -> bool:
+        """Case-insensitive; a short all-caps alias (AHL, CFL, N2688) must
+        stand as a whole word so "Stahl" never resolves to Arbor Hills."""
         t = (text or "").lower()
         if not t:
             return False
         for a in (self.name, self.air_srn, *self.aliases):
-            a = (a or "").strip().lower()
-            if a and a in t:
+            a = (a or "").strip()
+            if not a:
+                continue
+            if len(a) <= 6 and a.upper() == a:
+                if re.search(r"(?<![A-Za-z0-9])" + re.escape(a.lower()) + r"(?![A-Za-z0-9])", t):
+                    return True
+            elif a.lower() in t:
                 return True
         return False
 
@@ -841,6 +911,12 @@ def evaluate_triggers(rules: list, measurement_rows: list, facilities: list, hov
         if m["metric"] == "carbon_monoxide":
             co_by_well_month.setdefault((m["well"], m["date"].year, m["date"].month), []).append(m["value"])
     fac_by_id = {f.facility_id: f for f in facilities}
+    # A Measurements row with a BLANK Facility (rows predating that column)
+    # belongs to the one active facility the nSITE Documents stream feeds;
+    # with none or several such facilities it matches nobody.
+    nsite_owners = [f for f in facilities if f.active and "nsite" in f.streams]
+    blank_owner = nsite_owners[0].facility_id if len(nsite_owners) == 1 else None
+    hov_norm = {_norm_well(w) for w in hov_wells}
     out: dict = {}
     for rule in rules:
         if not rule.active:
@@ -850,13 +926,14 @@ def evaluate_triggers(rules: list, measurement_rows: list, facilities: list, hov
             if not fac.active:
                 continue
             temps = sorted((m for m in ms if m["metric"] == "temperature"
-                            and (not m["facility"] or fac.matches_text(m["facility"]))),
+                            and ((m["facility"] and fac.matches_text(m["facility"]))
+                                 or (not m["facility"] and fac.facility_id == blank_owner))),
                            key=lambda m: m["date"])
             for m in temps:
                 ok = True
                 for term in rule.terms:
                     if term[0] == "no_hov":
-                        ok = m["well"] not in hov_wells
+                        ok = _norm_well(m["well"]) not in hov_norm
                     elif term[0] == "wellhead_temp_f":
                         ok = _cmp(term[1], m["value"], term[2])
                     else:  # co_ppmv
@@ -925,14 +1002,15 @@ def match_record(rec: Record, schedules: list, facilities: list) -> Optional[Mat
     is PROPOSED (never applied) — that is how an inactive 2019-2021 row is
     kept from claiming a 2025 title. None when no rule matches at all. Pure."""
     fids = resolve_facility(rec, facilities)
+    title = (rec.title or "")[:TITLE_SEARCH_CHARS]
     cands = []
     for s in schedules:
         rule = s.match_rule
         if rule is None or rec.stream not in rule.streams:
             continue
-        if not rule.title_re.search(rec.title or ""):
+        if not rule.title_re.search(title):
             continue
-        if rule.exclude_re and rule.exclude_re.search(rec.title or ""):
+        if rule.exclude_re and rule.exclude_re.search(title):
             continue
         if rule.doc_type and rec.doc_type and rule.doc_type.lower() != rec.doc_type.lower():
             continue
@@ -999,12 +1077,13 @@ def is_complete(log_row: dict, today: date) -> bool:
 
 def missing_instances(instances: list, arrived_keys: set, log_keys: set, today: date) -> list:
     """Instances past due + grace with no arrival and not yet on the log."""
-    out = []
+    out, seen = [], set(log_keys)
     for inst in instances:
-        if inst.key in arrived_keys or inst.key in log_keys:
+        if inst.key in arrived_keys or inst.key in seen:
             continue
         if inst.due + timedelta(days=inst.grace) < today:
             out.append(inst)
+            seen.add(inst.key)   # two sources for one key never make two rows
     return out
 
 
@@ -1065,7 +1144,7 @@ def wds_records(rows: list) -> list:
 
 
 _HC_COLS = ("curated_filename", "title", "source", "doc_date", "facility", "doc_type", "risks",
-            "origin_url", "note", "drive_link", "added_at", "folded_into_public", "_m")
+            "origin_url", "note", "drive_link", "added_at", "folded_into_public", "source_public")
 
 
 def hand_curated_records(rows: list) -> list:
@@ -1147,9 +1226,31 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def _hov_wells(cfg: dict) -> set:
-    ceilings = ((cfg.get("temperature_thresholds") or {}).get("hov_ceilings") or {})
-    return {str(k) for k in ceilings} if isinstance(ceilings, dict) else set()
+def _norm_well(w: str) -> str:
+    return str(w or "").strip().rstrip("*").upper()
+
+
+def hov_wells(cfg: dict) -> set:
+    """Well ids with an approved HOV ceiling, normalized like
+    `email_alerts.hov_ceiling_for` (trailing `*` dropped, upper-cased).
+    `temperature_thresholds.hov_ceilings` is a LIST of {well_id, ceiling_f,
+    effective_start, effective_end} entries in config.yml (a dict keyed by
+    well id is accepted too). Covers only the letters the roster holds
+    (2024-2026 as of 2026-10-17), so `no_hov(well)` is about the CURRENT
+    roster, not a pre-2024 reading's own date."""
+    ceilings = (cfg.get("temperature_thresholds") or {}).get("hov_ceilings") or []
+    if isinstance(ceilings, dict):
+        return {_norm_well(k) for k in ceilings} - {""}
+    out = set()
+    for e in ceilings:
+        if isinstance(e, dict):
+            out.add(_norm_well(e.get("well_id", "")))
+        else:
+            out.add(_norm_well(e))
+    return out - {""}
+
+
+_hov_wells = hov_wells
 
 
 def _rows_with_rownums(service, sheet_id: str, tab: str, a1: str) -> list:
@@ -1221,9 +1322,12 @@ def run(today: Optional[date] = None, send_email: bool = False, cfg: Optional[di
         return 0
     today = today or datetime.now(timezone.utc).date()
     now = _now_iso()
+    public_id = (os.environ.get("GSHEET_ID") or "").strip()
+    if not public_id:
+        print("[report_tracker] refusing to run: GSHEET_ID is not set")
+        return 1
     import drive_client as dc
     service = dc.sheets_service()
-    public_id = os.environ["GSHEET_ID"]
     private_id, why = rf.private_sheet_for_write(service)
     if private_id is None:
         print(f"[report_tracker] refusing to run: {why} (the tracker writes the private Sheet only)")
@@ -1253,8 +1357,11 @@ def run(today: Optional[date] = None, send_email: bool = False, cfg: Optional[di
         instances += expand_schedule(s, today, default_grace, lookahead)
     if any(t.active for t in triggers):
         meas = sw._tab_rows_strict(service, public_id, sw.TAB_MEASUREMENTS, "A2:K")
-        instances += evaluate_triggers(triggers, meas, facilities, _hov_wells(cfg), today, default_grace)
-    by_key = {i.key: i for i in instances}
+        instances += evaluate_triggers(triggers, meas, facilities, hov_wells(cfg), today, default_grace)
+    by_key: dict = {}
+    for i in instances:          # one instance per key, first source wins
+        by_key.setdefault(i.key, i)
+    instances = list(by_key.values())
 
     # Existing tracker state (all three are this job's own tabs).
     arrivals = [_rowdict(sw.REPORT_ARRIVAL_HEADERS, r)
@@ -1270,11 +1377,33 @@ def run(today: Optional[date] = None, send_email: bool = False, cfg: Optional[di
     last_run = _ymd(runs[-1]["run_date"]) if runs else None
     arrived_refs = {(a["source_stream"], a["source_ref"]) for a in arrivals}
     arrived_keys = {a["instance_key"] for a in arrivals}
+    arrival_by_key: dict = {}
+    for a in arrivals:
+        arrival_by_key.setdefault(a["instance_key"], a)
+    # A hand-entered date nobody can read must not pass as "blank" (open
+    # forever, silently): surface it, keep the row open.
+    for lr in log_rows:
+        if lr["date_received"] and _ymd(lr["date_received"]) is None:
+            bad.append(("Missing & Overdue Log", lr["instance_key"],
+                        f"date_received {lr['date_received']!r} is not a date (use YYYY-MM-DD)"))
 
-    # 4. Match arrivals.
+    # 4. Match arrivals. First reconcile: an OPEN log row whose instance
+    # already has an arrival on the Report Arrivals tab (a hand-added row,
+    # or a run killed between the arrival append and the log fill) is
+    # received now, from that arrival — idempotent, so the fill can never be
+    # lost to a crash.
+    new_arrivals, review_new, fills = [], [], []
+    for idx, lr in enumerate(log_rows):
+        a = arrival_by_key.get(lr["instance_key"])
+        if a is None or lr["date_received"] or idx >= len(log_rownums):
+            continue
+        received = (a["filed_date"][:10] if _ymd(a["filed_date"]) else
+                    a["doc_date"][:10] if _ymd(a["doc_date"]) else
+                    a["first_seen_at"][:10] if _ymd(a["first_seen_at"]) else today.isoformat())
+        lr["date_received"], lr["received_via"] = received, a["arrival_id"] or "hand"
+        fills.append((log_rownums[idx], received, lr["received_via"]))
     streams_in_use = {s for f in facilities if f.active for s in f.streams}
     records = load_stream_records(service, public_id, private_id, streams_in_use)
-    new_arrivals, review_new, fills = [], [], []
     for rec in records:
         if (rec.stream, rec.ref) in arrived_refs or agency_re.search(rec.title or ""):
             continue
@@ -1371,15 +1500,35 @@ def run(today: Optional[date] = None, send_email: bool = False, cfg: Optional[di
     return 0
 
 
+_URL_RE = re.compile(r"https?://\S+")
+_LONG_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{20,}")
+
+
+def scrub(msg) -> str:
+    """Strip URLs and long id-like tokens (a spreadsheet id, a Drive file
+    id) from a message bound for the PUBLIC Actions log."""
+    return _LONG_TOKEN_RE.sub("<id>", _URL_RE.sub("<url>", str(msg)))[:300]
+
+
 def main(argv: Optional[list] = None) -> int:
     import argparse
+    import logging
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--today", help="run as of this ISO date (tests/replays)")
     ap.add_argument("--email", action="store_true", help="send the owner-only review email this run")
     args = ap.parse_args(argv)
     today = date.fromisoformat(args.today) if args.today else None
     email = args.email or str(os.environ.get("REPORT_TRACKER_EMAIL", "")).lower() == "true"
-    return run(today=today, send_email=email)
+    # stdout is public: googleapiclient's retry logger would print each
+    # retried request URI (which carries the private spreadsheet id), and an
+    # uncaught HttpError repr does the same. Same pattern as govqa_watcher /
+    # ride_docs_watcher.
+    logging.getLogger("googleapiclient.http").setLevel(logging.ERROR)
+    try:
+        return run(today=today, send_email=email)
+    except Exception as e:  # noqa: BLE001 — class + scrubbed message only
+        print(f"[report_tracker] failed: {type(e).__name__}: {scrub(e)}")
+        return 1
 
 
 if __name__ == "__main__":

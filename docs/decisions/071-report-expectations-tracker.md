@@ -307,6 +307,16 @@ the Mac's `.env` today, so the check reports `skipped` until it is added.
 `run_infra_checks.sh` lives under `~/Library/Application Support` and is not
 git-tracked; only the SKILL.md half of that edit is a Lotext commit.
 
+**Hand-edited dates.** Type `date_received` / `foia_date_filed` /
+`first_period` as `YYYY-MM-DD`; a date Sheets auto-formats to `m/d/yyyy`
+is read too, but anything else non-blank in `date_received` is flagged in
+`Report Tracker Review` (and the row stays open) rather than passing as
+blank. A hand-added `Report Arrivals` row closes its open log row on the
+next run (received date = the row's `filed_date`, else `doc_date`, else
+`first_seen_at`). Trigger rules: `no_hov(well)` is evaluated against the
+CURRENT HOV roster in `config.yml`, and a Measurements row with a blank
+Facility belongs to the one facility the nSITE stream feeds.
+
 **Activation (Trisha's steps, in order):** `python3 report_tracker_seed.py`
 (dry run) → `--apply` → set `shadow_until` → flip `enabled: true` → add
 `GSHEET_ID_PRIVATE` to the Mac `.env` for Check 16 → after two clean weeks,
