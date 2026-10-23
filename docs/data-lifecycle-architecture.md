@@ -203,10 +203,10 @@ human-facing signal never precedes the durable copy.
 
 ---
 
-## Per-stream Tier-1 status: the snapshot-diff watchers (ADR 071)
+## Per-stream Tier-1 status: the snapshot-diff watchers (ADR 072)
 
 Four watchers record their full snapshot payload only to a Tier-2 append-only
-tab (ROP Watch, MMD Watch, Submissions Watch, PFAS Page Watch). ADR 071 adds
+tab (ROP Watch, MMD Watch, Submissions Watch, PFAS Page Watch). ADR 072 adds
 one shared exporter, `snapshot_exporter.py`, that each of them calls
 immediately BEFORE its snapshot append, so the write order above holds:
 Drive file → Sheet row → alert. It ships behind
@@ -215,7 +215,7 @@ app-only folder, `GOAUTH_SNAPSHOT_FOLDER_ID`. Until Trisha activates it the
 "Tier 1" column below reads *on flag*; once activated it reads *yes* from the
 next observed change onward (no backfill of past rows).
 
-| Stream | Watcher | Tier 2 (today) | Tier 1 (ADR 071) | Exported payload |
+| Stream | Watcher | Tier 2 (today) | Tier 1 (ADR 072) | Exported payload |
 |---|---|---|---|---|
 | ROP (Stream H) | `rop_watcher.py` | ROP Watch tab, one row per item per change | on flag — `rop_<key>_<date>_<hash>.json` | the row's `snapshot_json` (sorted-keys JSON) |
 | MMD (Stream I) | `mmd_watcher.py` | MMD Watch tab | on flag — `mmd_<key>_<date>_<hash>.json` | the row's `snapshot_json` |

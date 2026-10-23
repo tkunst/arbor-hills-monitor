@@ -224,7 +224,7 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg,
     last = sw.last_mmd_snapshot(sheets, sheet_id, key)
 
     if last is None:
-        # Tier-1 Drive copy BEFORE the Tier-2 row (ADR 071 write order; a
+        # Tier-1 Drive copy BEFORE the Tier-2 row (ADR 072 write order; a
         # best-effort no-op unless data_lifecycle.snapshot_export is enabled).
         se.export_snapshot(snap_json, se.snapshot_name("mmd", key, today, new_hash), cfg)
         sw.append_mmd_watch_row(sheets, sheet_id, today, key, label, "baseline",

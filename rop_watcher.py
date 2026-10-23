@@ -293,7 +293,7 @@ def _diff_and_record(sheets, sheet_id, today, key, label, source_url, snap,
     last = sw.last_rop_snapshot(sheets, sheet_id, key)
 
     if last is None:
-        # Tier-1 Drive copy BEFORE the Tier-2 row (ADR 071 write order; a
+        # Tier-1 Drive copy BEFORE the Tier-2 row (ADR 072 write order; a
         # best-effort no-op unless data_lifecycle.snapshot_export is enabled).
         se.export_snapshot(snap_json, se.snapshot_name("rop", key, today, new_hash), cfg)
         sw.append_rop_watch_row(sheets, sheet_id, today, key, label, "baseline",

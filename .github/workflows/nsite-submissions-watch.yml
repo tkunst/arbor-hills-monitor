@@ -14,7 +14,7 @@ name: nsite-submissions-watch
 # it was verified against a real workflow_dispatch run before merging — see
 # the ADR). No Anthropic (a deterministic extractor, not the Claude
 # classifier); Drive/OAuth only for the OPTIONAL, default-off snapshot exporter
-# (ADR 071) — the deliverable is the alert + the durable Sheet row, same scope
+# (ADR 072) — the deliverable is the alert + the durable Sheet row, same scope
 # call as rop_watcher/mmd_watcher/ride_watcher. 1pm ET
 # continues the sequential slotting after pfas(7am)/rop(10am)/mmd(11am)/
 # ride(12pm); state is the "Submissions Watch" tab, NOT _meta, so it never
@@ -55,7 +55,7 @@ jobs:
         env:
           # Sheets I/O uses the service account; the change alert uses SMTP.
           # No Anthropic (nothing to classify). OAuth is passed ONLY for the
-          # optional snapshot -> Drive exporter (ADR 071, snapshot_exporter.py):
+          # optional snapshot -> Drive exporter (ADR 072, snapshot_exporter.py):
           # inert until data_lifecycle.snapshot_export.enabled is true AND
           # GOAUTH_SNAPSHOT_FOLDER_ID is set; an unset secret is an empty string.
           GSHEET_ID: ${{ secrets.GSHEET_ID }}

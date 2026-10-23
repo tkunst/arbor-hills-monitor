@@ -9,7 +9,7 @@ name: pfas-watch
 # Safe to leave scheduled from day one: pfas.enabled is false by default, so
 # pfas_watcher._should_run() makes every run a quiet no-op (exit 0) until Trisha
 # flips it on. Lighter than the other jobs — no Anthropic, no OCR; Drive/OAuth
-# only for the OPTIONAL, default-off snapshot exporter (ADR 071); Sheets I/O via
+# only for the OPTIONAL, default-off snapshot exporter (ADR 072); Sheets I/O via
 # the service account + SMTP for the alert. State is the
 # append-only PFAS Page Watch tab, NOT _meta, so this never races the other jobs
 # on the _meta cell; 7am ET simply keeps it clear of the 3–6am cluster.
@@ -49,7 +49,7 @@ jobs:
         env:
           # Sheets I/O uses the service account; the change alert uses SMTP.
           # No Anthropic (nothing to classify). OAuth is passed ONLY for the
-          # optional snapshot -> Drive exporter (ADR 071, snapshot_exporter.py):
+          # optional snapshot -> Drive exporter (ADR 072, snapshot_exporter.py):
           # inert until data_lifecycle.snapshot_export.enabled is true AND
           # GOAUTH_SNAPSHOT_FOLDER_ID is set; an unset secret is an empty string.
           GSHEET_ID: ${{ secrets.GSHEET_ID }}

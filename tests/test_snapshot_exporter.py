@@ -1,4 +1,4 @@
-"""snapshot_exporter.py unit tests (ADR 071): the flag, the naming rule, and the
+"""snapshot_exporter.py unit tests (ADR 072): the flag, the naming rule, and the
 never-raises contract of export_snapshot() against a mocked archive_client."""
 import json
 import os
