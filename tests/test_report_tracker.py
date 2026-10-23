@@ -720,6 +720,23 @@ def test_arrival_of_a_logged_item_fills_date_received_and_counts_completed(world
     assert len(_rows(fake, sw.TAB_MISSING_OVERDUE)) == int(runs[0]["open_count"])   # never deleted
 
 
+def test_blank_log_row_does_not_shift_the_date_received_fill(world):
+    """A cleared row / spacer in the hand-edited log must not move the
+    in-place fill onto the wrong instance (the fill is keyed on the real
+    sheet row number, not an index into the blank-filtered read)."""
+    fake = world
+    assert rt.run(today=TODAY, cfg=_cfg()) == 0
+    tab = fake.books["PRIV"].tabs[sw.TAB_MISSING_OVERDUE]
+    tab.insert(1, [])                      # a blank row right under the header
+    fake.books["PUB"].tabs[sw.TAB_NEW].append(_feed_row(
+        "Arbor Hills Landfill Q4 2025 Consent Judgment quarterly report to EGLE, dated 1/30/2026", "2026-10-24",
+        "https://mienviro.michigan.gov/ncore/downloadpdf/-6434168316378583072"))
+    assert rt.run(today=TODAY.replace(day=25), cfg=_cfg()) == 0
+    filled = [r for r in tab[1:] if len(r) > 8 and r[8]]
+    assert len(filled) == 1 and filled[0][0] == "arbor-hills|cj-quarterly-probe|2025Q4"
+    assert tab[1] == []                    # the spacer is untouched
+
+
 def test_hand_entered_date_received_completes_and_is_counted_once(world):
     fake = world
     assert rt.run(today=TODAY, cfg=_cfg()) == 0
