@@ -861,7 +861,8 @@ def _parse_table_lines_once(lines: list[tuple[str, int]], alias_map: Optional[di
             out.rejected_tables.append(RejectedTable(
                 first_page=cur_rejected_2d["first"], last_page=cur_rejected_2d["last"],
                 n_rows=cur_rejected_2d["n"], reason=cur_rejected_2d["reason"],
-                header=header if header_cols is None else "columns read: " + ",".join(header_cols)))
+                header=(header_2d if header_cols is None
+                        else "columns read: " + ",".join(header_cols))))
             cur_rejected_2d.update(n=0, first=None, last=None, reason="")
         if main_ends and cur_rows and not main_rejected:
             drop = set()

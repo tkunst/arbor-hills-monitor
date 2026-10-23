@@ -341,9 +341,15 @@ def test_two_digit_tables_read_like_their_four_digit_twins():
     n_unlabeled_multipage = 0
     for _ in range(600):
         seq = _twin_seq(rnd)
+        # the case this addendum is about: a header on a later page, no
+        # header labeled ADJ, and an ADJ token among the rows (the token
+        # main's over-long header text can take as a label)
         pages = {pg for _, pg in seq}
-        if len(pages) > 1 and any(t == "Well ID" and pg > 1 for t, pg in seq) and not any(
-                t == "ADJ" and seq[k - 1][0] == "Date/Time" for k, (t, _) in enumerate(seq)):
+        labeled = any(t == "ADJ" and seq[k - 1][0] == "Date/Time" for k, (t, _) in enumerate(seq))
+        row_adj = any(t == "ADJ" and seq[k - 1][0] != "Date/Time" or t.endswith(" ADJ")
+                      for k, (t, _) in enumerate(seq))
+        if len(pages) > 1 and any(t == "Well ID" and pg > 1 for t, pg in seq) and not labeled \
+                and row_adj:
             n_unlabeled_multipage += 1
         _assert_twins(seq)
     assert n_unlabeled_multipage > 20  # the case this addendum is about is exercised
