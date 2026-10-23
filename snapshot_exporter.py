@@ -91,6 +91,10 @@ _drive = None
 # breaker and every later export_snapshot() call in the same run skips
 # straight to the Sheet row (one line logged, once). A dead token likewise
 # fails once, not once per item. Reset only by a new process (= the next run).
+# Process-global, not per folder_env: every caller today runs one watcher per
+# process against the one shared folder; a future second folder in the SAME
+# process would share this breaker (fine — the outage it guards is Drive/OAuth
+# itself, not a folder).
 _tripped: str | None = None
 
 
@@ -121,9 +125,10 @@ def snapshot_name(stream: str, key, date: str, digest: str, ext: str = "json") -
 
 def _serialize(payload) -> str:
     """A str payload is written verbatim (it IS the Sheet cell); anything else
-    is compact sorted-keys JSON — byte-identical to the form the four watchers
-    build with `json.dumps(snap, sort_keys=True, ensure_ascii=False)` and hash,
-    so a dict payload's file still matches its row's hash."""
+    is single-line sorted-keys JSON with json.dumps's default separators —
+    byte-identical to the form the four watchers build with
+    `json.dumps(snap, sort_keys=True, ensure_ascii=False)` and hash, so a dict
+    payload's file still matches its row's hash."""
     if isinstance(payload, str):
         return payload
     return json.dumps(payload, sort_keys=True, ensure_ascii=False)
@@ -171,21 +176,32 @@ def export_snapshot(payload, name: str, cfg,
 
     tmp = None
     try:
-        ext = name.rsplit(".", 1)[-1].lower() if "." in name else "json"
-        mimetype = _MIME.get(ext, "application/octet-stream")
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=f".{ext}",
-                                         delete=False) as fh:
-            fh.write(_serialize(payload))
-            tmp = fh.name
-        link = ac.upload_file(_service(), tmp, name, mimetype, ac.folder_id(folder_env))
+        # Item-LOCAL preparation (serialize + temp file). A failure here says
+        # nothing about Drive, so it returns None for THIS item without
+        # tripping the breaker — the next item still gets its copy.
+        try:
+            ext = name.rsplit(".", 1)[-1].lower() if "." in name else "json"
+            mimetype = _MIME.get(ext, "application/octet-stream")
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=f".{ext}",
+                                             delete=False) as fh:
+                tmp = fh.name
+                fh.write(_serialize(payload))
+        except Exception as e:  # noqa: BLE001 — best-effort by contract; class only
+            print(f"[snapshot-export] FAILED to prepare {name} ({type(e).__name__}) — "
+                  "Sheet row still written; no Drive copy of this item.")
+            return None
+        # Drive-side work (token refresh + two Drive calls). A failure here IS
+        # an outage signal for the rest of the run: trip the breaker.
+        try:
+            link = ac.upload_file(_service(), tmp, name, mimetype, ac.folder_id(folder_env))
+        except Exception as e:  # noqa: BLE001 — best-effort by contract; class only
+            _reset_service()
+            _trip(type(e).__name__)
+            print(f"[snapshot-export] FAILED ({type(e).__name__}) for {name} — "
+                  "Sheet row still written; skipping further Drive copies this run.")
+            return None
         print(f"[snapshot-export] ok {name}")
         return link
-    except Exception as e:  # noqa: BLE001 — best-effort by contract; class only
-        _reset_service()
-        _trip(type(e).__name__)
-        print(f"[snapshot-export] FAILED ({type(e).__name__}) for {name} — "
-              "Sheet row still written; skipping further Drive copies this run.")
-        return None
     finally:
         if tmp and os.path.exists(tmp):
             try:

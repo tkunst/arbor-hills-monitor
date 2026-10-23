@@ -307,11 +307,16 @@ def test_breaker_is_not_consulted_while_disabled(monkeypatch):
     assert se.export_snapshot("c", "c.json", {}) is None
 
 
-def test_unserializable_payload_returns_none(monkeypatch):
+def test_unserializable_payload_returns_none_without_tripping_the_breaker(monkeypatch):
+    """An item-LOCAL preparation failure says nothing about Drive: this item
+    gets no copy, but the next item in the run still does."""
     _configure(monkeypatch)
-    monkeypatch.setattr(se.ac, "oauth_drive_service", lambda: "fake-drive")
-    monkeypatch.setattr(se.ac, "upload_file", _boom)
+    uploads = []
+    _arm_upload(monkeypatch, uploads)
     assert se.export_snapshot({"bad": object()}, "n.json", ON) is None
+    assert se._tripped is None
+    assert se.export_snapshot("fine", "m.json", ON)
+    assert [u["name"] for u in uploads] == ["m.json"]
 
 
 def test_temp_file_is_removed_even_when_upload_fails(monkeypatch):
