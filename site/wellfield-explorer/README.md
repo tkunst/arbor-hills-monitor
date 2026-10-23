@@ -11,7 +11,9 @@ tool makes no interpretive claims the data does not support.
 ## Data + method
 
 - **Readings:** the public wellfield dataset (WOI Status Reports + Gas-Extraction Exceedance
-  filings), as-found readings only (ADJ duplicates excluded).
+  filings), as-found readings only (ADJ duplicates excluded). Rows the dataset marks
+  `point_type` = "probe" (IDs GFL labels as gas probes, not extraction wells) are not shown.
+  Built from the 2026-10-23 corrections release (`wellfield-data-2026-10-23`).
 - **Well locations (lineages):** successive redrill wells at one location are merged into a
   single continuous series when their reading dates do not overlap; overlapping candidates are
   kept separate.
