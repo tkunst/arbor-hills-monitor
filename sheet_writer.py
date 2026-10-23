@@ -648,14 +648,36 @@ PERIMETER_EPISODE_HEADERS = [
     "Source", "Event ID", "Logged (UTC)",
 ]
 
+# coder:dataset-provenance-sheet (2026-10-22): one annotation column after the
+# row-builder columns on three tabs. The row builders (feed_row,
+# append_archive_row) still write only FEED_HEADERS / ARCHIVE_HEADERS, so an
+# appended row leaves the annotation cell blank; dataset_provenance.py fills it.
+# Listed here only so ensure_tabs() keeps the header cell and a future column
+# appended to FEED_HEADERS / ARCHIVE_HEADERS can't silently overwrite it.
+# Related Documents gets no pointer (never a dataset source, ADR 064).
+FEED_TAB_HEADERS = FEED_HEADERS + ["dataset_status"]
+ARCHIVE_TAB_HEADERS = ARCHIVE_HEADERS + ["same_content_as"]
+
+# Dataset Provenance (coder:dataset-provenance-sheet; Lotext
+# DESIGN-sheet-provenance-and-dedupe.md §3): one row per (document copy,
+# dataset version) saying which published or staged dataset a document fed.
+# Written ONLY by dataset_provenance.py (the seed script and the Lotext
+# wellfield staging run); created on demand there, so deliberately NOT in
+# _TAB_HEADERS. Public Sheet: doc ids, titles and links already public here.
+TAB_DATASET_PROVENANCE = "Dataset Provenance"
+DATASET_PROVENANCE_HEADERS = [
+    "doc_id", "document_title", "link", "dataset", "source_report", "status",
+    "first_release_tag", "rows_contributed", "last_updated",
+]
+
 _TAB_HEADERS = {
-    TAB_NEW: FEED_HEADERS,
-    TAB_HISTORICAL: FEED_HEADERS,
+    TAB_NEW: FEED_TAB_HEADERS,
+    TAB_HISTORICAL: FEED_TAB_HEADERS,
     TAB_RELATED: FEED_HEADERS,
     TAB_EVIDENCE: EVIDENCE_HEADERS,
     TAB_REGISTER: REGISTER_HEADERS,
     TAB_MEASUREMENTS: MEASUREMENTS_HEADERS,
-    TAB_ARCHIVE: ARCHIVE_HEADERS,
+    TAB_ARCHIVE: ARCHIVE_TAB_HEADERS,
     TAB_COMPLIANCE_DEADLINES: COMPLIANCE_DEADLINE_HEADERS,
     TAB_STATE: STATE_HEADERS,
     TAB_META: META_HEADERS,
