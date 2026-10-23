@@ -1977,6 +1977,47 @@ owner_weekly:
   # predates the routing log).
   hand_curated_since: "2026-10-15"
 
+# --- Report expectations tracker (ADR 071) ---
+# report_tracker.py + .github/workflows/report-tracker.yml: expands the
+# hand-edited Expected Reports / Trigger Rules tabs on the PRIVATE Sheet into
+# due instances, matches arrivals from the existing streams, and keeps the
+# never-deleted Missing & Overdue Log. Writes ONLY its own seven private tabs;
+# read-only on every existing tab. Seed the hand tables once with
+# `python3 report_tracker_seed.py --apply` (dry run by default) before
+# enabling. A brand-new job built unattended, so it ships disabled.
+report_tracking:
+  enabled: false
+  # Days after an instance's due date before it is called missing. Blank
+  # `grace_days` on an Expected Reports row means this value; a number on the
+  # row overrides it for that report type. Either change takes effect on the
+  # next run (Trisha's decision 2, 2026-10-20).
+  default_grace_days: 7
+  # Instances are expanded this far past today so the Runs row can count
+  # what is "coming due" (ADR 071 step 2).
+  lookahead_days: 30
+  # Report-only period after activation: while today <= this date the Runs
+  # row's mode is "shadow" and the briefing line says so (ADR 071 risk 1:
+  # the first two weeks run in report-only mode). Blank = live. Set it to
+  # activation day + 14 when flipping `enabled`.
+  shadow_until: ""
+  # Sunday owner-only email listing the week's review items (proposed
+  # matches, unmatched periodic titles, rejected hand-table rows). Recipients
+  # are the owner addresses ONLY (owner_notices.send_owner_email); empty
+  # owner set = no send. Separate switch so the tabs can run without it.
+  review_email_enabled: false
+  # Decision 4 (2026-10-20): EGLE's own records are never arrivals. A record
+  # whose title matches this is skipped before any match rule is tried and
+  # is never listed as an "unmatched periodic" title either. Inspection and
+  # enforcement records only: EGLE's HOV approval letters are deliberately
+  # NOT here, because `hov-approval` / `hov-plan-approval` are expected
+  # one-time instances in the ADR's vocabulary and need to be matchable.
+  agency_title_regex: "On-Site Inspection|Inspection \\(|Inspection Report|Violation Notice|Enforcement Notice|Consent Order|Compliance Communication|\\bEvaluation\\b|Air Quality Test Observation|^Schedule - |\\bEmail\\b"
+  # A record no rule matched is reported for a schedule fix (owner review)
+  # when its title reads as a PERIODIC report (ADR 071 match_rule section):
+  # a cadence word, not a bare "Report" (lab reports, test reports and
+  # staff reports are not schedules).
+  periodic_title_regex: "Semi-?Annual|Quarter|Monthly|Bi-?Monthly|\\bAnnual\\b"
+
 # --- CAN-SPAM unsubscribe for the multi-recipient alert emails (ADR 040) ---
 # Applied at the single send choke point (email_alerts.send_email), so ALL
 # multi-recipient streams inherit it: the same-day [URGENT] alerts, the Sunday

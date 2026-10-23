@@ -3062,3 +3062,83 @@ def purge_doc_rows(service, sheet_id: str, doc_id: str, dry_run: bool = False) -
             spreadsheetId=sheet_id, body={"requests": requests}
         ).execute(num_retries=0)  # no-retry: index-based delete, unsafe to replay (see above)
     return counts
+
+
+# ---------------------------------------------------------------------------
+# Report expectations tracker (ADR 071) — PRIVATE Sheet ONLY. Seven tabs, all
+# written by report_tracker.py (and seeded once by report_tracker_seed.py);
+# the tracker is read-only on every other tab in this module. Deliberately NOT
+# in _TAB_HEADERS: ensure_tabs() must never create them on the public
+# case-file Sheet. Four are hand-edited registries (Report Facilities,
+# Expected Reports, Trigger Rules, and the FOIA/date columns of the Missing &
+# Overdue Log); the job appends to Report Arrivals, the Missing & Overdue Log
+# (never deletes a row), Report Tracker Review and Report Tracker Runs.
+# Columns beyond the ADR's list are APPENDED LAST (name_aliases on Report
+# Facilities; active on Trigger Rules), the same convention as ADR 065/068.
+# ---------------------------------------------------------------------------
+
+TAB_REPORT_FACILITIES = "Report Facilities"
+REPORT_FACILITY_HEADERS = [
+    "facility_id", "name", "operator", "air_srn", "wds_id", "nsite_site_id",
+    "county", "role", "arrival_streams", "active", "notes", "name_aliases",
+]
+TAB_EXPECTED_REPORTS = "Expected Reports"
+EXPECTED_REPORT_HEADERS = [
+    "schedule_id", "facility_id", "report_type", "report_name", "obligation_source",
+    "citation_confidence", "recipient", "cadence", "period_basis", "due_rule",
+    "grace_days", "first_period", "last_period", "end_condition", "match_rule",
+    "active", "notes", "edited_by", "edited_at",
+]
+TAB_TRIGGER_RULES = "Trigger Rules"
+TRIGGER_RULE_HEADERS = [
+    "rule_id", "facility_id", "condition", "input", "creates", "due_rule", "repeat",
+    "stop_condition", "citation", "citation_confidence", "notes", "active",
+]
+TAB_REPORT_ARRIVALS = "Report Arrivals"
+REPORT_ARRIVAL_HEADERS = [
+    "arrival_id", "facility_id", "instance_key", "report_type", "period",
+    "source_stream", "source_ref", "doc_date", "filed_date", "first_seen_at",
+    "match_method", "match_confidence", "notes",
+]
+TAB_MISSING_OVERDUE = "Missing & Overdue Log"
+MISSING_OVERDUE_HEADERS = [
+    "instance_key", "facility_id", "report_name", "period", "due_date", "date_added",
+    "foia_request_id", "foia_date_filed", "date_received", "received_via", "notes",
+]
+TAB_REPORT_TRACKER_REVIEW = "Report Tracker Review"
+REPORT_TRACKER_REVIEW_HEADERS = [
+    "logged_at", "kind", "facility_id", "source_stream", "source_ref", "title", "detail",
+]
+TAB_REPORT_TRACKER_RUNS = "Report Tracker Runs"
+REPORT_TRACKER_RUN_HEADERS = [
+    "run_date", "run_at", "mode", "open_count", "added_today", "completed_today",
+    "coming_due", "per_facility", "proposed_matches", "unmatched_periodic",
+    "bad_rows", "note",
+]
+REPORT_TRACKER_TABS = {
+    TAB_REPORT_FACILITIES: REPORT_FACILITY_HEADERS,
+    TAB_EXPECTED_REPORTS: EXPECTED_REPORT_HEADERS,
+    TAB_TRIGGER_RULES: TRIGGER_RULE_HEADERS,
+    TAB_REPORT_ARRIVALS: REPORT_ARRIVAL_HEADERS,
+    TAB_MISSING_OVERDUE: MISSING_OVERDUE_HEADERS,
+    TAB_REPORT_TRACKER_REVIEW: REPORT_TRACKER_REVIEW_HEADERS,
+    TAB_REPORT_TRACKER_RUNS: REPORT_TRACKER_RUN_HEADERS,
+}
+
+
+def ensure_report_tracker_tabs(service, sheet_id: str) -> None:
+    """Create/heal the seven ADR 071 tabs on the PRIVATE Sheet. Called only
+    from report_tracker.py / report_tracker_seed.py, which pass the private
+    Sheet id they got from review_flags.private_sheet_for_write(). One
+    spreadsheet metadata read, one batched addSheet, then the usual
+    header reconcile per tab (ensure_tab's policy, ADR 008)."""
+    meta = service.spreadsheets().get(spreadsheetId=sheet_id).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    existing = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    requests = [{"addSheet": {"properties": {"title": t}}}
+                for t in REPORT_TRACKER_TABS if t not in existing]
+    if requests:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id, body={"requests": requests}
+        ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
+    for tab, headers in REPORT_TRACKER_TABS.items():
+        _set_header(service, sheet_id, tab, headers)

@@ -161,3 +161,22 @@ clean OCR result**; recall is best-effort, so "block + human judgment"
 stays the guarantee. Distinct from the "Vision-based classification for
 image-only content" item above, which is about classifying photo CONTENT
 via Claude vision, not OCR for the privacy gate.
+
+## Violation-closure tracking (future ADR)
+
+**Status:** proposed 2026-10-20 (ADR 071's Roadmap section). Not started.
+
+Track every violation EGLE records, whether from a Violation Notice or
+cited in an inspection report, through to its closure: violation date,
+citation, source document, what EGLE required (response, corrective
+action, deadline), the operator's response date, and EGLE's closure (date
+and document, e.g. "Compliance Communication discretionary" or a
+return-to-compliance date). Flag violations with no closure past their
+response deadline, the same way ADR 071 flags missing reports.
+
+**Inputs already exist:** the Violations Watch, Compliance Actions Watch
+and Evaluations Watch tabs (nSITE), the WDS compliance-action records, and
+Compliance Deadlines. Multi-landfill like ADR 071 (`facility_id` keyed).
+
+**Example gap it would catch:** Carleton's 9/14/2021 R 299.4432 violation,
+still listed open on EGLE's WDS portal.
