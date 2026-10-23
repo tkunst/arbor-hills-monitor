@@ -67,7 +67,13 @@ re-verification), `doc_pipeline`, `nsite_watch_common`, the `gfl_air_*` split,
 Publishing** domain. Entry points now also come from `python X.py` lines inside a
 `run: |` block.
 
-96 modules · 23 logical data stores · 345 edges · 5 persona flows · 65 entry
+Regenerated again 2026-10-23 (stall-hardening): adds `doc_pipeline_liveness`
+(the document pipeline's stall guard, split from `watcher` the way
+`gfl_air_liveness` is split from `gfl_air_watcher`) and classifies
+`dataset_provenance` / `scripts/sync_dataset_provenance.py`, which had landed
+unclassified (the extractor was raising on them).
+
+99 modules · 23 logical data stores · 353 edges · 5 persona flows · 52 entry
 points. Hubs: `drive_client` / `config_loader` (42 importers each) and
 `sheet_writer` (41); `doc_pipeline` is the one per-document path behind
 `watcher` and `backfill`. The only dead-end candidate is `neshap_table_parser`

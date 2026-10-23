@@ -203,6 +203,23 @@ data_lifecycle:
 # anyway (see README); this cap is the belt-and-suspenders backstop.
 watcher:
   max_new_docs_per_run: 25
+  # LIVENESS / silent-stall guard (stall-hardening, 2026-10-23; the 2026-08-02
+  # digest-recovery lesson). Two signals, one owner-only health notice each,
+  # at most once per episode (doc_pipeline_liveness.py; state in
+  # _meta.doc_pipeline_health). 0 disables a signal.
+  #   max_consecutive_deferrals — daily runs IN A ROW that deferred unprocessed
+  #     documents to backfill under the cap above. A new facility's backlog
+  #     clears in 1-2 nightly backfill batches of 50 when backfill's schedule is
+  #     on, so 3 = "the third straight morning the backlog is still there":
+  #     backfill isn't draining it (its schedule is off, or it is failing).
+  #   max_stale_days — days since the watcher last made progress on its queue
+  #     (processed a document, struck a poison one, or had nothing unprocessed).
+  #     A quiet week with no new filings does NOT count as stale; three daily
+  #     runs that each saw unprocessed documents and got through none of them
+  #     (every one deferred, or every one a transient API failure) does. 3 keeps
+  #     the same order of magnitude as gfl_air.max_stale_days.
+  max_consecutive_deferrals: 3
+  max_stale_days: 3
 
 # --- WDS (Stream C — EGLE Waste Data System, Part 115 solid waste) ---
 # OFF BY DEFAULT. WDS is the solid-waste system of record for the landfill

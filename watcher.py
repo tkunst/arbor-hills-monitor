@@ -25,7 +25,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 try:
@@ -45,6 +45,7 @@ import well_watch  # noqa: F401 — tests patch through this module name
 import archiver as av  # noqa: F401 — tests patch through this module name
 import poison_stub
 import doc_pipeline as dp
+import doc_pipeline_liveness as dl
 from egle_doc_parser import parse_document
 from risk_register import RISK_REGISTER, RISK_NAMES
 from config_loader import load_config
@@ -171,6 +172,84 @@ def _processed_payload(parsed, d: dict) -> dict:
     }
 
 
+def _check_liveness(sheets, sheet_id: str, cfg: dict, state: dict, *, unprocessed: int,
+                    processed: int, struck: int, deferred: int, cap: int,
+                    now_utc=None) -> None:
+    """The document pipeline's liveness / silent-stall guard (stall-hardening
+    part (a); pure parts in doc_pipeline_liveness.py). Runs after the doc loop,
+    every run: records this run's outcome in `_meta.doc_pipeline_health`
+    (last activity, consecutive deferrals) and sends ONE owner-only health
+    notice per episode when the pipeline has deferred its backlog for
+    `watcher.max_consecutive_deferrals` runs in a row, or has made no progress
+    on unprocessed documents for `watcher.max_stale_days` days.
+
+    Owner-only on purpose (owner_notices.send_owner_email, never the alert /
+    digest lists): this is a pipeline-health notice, not a document alert.
+
+    FULLY ISOLATED + best-effort, like gfl_air_watcher._check_liveness: every
+    failure here is logged (class only) and never propagates — a liveness bug
+    must not break the run. The warned markers are set only AFTER a successful
+    send, so a failed send retries next run until it lands exactly once. The
+    health dict is mutated into `state` first, so the unconditional end-of-run
+    write_meta persists it even if the write here fails."""
+    try:
+        wcfg = cfg.get("watcher") or {}
+        max_stale = int(wcfg.get("max_stale_days", dl.DEFAULT_MAX_STALE_DAYS))
+        max_def = int(wcfg.get("max_consecutive_deferrals",
+                               dl.DEFAULT_MAX_CONSECUTIVE_DEFERRALS))
+        now_utc = now_utc or datetime.now(timezone.utc)
+        prev = state.get(dl.META_KEY) or {}
+        health = dl.update_health(prev, now_utc=now_utc, unprocessed=unprocessed,
+                                  processed=processed, struck=struck, deferred=deferred)
+        state[dl.META_KEY] = health
+        was_warned = bool(prev.get("warned_deferrals")) or (
+            bool(prev.get("warned_stale_for"))
+            and prev.get("warned_stale_for") == prev.get("last_activity_at"))
+        recovered = was_warned and (
+            health["consecutive_deferrals"] == 0
+            and health.get("last_activity_at") != prev.get("last_activity_at"))
+        if recovered:
+            print("[watcher] liveness: document pipeline made progress again — "
+                  "health notice re-armed (log only, no email).")
+        try:
+            sw.write_meta(sheets, sheet_id, state)
+        except Exception as we:  # noqa: BLE001 — the end-of-run write_meta carries it
+            print(f"[watcher] liveness: health write deferred to end of run: "
+                  f"{type(we).__name__}")
+        decision = dl.liveness_decision(health, now_utc, max_stale, max_def)
+        if decision.unquantifiable and unprocessed and not processed and not struck:
+            print("[watcher] liveness: no parseable last_activity_at on record while "
+                  "unprocessed documents made no progress — cannot quantify staleness "
+                  "yet (first run with this guard?); the deferral counter still applies.")
+        if not decision.should_warn:
+            return
+        subject = dl.liveness_subject(decision)
+        body = dl.format_liveness_body(decision, health, max_stale, max_def, cap)
+        try:
+            sent = on.send_owner_email(subject, body, cfg)
+        except Exception as se:  # noqa: BLE001 — notice best-effort; markers NOT set → retries
+            print(f"[watcher] liveness: STALL detected (deferrals={decision.deferrals}, "
+                  f"stale_days={decision.stale_days}) but the owner notice FAILED to "
+                  f"send (will retry next run): {type(se).__name__}")
+            return
+        if not sent:
+            print(f"[watcher] liveness: STALL detected (deferrals={decision.deferrals}, "
+                  f"stale_days={decision.stale_days}) but no owner address is configured; "
+                  "notice not sent.")
+            return
+        state[dl.META_KEY] = dl.mark_warned(health, decision)
+        try:
+            sw.write_meta(sheets, sheet_id, state)
+        except Exception as we:  # noqa: BLE001
+            print(f"[watcher] liveness: warned-marker write deferred to end of run: "
+                  f"{type(we).__name__}")
+        print(f"[watcher] liveness: STALL notice emailed to the owner (deferrals="
+              f"{decision.deferrals}, stale_days={decision.stale_days}); episode marked.")
+    except Exception as e:  # noqa: BLE001 — liveness must NEVER break the run
+        print(f"[watcher] liveness check errored (ignored — run unaffected): "
+              f"{type(e).__name__}")
+
+
 def run() -> int:
     cfg = load_config()
     sheet_id = os.environ["GSHEET_ID"]
@@ -211,6 +290,7 @@ def run() -> int:
                 or state["errors"].get(did, 0) >= MAX_ERRORS_PER_DOC)
 
     new_docs = [d for d in docs if not done_or_poisoned(d)]
+    unprocessed = len(new_docs)
 
     # Anti-stampede guard: the watcher is for incremental new filings. A backlog
     # larger than the cap means backfill hasn't cleared history yet — defer doc
@@ -218,9 +298,11 @@ def run() -> int:
     # don't fire urgent alerts on years-old exceedances, don't overflow the
     # single-cell _meta pending_digest). Digest housekeeping still runs.
     cap = (cfg.get("watcher") or {}).get("max_new_docs_per_run", 25)
+    deferred = 0
     if len(new_docs) > cap:
         print(f"[watcher] {len(new_docs)} unprocessed docs > cap {cap}: backfill "
               f"still in progress — deferring doc processing to the backfill job.")
+        deferred = len(new_docs)
         new_docs = []
     else:
         print(f"[watcher] {len(new_docs)} new document(s).")
@@ -240,8 +322,17 @@ def run() -> int:
         alert=lambda parsed, d, link: _route_urgent_or_digest(
             parsed, d, link, cfg, state, sheets, sheet_id))
     tmp = tempfile.gettempdir()
+    outcomes: dict = {}
     for d in new_docs:
-        dp.process_one_doc(ctx, state, d, job, dp.local_path(tmp, d))
+        outcome = dp.process_one_doc(ctx, state, d, job, dp.local_path(tmp, d))
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+
+    # Liveness / silent-stall guard (stall-hardening part (a)): record this
+    # run's outcome and alarm, once per episode, on a backlog that keeps being
+    # deferred or a queue that keeps making no progress. Best-effort, isolated.
+    _check_liveness(sheets, sheet_id, cfg, state, unprocessed=unprocessed,
+                    processed=outcomes.get("processed", 0), struck=outcomes.get("error", 0),
+                    deferred=deferred, cap=cap)
 
     # MMPC meeting documents are archived by Mirror D (mmpc-archive.yml) on its
     # own schedule — the watcher no longer polls for or emails MMPC minutes (the

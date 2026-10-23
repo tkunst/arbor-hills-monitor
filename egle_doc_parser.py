@@ -697,6 +697,33 @@ def _wrap_untrusted_document(text: str) -> str:
     return f"<document>\n{safe}\n</document>"
 
 
+# Per-attempt timeout for the classifier's API calls (stall-hardening part (b),
+# 2026-10-23). The SDK's default is a 600 s read timeout per attempt with 2
+# retries (so a hung call could hold a document for ~30 min, and two of them
+# the whole 60-minute `daily` job), and a degraded/throttled key hangs the entire
+# run instead of failing one document fast. 300 s is chosen from the OUTPUT
+# side, not the job side: config `classification_max_tokens` is 16384, and the
+# SDK's own non-streaming estimate (128k output tokens/hour) puts a full-length
+# response at ~460 s, while the model's real output rate (~60+ tok/s) puts it
+# at ~270 s — so 300 s is above the slowest legitimate response and half the
+# old ceiling. A timeout is `anthropic.APITimeoutError`, which the SDK retries
+# (max_retries stays at its default of 2 — each attempt gets the full timeout,
+# so the worst case per call is ~15 min, down from ~30) and which
+# retry_policy.is_transient treats as a no-strike retry on a later run.
+# Connect is kept short separately: a dead endpoint should fail in seconds.
+_CLASSIFY_TIMEOUT_S = 300.0
+_CLASSIFY_CONNECT_TIMEOUT_S = 10.0
+
+
+def _anthropic_client():
+    """The classifier's Anthropic client, with the explicit per-attempt timeout
+    above. The ONE place the client is constructed (both classifier call sites
+    use it), so a test can pin the kwargs by faking `anthropic.Anthropic`."""
+    import anthropic
+    return anthropic.Anthropic(
+        timeout=anthropic.Timeout(_CLASSIFY_TIMEOUT_S, connect=_CLASSIFY_CONNECT_TIMEOUT_S))
+
+
 def _classify_with_claude(
     text: str,
     metadata: dict,
@@ -744,7 +771,7 @@ def _classify_with_claude(
         display_title: Optional[str] = None
 
     if client is None:
-        client = anthropic.Anthropic()
+        client = _anthropic_client()
 
     # Filer-controlled values go inside a labeled <metadata> block, one line each
     # (see _meta_value). Our OWN instruction ("Title is generic") stays OUTSIDE
@@ -840,7 +867,7 @@ def classify_note_metric(
         metric: MetricLiteral  # the ADR-034 vocabulary (single source of truth)
 
     if client is None:
-        client = anthropic.Anthropic()
+        client = _anthropic_client()
 
     content = f"Note: {note!r}\nUnit: {unit!r}"
     response = client.messages.parse(

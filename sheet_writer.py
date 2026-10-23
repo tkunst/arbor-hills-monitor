@@ -710,6 +710,10 @@ _META_DEFAULTS = {
     # owner_notices.py: when the owner-only weekly email last went out (its
     # window start). Blank until the first send.
     "last_owner_weekly": "",
+    # doc_pipeline_liveness.py (stall-hardening, 2026-10-23): the document
+    # pipeline's health singleton — last_activity_at, consecutive_deferrals
+    # and the two once-per-episode warned markers. Written by watcher.run.
+    "doc_pipeline_health": {},
 }
 
 # write_meta overwrites this many _meta rows every time (live keys first, blanks

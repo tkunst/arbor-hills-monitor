@@ -98,6 +98,16 @@ external users but no sensitive data). Public repo.
   exact old raise-on-failure behavior, while a case ONLY `needs_ocr()` catches
   (a page `classify()`'s 12-page sample misses) is fail-open — a document that
   classifies fine on `main` can never become a poison strike over this.
+  **Classifier timeout (stall-hardening part (b), 2026-10-23):** both
+  classifier call sites build their client through `_anthropic_client()`,
+  which sets an explicit per-attempt `timeout` (300 s read/write/pool, 10 s
+  connect; `_CLASSIFY_TIMEOUT_S`) instead of the SDK's 600 s default. The
+  SDK still retries a timeout twice (its default `max_retries`), and
+  `retry_policy.is_transient` treats `APITimeoutError` as a no-strike retry
+  on a later run. 300 s is sized from `classification_max_tokens` (16384),
+  not the job: it clears the slowest legitimate full-length response.
+  `scripts/term_search.py` and `backfill_metric_taxonomy.py` construct their
+  own clients and are NOT covered.
 - `ocr_util.py` — **ADR 069**: the shared OCR module. `classify()`/
   `ocr_in_place()` (moved from `egle_doc_parser.py`, unchanged) plus the NEW
   `needs_ocr()`/`ensure_searchable()` pair, used by both the Drive-mirror
@@ -410,6 +420,35 @@ external users but no sensitive data). Public repo.
   URL so penalties/compliance_actions and the two composting grids don't
   double-snapshot their shared pages. See ADR 043.
   Same inline-mirror-before-write as backfill.py.
+  **Stall guard (stall-hardening, 2026-10-23):** `run()` now counts each
+  run's unprocessed / processed / struck / deferred documents and hands them
+  to `_check_liveness()` (the orchestration wrapper, mirroring
+  `gfl_air_watcher._check_liveness`) right after the doc loop — see
+  `doc_pipeline_liveness.py` below. Best-effort and isolated: it can never
+  fail the run.
+- `doc_pipeline_liveness.py` — **stall-hardening part (a)** (handoff
+  `docs/overnight-coder-handoffs/stall-hardening.md`; the 2026-08-02
+  digest-recovery lesson, when two newly added facilities pushed the backlog
+  over `watcher.max_new_docs_per_run`, the watcher deferred EVERY run to a
+  backfill whose schedule was off, and nothing alarmed for two weeks). The
+  pure half, split like `gfl_air_liveness.py`: `update_health()`,
+  `liveness_decision()`, `mark_warned()`, the body/subject. State is ONE
+  `_meta` singleton, `doc_pipeline_health` (`_META_DEFAULTS`; persisted by
+  the existing `write_meta`), holding `last_activity_at` (the last run, UTC,
+  on which the watcher processed a document, struck a poison one, or had
+  nothing unprocessed — a quiet week is NOT a stall; three daily runs that
+  each saw unprocessed documents and got through none of them is) and
+  `consecutive_deferrals` (runs in a row that deferred a backlog under the
+  cap; reset by a run that deferred nothing), plus two once-per-episode
+  warned markers (`warned_stale_for` = the activity value warned on, the
+  `warned_as_of` idiom; `warned_deferrals`, cleared with the counter).
+  Thresholds `watcher.max_stale_days` / `watcher.max_consecutive_deferrals`
+  (both 3; 0 disables). The notice goes to the OWNER list only
+  (`owner_notices.send_owner_email`), is labeled a pipeline-health notice
+  (never `[URGENT]`, never an exceedance), and the markers are set only after
+  a successful send. An unparseable timestamp never fires a quantified stale
+  alarm; the deferral counter needs no timestamp, so it still fires on the
+  first stalled run after deploy.
 - `well_watch.py` — **ADR 058**: named single-well temperature trip-wires.
   `email_alerts.is_urgent` already fires on any measured wellhead temperature
   ≥145°F, but several wells hold an EGLE HOV above that, so the generic alert

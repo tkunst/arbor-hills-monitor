@@ -86,6 +86,8 @@ graph LR
   upcoming -. read .-> ds_private_sheet
   owner_notices["owner_notices"]
   owner_notices ==>|write| ds_private_sheet
+  dataset_provenance["dataset_provenance"]
+  dataset_provenance ==>|write| ds_case_file_sheet
   review_flags["review_flags"]
   review_flags ==>|write| ds_private_sheet
   civicclerk_archiver["civicclerk_archiver"]
