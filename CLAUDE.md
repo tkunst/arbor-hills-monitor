@@ -64,7 +64,8 @@ external users but no sensitive data). Public repo.
   reads THIS repo's own `config.yml` (`temperature_thresholds`) directly —
   see `kdp_check.py` below for the one narrow exception to "nobody builds a
   ref." (See the `nsite_client.py` entry further down for a SEPARATE
-  coupling fact in the same spirit — a different module, not this one.)
+  coupling fact in the same spirit — a different module, not this one — now
+  resolved by a deferred import.)
   **ADR 065** added
   `document_date`/`document_date_method` (a deterministic
   dateline/label regex pass over the doc's own raw first pages, LLM only as
@@ -157,25 +158,30 @@ external users but no sensitive data). Public repo.
   payload) inherits them for free. `poison_stub.py` (no parse exists for a
   poison doc) applies only the override map.
 - `nsite_client.py` — EGLE nSITE API: session, list, download. **A coupling
-  fact worth stating plainly, not refactored here:** `nsite_client.py:93`
-  imports `poison_doc_extractor` at MODULE level, and that module imports
-  `fitz`/`defusedxml` at module level too — so every one of the seven nSITE
-  PROFILE watchers (Streams K/L/M/N/O/P/Q — all seven import `nsite_client`;
-  six of them, L/M/N/O/P/Q, use a bespoke raising reader for their OWN state,
-  while K/Submissions uses `_tab_rows_strict`, see the state-vs-data
-  Invariant below), which only need a structured JSON API, not a PDF, still
-  loads the PDF-parsing stack the instant they `import nsite_client`.
-  Verified
-  empirically, not asserted: a bare `import nsite_client` puts `fitz` and
-  `defusedxml` in `sys.modules`. The LLM/OCR half
-  (`egle_doc_parser`/`anthropic`/`ocrmypdf`) stays OUT of that chain —
-  `poison_doc_extractor` only imports those lazily, inside the functions that
-  actually need them (see its own entry below).
+  that used to exist, fixed 2026-10-23 (coder:poison-import-move):** until
+  then `nsite_client.py` imported `poison_doc_extractor` at MODULE level, and
+  that module imports `fitz`/`defusedxml` at module level too — so every one
+  of the seven nSITE PROFILE watchers (Streams K/L/M/N/O/P/Q — all seven
+  import `nsite_client`; six of them, L/M/N/O/P/Q, use a bespoke raising
+  reader for their OWN state, while K/Submissions uses `_tab_rows_strict`,
+  see the state-vs-data Invariant below), which only need a structured JSON
+  API, not a PDF, loaded the PDF-parsing stack the instant they `import
+  nsite_client`. The import is now DEFERRED: `poison_doc_extractor` is
+  imported inside `download_pdf()` (its only user), immediately before the
+  ADR 011 extractor fallback, the same import-light pattern `archive_client.py`
+  uses for the google OAuth libs. `tests/test_nsite_import_isolation.py` pins
+  it in a clean subprocess: a bare `import nsite_client`, and a bare import of
+  each of the seven profile watchers, leaves `poison_doc_extractor`,
+  `egle_doc_parser`, `fitz` and `defusedxml` OUT of `sys.modules`; the
+  `download_pdf()` fallback path then loads the extractor on demand. The
+  LLM/OCR half (`egle_doc_parser`/`anthropic`/`ocrmypdf`) was never in that
+  chain — `poison_doc_extractor` only imports those lazily, inside the
+  functions that actually need them (see its own entry below).
 - `poison_doc_extractor.py` — **ADR 011**: text extraction + PDF synthesis for
   nSITE documents whose source isn't a PDF (.msg, .docx, bare images, zip
   bundles) — the gap `nsite_client.download_pdf()` alone can't close. Wired in
-  as that function's last-resort fallback (imported at module level —
-  `nsite_client.py:93`, see that entry above): native bytes are sniffed for
+  as that function's last-resort fallback (imported LAZILY inside
+  `download_pdf()` since 2026-10-23, see that entry above): native bytes are sniffed for
   format and, if supported, synthesized into a PDF containing every
   extractable piece of content, so `egle_doc_parser.parse_document()`'s
   existing classify/OCR/extract pipeline ingests it unchanged downstream.
@@ -183,8 +189,8 @@ external users but no sensitive data). Public repo.
   via `fitz.insert_pdf`, `.docx`/`.xls`/`.xlsx` attachments, image attachments
   OCR'd proactively). `extract_msg`/`openpyxl`/`xlrd` and
   `from egle_doc_parser import ocr_in_place` are all deferred (function-level)
-  imports — only `fitz`/`defusedxml` load at module import time (the fact the
-  `nsite_client.py` entry above states).
+  imports — only `fitz`/`defusedxml` load at module import time (which is why
+  the `nsite_client.py` entry above defers importing THIS module).
 - `well_aliases.py` — **ADR 068**: the curated well-ID rulings. The SOURCE OF
   TRUTH is the committed `data/well_registry.json` (ADR 068 addendum 2026-10-22):
   spelling aliases, ruled new wells and GFL-labeled gas probes (GFL's own "Probe ID"

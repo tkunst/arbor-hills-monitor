@@ -26,6 +26,9 @@ graph LR
   sheet_writer["sheet_writer"]
   sheet_writer -. read .-> ds_case_file_sheet
   sheet_writer ==>|write| ds_case_file_sheet
+  dataset_provenance["dataset_provenance"]
+  dataset_provenance -. read .-> ds_case_file_sheet
+  dataset_provenance ==>|write| ds_case_file_sheet
   archive_client["archive_client"]
   archive_client ==>|write| ds_drive_archive
   nsite_client["nsite_client"]

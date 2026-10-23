@@ -90,7 +90,14 @@ from typing import Optional
 
 import requests
 
-import poison_doc_extractor as pde
+# `poison_doc_extractor` (ADR 011) is deliberately NOT imported here. It loads
+# `fitz`/`defusedxml` at its own module level, and only `download_pdf()` below
+# uses it — so it is imported lazily inside that function (the same
+# import-light pattern archive_client.py uses for the google OAuth libs). The
+# seven nSITE profile watchers (Streams K–Q) import this module for the JSON
+# profile API alone and never download a PDF; a module-level import here made
+# every one of them load the PDF stack for nothing.
+# tests/test_nsite_import_isolation.py pins this.
 
 NSITE_BASE = "https://mienviro.michigan.gov"
 SETTINGS_URL = f"{NSITE_BASE}/nsite/api/settings/getWslSettings"
@@ -1442,6 +1449,10 @@ def download_pdf(session: requests.Session, doc: dict, dest_path: str, timeout: 
             break
 
     if last_non_pdf_content is not None:
+        # Deferred import (see the note at the top of this module): the PDF
+        # stack loads only on this fallback path, never on `import nsite_client`.
+        import poison_doc_extractor as pde
+
         fmt = pde.sniff_format(last_non_pdf_content)
         try:
             return pde.synthesize_pdf(last_non_pdf_content, dest_path)

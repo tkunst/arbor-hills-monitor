@@ -43,6 +43,16 @@ facts from analyst judgement:
 
 ## Snapshot
 
+Regenerated 2026-10-23 (coder:poison-import-move) — `nsite_client` now imports
+`poison_doc_extractor` lazily inside `download_pdf()`, so the seven nSITE
+profile watchers (K–Q) no longer load the PDF stack on import. The `ast`-derived
+call graph still shows the `nsite_client → poison_doc_extractor` edge (it sees
+function-level imports too); the Observations panel says to read it as
+"reachable from `download_pdf()`", not "loaded on import". Also classified the
+two Dataset Provenance modules (`dataset_provenance`, `sync_dataset_provenance`)
+that PR #170 added without a `DOMAIN` entry, which had been failing the
+extractor with a `KeyError`. 98 modules · 23 data stores · 353 edges.
+
 Regenerated 2026-10-16 — every root and `scripts/` module is now classified in
 `DOMAIN` (the extractor raises a `KeyError` on an unclassified module, so a new
 module can't silently land in the wrong domain again). Adds Streams F–V, the
