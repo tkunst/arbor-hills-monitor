@@ -34,4 +34,4 @@ Copies in backups are overwritten in the normal course.
 ## Requests
 
 To ask about this policy or to request deletion, e-mail
-corrections@arborhillsmonitor.org.
+<corrections@arborhillsmonitor.org>.
