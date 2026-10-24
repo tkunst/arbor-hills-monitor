@@ -29,10 +29,13 @@ jobs:
             [ -z "$f" ] && continue
             # Full-path allowlist (exact paths only, never a pattern). ADR 068:
             # the well registry and the alias map generated from it are
-            # curated config, not data. footer/canonical-footer.json is the
-            # shared legal-footer config for both sites (2026-10-24).
+            # curated config, not data.
             case "$f" in
-              data/well_registry.json|data/well_aliases.json|footer/canonical-footer.json)
+              data/well_registry.json|data/well_aliases.json)
+                continue
+                ;;
+              # Shared legal-footer config for both sites (2026-10-24).
+              footer/canonical-footer.json)
                 continue
                 ;;
             esac
