@@ -2,6 +2,8 @@
 document becomes a same-day [URGENT] email (recapped the next Sunday) or a
 routine pending_digest entry. See docs/overnight-coder-handoffs/digest-urgent-recap.md.
 """
+import pytest
+
 import watcher as w
 from egle_doc_parser import ParsedDoc
 
@@ -87,6 +89,105 @@ def test_urgent_send_skipped_smtp_not_configured_queues_neither(monkeypatch):
     assert state["pending_digest"] == []
     assert state["pending_urgent_recap"] == []
     assert writes == []  # write_meta never reached on the skipped-send path
+
+
+# --- ADR 065: _digest_record's is_correspondence computation ---------------
+
+def _parsed_with_text(full_text, severity="routine"):
+    return ParsedDoc(
+        summary="s", key_data_point="k", doc_type="evidence", risks=["R8"],
+        severity=severity, full_text=full_text, ocr_applied=False, page_count=1,
+        measurements=[],
+    )
+
+
+_EGLE_LETTER_TEXT = (
+    "Michigan.gov/EGLE • 800-662-9278\nAugust 27, 2026\n"
+    "We approve the requested 120-day extension."
+)
+
+
+def test_digest_record_is_correspondence_true_when_generic_and_letter():
+    d = dict(_doc_meta(), title_was_generic=True)
+    rec = w._digest_record(_parsed_with_text(_EGLE_LETTER_TEXT), d, "http://x")
+    assert rec["is_correspondence"] is True
+
+
+def test_digest_record_is_correspondence_false_when_not_generic():
+    # The text reads as an EGLE letter, but the title wasn't flagged generic
+    # -- real, specific titles don't need the rescue.
+    d = dict(_doc_meta(), title_was_generic=False)
+    rec = w._digest_record(_parsed_with_text(_EGLE_LETTER_TEXT), d, "http://x")
+    assert rec["is_correspondence"] is False
+
+
+# --- state-reads-raise: a transient read_state() failure must fail run() ----
+# loudly, BEFORE write_meta() ever runs (the exact bug this fix closes: the
+# old lenient reader would reduce a throttled/5xx response to the empty
+# default state, every doc would look unprocessed, and the end-of-run
+# write_meta() call would then persist that blown-away pending_digest /
+# pending_urgent_recap / wds_seen over the real stored values).
+
+def _min_cfg():
+    return {"anthropic_model": "m", "large_doc_page_threshold": 50,
+            "large_doc_max_keyword_pages": 10, "classification_max_tokens": 100,
+            "backfill_batch_size": 50}
+
+
+def test_run_propagates_a_read_state_failure_without_writing_meta(monkeypatch):
+    monkeypatch.setattr(w, "load_config", lambda: _min_cfg())
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.setattr(w.dc, "sheets_service", lambda: object())
+    monkeypatch.setattr(w.sw, "ensure_tabs", lambda svc, sid: None)
+
+    def _boom(svc, sid):
+        raise RuntimeError("HTTP 503")
+    monkeypatch.setattr(w.sw, "read_state", _boom)
+
+    writes = []
+    monkeypatch.setattr(w.sw, "write_meta", lambda svc, sid, state: writes.append(state))
+
+    with pytest.raises(RuntimeError):
+        w.run()
+    assert writes == []  # the destructive end-of-run write never happened
+
+
+def test_digest_record_is_correspondence_false_when_generic_but_not_a_letter():
+    d = dict(_doc_meta(), title_was_generic=True)
+    rec = w._digest_record(_parsed_with_text("Just a routine stormwater table."), d, "http://x")
+    assert rec["is_correspondence"] is False
+
+
+def test_digest_record_missing_title_was_generic_key_defaults_false():
+    rec = w._digest_record(_parsed_with_text(_EGLE_LETTER_TEXT), _doc_meta(), "http://x")
+    assert rec["is_correspondence"] is False
+
+
+def test_record_to_item_carries_is_correspondence_through():
+    rec = {"doc_type": "evidence", "severity": "routine", "risks": [],
+           "key_data_point": "k", "date_filed": "2026-08-27",
+           "document_name": "EGLE letter", "link": "http://x",
+           "is_correspondence": True}
+    item = w._record_to_item(rec)
+    assert item["parsed"].is_correspondence is True
+
+
+# --- ADR 065: _processed_payload carries document_date/egle_title ----------
+
+def test_processed_payload_carries_document_date_and_egle_title():
+    d = {"document_name": "EGLE letter: HOV renewal",
+         "egle_title": "Schedule - Air General Compliance Report",
+         "document_date": "2026-08-27", "date_filed": "2026-08-26"}
+    payload = w._processed_payload(_parsed(), d)
+    assert payload["document_date"] == "2026-08-27"
+    assert payload["egle_title"] == "Schedule - Air General Compliance Report"
+
+
+def test_processed_payload_egle_title_falls_back_to_document_name():
+    d = {"document_name": "Violation Notice", "date_filed": "2026-07-08"}
+    payload = w._processed_payload(_parsed(), d)
+    assert payload["document_date"] == ""
+    assert payload["egle_title"] == "Violation Notice"
 
 
 def test_write_meta_failure_after_successful_send_propagates_not_swallowed(monkeypatch):

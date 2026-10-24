@@ -19,8 +19,9 @@
 <meta name="twitter:description" content="An independent, automated monitor of Michigan EGLE's regulatory record for the Arbor Hills Landfill complex.">
 <script type="application/ld+json">
 {"@context":"https://schema.org","@graph":[
-{"@type":"Organization","@id":"https://arborhillsmonitor.org/#org","name":"Arbor Hills Monitor","alternateName":"Arbor Hills Monitor (independent)","url":"https://arborhillsmonitor.org/","description":"An independent, automated monitor of Michigan EGLE's public regulatory record for the Arbor Hills Landfill complex in Salem Township, Washtenaw County, Michigan. Not affiliated with the landfill operator or its compliance-monitoring vendor.","founder":{"@type":"Person","name":"Trisha Kunst"},"sameAs":["https://github.com/tkunst/arbor-hills-monitor"]},
-{"@type":"WebSite","@id":"https://arborhillsmonitor.org/#website","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/","publisher":{"@id":"https://arborhillsmonitor.org/#org"},"inLanguage":"en-US"}
+{"@type":"Organization","@id":"https://arborhillsmonitor.org/#org","name":"Arbor Hills Monitor","alternateName":"Arbor Hills Monitor (independent)","url":"https://arborhillsmonitor.org/","description":"An independent, automated monitor of Michigan EGLE's public regulatory record for the Arbor Hills Landfill complex in Salem Township, Washtenaw County, Michigan. Not affiliated with the landfill operator or its compliance-monitoring vendor.","founder":{"@type":"Person","name":"Trisha Kunst"},"parentOrganization":{"@id":"https://arborhillsmonitor.org/#publisher"},"sameAs":["https://github.com/tkunst/arbor-hills-monitor"]},
+{"@type":"Organization","@id":"https://arborhillsmonitor.org/#publisher","name":"Landfill Records Project LLC"},
+{"@type":"WebSite","@id":"https://arborhillsmonitor.org/#website","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/","publisher":{"@id":"https://arborhillsmonitor.org/#publisher"},"inLanguage":"en-US"}
 ]}
 </script>
 </head>
@@ -44,7 +45,7 @@ and keeps a running, dated record of what it finds.</p>
 <div class="data-links">
 <h2>Public Records</h2>
 <ul>
-<li><a href="public-records/index.html">Every document the monitor has read</a>, from the earliest record to the most recent filing.</li>
+<li><a href="public-records/">Every document the monitor has read</a>, from the earliest record to the most recent filing.</li>
 </ul>
 </div>
 
@@ -97,12 +98,12 @@ and keeps a running, dated record of what it finds.</p>
 <h2>Data releases</h2>
 <ul>
 <li><a href="data/">Browse all four datasets</a>: what each one covers and how to reproduce it, with individual dataset pages &mdash; the wellfield gas and temperature record, the 2026 wellhead hydrogen-sulfide survey, the perimeter fence-line feed, and the flagged elevated-temperature wells.</li>
-<li><a href="https://github.com/tkunst/arbor-hills-monitor/releases/tag/wellfield-data-2026-08-24">Wellfield gas and temperature dataset</a>, 2021 to 2026: every reading, every well, with source PDFs and build scripts.</li>
+<li><a href="https://github.com/tkunst/arbor-hills-monitor/releases/tag/wellfield-data-2026-10-23">Wellfield gas and temperature dataset</a>, 2021 to 2026: every reading, every well, with source PDFs and build scripts.</li>
 <li><a href="https://github.com/tkunst/arbor-hills-monitor/releases/tag/wellhead-h2s-annual-2026-09-05">Wellfield hydrogen-sulfide survey</a>, 2026: the operator's own per-well wellhead hydrogen-sulfide readings from its annual survey, 506 wells across the landfill, with the source PDF and a reproducible parser.</li>
 <li><a href="https://github.com/tkunst/arbor-hills-monitor/releases/tag/perimeter-air-data-2026-08-04">Perimeter air-monitoring dataset</a>, May 2022 to September 2026: fence-line methane and hydrogen sulfide readings.</li>
 <li><a href="https://github.com/tkunst/arbor-hills-monitor/releases/tag/flagged-wells-2026-08-07">Flagged wells: elevated-temperature reading history</a>, a smaller, curated subset of the wellfield dataset above.</li>
 </ul>
-<p class="data-quality-note"><strong>Data-quality note (September 2026):</strong> two of the six fence-line stations &mdash; MS-2, historically the station with the most hydrogen-sulfide exceedances, and MS-5 &mdash; have reported a flat 0.0&nbsp;ppb of hydrogen sulfide since mid-2025, while their methane sensors and the other four stations keep varying normally. A working sensor produces small non-zero readings, not an unbroken run of exact zeros, so this points to a non-responsive or uncalibrated H<sub>2</sub>S sensor rather than clean air &mdash; the recent absence of hydrogen-sulfide exceedances at those two stations is not verified compliance. Source: GFL's own public perimeter feed (Barr Engineering).</p>
+<!-- dq-note:perimeter-h2s:callout --><p class="data-quality-note"><strong>Data-quality note (updated October 9, 2026; corrects the September 25 note):</strong> for long stretches, several fence-line stations' hydrogen-sulfide (H2S) channels have reported a single constant value while the station kept reporting and its methane channel kept varying. A sensor in clean air can legitimately read 0.0 for weeks or even months, but a constant non-zero value for months, or a constant 0.0 for more than a year while neighboring stations vary, is a standard data-quality flag, not evidence of clean air. The feed marks every reading below 7&nbsp;ppb as "BDL" (below detection limit), apart from a small number with no label, and that includes the stuck 3.0&ndash;3.2 and 5.4&nbsp;ppb values described here. So the BDL label cannot tell a stuck sensor from a working one, and a "BDL" reading is not on its own evidence that the air was clean. GFL's public dashboard shows only these labels (for both hydrogen sulfide and methane), not the numbers, so a stuck sensor and a working one look the same there; the numeric values are available in the feed's underlying data service and in this project's dataset. <strong>Now:</strong> MS-3 and MS-4 are reporting varying readings. MS-5 and MS-2 have resumed varying readings only recently, so their records are short: MS-5 since September 26, 2026 (up to 11.0&nbsp;ppb), after reading 0.0 from May 28, 2025 (apart from one 0.1&nbsp;ppb reading) and sending no data from September 16 to 26; MS-2 since September 24, 2026 (up to 2.3&nbsp;ppb), after reading 0.0 from June 30, 2025; for its last week of that stretch, from 9&nbsp;p.m. on September 16 to 7&nbsp;p.m. on September 24, MS-2's methane channel also read a constant 0.0&nbsp;ppm. Since 11&nbsp;a.m. on October 6, MS-5 and MS-2 have each read 0.0&nbsp;ppb in all but one hour. MS-6 read 3.0&ndash;3.2&nbsp;ppb from May 28, 2025 (apart from two readings on June 11, 2026) until 11&nbsp;a.m. on September 29, 2026, when it dropped to 0.0&nbsp;ppb; it then sent no data after 5&nbsp;p.m. that day until it resumed at 11&nbsp;a.m. on October 5, read 0.0&nbsp;ppb H2S and 0&ndash;2&nbsp;ppm methane every hour through 5&nbsp;p.m. on October 6, and has sent no data since. MS-1 has sent no data since noon on September 17, 2026, after reading exactly 0.0 for both gases from 9&nbsp;p.m. on September 16. <strong>Earlier:</strong> MS-1 read a constant 3.0 or 3.1&nbsp;ppb from May 28, 2025 to May 28, 2026, starting the same hour MS-5 and MS-6 went flat; MS-3 read a constant 5.4&nbsp;ppb from July 15 to October 16, 2025, and 3.1&nbsp;ppb from November 24 to December 1, 2025, the same value MS-1 and MS-6 read in those hours. A quiet record at a station during these periods is not evidence of clean air. The stations then reporting varying readings recorded hourly values above 30&nbsp;ppb (the 2022 Consent Judgment's fence-line action level, which is defined on a 15-minute rolling average; an hourly value from the public feed is a screening signal, not a confirmed crossing), most recently on September 14, 2026, up to 153.4&nbsp;ppb at MS-1 (which has sent no data since September 17). None of the stations reporting varying readings has recorded an hourly value at or above 30&nbsp;ppb since. These are observations from GFL's public perimeter feed, hosted by Barr Engineering; the cause has not been publicly confirmed by GFL, EGLE or Barr Engineering. Status as of October 9, 2026, 12:00&nbsp;p.m.&nbsp;ET.</p><!-- /dq-note:perimeter-h2s -->
 </div>
 
 <div class="data-links">
@@ -120,7 +121,7 @@ and keeps a running, dated record of what it finds.</p>
 
 <footer class="site-footer">
 <p class="legal-nav"><a href="terms-of-use/">Terms</a> &middot; <a href="privacy-policy/">Privacy</a> &middot; <a href="disclaimer/">Disclaimer</a> &middot; <a href="corrections/">Corrections</a> &middot; <a href="ip-fair-use/">IP &amp; Fair Use</a></p>
-<p>An independent project. All source data is public regulatory filings from Michigan EGLE.</p>
+<p>An independent project of Landfill Records Project LLC. All source data is public regulatory filings from Michigan EGLE.</p>
 </footer>
 
 </div>

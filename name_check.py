@@ -79,6 +79,8 @@ ORG_ALLOWLIST = [
     "WDS", "ETLF", "RNG", "PFAS", "GCCS", "JPA", "ACO", "RA", "USEPA", "NSPS",
     "Tetra Tech", "Golder", "Golder Associates", "Midwestern Consulting",
     "Crandell", "Crandell Environmental", "Advanced Disposal", "Onyx",
+    "Republic Services", "Sauk Trail Hills", "Wellogic",
+    "Holloway Sand & Gravel", "Gravel",
     "Salem Township", "Jackson District", "Jackson District Office",
     "Solid Waste Section", "Air Quality Division", "Materials Management",
     "Materials Management Division", "Arbor Hills", "Washtenaw", "Michigan",
@@ -86,6 +88,7 @@ ORG_ALLOWLIST = [
     "Consent Judgment", "Consent Judgement", "Consent Order", "Consent Decree",
     "Elevated Temperature Landfill", "Waste Data", "Remediation Area",
     "Well Type", "Well Master List", "Wellhead Protection", "Pic",
+    "Northville Twp", "Health Department", "Toll Brothers",
 ]
 
 

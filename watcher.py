@@ -25,7 +25,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 try:
@@ -38,14 +38,19 @@ import drive_client as dc
 import sheet_writer as sw
 import nsite_client as nc
 import email_alerts as ea
-import retry_policy as rp
-import woi_router
-import archiver as av
+import well_aliases
+import owner_notices as on
+import woi_router  # noqa: F401 — tests patch through this module name
+import well_watch  # noqa: F401 — tests patch through this module name
+import archiver as av  # noqa: F401 — tests patch through this module name
+import poison_stub
+import doc_pipeline as dp
+import doc_pipeline_liveness as dl
 from egle_doc_parser import parse_document
-from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
+from risk_register import RISK_REGISTER, RISK_NAMES
 from config_loader import load_config
 
-MAX_ERRORS_PER_DOC = 3  # give up on a poison doc after this many failures (cf. backfill)
+MAX_ERRORS_PER_DOC = poison_stub.MAX_ERRORS_PER_DOC  # give up on a poison doc after this many failures (cf. backfill)
 
 
 def _today():
@@ -54,6 +59,11 @@ def _today():
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def _now_utc() -> datetime:
+    """The liveness guard's clock (aware UTC); tests patch this."""
+    return datetime.now(timezone.utc)
 
 
 def _digest_record(parsed, d: dict, link: str) -> dict:
@@ -65,6 +75,11 @@ def _digest_record(parsed, d: dict, link: str) -> dict:
         "risks": parsed.risks,
         "key_data_point": parsed.key_data_point,
         "link": link,
+        # ADR 065: only ever True for a doc whose nSITE title was generic AND
+        # whose text reads as a substantive EGLE letter — see
+        # email_alerts.is_correspondence_letter + format_digest_body's pinned
+        # "CORRESPONDENCE & ENFORCEMENT" section.
+        "is_correspondence": bool(d.get("title_was_generic")) and ea.is_correspondence_letter(parsed.full_text),
     }
 
 
@@ -88,6 +103,7 @@ def _record_to_item(rec: dict) -> dict:
         risks=rec.get("risks", []),
         key_data_point=rec.get("key_data_point", ""),
         summary=rec.get("key_data_point", ""),
+        is_correspondence=rec.get("is_correspondence", False),
     )
     meta = {"date_filed": rec["date_filed"], "document_name": rec["document_name"]}
     if "urgent_sent_at" in rec:
@@ -119,6 +135,8 @@ def _route_urgent_or_digest(parsed, d: dict, link: str, cfg: dict, state: dict,
         except Exception as ae:  # noqa: BLE001 — notification is best-effort
             print(f"  URGENT ALERT FAILED to send (doc still recorded): "
                   f"{d['document_name'][:50]}: {ae}")
+            on.record_send_failure(sheets, "urgent alert", f"raised {type(ae).__name__}",
+                                   d, link, sent_at)
             return
         if not sent:
             # send_email() no-op'd (SMTP not configured / no recipients) --
@@ -126,6 +144,8 @@ def _route_urgent_or_digest(parsed, d: dict, link: str, cfg: dict, state: dict,
             # nothing to recap (see email_alerts.send_email's docstring).
             print(f"  URGENT ALERT skipped, SMTP not configured (doc still "
                   f"recorded): {d['document_name'][:50]}")
+            on.record_send_failure(sheets, "urgent alert", "not sent (SMTP or recipients)",
+                                   d, link, sent_at)
             return
         state["pending_urgent_recap"].append(
             _urgent_recap_record(parsed, d, link, sent_at))
@@ -136,11 +156,177 @@ def _route_urgent_or_digest(parsed, d: dict, link: str, cfg: dict, state: dict,
         sw.write_meta(sheets, sheet_id, state)
 
 
+def _processed_payload(parsed, d: dict) -> dict:
+    return {
+        "document_name": d["document_name"],
+        "date_filed": d["date_filed"],
+        "doc_type": parsed.doc_type,
+        "severity": parsed.severity,
+        "risks": parsed.risks,
+        # ADR 025 (Gap G1-A-1): carry the extracted claim + summary in the
+        # append-only _state payload so it survives a Feed-tab clear — the
+        # key_data_point (incl. enforcement-deadline text) is no longer
+        # mutable-feed-only.
+        "key_data_point": parsed.key_data_point,
+        "summary": parsed.summary,
+        # ADR 065: carried so archiver.py's nightly catch-up run (which only
+        # has this payload + the live nSITE list, never a fresh parse) can
+        # still write the resolved name/date into a later Archived PDFs row.
+        "document_date": d.get("document_date", ""),
+        "egle_title": d.get("egle_title") or d["document_name"],
+    }
+
+
+DEFAULT_LIVE_FILING_WINDOW_DAYS = 30
+
+
+def _filed_within(d: dict, today, window_days: int) -> bool:
+    """True iff `d["date_filed"]` (ISO YYYY-MM-DD) is within the last
+    `window_days` days of `today`. Blank/unparseable/future dates are NOT
+    recent (conservative: such a document waits for backfill)."""
+    try:
+        filed = datetime.strptime(str(d.get("date_filed", ""))[:10], "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return False
+    age = (today - filed).days
+    return 0 <= age <= window_days
+
+
+def _split_by_history(new_docs: list, docs: list, state: dict, today,
+                      window_days: int) -> tuple[list, list]:
+    """Pure (stall-hardening part (c)). Over the anti-stampede cap, split the
+    unprocessed documents into LIVE new filings — from an ESTABLISHED facility
+    (one with at least one document already `processed` or terminally
+    `skipped` in state, i.e. one the pipeline has been through before) AND
+    filed within the last `window_days` days — and the BACKLOG: everything
+    else. The backlog is a facility just added to `facilities:` (years of
+    filings, backfill's job, never the live watcher's) or the historical
+    remainder of a facility backfill has only partly drained (which would
+    otherwise stampede years-old filings, and their urgent alerts, into the
+    live feed the moment its first batch landed — the hole the review of this
+    change found). Order is preserved; a document with no facility_srn or no
+    parseable date is backlog."""
+    history = set()
+    for d in docs:
+        did = d.get("doc_id")
+        if did in state.get("processed", {}) or did in state.get("skipped", {}):
+            history.add(d.get("facility_srn"))
+    history.discard(None)
+    live = [d for d in new_docs
+            if d.get("facility_srn") in history and _filed_within(d, today, window_days)]
+    live_ids = {id(d) for d in live}
+    backlog = [d for d in new_docs if id(d) not in live_ids]
+    return live, backlog
+
+
+def _check_liveness(sheets, sheet_id: str, cfg: dict, state: dict, *, unprocessed: int,
+                    processed: int, struck: int, deferred: int, cap: int,
+                    now_utc=None) -> None:
+    """The document pipeline's liveness / silent-stall guard (stall-hardening
+    part (a); pure parts in doc_pipeline_liveness.py). Runs after the doc loop,
+    every run: records this run's outcome in `_meta.doc_pipeline_health`
+    (last activity, consecutive deferrals) and sends ONE owner-only health
+    notice per episode when the pipeline has deferred its backlog for
+    `watcher.max_consecutive_deferrals` runs in a row, or has made no progress
+    on unprocessed documents for `watcher.max_stale_days` days.
+
+    Owner-only on purpose (owner_notices.send_owner_email, never the alert /
+    digest lists): this is a pipeline-health notice, not a document alert.
+
+    FULLY ISOLATED + best-effort, like gfl_air_watcher._check_liveness: every
+    failure here is logged (class only) and never propagates — a liveness bug
+    must not break the run. The warned markers are set only AFTER a successful
+    send, so a failed send retries next run until it lands exactly once. The
+    health dict is mutated into `state` first, so the unconditional end-of-run
+    write_meta persists it even if the write here fails."""
+    try:
+        wcfg = cfg.get("watcher") or {}
+        max_stale = dl.as_int(wcfg.get("max_stale_days"), dl.DEFAULT_MAX_STALE_DAYS)
+        max_def = dl.as_int(wcfg.get("max_consecutive_deferrals"),
+                            dl.DEFAULT_MAX_CONSECUTIVE_DEFERRALS)
+        now_utc = now_utc or _now_utc()
+        stored = state.get(dl.META_KEY)      # what the cell held at run start
+        prev = stored
+        if not isinstance(prev, dict):
+            # A corrupt/foreign cell value must not disable the guard forever
+            # (it would otherwise raise here on every run and be re-persisted).
+            if prev not in (None, "", [], {}):
+                print("[watcher] liveness: doc_pipeline_health cell was not an object — "
+                      "starting over from empty.")
+            prev = {}
+        prev = dl.seed_from_last_run(prev, state.get("last_run"))
+        health = dl.update_health(prev, now_utc=now_utc, unprocessed=unprocessed,
+                                  processed=processed, struck=struck, deferred=deferred)
+        state[dl.META_KEY] = health
+        # Log-only recovery note, one per re-armed gate: the deferral gate
+        # re-arms when the counter resets; the stale gate when activity
+        # re-stamps last_activity_at (mirrors liveness_decision's two gates).
+        deferral_rearmed = bool(prev.get("warned_deferrals")) and health["consecutive_deferrals"] == 0
+        stale_rearmed = (bool(prev.get("warned_stale_for"))
+                         and prev.get("warned_stale_for") == prev.get("last_activity_at")
+                         and health.get("last_activity_at") != prev.get("last_activity_at"))
+        if deferral_rearmed or stale_rearmed:
+            print("[watcher] liveness: document pipeline made progress again — "
+                  "health notice re-armed (log only, no email).")
+        if health != stored:
+            # Persist the counter/timestamp now (crash-safe) — but only when it
+            # changed, so a healthy run with nothing new costs no extra write.
+            try:
+                sw.write_meta(sheets, sheet_id, state)
+            except Exception as we:  # noqa: BLE001 — the end-of-run write_meta carries it
+                print(f"[watcher] liveness: health write deferred to end of run: "
+                      f"{type(we).__name__}")
+        decision = dl.liveness_decision(health, now_utc, max_stale, max_def)
+        if decision.unquantifiable and unprocessed and not processed and not struck:
+            print("[watcher] liveness: no parseable last_activity_at on record while "
+                  "unprocessed documents made no progress — cannot quantify staleness "
+                  "yet (first run with this guard?); the deferral counter still applies.")
+        if not decision.should_warn:
+            return
+        subject = dl.liveness_subject(decision)
+        body = dl.format_liveness_body(decision, health, max_stale, max_def, cap)
+        try:
+            sent = on.send_owner_email(subject, body, cfg)
+        except Exception as se:  # noqa: BLE001 — notice best-effort; markers NOT set → retries
+            print(f"[watcher] liveness: STALL detected (deferrals={decision.deferrals}, "
+                  f"stale_days={decision.stale_days}) but the owner notice FAILED to "
+                  f"send (will retry next run): {type(se).__name__}")
+            return
+        if not sent:
+            print(f"[watcher] liveness: STALL detected (deferrals={decision.deferrals}, "
+                  f"stale_days={decision.stale_days}) but no owner address is configured; "
+                  "notice not sent.")
+            return
+        state[dl.META_KEY] = dl.mark_warned(health, decision)
+        try:
+            sw.write_meta(sheets, sheet_id, state)
+        except Exception as we:  # noqa: BLE001
+            print(f"[watcher] liveness: warned-marker write deferred to end of run: "
+                  f"{type(we).__name__}")
+        print(f"[watcher] liveness: STALL notice emailed to the owner (deferrals="
+              f"{decision.deferrals}, stale_days={decision.stale_days}); episode marked.")
+    except Exception as e:  # noqa: BLE001 — liveness must NEVER break the run
+        print(f"[watcher] liveness check errored (ignored — run unaffected): "
+              f"{type(e).__name__}")
+
+
 def run() -> int:
     cfg = load_config()
     sheet_id = os.environ["GSHEET_ID"]
     model = cfg["anthropic_model"]
     today = _today()
+    # ADR 065: generic-title detection + the doc_id -> display-name override
+    # map. An empty/missing block is a safe no-op (every doc's title_is_generic
+    # is False, so the Document Name column renders exactly as before).
+    generic_exact, generic_prefixes, title_overrides = dp.title_config(cfg)
+    # ADR 068: the curated well-ID alias map, loaded ONCE here — outside the
+    # per-doc try — so a missing/malformed map fails the run red instead of
+    # becoming per-doc poison strikes or a silent WOI-routing fallback.
+    well_alias_map = well_aliases.load_alias_map()
+    # ADR 068 addendum 2026-10-22: the registry (probes, ruled wells) and the
+    # check that the generated alias map still equals it. Both fail loudly.
+    well_registry = well_aliases.load_registry()
+    well_aliases.check_alias_map_matches(well_alias_map, well_registry)
 
     sheets = dc.sheets_service()
     sw.ensure_tabs(sheets, sheet_id)
@@ -164,6 +350,7 @@ def run() -> int:
                 or state["errors"].get(did, 0) >= MAX_ERRORS_PER_DOC)
 
     new_docs = [d for d in docs if not done_or_poisoned(d)]
+    unprocessed = len(new_docs)
 
     # Anti-stampede guard: the watcher is for incremental new filings. A backlog
     # larger than the cap means backfill hasn't cleared history yet — defer doc
@@ -171,115 +358,66 @@ def run() -> int:
     # don't fire urgent alerts on years-old exceedances, don't overflow the
     # single-cell _meta pending_digest). Digest housekeeping still runs.
     cap = (cfg.get("watcher") or {}).get("max_new_docs_per_run", 25)
+    deferred = 0
     if len(new_docs) > cap:
-        print(f"[watcher] {len(new_docs)} unprocessed docs > cap {cap}: backfill "
-              f"still in progress — deferring doc processing to the backfill job.")
-        new_docs = []
+        # Stall-hardening part (c): a brand-new facility's historical backlog
+        # must never freeze live monitoring of every OTHER, already-established
+        # facility (2026-07-24: two new facilities' 73 never-seen filings
+        # deferred N2688's own new filings for two weeks). Over the cap, only
+        # an established facility's RECENT filings (within
+        # watcher.live_filing_window_days) are processed live, and only when
+        # they alone fit under the cap; everything else — a facility with no
+        # processing history, or the historical remainder of one whose
+        # backfill has only partly drained — is the backlog, deferred to
+        # backfill exactly as before. An established facility's own over-cap
+        # burst keeps today's conservative deferral (now alarmed by the
+        # liveness guard below).
+        window = int((cfg.get("watcher") or {}).get("live_filing_window_days",
+                                                    DEFAULT_LIVE_FILING_WINDOW_DAYS))
+        live, backlog = _split_by_history(new_docs, docs, state, today, window)
+        if live and len(live) <= cap:
+            srns = sorted({str(d.get("facility_srn")) for d in backlog})
+            print(f"[watcher] {len(new_docs)} unprocessed docs > cap {cap}: {len(backlog)} "
+                  f"are backlog (no processing history for the facility, or filed more "
+                  f"than {window} days ago; {', '.join(srns)}) — deferring that backlog "
+                  f"to the backfill job; processing the {len(live)} recent filing(s) "
+                  f"from established facilities.")
+            deferred = len(backlog)
+            new_docs = live
+        else:
+            print(f"[watcher] {len(new_docs)} unprocessed docs > cap {cap}: backfill "
+                  f"still in progress — deferring doc processing to the backfill job.")
+            deferred = len(new_docs)
+            new_docs = []
     else:
         print(f"[watcher] {len(new_docs)} new document(s).")
+    ctx = dp.RunContext(
+        cfg=cfg, sheets=sheets, sheet_id=sheet_id, session=session, model=model,
+        well_alias_map=well_alias_map, well_registry=well_registry, parse=parse_document,
+        now=_now,
+        generic_exact=generic_exact, generic_prefixes=generic_prefixes,
+        title_overrides=title_overrides)
+    # The watcher's half of the shared per-document pipeline (doc_pipeline.py):
+    # New Documents feed, compliance deadlines, well_watch, and the same-day
+    # urgent alert / digest queue.
+    job = dp.Job(
+        name="watcher", feed_tab=sw.TAB_NEW, stub_feed_tab=sw.TAB_NEW,
+        payload=_processed_payload, write_deadlines=True, well_watch=True,
+        related_log_tag=True, review_flag_alert=True,
+        alert=lambda parsed, d, link: _route_urgent_or_digest(
+            parsed, d, link, cfg, state, sheets, sheet_id))
     tmp = tempfile.gettempdir()
-    # Reused across every doc this run so the OAuth handshake + Archived PDFs
-    # index read happen at most once — see archiver.mirror_one_now().
-    drive_state = {}
-
+    outcomes: dict = {}
     for d in new_docs:
-        did = d["doc_id"]
-        local = os.path.join(tmp, f"{d.get('facility_srn', 'N2688')}_{did}.pdf")
-        try:
-            nc.download_pdf(session, d, local)
-            parsed = parse_document(
-                local, d, RISK_REGISTER, model=model,
-                signal_keywords=SIGNAL_KEYWORDS,
-                page_threshold=cfg["large_doc_page_threshold"],
-                max_keyword_pages=cfg["large_doc_max_keyword_pages"],
-                max_tokens=cfg["classification_max_tokens"],
-            )
-            # Mirror to Drive inline (best-effort; falls back to the nSITE link
-            # on any failure — see archiver.mirror_one_now()) so the Sheet row
-            # and any alert below link somewhere that survives a Google-referer
-            # click-through (Gmail, a Sheets cell) without the ~21h lag of
-            # waiting for archive.yml's own nightly catch-up run.
-            link = av.mirror_one_now(
-                session, sheets, sheet_id, d, drive_state, local_path=local)
+        outcome = dp.process_one_doc(ctx, state, d, job, dp.local_path(tmp, d))
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
 
-            # WOI Status Reports (180-320pp gas-extraction tables) are keyword-
-            # windowed by the generic parser (<5% of ~14k readings; a >=145F well
-            # buried past the window emits no measurement, so is_urgent never
-            # fires). Route them to the exhaustive woi_table_parser and REPLACE
-            # parsed.measurements BEFORE is_urgent (so a page-140 exceedance
-            # actually alerts) and before write_document (so the ranked ADR-004
-            # readings, not the windowed soup, land in Measurements). Routing is
-            # best-effort: any failure degrades to the generic parse (logged),
-            # never drops the filing. See woi_router / ADR 005.
-            try:
-                routed = woi_router.route_measurements(parsed, local, d, cfg)
-            except Exception as we:  # noqa: BLE001 — degrade to the generic parse
-                print(f"  WOI routing failed, using generic parse: {we}")
-                routed = None
-
-            # Crash-safe order: durable Sheet row first, the 'processed' state
-            # event last (a crash before it re-processes the doc next run — a
-            # duplicate row, never a silent drop; see ADR 006). The alert/digest
-            # sits between them and is BEST-EFFORT: the Sheet is the system of
-            # record, so a failed email must not block marking the doc done nor
-            # trigger a daily reprocess. send_email() already no-ops when SMTP is
-            # unconfigured; here we also swallow a configured-but-failing send.
-            sw.write_document(sheets, sheet_id, parsed, d, link, RISK_NAMES, feed_tab=sw.TAB_NEW)
-
-            # Structured compliance deadlines (ADR 025) — durable, machine-joinable
-            # home for the dated obligations the classifier extracted, instead of
-            # leaving them only in the mutable feed cell. Best-effort: must not
-            # block marking the doc processed or alerting.
-            deadlines = getattr(parsed, "deadlines", None)
-            if deadlines:
-                try:
-                    sw.write_compliance_deadlines(
-                        sheets, sheet_id, deadlines, "nSITE",
-                        d.get("facility_name", ""), link, _now())
-                except Exception as de:  # noqa: BLE001 — deadline tab is best-effort
-                    print(f"  compliance-deadline write skipped (doc still recorded): {de}")
-
-            if routed is not None:
-                try:
-                    sw.ensure_woi_tabs(sheets, sheet_id)
-                    sw.write_woi_summary(sheets, sheet_id, routed["summary"], d, link)
-                except Exception as we:  # noqa: BLE001 — summary tab is best-effort
-                    print(f"  WOI summary-tab write skipped (doc still recorded): {we}")
-
-            _route_urgent_or_digest(parsed, d, link, cfg, state, sheets, sheet_id)
-
-            payload = {
-                "document_name": d["document_name"],
-                "date_filed": d["date_filed"],
-                "doc_type": parsed.doc_type,
-                "severity": parsed.severity,
-                "risks": parsed.risks,
-                # ADR 025 (Gap G1-A-1): carry the extracted claim + summary in the
-                # append-only _state payload so it survives a Feed-tab clear — the
-                # key_data_point (incl. enforcement-deadline text) is no longer
-                # mutable-feed-only.
-                "key_data_point": parsed.key_data_point,
-                "summary": parsed.summary,
-            }
-            state["processed"][did] = payload
-            sw.mark_processed(sheets, sheet_id, did, payload, _now())
-            print(f"  ok  {d['date_filed']}  [{parsed.doc_type}/{parsed.severity}]  "
-                  f"{d['document_name'][:50]}")
-        except Exception as e:  # noqa: BLE001
-            if rp.is_transient(e):
-                # Infrastructure/quota error (API cap, 429, 5xx, network) — not the
-                # document's fault. Retry next run WITHOUT a poison strike, so a
-                # capped or outage window can't silently skip a real filing (the
-                # 2026-07-07 false-poison incident). The doc stays unprocessed.
-                print(f"  RETRY (transient, no strike) {d['document_name'][:50]}: {e}")
-                continue
-            cnt = state["errors"].get(did, 0) + 1
-            state["errors"][did] = cnt
-            sw.mark_error(sheets, sheet_id, did, cnt, _now())
-            print(f"  ERR {d['document_name'][:50]}: {e}")
-        finally:
-            if os.path.exists(local):
-                os.remove(local)
+    # Liveness / silent-stall guard (stall-hardening part (a)): record this
+    # run's outcome and alarm, once per episode, on a backlog that keeps being
+    # deferred or a queue that keeps making no progress. Best-effort, isolated.
+    _check_liveness(sheets, sheet_id, cfg, state, unprocessed=unprocessed,
+                    processed=outcomes.get("processed", 0), struck=outcomes.get("error", 0),
+                    deferred=deferred, cap=cap)
 
     # MMPC meeting documents are archived by Mirror D (mmpc-archive.yml) on its
     # own schedule — the watcher no longer polls for or emails MMPC minutes (the
@@ -342,7 +480,17 @@ def run() -> int:
         if state["pending_digest"] or state["pending_urgent_recap"]:
             items = [_record_to_item(r) for r in state["pending_digest"]]
             recap_items = [_record_to_item(r) for r in state["pending_urgent_recap"]]
-            ea.send_digest(items, cfg, urgent_recap=recap_items)
+            try:
+                digest_sent = ea.send_digest(items, cfg, urgent_recap=recap_items)
+            except Exception as de:
+                # Record it for the owner weekly email, then fail the run as
+                # before (the queue is kept and retried next Sunday).
+                on.record_send_failure(sheets, "Sunday digest", f"raised {type(de).__name__}",
+                                       {}, "", _now())
+                raise
+            if digest_sent is False:
+                on.record_send_failure(sheets, "Sunday digest", "not sent (SMTP or recipients)",
+                                       {}, "", _now())
             state["pending_digest"] = []
             state["pending_urgent_recap"] = []
             sw.write_meta(sheets, sheet_id, state)
@@ -369,6 +517,17 @@ def run() -> int:
                     print("[watcher] sent upcoming-activities section (scoped).")
         except Exception as e:  # noqa: BLE001 — the digest must never break on this
             print(f"[watcher] upcoming-activities section skipped: {e}")
+
+        # (3) The owner-only weekly housekeeping email (owner_notices.py):
+        # unreadable filings, unrouted hand-curated rows, failed sends, parser
+        # review flags. Owner addresses only, never a list. Gated on
+        # owner_weekly.enabled; isolated so it can never fail the run (class
+        # only in the public log).
+        try:
+            outcome = on.send_weekly(sheets, sheet_id, state, cfg, today, _now())
+            print(f"[watcher] owner weekly email: {outcome}")
+        except Exception as e:  # noqa: BLE001 — isolated, retried next Sunday
+            print(f"[watcher] owner weekly email skipped: {type(e).__name__}")
 
     try:
         sw.rebuild_risk_register_tab(sheets, sheet_id, RISK_REGISTER)

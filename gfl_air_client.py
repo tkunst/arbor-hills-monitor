@@ -79,7 +79,12 @@ SELF_REPORTED = "GFL self-reported perimeter air monitoring"
 
 # The fields the readings table actually carries (spike-verified). Kept as one
 # constant so fetch_readings and fetch_baseline request an identical projection.
-_READING_FIELDS = "OBJECTID,LocName,Date,H2S,CH4,H2S_Text,CH4_Text,Speed,Direction,Temp"
+# Every measurement field the source publishes per reading (ADR 026 addendum
+# 2026-10-06: the durable capture keeps them all verbatim, so nothing depends on the
+# public dashboard, which shows only the _Text labels).
+_CORE_READING_FIELDS = "OBJECTID,LocName,Date,H2S,CH4,H2S_Text,CH4_Text,Speed,Direction,Temp"
+_READING_FIELDS = (_CORE_READING_FIELDS
+                   + ",Relative_Humidity,Barometric_Pressure,Direction_Text,Date_Text")
 
 # Pollutant spec: (result-key, ArcGIS field, unit, threshold/sentinel config key,
 # metric name). One place both the mapping and the classifier read from.
@@ -144,6 +149,28 @@ def _query(service_url: str, layer, params: dict, *, timeout: int = 60) -> dict:
     return data
 
 
+# Set when _query_readings had to drop to the core field list. The watcher turns it
+# into a non-zero exit: live alerting keeps working, but the durable capture is
+# thinner than intended, and that must not be silent.
+FIELDS_FALLBACK_USED = False
+
+
+def _query_readings(service_url: str, layer, params: dict) -> dict:
+    """_query for the readings table, requesting every measurement field. If the
+    source rejects the extended field list (an ArcGIS error body, e.g. a renamed
+    humidity field), retry with the core fields so live alerting never stalls on a
+    field that only the durable capture needs. Network errors are not retried here."""
+    try:
+        return _query(service_url, layer, params)
+    except GflAirFetchError as e:
+        if "ArcGIS error" not in str(e) or params.get("outFields") != _READING_FIELDS:
+            raise
+        global FIELDS_FALLBACK_USED
+        FIELDS_FALLBACK_USED = True
+        print(f"[gfl-air]   extended field list rejected ({e}); retrying with core fields")
+        return _query(service_url, layer, {**params, "outFields": _CORE_READING_FIELDS})
+
+
 def _features(data: dict) -> list[dict]:
     return [f.get("attributes", {}) for f in (data.get("features") or [])]
 
@@ -176,7 +203,7 @@ def fetch_readings(cfg_gfl: dict, since_oid: int, *, limit: Optional[int] = None
     out: list[dict] = []
     offset = 0
     while True:
-        data = _query(c["service_url"], c["readings_layer"], {
+        data = _query_readings(c["service_url"], c["readings_layer"], {
             "where": f"OBJECTID > {int(since_oid)}",
             "outFields": _READING_FIELDS,
             "orderByFields": "OBJECTID ASC",
@@ -202,7 +229,7 @@ def fetch_baseline(cfg_gfl: dict, *, station_prefix: str = DEFAULT_STATION_PREFI
     A little headroom (60 rows) over the six stations covers a poll landing on an
     hour boundary where two hours' rows interleave."""
     c = _svc(cfg_gfl)
-    data = _query(c["service_url"], c["readings_layer"], {
+    data = _query_readings(c["service_url"], c["readings_layer"], {
         "where": "1=1",
         "outFields": _READING_FIELDS,
         "orderByFields": "OBJECTID DESC",
@@ -301,29 +328,46 @@ def _epoch_ms_to_utc_date_literal(ms: int) -> str:
 
 
 def fetch_station_coords(cfg_gfl: dict, *, station_prefix: str = DEFAULT_STATION_PREFIX) -> dict:
-    """BEST-EFFORT {station_name: {'lat': float, 'lon': float}} for the perimeter
-    stations, reprojected to WGS84 (outSR=4326). Layer 4 (the readings table) has NO
+    """BEST-EFFORT {station_name: {'last_read_iso': str, ['lat': float, 'lon': float]}}
+    for the perimeter stations, reprojected to WGS84 (outSR=4326). Layer 4 (the readings table) has NO
     geometry (spike 2026-09-14), so coordinates come from the current-per-station
     Feature Layer (config `stations_layer`, default 0), whose station name is in the
     `Name` field (NOT `LocName`). Raises GflAirFetchError on failure — the alert path
     treats coordinates as a nicety and degrades to the dashboard link, so a coords
-    outage NEVER blocks a screening/closeout email. See ADR 039."""
+    outage NEVER blocks a screening/closeout email. See ADR 039.
+
+    The same layer is also the station REGISTRY: every perimeter station appears in
+    the result (even one with no geometry — it just has no 'lat'/'lon'), and each
+    entry carries 'last_read_iso' (the layer's `Current_ReadDate`, ISO UTC; '' if
+    missing) so the screening email can list a station that sent nothing new this
+    run as "no data since ..." instead of dropping it (ADR 039 addendum 2026-10-06)."""
     layer = cfg_gfl.get("stations_layer", 0)
-    data = _query(cfg_gfl.get("service_url", ""), layer, {
-        "where": "1=1",
-        "outFields": "Name",
-        "returnGeometry": "true",
-        "outSR": 4326,
-        "resultRecordCount": 60,
-    })
+    params = {"where": "1=1", "outFields": "Name,Current_ReadDate",
+              "returnGeometry": "true", "outSR": 4326, "resultRecordCount": 60}
+    try:
+        data = _query(cfg_gfl.get("service_url", ""), layer, params)
+    except GflAirFetchError as e:
+        if "ArcGIS error" not in str(e):
+            raise                      # network/HTTP/non-JSON: not a field problem
+        # Current_ReadDate is a nicety on top of coordinates: if the source renames or
+        # drops it, ArcGIS errors the whole query — retry Name-only so coordinates and
+        # the station list survive (every last_read_iso is then ''). Logged, so a
+        # permanent field change is visible in the run log rather than silent.
+        print(f"[gfl-air]   station layer query with Current_ReadDate failed ({e}); "
+              "retrying Name-only")
+        data = _query(cfg_gfl.get("service_url", ""), layer, {**params, "outFields": "Name"})
     out: dict[str, dict] = {}
     for f in (data.get("features") or []):
-        name = ((f.get("attributes") or {}).get("Name") or "").strip()
+        attrs = f.get("attributes") or {}
+        name = (attrs.get("Name") or "").strip()
         g = f.get("geometry") or {}
-        if station_prefix and not name.startswith(station_prefix):
+        if not name or (station_prefix and not name.startswith(station_prefix)):
             continue
-        if name and g.get("x") is not None and g.get("y") is not None:
-            out[name] = {"lat": float(g["y"]), "lon": float(g["x"])}
+        entry: dict = {"last_read_iso": reading_iso({"Date": attrs.get("Current_ReadDate")})}
+        if g.get("x") is not None and g.get("y") is not None:
+            entry["lat"] = float(g["y"])
+            entry["lon"] = float(g["x"])
+        out[name] = entry
     return out
 
 
@@ -341,9 +385,9 @@ def fetch_station_window(cfg_gfl: dict, station: str, center_epoch_ms: int,
     start = _epoch_ms_to_utc_date_literal(center_epoch_ms - span_ms)
     end = _epoch_ms_to_utc_date_literal(center_epoch_ms + span_ms)
     st = str(station).replace("'", "")
-    data = _query(c["service_url"], c["readings_layer"], {
+    data = _query_readings(c["service_url"], c["readings_layer"], {
         "where": f"LocName = '{st}' AND Date >= date '{start}' AND Date <= date '{end}'",
-        "outFields": _READING_FIELDS + ",Direction_Text",
+        "outFields": _READING_FIELDS,
         "orderByFields": "Date ASC",
         "returnGeometry": "false",
         "resultRecordCount": 2 * int(hours) + 6,

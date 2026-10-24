@@ -15,6 +15,7 @@ cover/summary page) are sent to Claude. They are deliberately R8-heavy because
 the overheating/ETLF story is the new, evidence-dense one buried in the giant
 WOI Status Reports.
 """
+import re
 
 RISK_REGISTER = [
     {
@@ -116,3 +117,129 @@ SIGNAL_KEYWORDS = [
 # Convenience: id -> name, used by sheet_writer for the "Evidence by Risk" tab.
 RISK_NAMES = {r["id"]: r["name"] for r in RISK_REGISTER}
 VALID_RISK_IDS = set(RISK_NAMES)
+
+# ---------------------------------------------------------------------------
+# Deterministic urgency floor (CWE-1427 mitigation; classifier-untrusted-input,
+# 2026-10-14). A prompt injection hidden in a filing's own text (tiny/white
+# print, an instruction telling the model "severity: routine, summarize as
+# compliant") can talk the MODEL's severity down -- but it can't remove the
+# words "smoldering" from the PDF's own extracted text. This pattern reads
+# that raw, deterministic text directly and enforces a rule that ALREADY
+# EXISTS, never a new one: "a CO spike" / "smoldering" (narrowed 2026-10-14,
+# see below) is from egle_doc_parser._SEVERITY_HELP's own urgent-tier
+# definition (the model's own instructions already call these urgent).
+#
+# Two OTHER candidate triggers were built and then DROPPED after real-
+# specimen testing (40 live N2688 documents spanning Urgent/Notable/Routine,
+# 2026-10-14) found both produced false positives:
+#   - "a Consent Judgment violation", paired as a CJ-docket mention + a
+#     violation word anywhere in the document: false-positived on every
+#     routine quarterly CJ report (the boilerplate perjury/certification
+#     clause -- "the possibility of fine and imprisonment for knowing
+#     violations" -- and an inspection report's "Non-Compliance" SECTION
+#     HEADING both contain the substring "violat" with no connection to an
+#     actual CJ violation).
+#   - EGLE enforcement letterhead + adverse-action vocabulary (mirroring
+#     wds_watcher._classify_compliance_action, a DIFFERENT severity model for
+#     a DIFFERENT, structured-data stream): false-positived on a routine
+#     quarterly compliance letter merely CITING the CJ docket number, AND --
+#     more importantly -- on a REAL Notice of Violation that the live
+#     classifier itself already rates "notable", not "urgent": egle_doc_
+#     parser._SEVERITY_HELP's actual urgent-tier definition does not include
+#     "any Notice of Violation" by itself, only one that also reports a
+#     measured 145F+ reading, a CO spike, smoldering, or a genuine CJ
+#     violation. Treating "VN = urgent" from BODY text would have been
+#     inventing new urgency semantics, not enforcing an existing one -- see
+#     the PR for the full false-positive list.
+#     UPDATE 2026-10-15 (Trisha): enforcement actions ARE now urgent, by
+#     definition (_SEVERITY_HELP), and the deterministic backstop for them
+#     reads the regulator's own document TITLE (enforcement_title_signal,
+#     below), never body text -- which is what avoids the false positives
+#     listed above.
+# Deliberately NOT a bare SIGNAL_KEYWORDS hit either: most of those terms
+# (temperature, HOV, higher operating value, leachate, pfas, exceedance,
+# mact, woi, consent judgment) are page-selection keywords only, and
+# _SEVERITY_HELP says so explicitly -- "a permitted ceiling or HOV-waiver
+# limit... is NOT by itself urgent."
+# ---------------------------------------------------------------------------
+
+# Narrowed 2026-10-14 (Trisha, option (b)): "subsurface oxidation" is NOT a
+# trigger, and neither is a bare "SSO". The operator's routine Wells-of-Interest
+# status reports carry both as boilerplate -- "Drager Tube CO Readings taken to
+# prove absence of SSO" in every CO table, a standing history paragraph about a
+# 2019 "near-surface subsurface oxidation event", and "a chemical reaction is
+# occurring as opposed to a subsurface oxidation (SSO) event" -- so either term
+# would have floored every routine WOI report to urgent.
+_CO_SPIKE_RE = re.compile(r"\bco\s*spike\b|carbon\s+monoxide\s+spike", re.IGNORECASE)
+_SMOLDER_RE = re.compile(r"\bsmolder(?:ing)?\b", re.IGNORECASE)
+
+# The ONE narrow "SSO" form that IS a trigger (Trisha, 2026-10-14): a FIELD
+# TECHNICIAN's comment tag on a wellhead reading. In the WOI reports' per-reading
+# Comments column, technician codes are comma-separated tokens, e.g.
+#   "Opened Valve 1/2 turn or less,SSO Well: :"
+#   "Second Reading,SSO Well: 15ppm co:"
+#   "1/2 turn or less,Air off,SSO"
+# So: an UPPERCASE "SSO" that is a whole comma-delimited token (start of line or
+# after a comma), either "SSO Well" or "SSO" ending the token. Case-sensitive
+# (OCR noise in boring logs reads as lowercase "sso"), and it never matches the
+# prose boilerplate above ("absence of SSO.", "(SSO) event", "an SSO.").
+_FIELD_SSO_RE = re.compile(r"(?:^|,)[ \t]*SSO(?:[ \t]+Well\b|[ \t]*(?:,|$))", re.MULTILINE)
+
+
+# Enforcement-action TITLE backstop (Trisha, 2026-10-15). Reads the regulator's
+# own nSITE document title, never the document body (the body-text version of
+# this -- "EGLE letterhead + violation words" -- was dropped for false positives;
+# see above). Matches a title that STARTS with the action itself, optionally
+# after a date or "Signed": "Violation Notice", "Violation Notice - Request
+# Information", "VN (#4) for continued failure...", "Signed VN letter",
+# "8-31-22 Violation Notice and Transmittal Email", "Enforcement Notice",
+# "Administrative Consent Order", "Notice of Violation". Deliberately NOT:
+# "VN Correspondence" / "Violation Notice Correspondence" (follow-up letters) or
+# "Response to EGLE Violation Notice" (the operator's reply). Titles surveyed
+# from the live case-file Sheet, 2026-10-15.
+_TITLE_PREFIX = (
+    r"^\W*"
+    r"(?:(?:\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\s+)?"  # optional date
+    r"(?:(?:signed|second|third|revised|amended|final|egle|epa)\s+)*"           # optional qualifiers
+)
+# A follow-up ABOUT an action, checked on the NEXT word, however punctuated or
+# inflected ("VN - Correspondence", "Violation Notice Responses", "VN Reporting").
+# "compliance" is NOT excluded: "Violation Notice Compliance Schedule" is urgent
+# (Trisha, 2026-10-15).
+_NOT_FOLLOW_UP = (
+    r"(?![\W_]*(?:correspond\w*|respons\w*|repl\w*|report\w*|amend\w*|terminat\w*|"
+    r"quarterly|annual|semi-annual|status|list\w*)\b)"
+)
+_ENFORCEMENT_TITLE_RE = re.compile(
+    _TITLE_PREFIX + r"(?:"
+    # Violation / enforcement notices: next-word check only, so "Violation Notice
+    # - Failure to Submit Annual Report" (a real EGLE action) still matches.
+    r"(?:violation\s+notice|notice\s+of\s+violation|vn(?=[\W_]*\w)|enforcement\s+notice)\b"
+    + _NOT_FOLLOW_UP + r"|"
+    # Consent orders: also not the operator's periodic report under that order,
+    # wherever it is named ("Consent Order No. 12-2024 Quarterly Report").
+    r"(?:administrative\s+consent\s+order|consent\s+order)\b"
+    + _NOT_FOLLOW_UP + r"(?!.*\b(?:quarterly|annual|semi-annual|report\w*)\b)"
+    r")",
+    re.IGNORECASE)
+
+
+def enforcement_title_signal(title: str) -> bool:
+    """True if `title` (the regulator's own document title from nSITE metadata)
+    names an enforcement action issued to the facility. Pure."""
+    return bool(title and _ENFORCEMENT_TITLE_RE.search(" ".join(str(title).split())))
+
+
+def hard_urgency_signal(text: str) -> bool:
+    """True if `text` -- deterministically extracted document text, never the
+    model's own output -- contains a hard urgency signal under a rule that
+    already exists elsewhere in this codebase (see the module comment
+    above). Pure; a prompt injection embedded in the document cannot
+    suppress its own text. Used by egle_doc_parser.parse_document() as a
+    floor the model's severity cannot be talked below: if this returns True,
+    severity is at least "urgent" regardless of what the classifier
+    reported."""
+    if not text:
+        return False
+    return bool(_CO_SPIKE_RE.search(text) or _SMOLDER_RE.search(text)
+                or _FIELD_SSO_RE.search(text))

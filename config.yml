@@ -14,6 +14,17 @@
 # clears first; N2688's ~704 not-yet-processed docs are listed LAST so they don't
 # block it (its ~50 already-processed docs are skipped regardless). The watcher
 # and archiver are order-independent.
+#
+# SCOPE (ADR 064, 2026-10-07, Trisha-directed). An entry without `scope` is CORE:
+# an Arbor Hills / GFL filing that goes to New/Historical Documents, Evidence,
+# Measurements, Compliance Deadlines, the public-records pages, urgent alerts
+# and the Sunday digest. `scope: related` is a neighboring or watershed site
+# (not a GFL filing): its documents go ONLY to the "Related Documents" tab, and
+# never to the digest, urgent alerts, Evidence/Measurements/Deadlines or the
+# website. The eight neighbor-development sites added 2026-09-25 (COLDR, TOLL,
+# RIDGE, PTEX, LUMB, DTE5M, FMCOM, NTWP) are NOT here at all: they stay in
+# `nsite_sites` for the Trisha-only profile watches, but their documents are
+# not collected. Any new entry must be classified on purpose; tests pin the set.
 facilities:
   - {srn: "RA",    name: "Arbor Hills Remediation Area",  id: "-714792003991405124"}   # Water/RRD — R5/PFAS, process FIRST (740 docs)
   - {srn: "WRD",   name: "GFL-Arbor Hills Landfill-Washtenaw Co", id: "306291952280313698"}   # WRD Land & Water Interface (JPA/wetlands/floodplain/inland lakes) — R1/R5; found 2026-07-24 tracing a missed JPA (ADR 020); 69 never-seen docs, clears safely behind the anti-stampede guard (watcher.max_new_docs_per_run defers to backfill, which never alerts)
@@ -21,6 +32,20 @@ facilities:
   - {srn: "P1488", name: "Emerald RNG",                   id: "-5064275074930604158"}   # OPAL/GFL RNG plant (16 docs)
   - {srn: "N2688", name: "Arbor Hills Landfill",         id: "8094300008956198244"}    # the landfill — backfill complete (all processed); new filings now handled by the daily watcher
   - {srn: "AHLI",  name: "Arbor Hills Landfill, Inc.",   id: "643581439310101662"}     # bare duplicate nSITE record surfaced 2026-07-24 resolving all 19 MiEnviro subscriptions (ADR 021); genuine Dec-2025 activity (4 docs) — deliberate, standalone addition, not a side effect of the submissions-cadence build below
+  - {srn: "NAPR",  name: "GFL Napier Rd culvert (WRP034436)", id: "-4552820604746245548"}   # EGLE WRD Resources permit WRP034436 (issued 2022-08-01, expires 2027-08-01): GFL box culvert + fill in an unnamed Johnson Creek tributary, Napier Rd between 5 and 6 Mile, Northville Twp (Wayne Co). 12 docs (2022 JPA + permit packet). Found by Trisha 2026-09-25; ADR 044
+  - {srn: "WIP19", name: "Salem Springs wetland ID, 6255 Napier Rd (HNP-75WK-9JX94)", id: "6076539015117221381", scope: related}   # ADR 048: 2019 EGLE Level 3 WIP, ~91 ac, 25.51 ac regulated wetland, Salem Springs Owner LLC (Schostak), Sec. 25; 4 docs
+  - {srn: "PTI87", name: "1987 Air PTI applications (C-7567, C-7568)", id: "-3813933512584804016"}   # ADR 048: historical, 0 docs on nSITE today; tracked so any later-posted document is archived
+  - {srn: "BORE15", name: "Arbor Hills 2015 soil-boring JPA (WRP000808)", id: "-4454026774380249654"}   # ADR 049: Advanced Disposal/Golder, 11 hydrogeologic boreholes in Sec. 12 w/ temporary wetland crossings; GP Category Q, 2015-11-17..2020-11-17 (Expired); 8 docs incl. borehole+wetland map and adjacent-owner list
+  - {srn: "FP89",  name: "Floodplain elevation request, 8627 Napier Rd (89-11-0108-FP)", id: "7284130751247156626", scope: related}   # ADR 049: historical WRD floodplain elevation calculation request (1989 per ref format), parcel next to the landfill in Sec. 12; 0 docs today
+  - {srn: "MITIG", name: "Arbor Hills Mitigation Site", id: "6707784663696162097"}   # ADR 050: identified by Trisha 2026-09-25; empty on every nSITE profile at add time. Expected home of the wetland-mitigation filings tied to the 2026 Wetland 1 JPA (conceptual mitigation plan).
+  - {srn: "CHUBB18", name: "8110 Chubb Rd wetland-fill VN site (VN-008432)", id: "604563607848499529", scope: related}   # ADR 051: 2018 WRD complaint + Violation Notice (Request Information), unpermitted fill in regulated wetland + driveway to a stream, parcel A-01-12-300-012 (Sec. 12, not GFL-owned); closed 2018-06-05; 1 doc
+  - {srn: "CHUBBRD", name: "Chubb Rd + Five Mile Rd reconstruction (WRP013195)", id: "-5141175505123096250", scope: related}   # ADR 052: 2018 JPA + construction stormwater (MIR115382); 2 SESC violations 2020 still Active-Addressed not Resolved; 23 docs
+  - {srn: "WIP25", name: "7506 Chubb Rd wetland ID (HQ3-NSC0-TP7FT)", id: "-8179920515493197813", scope: related}   # ADR 052: 2025 Level 3 WIP, ~13 ac, parcel A-01-13-300-012, Sec. 13 (Anglin Civil / Dalice Co.); 2024 pre-app withdrawn; 22 docs
+  - {srn: "BDPH", name: "7374 Chubb Rd stormwater outfalls (WRP038206)", id: "-1974820987593684099", scope: related}   # ADR 052: Part 303 permit 2023-07-26..2028-07-26 to BD Property Holdings: 2 storm outfalls discharging to wetland, Sec. 13; 29 docs
+  - {srn: "ASB26", name: "Asbestos contractor registration (ASB-00009055)", id: "6658906756287014686", scope: related}   # ADR 052: AQD Asbestos New Contractor Registration, received 2026-01-21, In Process; 0 docs
+  - {srn: "CMP23", name: "WRD-NPDES complaint site (HPY-5JZ9-JFEQE)", id: "8106421448071964642", scope: related}   # ADR 052: one WRD-NPDES complaint, 2023-10-05; 0 docs
+  - {srn: "H95", name: "1995 resources permit 95-13-0412-P", id: "-6102479567065163659", scope: related}   # ADR 053: historical Conversion Resources Application, General Permit 1995-09-28..1996-12-31 (Expired); 0 docs
+  - {srn: "JCDR", name: "Johnson Creek Intercounty Drain Restoration (HPG-9289-R76GQ)", id: "-9161999632999417877", scope: related}   # ADR 055: 2022-05-18 JPA, On Hold; consultant ECT; >2,000 cy dredging, EGLE 2022 correction request on sediment (contaminant) testing + in-stream BMPs; downstream of the landfill discharge; 45 docs
   # NOT TRACKED (Documents pipeline) — the other 13 sites resolved in ADR 021
   # are polled for Submissions ONLY, at their tier's cadence — see
   # `nsite_sites` + `nsite_submissions.tiers` below (ADR 022). They are near-zero/zero-Documents-history
@@ -31,10 +56,15 @@ facilities:
   # Submissions quarterly tier (ADR 021 Decision 5).
 
 # --- Document classification ---
-# Haiku is the deliberate cost choice for the 754-doc backfill (~$2-4 total);
-# routine monitoring is a few docs/day, essentially free. Override here if you
-# want a more capable model for live monitoring vs. backfill.
-anthropic_model: "claude-haiku-4-5"
+# Haiku was the deliberate cost choice for the 754-doc backfill (~$2-4 total);
+# routine monitoring is a few docs/day, essentially free either way. Bumped to
+# Sonnet 5 (2026-09-20, Trisha-directed) after a large keyword-windowed doc (the
+# 875-page Q1 2026 VGC Well Report) produced a digest summary that reported only
+# the compliant-well count and silently dropped ~2/3 non-compliant wells. Model
+# quality alone doesn't fix the windowing (large_doc_page_threshold/
+# large_doc_max_keyword_pages below still caps what the classifier ever sees),
+# but a stronger model is a free upgrade for the pages it IS shown.
+anthropic_model: "claude-sonnet-5"
 # Output cap for the classification call. Generous enough that measurements[]
 # on a multi-well WOI report isn't truncated mid-JSON. If a doc ever fails with
 # "Classification truncated at max_tokens", raise this.
@@ -54,6 +84,478 @@ classification_max_tokens: 16384
 large_doc_page_threshold: 30
 large_doc_max_keyword_pages: 10
 
+# --- Document Date + real titles for generic nSITE titles (ADR 065) ---
+# nSITE files a lot of documents under generic filing-system titles that tell a
+# reader nothing ("Site", "nForm Document", ...). `generic_exact` is matched
+# case-insensitively as a whole title; `generic_prefixes` as a case-insensitive
+# startswith (so every "Schedule - ..." title counts, not just one exact
+# string — a real scan of the live N2688 corpus found 8/8 "Schedule -" docs
+# were substantive EGLE letters, 0 genuine schedule stubs; other facilities'
+# own "Schedule - DMR"/"Schedule - Submit..." titles ALSO start with
+# "Schedule - " and are swept in too — confirmed via real specimens to be
+# genuine stubs, which is harmless: a genuine stub's classifier never finds a
+# usable display_title, so it just keeps its plain nSITE title). A doc whose
+# title matches is flagged `title_is_generic` for the classifier (asked to
+# propose a real display_title — see egle_doc_parser.py) and for the
+# "CORRESPONDENCE & ENFORCEMENT" digest-tier bump (see email_alerts.
+# is_correspondence_letter). `overrides` is a doc_id -> display name map for
+# docs Trisha has hand-verified (precedence: overrides > classifier
+# display_title > the raw nSITE title — see document_titles.resolve_display_name).
+# The 9 below are carried over from the retired schedule-title-overrides.md
+# handoff's hand-verified rename map (8 "Schedule -" N2688 docs + 1 "nForm
+# Document"); this block absorbs and supersedes that handoff.
+document_titles:
+  generic_exact:
+    - "nForm Document"
+    - "Site"
+    - "Submission PDF"
+    - "Submital Attachments"
+    - "Correspondence"
+  generic_prefixes:
+    - "Schedule - "
+  overrides:
+    "5234117446316116012": "EGLE letter: 120-day perimeter-monitor extension approval (Cells 6A/6B)"
+    "5149154739899361698": "EGLE cover email: perimeter-monitor extension approval (Cells 6A/6B)"
+    "5130343428992210792": "EGLE letter: 120-day extension approval, perimeter monitor (Cell 5C)"
+    "-2622199756316422732": "EGLE letter: 120-day extension approval, VGC corrective (2 wells)"
+    "3589987381183586634": "EGLE letter: extension approval, VGC corrective actions (29 wells)"
+    "-4679635065984934930": "EGLE cover email: Consent Judgement extension-request approval"
+    "8510351745791368151": "EGLE letter: 2-year HOV temperature-waiver renewal (16 WOI wells/sumps)"
+    "-2935564993291663255": "EGLE cover email: HOV temperature-waiver renewal approval letter"
+    "7045536706099143566": "GFL Consent Judgment report: 2026 Second Quarter (CJ No. 2020-0593-CE)"
+    # 429 reviewed display names for documents whose nSITE title is a bare placeholder (Site / Submission PDF /
+    # nForm Document), added 2026-10-23 (Trisha-reviewed; built by Lotext analysis/generic-titles-rewrite-2026-10-23).
+    # Shape: "Email correspondence (<org> to <org>): <subject>" or "Submitted by <facility>: <document type>"; no personal names.
+    "8038623586407164591": "Email correspondence (EGLE to Golder): Hg monitoring and revised Mercury PMP under NPDES Permit MIG0045713"
+    "4060694734327273871": "Email correspondence (Golder to EGLE): RE: March 7, 2012 Inspection, Hg PMP submittal"
+    "-7470045112388245736": "Email correspondence (EGLE to EGLE): Arbor Hills Data - review of influent treatment data, Jan 2012"
+    "-8530901977381016914": "Email correspondence (EGLE): Arbor Hills Remediation Area Part 445 Landfill Leachate Regulations review"
+    "-7373710195951282612": "Email correspondence (EGLE to Arbor Hills Remediation Area): NPDES Permit sampling data follow-up"
+    "1006395615355839512": "Email correspondence (EGLE): RE: Arbor Hills Remediation Area monitoring approach"
+    "1556524429836648126": "Email correspondence (EGLE): RE: Arbor Hills Remediation Area permit monitoring and Part 445 applicability"
+    "-4793781004201657164": "Email correspondence (GFL to EGLE): RE: Arbor Hills MI0045713 application review status"
+    "8773073227816108320": "Submitted by Arbor Hills Remediation Area: cover page referencing a report on Arbor Hills, dated May 17, 2010"
+    "6375012619962282249": "Submitted by Arbor Hills Landfill: Annual SWPPP Review, Certificate of Coverage No. MIS210766"
+    "-9031390399643005763": "Email correspondence (Arbor Hills Landfill to EGLE): Arbor Hills Sampling of GC-1 and GC-2"
+    "7968129634490662903": "Submitted by Arbor Hills Remediation Area: E2 Reporting System Activation Form, NPDES Permit MI0004573"
+    "5063980595350490270": "Email correspondence (EGLE to Arbor Hills Remediation Area): NPDES Compliance Evaluation Inspection, Permit No. MI0045713"
+    "-2042669128978549235": "Submitted by Arbor Hills Energy: Compliance Source Testing Report, Solar Taurus Turbine and Typhoon Unit 2, Sept 2014"
+    "-5411232037878654309": "Email correspondence (Golder to EGLE): RE Arbor Hills Remediation Area - Permit No. MI0045713"
+    "997896824674328753": "Submitted by Arbor Hills Energy: Emissions Compliance Report, Stack Testing of EG Turbine #1 and #3, March 2015"
+    "-4592409041335410781": "Email correspondence (Golder to EGLE): AHRA - MI 0045713 Ammonia and Selenium Permit Exceedance Follow-Up"
+    "2463280442378435372": "Email correspondence (Golder to EGLE): Ammonia and selenium exceedances halting pond discharge at Arbor Hills"
+    "6706261251389569639": "Email correspondence (Golder to EGLE): AHRA selenium pond sample results, request to initiate discharge"
+    "-6440292995357094503": "Email correspondence (EGLE to EPA): AHRA selenium testing method ICP-DRC-MS vs EPA Method 200.8"
+    "3071147443238573105": "Email correspondence (Golder to EGLE): Re: AHRA - alternative selenium lab method approval"
+    "3443620359529047492": "Email correspondence (Golder to EGLE): Selenium analysis QA/QC approval to begin discharge sampling"
+    "6398612118739863601": "Email correspondence (EPA to EGLE): AHRA - ICP-DRC-MS method approval for total selenium testing"
+    "-2762514373697797764": "Email correspondence (Golder to EGLE): Fwd: Golder Work Order - QA protocol approval to begin discharge sampling"
+    "7973004589210285653": "Email correspondence (Golder to EGLE): RE: AHRA - Notice of Discharge Exceedance, Permit No. MI0045713"
+    "-4115497545174774871": "Email correspondence (Golder to EGLE): AHRA Notice of Discharge Exceedance, Permit No. MI0045713"
+    "-1364342986033222171": "Submitted by Arbor Hills Landfill: Pollutant Emissions Test Report, Zink Enclosed Flare Exhaust (EUENCLOSEDFLARE 1-S2)"
+    "-5267574638886698798": "Submitted by Arbor Hills Landfill: Pollutant Emissions Test Report, McGill Enclosed Flare Exhaust, June 8 2016"
+    "5926721455606991946": "Submitted by Arbor Hills Landfill: Compliance Test Report, Utility Flare Performance Test, July 28 2016"
+    "1962151299430239096": "Submitted by Arbor Hills Energy: Emission Test Report, Compliance Testing EUTURBINE4-S3"
+    "-8082634868010166500": "Email correspondence (EGLE internal): FW: Arbor Hills PFAS FOIA, Stormwater Pond Sampling"
+    "1828908608702544149": "Email correspondence (EGLE): FW: Stormwater Pond Treatment, internal 2016 thread forwarded 2020"
+    "7081281252230017865": "Submitted by Arbor Hills Landfill: Utility Flare Compliance Test Report, Tested June 6, 2017"
+    "-1792404006782650526": "Submitted by Arbor Hills Energy: Air Emission Test Report, Permit MI-ROP-N2688-2011, May 29-June 1 2018"
+    "-1549063320484824445": "Submitted by Arbor Hills Energy: Air Emission Test Report for Landfill Gas Fueled Turbines, Oct 16-19, 2018, MI-ROP-N2688-2011a"
+    "-2468515237739563479": "Email correspondence (Arbor Hills Landfill to EGLE): Compliance Performance Evaluation Test Results for New Utility Flare EU5000CFMFLARE (PTI No. 79-17)"
+    "-1105350595296042261": "Email correspondence (EGLE to EGLE): FW: NPDES - Arbor Hills Landfill"
+    "-2061868185531768880": "Email correspondence (ERG to EGLE): NPDES - Arbor Hills Landfill permit modification for PFAS"
+    "5076723508025862809": "Submitted by Arbor Hills Landfill: Flare Performance Test Report, December 2019, PTI 79-17"
+    "204024205815871785": "Submitted by Arbor Hills Energy: Air Emission Test Report verifying pollutant emissions from EUTURBINE4-S3, Permit MI-ROP-N2688-2011"
+    "2266182889556122537": "Submitted by Arbor Hills Landfill: Report of Laboratory Analysis, Discharge 001A LLHG Sampling"
+    "-8961691794149114321": "Submitted by Arbor Hills Remediation Area: NPDES Permit MI0045713 Additional Monitoring Parameters, December 2019"
+    "8332146646330310146": "Submitted by Arbor Hills Landfill: Report of Laboratory Analysis, Discharge 001A LLHG Sampling"
+    "-2347088415744210305": "Submitted by Arbor Hills Landfill: Annual SWPPP Review Report, Certificate of Coverage MIS210766"
+    "-7000389399895386754": "Email correspondence (ERG to EGLE): NPDES permit modification to discharge treated leachate"
+    "7489168879810728887": "Email correspondence (ERG to EGLE): RE: NPDES - Arbor Hills Landfill"
+    "-8107732178669561641": "Submitted by Arbor Hills Remediation Area: Site Photo, Office & Scale Wetland, dated Oct. 1, 2019"
+    "5211795464075792624": "Submitted by Arbor Hills Remediation Area: Site Photo, Office & Scale Wetland, dated Oct. 1, 2019"
+    "-5790232982143637358": "Email correspondence (EGLE to EGLE): NPDES - Arbor Hills Landfill"
+    "7194188705378337671": "Email correspondence (EGLE to EGLE): NPDES - Arbor Hills Landfill"
+    "761707789728432699": "Email correspondence (ERG to EGLE): NPDES permit modification for compost pond and stormwater discharge"
+    "-4635339895786968560": "Email correspondence (ERG to EGLE): RE: NPDES - Arbor Hills Landfill major modification request"
+    "-7555839954635220101": "Submitted by Arbor Hills Remediation Area: site location map, Arbor Hills Landfill"
+    "-3369323776219956293": "Email correspondence (EGLE to EGLE): Arbor Hills Compost/Stormwater Discharge Discussion"
+    "-3006893468303898290": "Email correspondence (EGLE to EGLE): FW: Merging Arbor Hills Landfill Sites in MiWaters"
+    "-899643146051280024": "Email correspondence (EGLE to EGLE): Arbor Hills Remediation Site Visit"
+    "1178487834995897954": "Email correspondence (EGLE to EGLE): Arbor Hills Remediation Area - Proposed Treated Leachate MP"
+    "-2761350602420392110": "Submitted by ERG: PFAS Laboratory Analytical Report, Compost Pond YCUA-1, December 2019"
+    "-9174128623563815566": "Submitted by Arbor Hills Remediation Area: NPDES Water Quality Monitoring Data, January-February 2020"
+    "3513501826776499700": "Submitted by YCUA: Compost Pond and Stormwater Retention Area water quality sampling data"
+    "-8087054633363976390": "Submitted by Arbor Hills Remediation Area: NPDES Permit MIS210766 Major Modification Request"
+    "-7762847767162170577": "Submitted by Arbor Hills Landfill: NPDES Permit MIS210766 Major Modification Request, April 2020"
+    "7734182020283716090": "Submitted by Arbor Hills Landfill: NPDES Permit MIS210766 Major Modification Request, Feb 2020"
+    "8962316464883021617": "Submitted by Arbor Hills Landfill: NPDES Permit MIS210766 Major Modification Request"
+    "-4589271018382233143": "Email correspondence (EGLE to EGLE): FW: IPP Permit & Agreement - Compost Pond - NPDES"
+    "1119257244751545738": "Email correspondence (EGLE to EGLE): FW: Arbor Hills Compost/Stormwater Discharge Discussion"
+    "1563102847447396099": "Email correspondence (EGLE internal): FW: NPDES - Arbor Hills Landfill, compost pond discharge"
+    "8731974466371513905": "Email correspondence (EGLE to EGLE): Arbor Hills Rem Area - Major Mod Submissions"
+    "5831063672263032960": "Email correspondence (ERG to EGLE): PFAS impacted stormwater pond - Arbor Hills Landfill"
+    "4958168590647229356": "Email correspondence (ERG to EGLE): RE: PFAS impacted stormwater pond - Arbor Hills Landfill"
+    "4113245859930446678": "Submitted by Arbor Hills Remediation Area: Site classification form dated June 3, 2020"
+    "-6907180861925627361": "Email correspondence (EGLE to EGLE): RE: PFAS impacted stormwater pond - Arbor Hills Landfill"
+    "-762804112176798856": "Email correspondence (EGLE internal): NPDES-Arbor Hills Landfill Additional Discharge Request, stormwater pond"
+    "-2381575380967846084": "Email correspondence (EGLE to EGLE): RE: Arbor Hills NPDES Permits"
+    "3014929851206753000": "Email correspondence (EGLE): RE: NPDES-Arbor Hills Landfill Additional Discharge Request"
+    "-598546821202218933": "Email correspondence (EGLE): NPDES-Arbor Hills Landfill Additional Discharge Request"
+    "-5245570759866012490": "Email correspondence (EGLE internal): NPDES-Arbor Hills Landfill Additional Discharge Request, treat and discharge stormwater pond"
+    "-1985649075248573028": "Email correspondence (ERG to EGLE): PFAS impacted stormwater pond - Arbor Hills Landfill"
+    "-705841881631773635": "Email correspondence (EGLE to EGLE): NPDES-Arbor Hills Landfill Additional Discharge Request"
+    "2949548208628113734": "Email correspondence (EGLE): FW: PFAS impacted stormwater pond - Arbor Hills Landfill"
+    "4586214837777879882": "Email correspondence (EGLE): NPDES-Arbor Hills Landfill Additional Discharge Request, PFOS-impacted pond to Johnson Creek"
+    "2027370753300804821": "Email correspondence (ERG to EGLE): RE: PFAS impacted stormwater pond - Arbor Hills Landfill"
+    "9114221451398514227": "Email correspondence (EGLE internal): RE: NPDES-Arbor Hills Landfill Additional Discharge Request"
+    "-8309298727808539507": "Submitted by Arbor Hills Landfill: SWPPP Annual Review Report under Permit MIS210766"
+    "2081002028350107106": "Submitted by Arbor Hills Remediation Area: Schedule of Compliance Submittal - NPDES Unscheduled Permit Required Reports"
+    "6945073008018437377": "Submitted by Arbor Hills Landfill: Annual SWPPP Review Report under Permit MIS210766 v4.0"
+    "-3362112412539793974": "Email correspondence (EGLE to EGLE): PFAS sampling status of Johnson Creek near Arbor Hills Landfill"
+    "-4735044740863520602": "Email correspondence (EGLE to Arbor Hills Landfill): Arbor Hills Remediation Area - Storm Water Ponds"
+    "5392573849999112638": "Submitted by Arbor Hills Landfill: USPS Domestic Return Receipt for certified mail, dated 2020-09-17"
+    "8775514328510660243": "Submitted by Arbor Hills Energy: Air Emission Test Report for Turbine EUTURBINE4-S3, Permit MI-ROP-N2688-2011"
+    "-6803427426907822644": "Submitted by EGLE: Activity Report, Self-Initiated Inspection, SEM Survey with 33 Exceedances, 10/28/2020"
+    "2192415005322595562": "Submitted by Arbor Hills Remediation Area: NPDES Permit MI0045713 Schedule of Compliance Submittal"
+    "-8201819859018251869": "Submitted by Arbor Hills Remediation Area: SWPPP Annual Review Report, Permit No. MIS210766"
+    "-6512641794968603229": "Submitted by Arbor Hills Remediation Area: NPDES Permit MI0045713 Discharge 001A Annual Parameters, December"
+    "-6499331748449907062": "Submitted by GFL: 5-day written notification of NH3 permit exceedance under NPDES MI0045713"
+    "-4432238334340545753": "Email correspondence (Golder to EGLE): Mercury PMP 2020 Annual Status Report, NPDES Permit MI0045713"
+    "8249091809039156209": "Submitted by Arbor Hills Landfill: Pollutant Minimization Program Annual Status Report, 2021"
+    "-7611524048493251086": "Submitted by Arbor Hills Remediation Area: Analytical Laboratory Report, MIDEQ Split Sampling, collected 03/07/2019"
+    "-6226453285324485991": "Email correspondence (Pace Analytical to GFL): Report of Laboratory Analysis, AHL NPDES Phenolic, Discharge 001A"
+    "-6219097130882116211": "Submitted by GFL: Report of Laboratory Analysis, Discharge 001A Annual sample, December 2020"
+    "4626163816831735479": "Submitted by GFL Environmental: Report of Laboratory Analysis, Discharge 001A Annual sample"
+    "-8413316383353958104": "Submitted by Arbor Hills Remediation Area: NPDES Permit MI0045713 Reissuance Application Form"
+    "-7634925035061779924": "Submitted by Arbor Hills Remediation Area: Groundwater Remediation System Description, Outfall 001 Discharge Schematic"
+    "-5881872842430868794": "Submitted by Arbor Hills Remediation Area: Groundwater Remediation Project Flow Schematic, Valve and Meter Pit Details"
+    "-5501395453421337980": "Submitted by Arbor Hills Landfill: Permit Application Facility Map, Figure 1, dated 2021-03-17"
+    "5076495009916899853": "Submitted by Arbor Hills Remediation Area: Wastewater Discharge Permit Application, NPDES Permit No. MI0045713"
+    "6384480257153141915": "Submitted by Arbor Hills Remediation Area: Select Water Treatment Additive Request Form (Submission HN4-X6HG-53BVQ)"
+    "8175898127329967120": "Email correspondence (Golder to EGLE): NPDES Permit MI0045713 Notice of Non-Compliance (5-Day Report), TSS exceedance"
+    "9217885072562976664": "Submitted by Arbor Hills Remediation Area: NPDES Permit MI0045713 Reissuance Application"
+    "-5869583141641142153": "Submitted by Arbor Hills Landfill: Short-Term Stormwater Characterization Study (STSWCS) for PFAS, July 15, 2021"
+    "-1502926595815148192": "Submitted by Arbor Hills Landfill: Short-Term Stormwater Characterization Study (STSWCS): PFAS, July 15, 2021"
+    "2172612874428004359": "Email correspondence (GFL to EGLE): Voluntary Administrative Consent Order, NPDES Certificate of Coverage No. MIS210766"
+    "1924959403740923042": "Submitted by GFL: Schedule of Compliance Submittal, Permit MI0045713, PFAS Stormwater ACO acceptance, 7/15/2021"
+    "4383114020316780064": "Email correspondence (GFL to EGLE): Voluntary Administrative Consent Order, NPDES Certificate of Coverage No. MIS210766"
+    "-1204821613299864218": "Submitted by Arbor Hills Remediation Area: Schedule of Compliance Submittal under Permit MI0045713, PFAS Stormwater ACO acceptance"
+    "5474549410072688889": "Submitted by Arbor Hills Remediation Area: Schedule of Compliance Submittal, Short-Term SW Characterization Study Plan, Permit MI0045713"
+    "348811727858997840": "Email correspondence (EGLE internal): RE: Arbor Hills Pond Remediation Plans"
+    "-4695672124925164497": "Submitted by Arbor Hills Landfill: NPDES Storm Water NOI renewal, Certificate of Coverage MIS210766"
+    "9172263617462053279": "Submitted by Arbor Hills Remediation Area: Site Map of Napier Rd and 5 Mile Rd Detention Ponds"
+    "-7620534304047329717": "Submitted by GFL: NPDES Schedule of Compliance Submittal, Notice of Intent to Discharge, Permit MIS210766"
+    "1194723619623265587": "Email correspondence (Golder to EGLE): Start-up Notification, Permit MI0045713, discharge beginning 12/1/2021"
+    "-7697249127964070846": "Submitted by Arbor Hills Remediation Area: NPDES Permit MI0045713, Part I Limitations and Monitoring Requirements"
+    "-4141412541500358862": "Submitted by Arbor Hills Remediation Area: NPDES Schedule of Compliance Submittal, Permit MIS210766"
+    "3457180668617113145": "Email correspondence (Golder to EGLE): NPDES Notice of Non-Compliance (5-Day Report), Permit No. MI0045713"
+    "-2235940085436018662": "Submitted by Arbor Hills Remediation Area: NPDES Schedule of Compliance Submittal, Permit MI0045713, 12/22/2021"
+    "-3127973068143896465": "Submitted by Arbor Hills Remediation Area: SWPPP Annual Review Report, Permit No. MIS210766"
+    "-168406100844586385": "Submitted by GFL Environmental: Report of Laboratory Analysis, samples received December 2, 2021"
+    "-113351629441250000": "Submitted by GFL: Report of Laboratory Analysis, Annual Phenol sample collected Dec 2, 2021"
+    "9024336726996144844": "Submitted by GFL: Report of Laboratory Analysis, Discharge 001A Monthly Mercury, Dec 2021"
+    "2063852800159920024": "Submitted by Arbor Hills Remediation Area: Certification of Completion of Additional Monitoring Requirements, Permit MI0045713"
+    "-4200238918298297810": "Submitted by Arbor Hills Landfill: routine procedural filing dated January 13, 2022"
+    "-6063049355429278508": "Submitted by Arbor Hills Landfill: Site Plan - RNG Plant, USGS Topographic Map, Figure 1"
+    "-3812185255664877203": "Email correspondence (GFL to EGLE): Joint Permit Application for wetland impacts from RNG project"
+    "-2411379835104701535": "Email correspondence (Golder to GFL): Wetland Delineation Report, Arbor Hills Landfill, Section 13, Northville, Michigan"
+    "-2007171271301284669": "Submitted by Arbor Hills Landfill: EGLE/USACE Joint Permit Application (JPA) for RNG facility wetland impact"
+    "69384860076205980": "Submitted by Arbor Hills Landfill: Adjoining Properties and Owners List, reviewed December 28, 2021"
+    "-8657472923597629251": "Submitted by Arbor Hills Landfill: Second Interim Short-Term Stormwater Characterization Study (STSWCS) Report, PFAS, Jan 21 2022"
+    "6321721392520339051": "Email correspondence (Arbor Hills Landfill to EGLE): PFAS Remediation Plan Response, NPDES COC No. MIS210766"
+    "3381152159926064072": "Submitted by Arbor Hills Remediation Area: Schedule of Compliance Submittal - Second Interim STSWCS Report"
+    "4532766596761518062": "Submitted by Arbor Hills Remediation Area: Schedule of Compliance Submittal, Permit MIS210766, Remediation Plan dated 2021-12-22"
+    "4446294696839081635": "Submitted by ERG: Short-Term Stormwater Characterization Study (STSWCS) Report: PFAS, Feb 2022"
+    "-3948891341386026411": "Submitted by Arbor Hills Remediation Area: Schedule of Compliance Submittal with STSWCS Report attachment, 2022-02-22"
+    "-6012669690070110562": "Submitted by Arbor Hills Energy: EGLE/USACE Joint Permit Application for RNG facility wetland impacts"
+    "-5374216485251386274": "Submitted by Golder: Site Plan, Proposed RNG Facility Limits of Disturbance, USGS Topographic Map"
+    "2762494782722241288": "Submitted by Arbor Hills Landfill: Routine procedural document dated March 3, 2022"
+    "-8507081823336712166": "Submitted by Arbor Hills Landfill: Site Plan - RNG Plant, USGS Topographic Map, West Expanded Sanitary Landfill"
+    "1781590602388068158": "Submitted by GFL: EGLE/USACE Joint Permit Application (JPA) for wetland impacts from RNG facility construction"
+    "-3362403808669163936": "Submitted by Arbor Hills Landfill: EGLE/USACE Joint Permit Application for wetland impacts from RNG facility construction"
+    "-3638399425356458930": "Submitted by GFL: Wetland Determination Data Form, Napier Road Culvert Replacement, sampling date 12/16/2021"
+    "-6609351055243931479": "Email correspondence (Wayne County to Washtenaw County): RE: Drain ROW question, Napier Road culvert jurisdiction"
+    "-6053311731204538050": "Email correspondence (Tetra Tech to EGLE): Wayne County closes southbound Napier Road culvert replacement permitting"
+    "-394658200169845375": "Submitted by GFL: Joint Permit Application (JPA) for Napier Road culvert replacement, Submission HPE-J21H-ZS5WW"
+    "453130728087335775": "Email correspondence (GFL to EGLE): Letter Authorizing Tetra Tech to Apply for a Minor Permit for South Napier Road Culvert Replacement"
+    "5378551559652951226": "Submitted by Arbor Hills Landfill: Attachment E Photo Documentation Log, Wetland 1 and Johnson Drain tributary"
+    "5544820719592147717": "Submitted by Arbor Hills Landfill: Culvert Replacement Proposal, Full Site Location Plan and Profile"
+    "8749285406697908833": "Submitted by Arbor Hills Landfill: Site Plan Figure 1, Napier Road Culvert Replacement"
+    "-6418180437978903739": "Submitted by GFL Environmental: Washtenaw County Soil Erosion Permit Application for RNG facility construction"
+    "-226364236766157004": "Submitted by GFL Environmental Inc: Notice of Coverage for NPDES Storm Water Discharges from Construction Activity"
+    "4961262464865348690": "Submitted by Arbor Hills Landfill: Soil Erosion Permit Site Plan - Aerial Photograph, RNG Facility"
+    "9205983434597179891": "Submitted by Arbor Hills Landfill: Washtenaw County SESC Permit SESC2022-0164 for Renewable Natural Gas Facility"
+    "-5486830745255049622": "Email correspondence (GFL to EGLE): Leachate Spill Incident Report PEAS #24917, August 5, 2022"
+    "4283353693233058745": "Submitted by Arbor Hills Energy: Air Emission Test Report verifying NOx and SO2 from landfill gas turbine, Nov 16 2022"
+    "-7762699206966533643": "Submitted by Arbor Hills Remediation Area: SWPPP Annual Review Report, Permit No. MIS210766"
+    "1034239046269108132": "Submitted by Arbor Hills Remediation Area: Certification of Completion of Additional Monitoring Requirements, Permit MI0045713"
+    "-5489385322345627853": "Email correspondence (The Conservancy Initiative to EGLE): Arbor Hills Landfill Impact on Johnson Creek"
+    "-5656801458690619858": "Email correspondence (The Conservancy Initiative to EGLE): Arbor Hills' Impact on Johnson Creek"
+    "4006569455388980592": "Submitted by GFL: Certification of Completion of Additional Monitoring Requirements, Permit MI0045713"
+    "6340712468476940238": "Email correspondence (EGLE to The Conservancy Initiative): RE: Arbor Hills Landfill Impact on Johnson Creek"
+    "6934231061904092808": "Email correspondence (EGLE to The Conservancy Initiative): EGLE's Response to TCI's Letter RE: Arbor Hills Landfill Impact on Johnson Creek"
+    "4823155300643314139": "Submitted by Arbor Hills Energy: Air Emission Test Report for Landfill Gas Fueled Turbines, Oct 18-19 2023"
+    "-9103038553046553077": "Submitted by GFL: Certification of Completion of Additional Monitoring Requirements, Permit MI0045713"
+    "69015250817054881": "Submitted by Arbor Hills Landfill: Air Emission Test Report, Waste Gas Thermal Oxidizer, Test Date 2/13/2024"
+    "-538274557890621044": "Submitted by Arbor Hills Remediation Area: Analytical Laboratory Report, Sample Collected 03/06/2024, Report ID S59725.01(01)"
+    "4377042992095757742": "Submitted by Arbor Hills Remediation Area: Analytical Laboratory Report S60771.01(01), sample collected 04/04/2024"
+    "8503466829255265905": "Submitted by Arbor Hills Remediation Area: PFAS Analytical Laboratory Report, Outfall-001, Collected 12/05/2023"
+    "860915615160189585": "Submitted by Arbor Hills Remediation Area: PFAS Non-POTW Effluent Monitoring Report, Outfall-001A, permit MI0045713"
+    "-6097025678820971066": "Submitted by Arbor Hills Remediation Area: PFAS Non-POTW Effluent Monitoring Report, Permit MI0045713, no discharge"
+    "-7615658659711737584": "Email correspondence (Environmental Consulting & Technology to Arbor Hills Landfill): Wetland and Waterbody Delineation Report"
+    "5123167912415526800": "Submitted by Arbor Hills Landfill: Figure 7, Proposed Wetland Impacts map, dated 10/17/2024"
+    "-7754701822656026573": "Email correspondence (GFL to EGLE): Authorization for agent to submit Joint Permit Application via MiEnviro"
+    "3044451363052872502": "Submitted by Arbor Hills Landfill: Minor Project 51 Additional Information, groundwater well installation schedule"
+    "7842681048118697147": "Submitted by Arbor Hills Landfill: EGLE/USACE Joint Permit Application for groundwater monitoring well installation"
+    "6821810264482053864": "Submitted by Arbor Hills Landfill: EGLE/USACE Joint Permit Application for wetland access, groundwater monitoring well installation"
+    "-3604092486553018625": "Email correspondence (GFL to EGLE): Violation Notice Response, Arbor Hills Landfill odor sources and GCCS repairs"
+    "384873515774640127": "Submitted by Arbor Hills Remediation Area: Certification of Completion of Additional Monitoring Requirements, Permit MI0045713"
+    "1553227474891937492": "Submitted by Arbor Hills Energy: ROP Report Certification, MI-ROP-N2688-2011a, test protocol amendment"
+    "1457514993673985017": "Email correspondence (EGLE to GFL): Approval of 120-Day Extension for Perimeter Monitor Corrective Actions, CJ 2020-0593-CE"
+    "-8899093975383669020": "Email correspondence (Arbor Hills Landfill to EGLE): Request to Abandon AHW237R2 and AHW237R3"
+    "-8280414259313220343": "Submitted by GFL: 2024 Annual SEP Report under Consent Judgment 2020-0593-CE"
+    "94863009710373001": "Email correspondence (GFL to EGLE): Arbor Hills Landfill Action Plan under Consent Judgment 2020-0593-CE Section 5.2"
+    "-7757868192018421541": "Email correspondence (Arbor Hills Landfill to EGLE): Request for Higher Operating Value \u2013 Well AHW272R4"
+    "-7038482249004696344": "Submitted by GFL Environmental: Certificate of Analysis for NPDES Outfall 5092, sampled 04/04/2024"
+    "-6809434657289784510": "Submitted by GFL Environmental: Laboratory Analytical Report for NPDES #5092 Outfall, Sampled 3/6/24"
+    "-2118664067290187699": "Submitted by Arbor Hills Remediation Area: PFAS Non-POTW Effluent Monitoring Report, Outfall-001A, Permit MI0045713, 2024"
+    "-2074947338391769600": "Submitted by Arbor Hills Landfill: PFAS Laboratory Analytical Report, Outfall-001A, Project 24L1082"
+    "406480306424263274": "Submitted by GFL Environmental: PFAS Analysis Laboratory Report, Outfall 001A sample collected 1/30/24"
+    "-6104454038834204973": "Submitted by Arbor Hills Remediation Area: PFAS Monitoring Report, Outfall-001A, sampled 12/19/2024 (Permit MI0045713)"
+    "-5599455034917019820": "Email correspondence (EGLE to GFL): Arbor Hills Landfill, Washtenaw County Request to Abandon Wells AHW237R2 and AHW237R3"
+    "-345437383055897192": "Email correspondence (EGLE to GFL): Arbor Hills Landfill, Washtenaw County Request to Abandon Wells AHW237R2 and AHW237R3"
+    "-6347193533722827376": "Email correspondence (GFL to EGLE): Request for Higher Operating Value - Well AHW272R4"
+    "-5411241066255422332": "Email correspondence (Arbor Hills Landfill to EGLE): Request for Extension \u2013 Corrective Actions at Vertical Gas Collection Wells"
+    "1710389872334440255": "Submitted by Arbor Hills Landfill: Annual Report - Consent Judgment No. 2020-0593-CE Section 8.4"
+    "1903324966034339150": "Email correspondence (Arbor Hills Landfill to EGLE): Revised 2023 SEP Annual Report - Consent Judgment No. 2020-0593-CE Section 8.4"
+    "2851592815161709123": "Submitted by Arbor Hills Landfill: Revised 2022 SEP Annual Report under Consent Judgment No. 2020-0593-CE Section 8.4"
+    "2992349841962549607": "Submitted by Arbor Hills Landfill: Revised 2024 SEP Annual Report, Consent Judgment 2020-0593-CE Section 8.4"
+    "-3105704603797804790": "Email correspondence (Arbor Hills Landfill to EGLE): Request for Extension of Corrective Actions at Vertical Gas Collection Wells"
+    "-3226725982684376611": "Submitted by Arbor Hills Energy: Consent Decree, Civil No. 5:21-cv-12098-SDD-EAS"
+    "2861829366632281893": "Email correspondence (EGLE to Arbor Hills Energy): Violation Notice - NOx stack testing noncompliance, PTI 68-23A/ROP MI-ROP-N2688-2011a"
+    "2051207407429673720": "Email correspondence (Arbor Hills Landfill to EGLE): NESHAP 2nd Semi-Annual 2024 Report, ROP-N2688-2011"
+    "-2289320068966821168": "Email correspondence (Arbor Hills Landfill to EGLE): Annual Deviation Report, ROP MI-ROP-N2688-2011, 2024"
+    "5541333122936946136": "Email correspondence (Arbor Hills Landfill to EGLE): 2024 Second Semi-Annual Report - Consent Judgment No. 2020-0593-CE Section 6.3"
+    "-5976381360756224826": "Submitted by Emerald RNG: Permit to Install 67-23A v2.0 issued by EGLE, dated February 28, 2025"
+    "-4970731478565704156": "Submitted by Emerald RNG: ROP Notification of Change (Rule 215), Off-Spec Flare capacity increase"
+    "-2159181094609688027": "Email correspondence (Arbor Hills Energy to EGLE): Submittal of Modification Form M-001, PTI No. 67-23A v2.0"
+    "-4142046262931313915": "Submitted by Arbor Hills Landfill: First Quarter 2025 Perimeter Monitor Root Cause Analysis Investigation Report"
+    "2497322718784282324": "Email correspondence (GFL to EGLE): Status Update for Corrective Actions for Perimeter Monitor Alarms"
+    "-5474092712622402160": "Submitted by Arbor Hills Remediation Area: PFAS Monitoring Report, NPDES MI0045713, Outfall-001A, 01/29/2025"
+    "-1891479150411622091": "Submitted by Arbor Hills Landfill: PFAS Analytical Results, Outfall 001A, Sample Date 1/29/25"
+    "392107023109938286": "Email correspondence (Arbor Hills Energy to EGLE): Submittal of Modification Form M-001, PTI No. 67-23A v2.0"
+    "4263651466868234185": "Email correspondence (Arbor Hills Landfill to EGLE): Request for Extension \u2013 Corrective Actions at Vertical Gas Collection Wells"
+    "4201411757540993841": "Submitted by GFL: Schedule of Compliance Response, Extension Request under Consent Judgment CJ-2020-0593-CE"
+    "-2920988471970477228": "Email correspondence (EGLE to Arbor Hills Landfill): Extension Response Letter for N2688"
+    "-1576431240781076231": "Email correspondence (EGLE to Arbor Hills Landfill): Approval of 120-Day Extension for Corrective Actions at VGC Wells AH148BR2 and AHWW0208"
+    "-3522723395612200603": "Submitted by Arbor Hills Energy: ROP Report Certification, ROP PTI 67-23A V2.0, Emissions Test Protocol for FGTURBINES"
+    "614885407847324340": "Submitted by Arbor Hills Energy: ROP Report Certification for Emissions Test Protocol, EUTURBINE4, PTI 67-23A V2.0"
+    "-2567847580110337521": "Email correspondence (Arbor Hills Landfill to EGLE): Action Plan \u2013 Limiting Liquid Infiltration and Minimizing Leachate Generation, CJ 2020-0593-CE"
+    "2152521936814273621": "Submitted by Arbor Hills Landfill: Second Quarter 2025 Perimeter Monitor Root Cause Analysis Investigation Report"
+    "7356339025775936007": "Email correspondence (Arbor Hills Landfill to EGLE): Request for Higher Operating Value for well AHW263R5"
+    "1758219518397825159": "Email correspondence (Arbor Hills Landfill to EGLE): Request for Higher Operating Value for Well AHW263R5"
+    "5162378648155285742": "Email correspondence (EGLE to Arbor Hills Landfill): Request for Higher Operating Value Temperature Waiver AHW263R"
+    "8116779882878910546": "Submitted by Arbor Hills Remediation Area: PFAS Monitoring Report, NPDES MI0045713, Outfall-001A, 04/17/2025"
+    "1771175339758533141": "Submitted by GFL Environmental: NPDES #5092 analytical results for Outfall sampling 4/18/25 (Project 25D1076)"
+    "-8836929578783536940": "Submitted by Arbor Hills Landfill: Wells of Interest Status Report, Table 1E, Q2 2025"
+    "-3009178402433781286": "Submitted by Arbor Hills Landfill: Liquid Level Report, Table LL-1, East Vertical Gas Wells Q2 2025"
+    "-1381693746244349743": "Submitted by Arbor Hills Remediation Area: PFAS Non-POTW Effluent Monitoring Report, Outfall-001A, permit MI0045713, sample 04/17/2025"
+    "-8826945519125039932": "Submitted by Arbor Hills Landfill: ROP Semi-Annual Compliance Certification, ROP0000224, Jan-Jun 2025"
+    "3723401449327569265": "Email correspondence (Arbor Hills Landfill to EGLE): Semi-Annual ROP Deviation Report, Permit MI-ROP-N2688-2011, Jan\u2013Jun 2025"
+    "-3249383474266663092": "Email correspondence (Arbor Hills Landfill to EGLE): NESHAP 1st Semi-Annual 2025 Report, ROP-N2688-2011, Jan 1\u2013Jun 30 2025"
+    "3447969824920400057": "Email correspondence (GFL to EGLE): Extension Request for Corrective Actions, Consent Judgment 2020-0593-CE Section 5.5(E)"
+    "-1976418925217651137": "Email correspondence (Arbor Hills Landfill to EGLE): 2025 First Semi-Annual Report - Consent Judgment 2020-0593-CE Sec 6.3"
+    "5605247743003962651": "Email correspondence (EGLE to Arbor Hills Landfill): Extension Approval for Perimeter Monitor Corrective Actions under CJ 2020-0593-CE"
+    "-5437365984634729130": "Email correspondence (Arbor Hills Landfill to EGLE): Action Plan Limiting Liquid Infiltration and Minimizing Leachate Generation, CJ 2020-0593-CE"
+    "6824985570131863142": "Email correspondence (EGLE to Arbor Hills Landfill): Request for Extension \u2013 Corrective Actions for Perimeter Monitor Action"
+    "-3557035779889288864": "Submitted by Arbor Hills Landfill: Third Quarter 2025 Perimeter Monitor Root Cause Analysis Investigation Report"
+    "-4037657206744184292": "Submitted by Arbor Hills Remediation Area: PFAS Non-POTW Effluent Monitoring Report, Permit MI0045713, no discharge"
+    "3262644931898022093": "Submitted by Arbor Hills Energy: Air ROP Transition Application, Renewal of ROP0000656"
+    "8928031059070127260": "Submitted by Arbor Hills Energy: Renewable Operating Permit Renewal Application, MI-ROP-N2688-2011"
+    "-4793022370725989189": "Submitted by Arbor Hills Energy: ROP Report Certification, air emissions stack test, MI-ROP-N2688-2011a / PTI 68-23A"
+    "2488744766878081880": "Submitted by Arbor Hills Energy: Gas Turbine Stack Test Results for NOx and SO2, Method 7E/ASTM D5504"
+    "-7535058685244195048": "Submitted by Arbor Hills Energy: ROP Report Certification for PTI 67-23A V2.0, EUTURBINE4 Emissions Test Protocol"
+    "-7522288547329554934": "Email correspondence (EGLE to Arbor Hills Energy): Approval of Protocol for Emissions Testing, PTI 68-23A v2.0"
+    "-3282278420533837544": "Submitted by Arbor Hills Energy: ROP Report Certification, ROP No. PTI 67-23A V2.0, Emissions Test Protocol for FGTURBINES"
+    "-1752109274654022305": "Submitted by Arbor Hills Energy: Air Quality Stack Test Report, August 26-28, 2025"
+    "1514400865393565979": "Submitted by Arbor Hills Energy: NO2/SO2 compliance test report for gas turbines, dated 2025-10-29"
+    "296550035184738685": "Submitted by Arbor Hills Landfill: Liquid Level Report, Table LL-1, East Vertical Gas Wells Q3 2025"
+    "914371076669899396": "Submitted by Arbor Hills Landfill: Well Liquid Monitoring and Management Report, Q3 2025, Table 1E"
+    "-5449428870583534783": "Submitted by Arbor Hills Energy: Stack test report, NOx and SO2 results for Typhoon and Solar gas turbines"
+    "3222876167595057244": "Submitted by Arbor Hills Energy: Air Quality Test Report for stack testing conducted August 26-28, 2025"
+    "3518824478995819502": "Submitted by Arbor Hills Energy: Stack Test Report, NOx and SO2 Results for Gas Turbines 1-4"
+    "-8101412366513948395": "Submitted by Arbor Hills Energy: Air Quality Test Report Submittal, stack test conducted 08/26-08/28/2025"
+    "1235181392716462678": "Submitted by Arbor Hills Energy: Air Quality Test Report Submittal, stack test conducted August 26-28, 2025"
+    "-6948136616301758498": "Email correspondence (GFL to EGLE): Status Update, Corrective Actions for Perimeter Monitor Alarms, Cell 6C"
+    "6296669022099102483": "Email correspondence (Arbor Hills Landfill to EGLE): Action Plan \u2013 Limiting Liquid Infiltration and Minimizing Leachate Generation, CJ 2020-0593-CE"
+    "-3492607762924812436": "Email correspondence (GFL to EGLE): Request for Extension \u2013 Corrective Actions for Perimeter Monitor Alarms"
+    "-1317983441849765360": "Submitted by Arbor Hills Landfill, Inc.: Record Information, October 2025 Asbestos Placement"
+    "-1022422399841933630": "Submitted by Arbor Hills Landfill, Inc.: Asbestos Notification of Intent to Renovate/Demolish"
+    "-50297609908786": "Submitted by Arbor Hills Remediation Area: Certification of Completion of Additional Monitoring Requirements, Permit MI0045713"
+    "-5740894257977589659": "Email correspondence (Arbor Hills Landfill to EGLE): Request to Decommission Gas Collection Wells (SRN N2688)"
+    "5053832287707918038": "Email correspondence (Arbor Hills Landfill to EGLE): Request to Decommission 20 Gas-Collection Wells"
+    "-2084226956261390885": "Submitted by GFL Environmental: Analytical Results Report, NPDES GFL-NPDES 5092, Outfall 001A, Dec 3 2025 sample"
+    "2137907018508343274": "Submitted by GFL: Analytical Results Report 25L0444, Outfall-001A, NPDES Permit 5092, Dec 4 2025"
+    "5049795667771085068": "Submitted by GFL: Report of Laboratory Analysis, Outfall 001A LL Hg, sampled December 4, 2025"
+    "7709566759768292939": "Submitted by Arbor Hills Remediation Area: Certification of Completion of Additional Monitoring Requirements, Permit MI0045713"
+    "-8328416719643088502": "Email correspondence (Arbor Hills Landfill to EGLE): Response re Certificate of Coverage No. MIS210766 sample results"
+    "-3694900499814672749": "Email correspondence (GFL to EGLE): NPDES Schedule of Compliance Response to 1.8.26 Letter, Permit MIS210766"
+    "-4302873448799367992": "Submitted by Arbor Hills Landfill: Asbestos Notification of Intent to Renovate/Demolish, filed 1/21/2026"
+    "513725809497598920": "Submitted by Arbor Hills Landfill: Statement on asbestos disposal GPS surveying requirements"
+    "-4982386146776046924": "Submitted by GFL Environmental: PFAS Laboratory Analytical Report, Outfall-001A, sampled December 4, 2025"
+    "-2254938527635509681": "Submitted by Arbor Hills Remediation Area: PFAS Non-POTW Effluent Monitoring Report, Permit MI0045713, Outfall 001A"
+    "-6059199540327528383": "Submitted by Arbor Hills Landfill: Well Liquid Monitoring and Management Report, Table 1E, Q2 2023"
+    "-5998260139153280590": "Submitted by Arbor Hills Landfill: Well Liquid Monitoring and Management Report, Table 1E, Q1 2023"
+    "-5964901274642722972": "Submitted by Arbor Hills Landfill: Table 1E, Wells with 50% Open Screen, Q2 2023 Quarterly Monitoring Report"
+    "-5802505088469370929": "Email correspondence (Arbor Hills Landfill to EGLE): 2023 Second Semi-Annual Report - Consent Judgment No. 2020-0593-CE Section 6.3"
+    "-5419898085199364155": "Email correspondence (GFL to EGLE): 2022 Second Quarter Report - CJ No. 2020-0593-CE"
+    "-2315001330629680138": "Email correspondence (GFL to EGLE): 2022 Second Semi-Annual Report - Consent Judgment No. 2020-0593-CE Section 6.3"
+    "-558767985641863833": "Email correspondence (Arbor Hills Landfill to EGLE): Response to MMD October 10, 2023 Violation Notice (SRN: N2688)"
+    "-312606154238976685": "Email correspondence (Arbor Hills Landfill to EGLE): Response to October 10, 2023 Violation Notice (SRN: N2688)"
+    "464826453042482776": "Submitted by Arbor Hills Landfill: Gas Extraction Report, March-April 2023 quarterly well monitoring data"
+    "804256061743263130": "Submitted by Arbor Hills Landfill: Table 1E, Wells with 50% Open Screen, Q1 2024"
+    "1787519788833989038": "Email correspondence (Arbor Hills Landfill to EGLE): 2022 First Semi-Annual Report - Consent Judgment No. 2020-0593-CE Section 6.3"
+    "4195452564454428992": "Submitted by Arbor Hills Landfill: Table 1E, Wells with 50% Open Screen and Less Than 30 Feet of Solid Pipe, Q4 2022"
+    "4481185613590098765": "Email correspondence (Arbor Hills Landfill to EGLE): Third Quarter 2023 Perimeter Monitor Root Cause Analysis Investigation Report"
+    "5277366295205545414": "Email correspondence (Arbor Hills Landfill to EGLE): First Quarter 2024 Perimeter Monitor Root Cause Analysis Investigation Report"
+    "6580825892883407154": "Submitted by Arbor Hills Landfill: Table 1E, Wells of Interest Liquid Level Status Report, Q4 2022"
+    "7236545756075017907": "Email correspondence (GFL to EGLE): 2022 Second Semi-Annual Report - Consent Judgment No. 2020-0593-CE Section 6.3"
+    "7258077595449370109": "Email correspondence (Arbor Hills Landfill to EGLE): 2024 First Semi-Annual Report under Consent Judgment No. 2020-0593-CE Section 6.3"
+    "8106181551281726432": "Email correspondence (Arbor Hills Landfill to EGLE): 2024 First Semi-Annual Report under Consent Judgment No. 2020-0593-CE Section 6.3"
+    "-6286823734327541106": "Email correspondence (GFL to EGLE): 2023 First Semi-Annual Report - Consent Judgment No. 2020-0593-CE Section 6.3"
+    "8677498307236067323": "Email correspondence (GFL to EGLE): 2023 First Semi-Annual Report - Consent Judgment No. 2020-0593-CE Section 6.3"
+    "-8560115638707622023": "Submitted by Arbor Hills Landfill: Q1 2023 Well Liquid Monitoring Report, Table 1E, Screen Submersion Data"
+    "-8359284512515351915": "Submitted by Arbor Hills Landfill: Well Liquid Level Monitoring Report, Table 1E, Q1 2024"
+    "-7811553890252085221": "Submitted by Arbor Hills Landfill: Liquid Level Report, Table LL-1, East Vertical Gas Wells, Q2 2023"
+    "-7166783884718213239": "Submitted by Arbor Hills Landfill: Table LL-1, Liquid Level Report, East Vertical Gas Wells, Q4 2022"
+    "-6743428406379749407": "Submitted by Arbor Hills Landfill: Table LL-1, Liquid Level Report - Arbor Hills East Vertical Gas Wells, Q2 2023"
+    "-4918994446672990660": "Submitted by Arbor Hills Landfill: Second Quarter 2024 Perimeter Monitor Root Cause Analysis Investigation Report"
+    "-3989708519120986947": "Submitted by Arbor Hills Landfill: Liquid Level Report, Table LL-1, East Vertical Gas Wells, Q4 2022"
+    "-2319803912179769751": "Submitted by Arbor Hills Landfill: Liquid Level Report, Table LL-1, East Vertical Gas Wells, Q1 2024"
+    "-2160169417564232675": "Email correspondence (Arbor Hills Landfill to EGLE): Action Plan \u2013 Limiting Liquid Infiltration and Minimizing Leachate Generation, CJ 2020-0593-CE"
+    "-1202065145611628115": "Email correspondence (GFL to EGLE): Action Plan - Limiting Liquid Infiltration and Minimizing Leachate Generation"
+    "-120686297948596097": "Submitted by Arbor Hills Landfill: Third Quarter 2024 Perimeter Monitor Root Cause Analysis Investigation Report"
+    "2460626616471799988": "Email correspondence (Arbor Hills Landfill to EGLE): Action Plan \u2013 Limiting Liquid Infiltration, CJ No. 2020-0593-CE"
+    "5379399477318787496": "Email correspondence (Arbor Hills Landfill to EGLE): 2023 Second Semi-Annual Report - Consent Judgment No. 2020-0593-CE Section 6.3"
+    "5833140159382482073": "Submitted by Arbor Hills Landfill: Liquid Level Report, Table LL-1, East Vertical Gas Wells Q1 2024"
+    "7253031800265725655": "Submitted by Arbor Hills Landfill: Liquid Level Report, Table LL-1, East Vertical Gas Wells, Q1 2023"
+    "8931395597323960221": "Email correspondence (GFL to EGLE): 2022 Second Quarter Report - CJ No. 2020-0593-CE"
+    "309290572674426022": "Email correspondence (Arbor Hills Landfill to EGLE): 2022 First Semi-Annual Report under Consent Judgment No. 2020-0593-CE Section 6.3"
+    "-1765952355526653266": "Email correspondence (GFL to EGLE): Notice of Distribution List Change under Consent Judgment 2020-0593-CE Section 10.1"
+    "187280897305324737": "Email correspondence (Arbor Hills Landfill to EGLE): Notice of Distribution List Change under Consent Judgment 2020-0593-CE"
+    "-8964655205523517382": "Email correspondence (GFL to EGLE): Arbor Hills Landfill Action Plan under Consent Judgment 2020-0593-CE Section 5.2"
+    "-8829809487814966204": "Email correspondence (GFL to EGLE): Status Update for Corrective Actions at Vertical Gas Collection Wells"
+    "-8029239624948292907": "Email correspondence (Arbor Hills Landfill to EGLE): 2022 SEP Annual Report - Consent Judgment No. 2020-0593-CE Section 8.4"
+    "-7818728024847014086": "Email correspondence (GFL to EGLE): Action Plan - Limiting Liquid Infiltration, Consent Judgment 2020-0593-CE"
+    "-7648316454368908211": "Email correspondence (Arbor Hills Energy to EGLE): Monthly Report, PTI No. 68-23, August 2023"
+    "-7159437497878758509": "Email correspondence (GFL to EGLE): Action Plan - Limiting Liquid Infiltration and Minimizing Leachate Generation under CJ 2020-0593-CE"
+    "-5766466367938402647": "Email correspondence (Arbor Hills Landfill to EGLE): Action Plan \u2013 Limiting Liquid Infiltration and Minimizing Leachate Generation, CJ 2020-0593-CE"
+    "-5208154864851384486": "Email correspondence (GFL to EGLE): Action Plan Limiting Liquid Infiltration and Minimizing Leachate Generation, CJ 2020-0593-CE Sec. 5.2"
+    "-4311835802696436824": "Email correspondence (GFL to EGLE): Arbor Hills Landfill Action Plan \u2013 Limiting Liquid Infiltration and Minimizing Leachate Generation"
+    "-4209554673465124862": "Submitted by Arbor Hills Landfill: 2024 SEP Annual Report under Consent Judgment No. 2020-0593-CE Section 8.4"
+    "-4195830901165593828": "Submitted by Arbor Hills Landfill: site plan showing cell designations and waste placement areas, dated 2026-02-05"
+    "-3579181162797942741": "Email correspondence (Arbor Hills Landfill to EGLE): Third Quarter 2024 Perimeter Monitor Root Cause Analysis Investigation Report"
+    "-3106529582668002567": "Submitted by Arbor Hills Landfill: Second Quarter 2024 Perimeter Monitor Root Cause Analysis Investigation Report"
+    "-3087743909634273081": "Submitted by Arbor Hills Landfill: Q3 2023 Perimeter Monitor Root Cause Analysis Investigation Report, Consent Judgment 2020-0593-CE"
+    "-1709811647770574671": "Email correspondence (Arbor Hills Landfill to EGLE): Action Plan \u2013 Limiting Liquid Infiltration and Minimizing Leachate Generation, CJ 2020-0593-CE Section 5.2"
+    "-1138169676314138333": "Submitted by Arbor Hills Landfill: 2023 SEP Annual Report under Consent Judgment 2020-0593-CE Section 8.4"
+    "-120399699248137536": "Email correspondence (Arbor Hills Landfill to EGLE): 2022 SEP Annual Report - Consent Judgment No. 2020-0593-CE Section 8.4"
+    "84079314855463409": "Email correspondence (GFL to EGLE): Leachate Minimization Action Plan under Consent Judgment 2020-0593-CE Section 5.2"
+    "531668678128924549": "Submitted by Arbor Hills Landfill: Site document filed February 5, 2026"
+    "1429124963620519134": "Submitted by Arbor Hills Landfill: 2023 SEP Annual Report under Consent Judgment 2020-0593-CE Section 8.4"
+    "2131339563150436135": "Submitted by Arbor Hills Landfill: First Quarter 2024 Perimeter Monitor Root Cause Analysis Investigation Report"
+    "3827341709787597062": "Email correspondence (GFL to EGLE): Status Update for Corrective Actions at Vertical Gas Collection Wells"
+    "4256065014480215398": "Email correspondence (Arbor Hills Energy to EGLE): Monthly Report, PTI No. 68-23, August 2023"
+    "4938981097852838542": "Submitted by Arbor Hills Landfill: Liquid Level Report, Table LL-1, East Vertical Gas Wells, Q1 2023"
+    "6516436380904975379": "Submitted by Arbor Hills Landfill: site plan showing cell designations and layout"
+    "8133433872695827170": "Email correspondence (Arbor Hills Landfill to EGLE): 2024 SEP Annual Report - Consent Judgment No. 2020-0593-CE Section 8.4"
+    "3616717441910791141": "Submitted by Arbor Hills Landfill: PFAS Analytical Report for Outfall-001A, sampled December 4, 2025"
+    "-2553240882525767760": "Email correspondence (Trace Analytical Laboratories to GFL): Analytical Results for Outfall-001A, Project 25L0444"
+    "1448254064484704482": "Submitted by Arbor Hills Landfill: NPDES Outfall-001A Analytical Results Report, samples collected December 4, 2025"
+    "5344135890849961637": "Submitted by GFL: Wastewater Analytical Report, Outfall 001A, GFL-NPDES 5092, sampled Dec 3, 2025"
+    "7437456750180491570": "Submitted by GFL Environmental: Certificate of Analysis, Outfall 001A sample, NPDES 5092, Dec 2025"
+    "-7301719166834771496": "Submitted by Arbor Hills Remediation Area: Groundwater Discharge Permit Application, NPDES No. MI0045713"
+    "-7135457446431070419": "Email correspondence (EGLE to Arbor Hills Remediation Area): Water Treatment Additive Response - Vitastim Nitrifiers (Aquafix Inc.) Approval, NPDES MI0045713"
+    "-7083370372473823931": "Submitted by Arbor Hills Remediation Area: Site Plan Drawing showing property boundary, slurry wall, and gradient control pumps"
+    "-4253540835944364669": "Submitted by Arbor Hills Remediation Area: Groundwater Remediation Project Flow Schematic, Valve Pit Detail Drawing"
+    "7970149453797097866": "Submitted by Arbor Hills Remediation Area: Description of Groundwater Remediation System and Outfall 001A Discharge"
+    "1026949119804467702": "Email correspondence (Arbor Hills Landfill to EGLE): 2025 Second Semi-Annual Report, Consent Judgment No. 2020-0593-CE Section 6.3"
+    "5980642123473674279": "Email correspondence (Arbor Hills Landfill to EGLE): 2025 First Semi-Annual Report under Consent Judgment No. 2020-0593-CE Section 6.3"
+    "-2327508409053915689": "Submitted by Arbor Hills Landfill: 2025 Second Semi-Annual Report under Consent Judgment No. 2020-0593-CE Section 6.3"
+    "1214261465308073660": "Submitted by Arbor Hills Landfill: NPDES Permit MI0045713 Reissuance Application, Correction Request"
+    "3257226260434584362": "Submitted by Arbor Hills Landfill Incorporated: NPDES Permit MI0045713 Reissuance Application, Correction Response"
+    "-6853291563503975583": "Email correspondence (Arbor Hills Landfill to EGLE): Alternate Operating Temperature Request Renewal for 16 Wells of Interest"
+    "-2028979237057762549": "Submitted by Arbor Hills Landfill: Air General Compliance Report, HOV renewal for WOI 2-year request"
+    "-7262309803496184088": "Submitted by Arbor Hills Remediation Area: NPDES Permit MI0045713 Reissuance Application, Correction Response"
+    "566994166531287700": "Submitted by GFL: 40 CFR Part 61 Asbestos Notification of Intent to Disturb Waste"
+    "8550707639282347957": "Submitted by Arbor Hills Landfill: Q1 2026 Well Liquid Level Monitoring and Management Report, Table 1E"
+    "9174291905125877814": "Email correspondence (GFL to EGLE): CJ No. 2020-0593-CE Quarterly Report, 2026 Q1"
+    "4198616406243198308": "Submitted by GFL Environmental: Analytical Laboratory Results, Outfall 001A, NPDES/5092, Feb 2026"
+    "8068001510932878632": "Submitted by Arbor Hills Remediation Area: PFAS Non-POTW Effluent Monitoring Report, Permit MI0045713, Outfall 001A"
+    "-4331480416032794251": "Submitted by Arbor Hills Remediation Area: Trace PFAS Master Laboratory Analytical Report, Project 26A1200"
+    "1785667508899019344": "Submitted by Arbor Hills Remediation Area: Trace PFAS Master laboratory analysis report, Project 26D0621"
+    "7967631472480654737": "Email correspondence (Trace Analytical Laboratories to GFL Environmental): NPDES Quarterly analytical results, 4/9/26, Project 26D0621"
+    "-471829998806791290": "Submitted by GFL Environmental: Wetland Pond Depth Contours & Sampling Location Map, Wetland Remediation Project, May 2026"
+    "238853662649205064": "Submitted by GFL: Pre-Application Meeting Request, Part 301 Inland Lakes and Streams, Part 303 Wetlands Protection"
+    "-1133754762848673309": "Submitted by Arbor Hills Landfill: Emission Limits for Flares 391/392 under 40 CFR Part 63, Subpart AAAA"
+    "-953323570539842503": "Submitted by Arbor Hills Landfill: Stack Test Protocol for Enclosed Flares, Test Dates July 29-30, 2026"
+    "6293515687138794250": "Submitted by Arbor Hills Landfill: Air Quality Test Plan for Stack Test Starting 07/29/2026"
+    "5938548959435748091": "Submitted by GFL: 40 CFR Part 61 Asbestos Notification of Intent to Disturb Waste"
+    "6287998311878173668": "Submitted by GFL Environmental: Sampling Location Map, Wetland Remediation Project, May 2026"
+    "3394705462506930550": "Submitted by Arbor Hills Landfill: Part 303 Wetland Permit Application to excavate/fill Wetland 1 for PFAS source removal"
+    "8505051665848953359": "Email correspondence (U.S. Fish and Wildlife Service to Arbor Hills Landfill): Technical Assistance letter for AHLF - South Wetland"
+    "-8957993715507687131": "Email correspondence (GFL to EGLE): Authorized agent letter for Arbor Hills Landfill South Wetland Remediation Project"
+    "-4065621244538918478": "Submitted by Arbor Hills Landfill: Conceptual Wetland Mitigation Plan, South Wetland Project (6.5 Acres)"
+    "713880505523380247": "Submitted by GFL: Wetland Remediation Project drawing, Wetland Pond Depth Contours & Sampling Location Map, June 2026"
+    "6388737590776530408": "Submitted by Arbor Hills Landfill: Joint Permit Application for Wetland 1 remediation and excavation"
+    "7319593835070751189": "Submitted by Arbor Hills Landfill: Wetland Delineation Report for 14.04-acre site in Salem Township"
+    "7019107004864033373": "Email correspondence (Arbor Hills Landfill to EGLE): Violation Notice Response re Enclosed Flares Performance Testing"
+    "-8858588425977972121": "Submitted by Arbor Hills Landfill: Violation Notice Response to July 10, 2026 Violation Notice"
+    "-4836994002205885702": "Submitted by Arbor Hills Landfill: Second Quarter 2026 Report under Consent Judgment 2020-0593-CE"
+    "-3418371255517403731": "Submitted by Arbor Hills Landfill: Air Quality Test Plan Submittal for enclosed flares, test start 09/01/2026"
+    "641711556055994824": "Email correspondence (Arbor Hills Landfill to EGLE): Test Plan for TRS and HCl Concentration Sampling of FGENCLOSEDFLARES-S2 under ROP0000224"
+    "1883082666287807738": "Submitted by Arbor Hills Landfill: Enclosed Flare Emission Limits under 40 CFR Part 63, Subpart AAAA"
+    "4778025976224223878": "Submitted by Arbor Hills Landfill: Air Quality Test Plan Submittal v1.12, stack test starting 09/01/2026"
+    "1046354226308456723": "Submitted by GFL Environmental: NPDES Quarterly PFAS Analytical Report, Outfall 001A, Sampled 4/10/26"
+    "4829702029813170271": "Submitted by Arbor Hills Remediation Area: PFAS Monitoring Report, NPDES MI0045713, Outfall 001A, sampled 04/10/2026"
+    "-767368606632808938": "Submitted by Arbor Hills Energy: Stack Test Protocol for Turbine Emissions, Test Date September 9, 2026"
+    "8558059707065777403": "Submitted by Arbor Hills Energy: Air Quality Test Plan for performance test under ROP0000656 and 68-23"
+    "4931398505349040787": "Submitted by Arbor Hills Energy: Air Quality Test Plan Submittal for Stack Test Beginning 09/09/2026"
+    "-5506401359421536124": "Submitted by Arbor Hills Energy: Air Quality Test Plan Submittal, stack test scheduled 09/09/2026"
+    "-118399228546352405": "Submitted by Arbor Hills Energy: Air Emission Monitoring Form, FGTURBINES SO2 Limit 0.5 lb/hr"
+    "1646710172545523085": "Submitted by Arbor Hills Energy: EUTURBINE4 Solar Turbine GT4 SO2 Emission Limits Form"
+    "-116153051820261801": "Submitted by Arbor Hills Landfill: EGLE/USACE Joint Permit Application for wetland excavation and fill"
+    "-8784357504587856389": "Email correspondence (EPA to Arbor Hills Landfill): Re: MA Determination, project code 2025-0113941"
+    "-5789186568716202170": "Submitted by Arbor Hills Landfill: Conceptual Wetland Mitigation Plan, South Wetland and Expansion Mitigation Areas"
+    "-3918113962740903590": "Email correspondence (ECT to Arbor Hills Landfill): Wetland and Waterbody Delineation, Project No. 240370-0200"
+    "-1484556001020577856": "Submitted by Arbor Hills Landfill: Engineering Site Plan, Cell Expansion and Wetland Impact Map"
+    "3915950858355560862": "Submitted by Arbor Hills Landfill: Joint Permit Application for Northward Landfill Expansion"
+    "8468097087046674504": "Submitted by Arbor Hills Landfill: Pre-Application Meeting Request under Part 301 and Part 303"
+    "8723213511912544349": "Submitted by Arbor Hills Remediation Area: PFAS Non-POTW Effluent Monitoring Report, Permit MI0045713, May\u2013July 2026"
+    "4519132112115972338": "Submitted by Arbor Hills Landfill: EGLE/USACE Joint Permit Application for wetland excavation and fill"
+    "-3495972040555589248": "Submitted by Arbor Hills Landfill: Conceptual Wetland Mitigation Plan Narrative for South Wetland Project impact to Wetland W1"
+    "-680364647754755514": "Email correspondence (GFL to EGLE): Request for Extension \u2013 Corrective Actions for Perimeter Monitor Alarms, CJ 2020-0593-CE"
+    "1236843714327129094": "Submitted by Arbor Hills Landfill: Air General Compliance Report, 120-Day Extension Request"
+    "-2202646365709182057": "Submitted by Arbor Hills Landfill: Air Emissions Test Report, Enclosed Flares FGENCLOSEDFLARES-S2, NOx and CO Results"
+    "-1880568531366408926": "Submitted by Arbor Hills Landfill: NMOC Emissions Test Results for Enclosed Flares 391 and 392"
+    "4177295883340260229": "Submitted by Arbor Hills Landfill: Air Emission Test Report for Enclosed Flare, Test Date July 29, 2026"
+    "-7648064088625030344": "Submitted by Arbor Hills Landfill: Air Quality Test Report Submittal, test conducted 07/29/2026"
+    "5180602026303752164": "Submitted by Arbor Hills Landfill: EGLE/USACE Joint Permit Application for wetland excavation and fill"
+    "-1913723575516273595": "Submitted by Arbor Hills Landfill: Q3 2026 Leachate Minimization Action Plan under Consent Judgment CJ-2020-0593-CE"
+    "5099988301326947130": "Email correspondence (Arbor Hills Landfill to EGLE): Action Plan \u2013 Limiting Liquid Infiltration and Minimizing Leachate Generation, CJ 2020-0593-CE"
+    "-1362294972326208294": "Submitted by Arbor Hills Landfill: Surface and Penetration Emissions Monitoring EGLE-AQD 2026 Report"
+    "8760992060796734343": "Submitted by Arbor Hills Landfill: Air General Compliance Report, Corrective Action SEM Report (June 2026 EGLE-AQD Inspection)"
+    "191720104515493060": "Submitted by Arbor Hills Landfill: Air Quality Test Report Submittal for Stack Test on 7/29/2026"
+    "370773499824467741": "Submitted by Arbor Hills Landfill: Air Quality Test Report Submittal for July 29, 2026 Stack Test"
+    "2658860374006709254": "Email correspondence (Arbor Hills Landfill to EGLE): TRS and HCl Gas Sampling Results for FGENCLOSEDFLARES-S2, September 1, 2026"
+    "-3434130374454441630": "Submitted by Arbor Hills Landfill: Air Quality Test Report Submittal for enclosed flares, test date 09/01/2026"
+    "1246145503185828395": "Submitted by Arbor Hills Landfill: Air Quality Test Report Submittal, Stack Test 09/01/2026 (HQR-V0Y8-PSAJY)"
+    "-4157115078476955913": "Email correspondence (Arbor Hills Energy to EGLE): Update of Permit Mailing Address \u2013 Arbor Hills Energy and Emerald RNG LLC"
+    "3498920192144486845": "Email correspondence (Arbor Hills Landfill to EGLE): Test Results for TRS and HCl Concentration, FGENCLOSEDFLARES-S2, Sept 1 2026"
+    "7377919204018821699": "Submitted by Arbor Hills Landfill: Stack Test Report for Enclosed Flares (FGENCLOSEDFLARES-S2) under NESHAP Subpart AAAA"
+    "8445516826773948510": "Submitted by Arbor Hills Landfill: Air Quality Test Report Submittal, Submission HQR-V0Y8-PSAJY, Test Date 09/01/2026"
+
 # --- WOI (Wells of Interest) auto-routing (ADR 005 integration, added 2026-07-13) ---
 # The semi-annual WOI Status Reports (the two are 181 and 323 pp of per-well
 # gas-extraction tables) are routed to the exhaustive woi_table_parser instead of
@@ -71,6 +573,25 @@ large_doc_max_keyword_pages: 10
 woi:
   auto_route: true
 
+# --- Named single-well temperature trip-wires (ADR 058, well_watch.py) ---
+# Fires a dedicated email naming the well when a newly processed WOI-format
+# filing shows it at/above threshold_f. `pattern` matches the well NUMBER across
+# redrills/prefix/zero-pad drift; `since` ignores re-printed history rows.
+well_watch:
+  recipients:
+    - arbor-hills@trishakunst.com        # Trisha only
+  wells:
+    - label: "AHW263R5 (Cell 1D, north; SSO-tagged)"
+      pattern: '^AHW{1,2}0*263R\d*$'
+      threshold_f: 145
+      since: "2026-05-01"
+      note: >-
+        145F is the federal MACT Subpart AAAA wellhead limit. AHW263R5 got a
+        170F HOV on 7/23/2025 (letter states no end date) but is NOT in the
+        4/7/2026 16-well HOV renewal (through 5/1/2028), so whether a waiver
+        still covers it is unconfirmed. Through 6/30/2026 it held at
+        142.1-144.2F.
+
 # --- Backfill ---
 backfill_batch_size: 50          # docs per nightly run
 
@@ -84,6 +605,26 @@ archive:
   batch_size: 100
   folder_name: "Arbor Hills Case File Mirror"
 
+# --- Data lifecycle: snapshot -> immutable Drive exporter (ADR 072) ---
+# OFF BY DEFAULT. Cross-cutting (not inside any one watcher's block): when
+# enabled, rop_watcher / mmd_watcher / nsite_submissions_watcher / pfas_watcher
+# each upload the raw snapshot payload they are about to append to their Sheet
+# tab as an immutable file in ONE shared app-only Drive folder (secret
+# GOAUTH_SNAPSHOT_FOLDER_ID), BEFORE the Sheet row is written — the Tier-1
+# copy docs/data-lifecycle-architecture.md asks for. Best-effort: a failed or
+# unconfigured upload never blocks the row or the alert. See snapshot_exporter.py.
+#
+# ACTIVATION (Trisha's; mirrors ADR 026's three steps):
+#   1. create the app-only folder — run the `create-oauth-folder` workflow
+#      (identity `kunst`, e.g. FOLDER_NAME "Arbor Hills Watch Snapshots"),
+#   2. add its id as the GOAUTH_SNAPSHOT_FOLDER_ID repo secret (the four
+#      workflows already pass it through),
+#   3. set enabled: true here and commit.
+# Until enabled: true is on main, the four watchers behave exactly as before.
+data_lifecycle:
+  snapshot_export:
+    enabled: true   # activated 2026-10-23 (Trisha); GOAUTH_SNAPSHOT_FOLDER_ID set
+
 # --- Watcher (daily) ---
 # The daily watcher handles INCREMENTAL new filings only (normal volume is 0-5).
 # If it ever sees more unprocessed docs than this, the historical backlog is not
@@ -92,8 +633,41 @@ archive:
 # docs into the live feed and firing urgent alerts on years-old exceedances. The
 # daily schedule should stay disabled until backfill logs "Backfill complete"
 # anyway (see README); this cap is the belt-and-suspenders backstop.
+# Over the cap (stall-hardening part (c), 2026-10-23): only an established
+# facility's RECENT filings (filed within live_filing_window_days, from a
+# facility with at least one processed/skipped document on record) are still
+# processed live, and only when they alone fit under the cap; everything else
+# — a facility just added to `facilities:`, or the historical remainder of one
+# whose backfill has only partly drained — is the backlog and defers as
+# before. So a new facility can't freeze live monitoring of every other one
+# (the 2026-07-24 stall), and while the backlog is over the cap a
+# half-backfilled facility can't stampede years-old filings into the live feed
+# either. UNDER the cap nothing is filtered (as before): the last <= 25
+# historical documents of a manual backfill are processed live by the next
+# watcher run, alerts included — finish a facility's backfill in one sitting.
 watcher:
   max_new_docs_per_run: 25
+  live_filing_window_days: 30
+  # LIVENESS / silent-stall guard (stall-hardening, 2026-10-23; the 2026-08-02
+  # digest-recovery lesson). Two signals, one owner-only health notice each,
+  # at most once per episode (doc_pipeline_liveness.py; state in
+  # _meta.doc_pipeline_health). 0 disables a signal.
+  #   max_consecutive_deferrals — daily runs IN A ROW that deferred unprocessed
+  #     documents to backfill under the cap above. backfill.yml's schedule is
+  #     INTENTIONALLY off (it raced the watcher, 2026-07-07), so a backlog only
+  #     drains when backfill is started by hand (workflow_dispatch; one or two
+  #     batches of 50 for a new facility). 3 = "the third straight morning the
+  #     backlog is still there": nobody has drained it yet. Expect this notice
+  #     ~3 days after every new facility is added unless backfill is run.
+  #   max_stale_days — calendar days since the watcher last made progress on
+  #     its queue (processed a document, struck a genuinely unprocessable one,
+  #     or had nothing unprocessed). A quiet week with no new filings does NOT
+  #     count as stale; three daily runs that each saw unprocessed documents
+  #     and got through none of them (every one deferred, or every one a
+  #     transient failure — an outage or a revoked/throttled key) does. 3 keeps
+  #     the same order of magnitude as gfl_air.max_stale_days.
+  max_consecutive_deferrals: 3
+  max_stale_days: 3
 
 # --- WDS (Stream C — EGLE Waste Data System, Part 115 solid waste) ---
 # OFF BY DEFAULT. WDS is the solid-waste system of record for the landfill
@@ -260,6 +834,25 @@ gfl_air:
   readings_layer: 4
   dashboard_url: "https://barrgisonline.maps.arcgis.com/apps/dashboards/ac08a03f8018403ba6ae1c2243c00e99"
   station_prefix: "MS-"             # perimeter gas stations; excludes the stale "10-Meter MET Tower" row
+  # Station ROSTER (coder:h2s-roster-count, 2026-10-23): the human-maintained list of
+  # perimeter stations that are SUPPOSED to exist. This is the single source of truth
+  # for the SCREENING email's "stations reporting N/<len>" count and its "not listed"
+  # note — adding or removing a monitor is a one-line edit here, not a code change.
+  # Distinct from the live layer-0 REGISTRY (gfl_air_client.fetch_station_coords:
+  # what the source lists right now, fetched every run): a registry/reading station
+  # NOT on this list is logged + named in the email as "not in this monitor's
+  # configured roster" (never silently counted as one of the expected N, never
+  # silently dropped); a roster station the source doesn't list at all is named as
+  # "not listed". Names must carry station_prefix exactly as the feed spells them.
+  # Six names as of PR #107's 2026-10-06 live specimen (MS-1..MS-6); re-check against
+  # the live service before changing.
+  expected_stations:
+    - MS-1
+    - MS-2
+    - MS-3
+    - MS-4
+    - MS-5
+    - MS-6
   max_record_count: 2000            # page size for the incremental OBJECTID query (service cap is 10000)
   # Which readings land in the shared Measurements tab. The feed is hourly (~288
   # rows/day at 'all'), so the default 'digest' keeps every exceedance + a per-
@@ -394,9 +987,36 @@ gfl_air:
   # summary PDF is rendered from these files only when an exhibit is actually needed
   # (deferred). Rollback lever: set enabled: false to return _write_capture() to a
   # silent no-op (the folder + secret can stay).
+  # 2026-10-06 (Trisha: "make sure we have a backup of all actual readings for both
+  # CH4 and H2S... Don't want to rely on that dashboard staying live"): mode "all"
+  # captures EVERY hourly perimeter reading with every source field verbatim
+  # (numeric H2S/CH4, the BDL labels, wind, temp, humidity, pressure). ~150
+  # readings/day. "sample" restores the original 1-per-baseline_hours downsample.
   capture:
     enabled: true
+    mode: all
     baseline_hours: 8
+  # 2026-10-06 (Trisha): HOURLY capture too, so a reading sits in GFL's feed for about
+  # an hour (not up to a day) before we hold a copy. gfl_air_hourly_capture.py via its
+  # own workflow; cursor derived from the capture file names in Drive (no Sheet
+  # state); no alerts. Rollback: enabled: false (the daily capture is unaffected).
+  hourly_capture:
+    enabled: true
+    max_readings_per_run: 5000
+
+# --- GFL perimeter feed: monthly FULL snapshot + change detection (ADR 063) ---
+# Once a month, pull EVERY row of every layer of GFL's public perimeter-air feed
+# (~226k hourly H2S/CH4 readings, all fields verbatim) + the dashboard config into
+# one zip with a manifest (row counts checked against the server's own count,
+# SHA-256 per file), upload it to the app-only GFL Air Exhibit Drive folder
+# (GOAUTH_GFL_AIR_FOLDER_ID), and diff it against the previous snapshot: past
+# readings DELETED or EDITED upstream email the OWNER list only. The backstop for
+# anything the daily capture (gfl_air.capture) misses. Ships false (new job
+# against a live external system); a human flips it on.
+gfl_feed_snapshot:
+  enabled: true   # switched on 2026-10-06 (Trisha: "merge and push 108 and 109")
+  page_size: 5000
+  dashboard_item_url: "https://barrgisonline.maps.arcgis.com/sharing/rest/content/items/ac08a03f8018403ba6ae1c2243c00e99"
 
 # --- CivicClerk meeting-change watch (Stream F, ADR 015, added 2026-07-14) ---
 # Watches a HAND-PICKED list of Washtenaw County CivicClerk meeting events for ANY
@@ -569,6 +1189,21 @@ ridgewood:
   # review-tier alerts to the full list too.
   review_recipients:
     - arbor-hills@trishakunst.com          # Trisha only (not the advocacy list)
+  # Monthly RE-VERIFICATION pass + committed provenance manifest (ADR 066, added
+  # 2026-10-12; ridgewood_reverify.py). OFF BY DEFAULT. Stream G above archives a
+  # month's report ONCE and never looks at it again; this re-downloads EVERY listed
+  # month monthly, detects a silently REVISED PDF (new version mirrored, old one
+  # never touched/deleted) and a report that disappears from Barr's page, and
+  # commits data/provenance/ridgewood-manifest.json (one entry per report version;
+  # the git commit history is the provenance "signature" — Trisha's 2026-10-08
+  # ruling, no cryptographic signing). Change/removal alerts are OWNER-ONLY
+  # (ea.load_owner_emails) — never the public or review_recipients/alert_recipients
+  # lists above. ACTIVATION (same pattern as Stream G itself): review + merge, then
+  # set reverify_enabled: true and commit. The Drive folder secret
+  # (GOAUTH_RIDGEWOOD_FOLDER_ID) is shared with Stream G and already optional there;
+  # unset here too, a revision is still logged + alerted, just without a mirrored
+  # copy of the new bytes.
+  reverify_enabled: true            # activated 2026-10-12 (Trisha) — see ADR 066. GOAUTH_RIDGEWOOD_FOLDER_ID/MONITOR_OWNER_EMAILS already provisioned (shared with Stream G / GFL snapshot).
 
 # --- ROP (air Title V permit) watch (ADR 017, added 2026-07-15) ---
 # OFF BY DEFAULT. All three Arbor Hills air facilities have a ROP renewal IN
@@ -647,15 +1282,17 @@ mmd:
 # Daily snapshot-diff on EGLE's KEYLESS RRDOpenData ArcGIS registry
 # (gisagoegle.state.mi.us .../EGLE/RRDOpenData/MapServer) — Layer 0 (Part 201
 # contaminated-site remediation status) for the 5 Arbor Hills-area sites, and
-# Layer 1 (Part 211 underground storage tanks) for the GFL UST. RIDE's own web
-# app is auth-walled with no anonymous document API; this is the underlying
-# public status data. A RiskCondition flip, a Contaminants change, or a new
+# Layer 1 (underground storage tanks) for the watched UST facilities
+# (registry names: GFL Environmental USA, LLC 00040223; Arbor Hills Landfill Inc 00038889). This is the underlying
+# public STATUS data (RIDE's document listing is a separate source — see the
+# ADR 019 addendum). A RiskCondition flip, a Contaminants change, or a new
 # Open_Release is early, citable R5 (water quality) signal. Statuses change
 # rarely — near-silent in steady state. The FIRST sighting of each watched
 # item baselines silently. See ride_client.py / ride_watcher.py.
 #
 # Built 2026-07-23/24 (unattended overnight) and shipped disabled per the
-# new-source gate; the live feasibility re-check confirmed all 6 records return.
+# new-source gate; the live feasibility re-check confirmed all 6 records return
+# (7 since 00038889 was added 2026-09-28).
 # ACTIVATED 2026-08-07 (Trisha-directed) — keyless, nothing to provision. The
 # first run baselines every watched item silently; alerts go to `recipients`
 # below (Trisha only to start).
@@ -667,12 +1304,49 @@ ride:
     - "81000835"   # 7667 Chubb Rd
     - "81000840"   # 7941 Salem Rd
     - "82008712"   # MITC Corridor
-  facility_ids:                      # Layer 1 (Part 211 UST) — key field FacilityID
+  facility_ids:                      # Layer 1 (UST; RegulatoryProgram 211 or 213 per record) — key field FacilityID
     - "00040223"   # GFL Environmental USA, LLC, 7811 Chubb Rd
+    - "00038889"   # Registry FacilityName "Arbor Hills Landfill Inc" (RegulatoryProgram 213, ReleaseStatus
+                   # Closed, RiskCondition "No Longer A Facility", 0 open releases as of 2026-09-28). Added
+                   # 2026-09-28 so a change to RiskCondition / Open_Release / LastUpdated is caught (NOT a
+                   # ReleaseStatus flip or the tank/release counters -- those aren't fetched); see ADR 019.
   # Recipient override: Trisha only to start (Meeting Watch/MMD precedent for
   # a brand-new stream). Delete/comment this block to send to the full
   # alert_recipients list once the alert copy has been seen in the wild.
   recipients:
+    - arbor-hills@trishakunst.com
+
+# --- EGLE RIDE anonymous DOCUMENT listing watch (Stream T, ADR 061) ---
+# RRD (Remediation and Redevelopment Division) is the one EGLE division the
+# monitor watched only for STATUS (`ride:` above), never for DOCUMENTS. RIDE's
+# public Inventory of Facilities page gives every anonymous visitor a "Public
+# User" session and lists each Part 201 location's files (no credentials, no
+# login). Daily: list every watched location's files; the FIRST sighting of a
+# location baselines silently; a new file / a changed record / a vanished file
+# alerts; not-yet-mirrored files are copied to a PRIVATE Drive folder.
+# HARD RULES (pinned by tests): rows go ONLY to the PRIVATE Sheet
+# (GSHEET_ID_PRIVATE) — RIDE titles can carry residents' names/addresses;
+# nothing here reaches the public Sheet, the findings feed or the site; an
+# EMPTY `recipients` = display-only (NEVER the coalition list).
+# Ships DISABLED (brand-new external source). To activate: (1) share the private
+# Sheet with the service account as EDITOR, (2) run the workflow with probe=true
+# to confirm the Azure runner isn't bot-challenged, (3) optionally create a
+# PRIVATE Drive folder and set the GOAUTH_RRD_FOLDER_ID secret (mirroring is
+# skipped without it), then flip `enabled`.
+ride_docs:
+  enabled: true                # activated 2026-09-28 (Trisha: "Public User" is not logging in; runner probe OK, 5 locations / 95 files)
+  # Part 201 program numbers to watch. Omit to reuse `ride.site_ids` (the same 5
+  # Arbor Hills-area sites). UST facility ids (`ride.facility_ids`) are not RIDE
+  # inventory programs; 00038889's files are listed under 81000004's location.
+  # program_nums: ["81000033", "81000004", "81000835", "81000840", "82008712"]
+  mirror: true                 # copy files to the private Drive folder (needs GOAUTH_RRD_FOLDER_ID)
+  # RIDE uris never to (re)mirror: files moved to the private quarantine folder as not
+  # Arbor Hills related (misfiled in RIDE). Alerts/Sheet rows are unaffected.
+  mirror_exclude_uris: ["35715073", "35715083", "35715084", "35715096"]
+  max_mirror_per_run: 8        # bounds run time; the ~95-file backlog drains over ~12 daily runs
+  max_file_mb: 250             # larger files are recorded as mirror-skipped (some reach 216 MB)
+  stale_alert_after_skips: 3   # ONE liveness alert after this many consecutive skipped (unreadable) runs
+  recipients:                  # Trisha only; EMPTY = display-only (rows, no email)
     - arbor-hills@trishakunst.com
 
 # --- nSITE site registry (ADR 022) ---
@@ -707,6 +1381,31 @@ nsite_sites:
   - {srn: "AHE2",  name: "Arbor Hills Energy, LLC (bare)",            id: "6005499155163438362"}
   - {srn: "SANL",  name: "Arbor Hills Sanitary Landfill-Northville",  id: "-3993454880491964634"}
   - {srn: "ERNGX", name: "EMERALD RNG, LLC (no-SRN sibling)",         id: "-1194242252385100852"}   # supersedes the old ADR-008 Documents-side exclusion above — still no Documents tracking, now covered here
+  - {srn: "NAPR",  name: "GFL Napier Rd culvert (WRP034436)",        id: "-4552820604746245548"}   # ADR 044: 1 submission (2022 JPA, Completed), 1 permit (In Effect to 2027-08-01), 0 violations/CAs/evaluations/complaints/notices at add time
+  - {srn: "LFLO",  name: "Low Flow Discharge Request site (Lflow-7643)", id: "-8293528710588524646"}   # ADR 045: WRD-Resources "Low Flow Discharge Request" service request (Lflow-7643, 2011-01-18, Completed) is its only record; Trisha: these requests recur about every 5 years for this location. Quarterly everywhere = catches the next one.
+  - {srn: "DTEN",  name: "DTE Nitro Substation Napier Rd & 5 Mile Conduit (MI0060368)", id: "-4327269113100269233"}   # ADR 046: NPDES Industrial/Commercial IP MI0060368 (In Effect 2024-08-28..2028-10-01), ~1.1 MGD discharge w/ PFAS monitoring, 8 DMR limit exceedances 2025-11..2026-04 (Active - Not Reviewed), ownership-transfer notice 2026-09-17 In Process. Profile watchers only (Trisha option a) — NOT in facilities: (213 docs; classification cost vs the Anthropic cap)
+  - {srn: "WIP15", name: "Wetland Identification request site (294-E9PM-E16P)", id: "1335503966479023299"}   # ADR 047: one WRD-Resources Wetland Identification Program request (294-E9PM-E16P, 2015-08-26, Completed); no documents on nSITE. Very likely the 2015 WIP of the Salem Springs land (see WIP19 / ADR 048), not landfill property
+  - {srn: "WIP19", name: "Salem Springs wetland ID, 6255 Napier Rd (HNP-75WK-9JX94)", id: "6076539015117221381"}   # ADR 048
+  - {srn: "PTI87", name: "1987 Air PTI applications (C-7567, C-7568)", id: "-3813933512584804016"}   # ADR 048
+  - {srn: "BORE15", name: "Arbor Hills 2015 soil-boring JPA (WRP000808)", id: "-4454026774380249654"}   # ADR 049 (Advanced Disposal/Golder, 11 hydrogeologic boreholes in Sec. 12 w/ temporary wetland crossings; GP Category Q, 2015-11-17..2020-11-17 (Expired); 8 docs incl. borehole+wetland map and adjacent-owner list
+  - {srn: "FP89",  name: "Floodplain elevation request, 8627 Napier Rd (89-11-0108-FP)", id: "7284130751247156626"}   # ADR 049 (historical WRD floodplain elevation calculation request (1989 per ref format), parcel next to the landfill in Sec. 12; 0 docs today
+  - {srn: "MITIG", name: "Arbor Hills Mitigation Site", id: "6707784663696162097"}   # ADR 050 — identified by Trisha 2026-09-25; empty on every nSITE profile at add time. Expected home of the wetland-mitigation filings tied to the 2026 Wetland 1 JPA (conceptual mitigation plan).
+  - {srn: "CHUBB18", name: "8110 Chubb Rd wetland-fill VN site (VN-008432)", id: "604563607848499529"}   # ADR 051 — 2018 WRD complaint + Violation Notice (Request Information), unpermitted fill in regulated wetland + driveway to a stream, parcel A-01-12-300-012 (Sec. 12, not GFL-owned); closed 2018-06-05; 1 doc
+  - {srn: "CHUBBRD", name: "Chubb Rd + Five Mile Rd reconstruction (WRP013195)", id: "-5141175505123096250"}   # ADR 052 — 2018 JPA + construction stormwater (MIR115382); 2 SESC violations 2020 still Active-Addressed not Resolved; 23 docs
+  - {srn: "WIP25", name: "7506 Chubb Rd wetland ID (HQ3-NSC0-TP7FT)", id: "-8179920515493197813"}   # ADR 052 — 2025 Level 3 WIP, ~13 ac, parcel A-01-13-300-012, Sec. 13 (Anglin Civil / Dalice Co.); 2024 pre-app withdrawn; 22 docs
+  - {srn: "BDPH", name: "7374 Chubb Rd stormwater outfalls (WRP038206)", id: "-1974820987593684099"}   # ADR 052 — Part 303 permit 2023-07-26..2028-07-26 to BD Property Holdings: 2 storm outfalls discharging to wetland, Sec. 13; 29 docs
+  - {srn: "ASB26", name: "Asbestos contractor registration (ASB-00009055)", id: "6658906756287014686"}   # ADR 052 — AQD Asbestos New Contractor Registration, received 2026-01-21, In Process; 0 docs
+  - {srn: "CMP23", name: "WRD-NPDES complaint site (HPY-5JZ9-JFEQE)", id: "8106421448071964642"}   # ADR 052 — one WRD-NPDES complaint, 2023-10-05; 0 docs
+  - {srn: "PTEX", name: "Plymouth Township Exchange, Five Mile Rd (WRP037948)", id: "-1034065027376918328"}   # ADR 053 — JD 5 Mile LLC (Jones Development); Part 301/303 permit In Effect 2025-08-06..2028-06-26 w/ 2025 minor revisions; temp wetland impacts + Johnson Drain crossing; agent Barr Engineering; 2022 WIP + pre-app, 2023 JPA; 45 docs
+  - {srn: "H95", name: "1995 resources permit 95-13-0412-P", id: "-6102479567065163659"}   # ADR 053 — historical Conversion Resources Application, General Permit 1995-09-28..1996-12-31 (Expired); 0 docs
+  - {srn: "LUMB", name: "7480 Napier Rd lumber facility, Five Mile & Napier (WRP039817)", id: "-138923829872982091"}   # ADR 054 — new commercial lumber facility, Northville Twp (Wayne); Part 303 Individual Permit In Effect 2024-04-23..2029-04-23; 2023 after-the-fact VN-015316 (unauthorized activity still Active-Addressed not Resolved); 24 docs
+  - {srn: "DTE5M", name: "DTE work, N side of Five Mile Napier to Ridge (WRP039922)", id: "-3197747421558034961"}   # ADR 054 — DTE Energy (One Energy Plaza); Individual Permit In Effect 2023-12-20..2028-12-20; 2021 pre-app + 2023 JPA; 37 docs
+  - {srn: "FMCOM", name: "Five Mile Rd E of Napier commercial pre-app (HQG-PB0D-FXQ6N)", id: "4473941391942993502"}   # ADR 054 — 2025-11-03 pre-application meeting for a new commercial development, N side of Five Mile W of Ridge, Sec. 18 Northville Twp; permit application expected; 5 docs
+  - {srn: "NTWP", name: "Northville Twp site, NW corner Five Mile & Ridge (WRP037947)", id: "1136159897475661963"}   # ADR 054 — Charter Township of Northville; Part 303 minor permit In Effect 2023-06-26..2028-06-26 (sibling number to PTEX WRP037948); construction stormwater MIR117693 (2023, expired) + new NOC 2026-05-08 On Hold; 25 docs
+  - {srn: "JCDR", name: "Johnson Creek Intercounty Drain Restoration (HPG-9289-R76GQ)", id: "-9161999632999417877"}   # ADR 055 — 2022-05-18 JPA, On Hold; consultant ECT; >2,000 cy dredging, EGLE 2022 correction request on sediment (contaminant) testing + in-stream BMPs; downstream of the landfill discharge; 45 docs
+  - {srn: "TOLL", name: "Toll Brothers Coldwater Ridge aquatic herbicide COC (ANC9430361)", id: "-5940520217246576583"}   # ADR 056 — WRD Aquatic Nuisance Control: Niswander Environmental COC under the Great Lakes Invasives general permit, In Effect 2025-09-02..2028-12-31, Johnson Drain stretch (Wayne); 11 docs incl. treatment map
+  - {srn: "COLDR", name: "Coldwater Ridge residential development, Ridge Rd (WRP041048)", id: "1591666718366793099"}   # ADR 057 — Individual Permit In Effect 2024-05-01..2029-05-01: box culvert + fill in an unnamed Johnson Drain tributary, wetland boardwalk, force main + sanitary bores under wetland/stream, 0.68-ac storm basin outletting to wetland, 378 cy fill / 1,212 cy cut in Johnson Drain floodplain; N of Five Mile, W side of Ridge; 25 docs
+  - {srn: "RIDGE", name: "Ridge Rd structure replacement over Johnson Drain (WRP017601)", id: "-5712439741250995543"}   # ADR 057 — public-transportation JPAs 2017-2019; permits WRP010908 (2018-23) + WRP017601 (2019-24), both Expired; 2024-04-10 Stream Relocation Plan approval letter; Sec. 18 Northville Twp; 15 docs
 
 # --- nSITE Submissions watch (Stream K, ADR 020; tiered cadence ADR 021; site identity moved to nsite_sites above, ADR 022) ---
 # Watch on the "Submissions" profile (application / service-request intake: a
@@ -765,6 +1464,31 @@ nsite_submissions:
     AHE2: quarterly
     SANL: quarterly
     ERNGX: quarterly
+    NAPR: biweekly       # ADR 044 (WRP034436 Napier Rd culvert)
+    LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
+    DTEN: daily          # ADR 046 (DTE Nitro NPDES MI0060368)
+    WIP15: quarterly     # ADR 047 (2015 wetland ID request)
+    WIP19: quarterly     # ADR 048 (Salem Springs 2019 WIP)
+    PTI87: quarterly     # ADR 048 (1987 air PTIs)
+    BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
+    FP89: quarterly      # ADR 049 (1989 floodplain request)
+    MITIG: biweekly      # ADR 050 (Arbor Hills Mitigation Site)
+    CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
+    CHUBBRD: quarterly  # ADR 052
+    WIP25: biweekly     # ADR 052
+    BDPH: biweekly      # ADR 052
+    ASB26: biweekly     # ADR 052
+    CMP23: quarterly    # ADR 052
+    PTEX: biweekly      # ADR 053
+    H95: quarterly      # ADR 053
+    LUMB: quarterly     # ADR 054
+    DTE5M: quarterly    # ADR 054
+    FMCOM: biweekly     # ADR 054
+    NTWP: biweekly      # ADR 054
+    JCDR: biweekly      # ADR 055
+    TOLL: biweekly      # ADR 056
+    COLDR: biweekly     # ADR 057
+    RIDGE: biweekly     # ADR 057
 
 # --- nSITE Violations watch (Stream L, ADR 023) ---
 # Watch on the "Violations" profile — EGLE's OWN ENFORCEMENT RECORD (a formal
@@ -835,6 +1559,31 @@ nsite_violations:
     AHE2: quarterly
     SANL: quarterly
     ERNGX: quarterly
+    NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
+    LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
+    DTEN: daily          # ADR 046 (DTE Nitro NPDES MI0060368)
+    WIP15: quarterly     # ADR 047 (2015 wetland ID request)
+    WIP19: quarterly     # ADR 048 (Salem Springs 2019 WIP)
+    PTI87: quarterly     # ADR 048 (1987 air PTIs)
+    BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
+    FP89: quarterly      # ADR 049 (1989 floodplain request)
+    MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
+    CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
+    CHUBBRD: biweekly   # ADR 052
+    WIP25: quarterly    # ADR 052
+    BDPH: quarterly     # ADR 052
+    ASB26: quarterly    # ADR 052
+    CMP23: quarterly    # ADR 052
+    PTEX: quarterly     # ADR 053
+    H95: quarterly      # ADR 053
+    LUMB: biweekly      # ADR 054
+    DTE5M: quarterly    # ADR 054
+    FMCOM: quarterly    # ADR 054
+    NTWP: quarterly     # ADR 054
+    JCDR: quarterly     # ADR 055
+    TOLL: quarterly     # ADR 056
+    COLDR: quarterly    # ADR 057
+    RIDGE: quarterly    # ADR 057
 
 # --- nSITE Compliance Actions watch (Stream M, ADR 028) ---
 # Watch on the "Compliance Actions" profile — the formal actions EGLE takes in
@@ -908,6 +1657,31 @@ nsite_compliance_actions:
     AHE2: quarterly
     SANL: quarterly
     ERNGX: quarterly
+    NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
+    LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
+    DTEN: biweekly       # ADR 046 (DTE Nitro NPDES MI0060368)
+    WIP15: quarterly     # ADR 047 (2015 wetland ID request)
+    WIP19: quarterly     # ADR 048 (Salem Springs 2019 WIP)
+    PTI87: quarterly     # ADR 048 (1987 air PTIs)
+    BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
+    FP89: quarterly      # ADR 049 (1989 floodplain request)
+    MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
+    CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
+    CHUBBRD: quarterly  # ADR 052
+    WIP25: quarterly    # ADR 052
+    BDPH: quarterly     # ADR 052
+    ASB26: quarterly    # ADR 052
+    CMP23: quarterly    # ADR 052
+    PTEX: quarterly     # ADR 053
+    H95: quarterly      # ADR 053
+    LUMB: quarterly     # ADR 054
+    DTE5M: quarterly    # ADR 054
+    FMCOM: quarterly    # ADR 054
+    NTWP: quarterly     # ADR 054
+    JCDR: quarterly     # ADR 055
+    TOLL: quarterly     # ADR 056
+    COLDR: quarterly    # ADR 057
+    RIDGE: quarterly    # ADR 057
 
 # --- nSITE Evaluations watch (Stream N, ADR 029) ---
 # Watch on the "Evaluations" profile — the underlying INSPECTION record a
@@ -980,6 +1754,31 @@ nsite_evaluations:
     AHE2: quarterly
     SANL: quarterly
     ERNGX: quarterly
+    NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
+    LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
+    DTEN: biweekly       # ADR 046 (DTE Nitro NPDES MI0060368)
+    WIP15: quarterly     # ADR 047 (2015 wetland ID request)
+    WIP19: quarterly     # ADR 048 (Salem Springs 2019 WIP)
+    PTI87: quarterly     # ADR 048 (1987 air PTIs)
+    BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
+    FP89: quarterly      # ADR 049 (1989 floodplain request)
+    MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
+    CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
+    CHUBBRD: quarterly  # ADR 052
+    WIP25: quarterly    # ADR 052
+    BDPH: quarterly     # ADR 052
+    ASB26: quarterly    # ADR 052
+    CMP23: quarterly    # ADR 052
+    PTEX: quarterly     # ADR 053
+    H95: quarterly      # ADR 053
+    LUMB: quarterly     # ADR 054
+    DTE5M: quarterly    # ADR 054
+    FMCOM: quarterly    # ADR 054
+    NTWP: quarterly     # ADR 054
+    JCDR: quarterly     # ADR 055
+    TOLL: quarterly     # ADR 056
+    COLDR: quarterly    # ADR 057
+    RIDGE: quarterly    # ADR 057
 
 # --- nSITE Permits watch (Stream O, ADR 030) ---
 # Watch on the "Permits" profile — a facility's permit lifecycle (issued ->
@@ -1063,6 +1862,31 @@ nsite_permits:
     AHE1: quarterly
     AHE2: quarterly
     ERNGX: quarterly
+    NAPR: biweekly       # ADR 044 (WRP034436 Napier Rd culvert)
+    LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
+    DTEN: daily          # ADR 046 (DTE Nitro NPDES MI0060368)
+    WIP15: quarterly     # ADR 047 (2015 wetland ID request)
+    WIP19: quarterly     # ADR 048 (Salem Springs 2019 WIP)
+    PTI87: quarterly     # ADR 048 (1987 air PTIs)
+    BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
+    FP89: quarterly      # ADR 049 (1989 floodplain request)
+    MITIG: biweekly      # ADR 050 (Arbor Hills Mitigation Site)
+    CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
+    CHUBBRD: quarterly  # ADR 052
+    WIP25: biweekly     # ADR 052
+    BDPH: biweekly      # ADR 052
+    ASB26: quarterly    # ADR 052
+    CMP23: quarterly    # ADR 052
+    PTEX: biweekly      # ADR 053
+    H95: quarterly      # ADR 053
+    LUMB: biweekly      # ADR 054
+    DTE5M: biweekly     # ADR 054
+    FMCOM: biweekly     # ADR 054
+    NTWP: biweekly      # ADR 054
+    JCDR: biweekly      # ADR 055
+    TOLL: biweekly      # ADR 056
+    COLDR: biweekly     # ADR 057
+    RIDGE: quarterly    # ADR 057
 
 # --- nSITE Complaints watch (Stream P, ADR 031) ---
 # Watch on the "Complaints" profile — citizen/agency reports filed against a
@@ -1152,6 +1976,31 @@ nsite_complaints:
     AHE2: quarterly
     SANL: quarterly
     ERNGX: quarterly
+    NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
+    LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
+    DTEN: quarterly      # ADR 046 (DTE Nitro NPDES MI0060368)
+    WIP15: quarterly     # ADR 047 (2015 wetland ID request)
+    WIP19: quarterly     # ADR 048 (Salem Springs 2019 WIP)
+    PTI87: quarterly     # ADR 048 (1987 air PTIs)
+    BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
+    FP89: quarterly      # ADR 049 (1989 floodplain request)
+    MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
+    CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
+    CHUBBRD: quarterly  # ADR 052
+    WIP25: quarterly    # ADR 052
+    BDPH: quarterly     # ADR 052
+    ASB26: quarterly    # ADR 052
+    CMP23: quarterly    # ADR 052
+    PTEX: quarterly     # ADR 053
+    H95: quarterly      # ADR 053
+    LUMB: quarterly     # ADR 054
+    DTE5M: quarterly    # ADR 054
+    FMCOM: quarterly    # ADR 054
+    NTWP: quarterly     # ADR 054
+    JCDR: quarterly     # ADR 055
+    TOLL: quarterly     # ADR 056
+    COLDR: quarterly    # ADR 057
+    RIDGE: quarterly    # ADR 057
 
 # --- nSITE Active Public Notices watch (Stream Q, ADR 032) ---
 # Watch on the "Active Public Notices" profile — the formal comment-window
@@ -1242,6 +2091,31 @@ nsite_public_notices:
     AHE2: quarterly
     SANL: quarterly
     ERNGX: quarterly
+    NAPR: quarterly      # ADR 044 (WRP034436 Napier Rd culvert)
+    LFLO: quarterly      # ADR 045 (low-flow request site, ~5-yr cadence)
+    DTEN: biweekly       # ADR 046 (DTE Nitro NPDES MI0060368)
+    WIP15: quarterly     # ADR 047 (2015 wetland ID request)
+    WIP19: quarterly     # ADR 048 (Salem Springs 2019 WIP)
+    PTI87: quarterly     # ADR 048 (1987 air PTIs)
+    BORE15: quarterly    # ADR 049 (2015 soil-boring JPA)
+    FP89: quarterly      # ADR 049 (1989 floodplain request)
+    MITIG: quarterly     # ADR 050 (Arbor Hills Mitigation Site)
+    CHUBB18: quarterly   # ADR 051 (8110 Chubb 2018 wetland VN)
+    CHUBBRD: quarterly  # ADR 052
+    WIP25: quarterly    # ADR 052
+    BDPH: quarterly     # ADR 052
+    ASB26: quarterly    # ADR 052
+    CMP23: quarterly    # ADR 052
+    PTEX: quarterly     # ADR 053
+    H95: quarterly      # ADR 053
+    LUMB: quarterly     # ADR 054
+    DTE5M: quarterly    # ADR 054
+    FMCOM: quarterly    # ADR 054
+    NTWP: quarterly     # ADR 054
+    JCDR: quarterly     # ADR 055
+    TOLL: quarterly     # ADR 056
+    COLDR: quarterly    # ADR 057
+    RIDGE: quarterly    # ADR 057
 
 # --- GFL "informational website" change-watch (Stream S, ADR 041, added 2026-09-11) ---
 # OFF BY DEFAULT. A daily snapshot + change-diff watch on the OPERATOR's own
@@ -1361,10 +2235,69 @@ pfas_pws:
   # are identified — no code change needed.
   wssns:
     - 2001381    # SALEM ELEMENTARY SCHOOL, 7806 Salem Rd (Type 2 provisional WHPA; capture zone)
+    - 2046881    # the landfill's own Type II supply, 10690 Six Mile Rd (EGLE name "GFL ENV - COMPOST FACILITY"); 7 rows at add, last sampled 2025-07-09 — first run baselines them silently. Added 2026-09-29 (Trisha).
+    - 2037081    # the landfill's other listed supply; NO rows at add (2026-09-29) — an empty snapshot is valid, so its FIRST sampling round will alert. Added 2026-09-29 (Trisha).
   # Recipient override: Trisha only to start (Meeting Watch / MMD / RIDE / GFL-info
   # precedent for a brand-new stream). Delete/comment this block to send to the
   # full alert_recipients list once the alert copy has been seen in the wild.
   recipients:
+    - arbor-hills@trishakunst.com
+
+# --- EGLE GovQA public FOIA archive watch (Stream U, ADR 059) ---
+# EGLE answers other people's FOIA requests — the operator's law firm, neighbors,
+# peer-landfill watchers — and posts the requests and what it released on a PUBLIC
+# archive (michiganegle.govqa.us). E614007 (8/2026) surfaced ~45 RRD files we had
+# never seen that way. Daily: sweep each keyword newest-first (headless browser,
+# one term per search, stopping at the first page whose requests are ALL known), re-check open/watched
+# requests by number (plain session, no browser), and alert on a new matching
+# request or a status change (e.g. "Cost estimate sent" -> "Closed").
+# HARD RULES (pinned by tests): rows go ONLY to the PRIVATE Sheet
+# (GSHEET_ID_PRIVATE) — request text and attachment names can name residents and
+# street addresses; attachments (when enabled) go ONLY to a private staging Drive
+# folder; nothing is ever published; an EMPTY `recipients` = display-only.
+# Ships DISABLED. To activate: (1) share the private Sheet with the service account
+# as EDITOR; (2) run the workflow with probe=true (checks the browser + the runner);
+# (3) optional: a private staging folder (GOAUTH_GOVQA_STAGING_FOLDER_ID) + set
+# download_attachments: true; (4) flip `enabled`. The first sweep of each keyword
+# baselines silently. A backfill too large to scrape makes the run STOP AND ASK for
+# a gridView CSV export (drop it in the folder named by GOAUTH_GOVQA_CSV_FOLDER_ID,
+# shared with the service account) rather than loop on timeouts.
+govqa:
+  enabled: true                            # activated 2026-09-28 (Trisha) — runner probe green (run 36518570536: by-number lookup + keyword "Arbor Hills" -> 13 items); notify-only, download_attachments stays false. See ADR 059.
+  # ONE term per site search. Observed 2026-09-28: the site ORs the words of an UNQUOTED
+  # multi-word term (Great Lakes Recycling -> 213 items, Arbor Hills -> 97, mostly "Ann
+  # Arbor …"), but honours a DOUBLE-QUOTED phrase (-> 1 and 13 items) and also matches
+  # text its grid doesn't show. So multi-word terms are quoted. `require` (every listed
+  # phrase must appear in the request text) is an OPTIONAL extra filter and is NOT used
+  # by default: a `require: ["Salem"]` on "Six Mile" would have dropped the landfill's own
+  # requests, which write "10690 6 Mile Road, Northville".
+  keywords:
+    - {term: '"Arbor Hills"'}
+    - {term: "Holloway"}
+    - {term: "10690"}
+    - {term: '"Six Mile"'}
+    - {term: "Napier"}
+    - {term: '"Great Lakes Recycling"'}
+    - {term: "10833"}            # 10833 Five Mile Rd (the number is the distinctive part; a quoted "10833 Five Mile" returns 1,637 items)
+    - {term: "N2688"}
+    - {term: "475946"}
+    - {term: "81000004"}
+  # FULL E-numbers to track by number regardless of keywords, in the archive's own form
+  # E######-MMDDYY (e.g. a peer site's open request "E614606-<MMDDYY>", Liddle Sheets / Pine
+  # Tree — take the date suffix from the archive). A malformed entry is reported, never a
+  # crash. First sighting baselines silently; an explicit watch also overrides a no-match.
+  watch_requests: []
+  max_pages_per_term: 12       # a first sweep needing more pages than this => records what it read, then "export a CSV" (once)
+  max_open_rechecks: 25        # recorded open requests re-checked per run, newest first
+  max_attempts: 3              # per term / request: retry with a fresh session (30 s, 2 min), then report and move on
+  download_attachments: false  # stage released files to the PRIVATE folder (needs the staging secret)
+  time_budget_minutes: 40      # wall-clock cap per run; a phase stops and reports when it is spent (the job timeout is 60)
+  max_downloads_per_run: 10
+  max_file_mb: 200
+  staging_folder_env: GOAUTH_GOVQA_STAGING_FOLDER_ID
+  csv_folder_env: GOAUTH_GOVQA_CSV_FOLDER_ID
+  held_folder_envs: []         # env names of Drive folders (read by the service account) whose files are "already held" by MD5; e.g. [GOAUTH_ARCHIVE_FOLDER_ID]
+  recipients:                  # Trisha only; EMPTY = display-only (rows, no email)
     - arbor-hills@trishakunst.com
 
 # --- Alerts ---
@@ -1379,7 +2312,63 @@ pfas_pws:
 # BOC-distribution question — see the Lotext strategy doc.
 alert_recipients:
   - arbor-hills@trishakunst.com          # alerts go to Trisha (Cloudflare catch-all → Gmail)
-  - hwangr@umich.edu                     # Roland Hwang — voting MMPC member (adjacent-community seat), Northville
+  # NOTE: additional recipients (e.g. Roland Hwang) are kept PRIVATE via the
+  # ALERT_RECIPIENTS_EXTRA secret, not committed here — see email_alerts.merge_extra_recipients()
+  # and tests/test_config_no_committed_emails.py. (Hwang moved out 2026-09-17, privacy pass.)
+
+# --- MPART PFAS open-data layers watch (Stream V, ADR 060) ---
+# MPART (the Michigan PFAS Action Response Team, housed at EGLE) publishes PFAS results
+# as KEYLESS ArcGIS open-data layers. The monitor watches MPART's Arbor Hills WEB PAGE
+# (ADR 012) and the public-water-supply layer (Stream R, `pfas_pws`) but not the layers
+# that hold the Johnson Drain / Johnson Creek / upper-Rouge results, which were found by
+# hand in 9/2026. Daily snapshot-diff of three layers (surface-water samples, fish PFOS
+# results, and MPART's PFAS sites/AOIs); the FIRST sighting of each baselines silently;
+# a new/changed/removed row alerts. The public-water-supply layer is NOT re-watched here
+# (Stream R owns it; adding more WSSNs is a `pfas_pws.wssns` edit, not this block).
+# New and changed surface-water rows are SCREENED against the thresholds below.
+# EGLE's layer descriptions (as saved 2026-09-26) call both STATIC PULLS (surface water "last
+# pulled 2/2025"; fish "01/14/2026 … updated annually"), so expect long quiet stretches and a
+# burst when EGLE re-pulls; check the layer description for the current pull date.
+# Ships DISABLED (a brand-new external source): review the alert copy, then flip
+# `enabled`. Keyless — nothing to provision.
+mpart:
+  enabled: true                            # activated 2026-09-29 (Trisha-directed) — runner probe green
+                                            # (run 36519697233: 17 surface-water / 388 fish / 7 sites rows,
+                                            # all parsed). First run baselines silently. See ADR 060.
+  # Johnson Drain / Johnson Creek / upper Rouge box: [lon_min, lat_min, lon_max, lat_max].
+  bbox: [-83.66, 42.34, -83.40, 42.46]
+  surface_water:
+    url: "https://gisagoegle.state.mi.us/arcgis/rest/services/EGLE/PfasOpenData/MapServer/0/query"
+  fish:
+    url: "https://gisagoegle.state.mi.us/arcgis/rest/services/EGLE/FcmpOpenData/FeatureServer/1/query"
+    stations: [1484, 1507]        # Johnson Drain: Fish Hatchery Park, "6-mile" — plus every station inside the box
+  sites:
+    url: "https://services1.arcgis.com/FNjlrOFR0aGJ71Tg/arcgis/rest/services/Michigan_PFAS_Sites_and_Areas_of_Interest_PUBLIC_view/FeatureServer/1/query"
+    name_like: "Arbor Hills"      # plus every site inside the box
+  # Rule 57 NON-DRINKING-WATER human non-cancer values, ng/L. Johnson Drain / Johnson Creek is
+  # a non-drink water body per the monitor's own Rule 57 notes (not checked against Rule 100),
+  # but the layer has no designation, so these are applied to EVERY
+  # surface-water row in the box (the alert says so; drink values are PFOS 11, PFOA 66,
+  # PFHxS 59, PFNA 19). Source: EGLE's Rule 57 values spreadsheet as saved 2026-09-26. Alerts
+  # call this a SCREENING comparison. A sample collected before the year its CURRENT value was
+  # verified is NOT screened (an older value — PFOA's was far higher, replaced in 2022 — or
+  # none applied then; PFHxS and PFNA were added in 2023), an undated row IS screened, a 'K'
+  # flag (EGLE: "below the Method Detection Limit/LOD") is never compared, every other flag is
+  # printed as published and not interpreted, and a unit that does not read as ng/L is never compared. Keys must be PFOS/PFOA/PFHxS/
+  # PFNA (a typo raises); both `thresholds_ng_l` and `thresholds_verified_year` are layered
+  # over their defaults, so overriding one analyte here cannot silently drop the other three.
+  thresholds_ng_l: {PFOS: 12, PFOA: 170, PFHxS: 210, PFNA: 30}
+  thresholds_verified_year: {PFOS: 2014, PFOA: 2022, PFHxS: 2023, PFNA: 2023}
+  stale_alert_after_skips: 3      # a liveness alert after this many consecutive unreadable runs (repeated weekly)
+  # A SUCCESSFUL response that is empty, or smaller than this fraction of what was recorded
+  # (must be in (0, 1]), is treated as a republish glitch: recorded as `shrink-held` (its own
+  # counter, separate from fetch failures), not diffed, and accepted only once the SAME
+  # shrunken response has been held on `accept_shrink_after_skips` earlier runs — so it cannot
+  # fire "REMOVED (17)" then re-announce all.
+  max_shrink_fraction: 0.5
+  accept_shrink_after_skips: 2
+  recipients:                     # Trisha only; EMPTY = display-only (rows, no email)
+    - arbor-hills@trishakunst.com
 
 # --- Weekly digest "Upcoming Activities" section (ADR 027) ---
 # The Sunday digest's calendar section is sourced from a SEPARATE, PRIVATE Sheet
@@ -1405,7 +2394,9 @@ urgent:
   # Urgency fires only on a MEASURED temperature at/above this (deg F). A
   # permitted ceiling / HOV-waiver limit at this value does NOT fire — that
   # conflation would discredit the artifact. See docs/decisions/004.
-  measured_temp_urgent_f: 145    # MACT limit
+  # Same number as temperature_thresholds.mact_f below, via a YAML anchor, so
+  # the two can never drift apart (classifier-untrusted-input follow-up, 2026-10-14).
+  measured_temp_urgent_f: &mact_limit_f 145    # MACT limit
   # Lower watch threshold: EPA gas-well operating limit. Tracked for trend
   # comparison and (future) a Watch tier; does not fire an urgent alert today.
   measured_temp_watch_f: 131
@@ -1413,7 +2404,126 @@ urgent:
 # Temperature reference thresholds (deg F), for downstream trend/tier logic.
 temperature_thresholds:
   epa_gas_operating_f: 131       # EPA gas-well operating limit (watch)
-  mact_f: 145                    # MACT limit (urgent)
+  mact_f: *mact_limit_f          # MACT limit (urgent); anchored to urgent.measured_temp_urgent_f
+  # Well-specific Higher Operating Values EGLE has approved at Arbor Hills
+  # (2024-04-30 grant: 150/160/170; 2024-07-10 replacement wells; 2023 grants
+  # at 155; AHW272R4 at 180 on 2025-02-19, the only 180; AHW263R5 at 170 on
+  # 2025-07-23; 2026-04-07 renewal). Used ONLY by kdp_check.py (ADR 067) to
+  # recognize an HOV value named in classifier prose. Add a value here when a
+  # new HOV letter sets one.
+  hov_values_f: [150, 155, 160, 170, 180]
+  # The only well(s) holding the top HOV value above (180°F). kdp_check flags
+  # classifier text that gives that value to any other well (Trisha 2026-10-12).
+  top_hov_wells: [AHW272R4]
+  # Per-well approved HOV ceilings, for CONTEXT in the [URGENT] email body only
+  # (email_alerts.hov_ceiling_for, coder:keydatapoint-guard). Never a trigger
+  # or a suppressor: every measured reading at/above measured_temp_urgent_f
+  # alerts regardless. Exact well id (a redrill is a different well); ids are
+  # the canonical spellings the ADR 068 alias map produces. Filled 2026-10-17
+  # from the five EGLE AQD letters in hand (Lotext source-docs/hov-etlf/):
+  # 4/30/2024 15-well renewal (to 5/1/2026), 7/10/2024 four replacement wells,
+  # 2/19/2025 AHW272R4, 7/23/2025 AHW263R5, 4/7/2026 16-well renewal (to
+  # 5/1/2028). Each window starts at the earliest letter granting that exact
+  # id. The 2019-2023 grant letters were never pulled, so a reading dated
+  # before 2024-04-30 matches no entry. A well with no matching entry is
+  # labeled "Approved ceiling for <well> not in this monitor's roster"
+  # (not "no approval exists"). Add a row when a new HOV letter arrives.
+  hov_ceilings:
+    # 4/7/2026 renewal (Table 1), continuous with the 2024/2025 grants at the same value.
+    - {well_id: AHWW258R, ceiling_f: 150, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHW259R5, ceiling_f: 170, effective_start: "2024-07-10", effective_end: "2028-05-01"}
+    - {well_id: AHW272R4, ceiling_f: 180, effective_start: "2025-02-19", effective_end: "2028-05-01"}
+    - {well_id: AHWW0279, ceiling_f: 160, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHW285R3, ceiling_f: 170, effective_start: "2024-07-10", effective_end: "2028-05-01"}
+    - {well_id: AHWW287R, ceiling_f: 150, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHWW290R, ceiling_f: 170, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHWW0300, ceiling_f: 160, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHWW301R, ceiling_f: 160, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHWW302R, ceiling_f: 160, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHW311R2, ceiling_f: 150, effective_start: "2024-07-10", effective_end: "2028-05-01"}
+    - {well_id: AHW312R2, ceiling_f: 160, effective_start: "2024-07-10", effective_end: "2028-05-01"}
+    - {well_id: AHWW0313, ceiling_f: 160, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHWW0315, ceiling_f: 150, effective_start: "2024-04-30", effective_end: "2028-05-01"}
+    - {well_id: AHWWTS01, ceiling_f: 150, effective_start: "2024-04-30", effective_end: "2028-05-01"}  # leachate sump
+    - {well_id: AHWTS01R, ceiling_f: 150, effective_start: "2024-04-30", effective_end: "2028-05-01"}  # leachate sump
+    # 4/30/2024 grant only; replaced by the R-redrills above (7/10/2024). End
+    # is that grant's stated term; no letter revoked them.
+    - {well_id: AHW259R4, ceiling_f: 170, effective_start: "2024-04-30", effective_end: "2026-05-01"}
+    - {well_id: AHW285R2, ceiling_f: 170, effective_start: "2024-04-30", effective_end: "2026-05-01"}
+    - {well_id: AHWW311R, ceiling_f: 150, effective_start: "2024-04-30", effective_end: "2026-05-01"}
+    - {well_id: AHWW312R, ceiling_f: 160, effective_start: "2024-04-30", effective_end: "2026-05-01"}
+    # 7/23/2025 grant states no end date, but the well is not in the 4/7/2026
+    # renewal, which says the existing waivers lapse 5/1/2026. The end date
+    # below is the last date the waiver is CONFIRMED in force, not a lapse any
+    # letter states (Trisha 2026-10-17). Update if EGLE confirms its status.
+    - {well_id: AHW263R5, ceiling_f: 170, effective_start: "2025-07-23", effective_end: "2026-05-01"}
+  # Above this, a "°F" number in a sentence about wells is treated as a
+  # misread column (e.g. H2S ppm), never a wellhead temperature. Flare and
+  # combustion sentences are exempt (kdp_check.py). Such a number never fires
+  # an URGENT alert on its own, but it is no longer dropped silently: it is
+  # logged to the Parser Review Flags tab (review_flags.py, ADR 067 amendment
+  # 2026-10-15), as is a WOI table reading above it (woi_router).
+  max_plausible_wellhead_f: 250
+
+# --- Owner-only "For Trisha only" channel (owner_notices.py, coder:owner-weekly-email) ---
+# A Sunday email to the OWNER addresses only (unsubscribe.owner_addresses +
+# MONITOR_OWNER_EMAILS; never alert_recipients, the digest list or any watch
+# list): filings the monitor could not read, hand-curated rows nobody routed,
+# alert emails that failed to send, and parser review flags. Plus a same-day
+# owner-only email when an unreadable filing has an enforcement title, or a
+# parse produced a temperature above max_plausible_wellhead_f. Both ship off.
+owner_weekly:
+  enabled: true  # activated 2026-10-16 (Trisha)
+  # Same-day owner alerts (unreadable enforcement notice; above-ceiling
+  # temperature). Separate switch so the weekly can run without them.
+  enforcement_alert_enabled: true  # activated 2026-10-16 (Trisha)
+  # Hand-curated rows added before this date are never listed (the backlog
+  # predates the routing log).
+  hand_curated_since: "2026-10-15"
+
+# --- Report expectations tracker (ADR 071) ---
+# report_tracker.py + .github/workflows/report-tracker.yml: expands the
+# hand-edited Expected Reports / Trigger Rules tabs on the PRIVATE Sheet into
+# due instances, matches arrivals from the existing streams, and keeps the
+# never-deleted Missing & Overdue Log. Writes ONLY its own seven private tabs;
+# read-only on every existing tab. Seed the hand tables once with
+# `python3 report_tracker_seed.py --apply` (dry run by default) before
+# enabling. A brand-new job built unattended, so it ships disabled.
+report_tracking:
+  enabled: true   # activated 2026-10-23 (Trisha); shadow fortnight below
+  # Days after an instance's due date before it is called missing. Blank
+  # `grace_days` on an Expected Reports row means this value; a number on the
+  # row overrides it for that report type. Either change takes effect on the
+  # next run (Trisha's decision 2, 2026-10-20).
+  default_grace_days: 7
+  # Instances are expanded this far past today so the Runs row can count
+  # what is "coming due" (ADR 071 step 2).
+  lookahead_days: 30
+  # Report-only period after activation: while today <= this date the Runs
+  # row's mode is "shadow" and the briefing line says so (ADR 071 risk 1:
+  # the first two weeks run in report-only mode). Blank = live. Set it to
+  # activation day + 14 when flipping `enabled`.
+  shadow_until: "2026-11-06"
+  # Sunday owner-only email listing the week's review items (proposed
+  # matches, unmatched periodic titles, rejected hand-table rows). Recipients
+  # are the owner addresses ONLY (owner_notices.send_owner_email); empty
+  # owner set = no send. Separate switch so the tabs can run without it.
+  review_email_enabled: false
+  # Decision 4 (2026-10-20): EGLE's own records are never arrivals. A record
+  # whose title matches this is skipped before any match rule is tried and
+  # is never listed as an "unmatched periodic" title either. Inspection and
+  # enforcement records only: EGLE's HOV approval letters are deliberately
+  # NOT here, because `hov-approval` / `hov-plan-approval` are expected
+  # one-time instances in the ADR's vocabulary and need to be matchable.
+  # Anchored where a word is common in operator titles (an operator's
+  # "Email ... transmitting the NESHAP report" is a filing). A skipped title
+  # that still reads periodic is shown once in Report Tracker Review.
+  agency_title_regex: "On-Site Inspection|Inspection \\(|Inspection Report|Violation Notice|Enforcement Notice|^Consent Order|Compliance Communication|Evaluation Report|Air Quality Test Observation|^Schedule - |^Email\\b"
+  # A record no rule matched is reported for a schedule fix (owner review)
+  # when its title reads as a PERIODIC report (ADR 071 match_rule section):
+  # a cadence word, not a bare "Report" (lab reports, test reports and
+  # staff reports are not schedules).
+  periodic_title_regex: "Semi-?Annual|\\bQuarter|Monthly|Bi-?Monthly|\\bAnnual\\b"
 
 # --- CAN-SPAM unsubscribe for the multi-recipient alert emails (ADR 040) ---
 # Applied at the single send choke point (email_alerts.send_email), so ALL
@@ -1449,10 +2559,10 @@ unsubscribe:
   postal_address: ""
   # Clear sender identity printed in the footer (neutral, per the data-layer
   # posture — this is the monitor, not any advocacy org).
-  sender_identity: "Arbor Hills Landfill Monitor"
+  sender_identity: "Arbor Hills Monitor"
   # Why the recipient is getting the email (footer line). Recipients are added
   # manually (there is no signup form), so this says "added," not "subscribed."
-  receiving_reason: "You are receiving this because your address was added to the Arbor Hills Landfill Monitor alert list."
+  receiving_reason: "You are receiving this because your address was added to the Arbor Hills Monitor alert list."
   # Trisha's OWN addresses — never suppressed, never held, never footered. The
   # non-sensitive catch-all lives here (it is already public in alert_recipients);
   # PRIVATE addresses (proton / gmail) go in the MONITOR_OWNER_EMAILS *secret*,
@@ -1470,3 +2580,33 @@ unsubscribe:
   # NOTE: the SUPPRESSION LIST is intentionally NOT here — opted-out third-party
   # addresses are PII and this repo + the case-file Sheet are PUBLIC. They live in
   # the UNSUBSCRIBED_EMAILS secret (comma/semicolon list), read at send time.
+
+# --- EGLE newsroom watch (egle_newsroom_watcher.py; Trisha-directed 2026-10-01) ---
+# Polls https://www.michigan.gov/egle/newsroom (server-renders only the newest 4
+# items, hence the frequent schedule in egle-newsroom-watch.yml) and emails the
+# scoped recipients when a NEW item matches the keywords below (article body
+# only; "Related News" excluded). First run baselines silently. Enabled at ship
+# on Trisha's explicit request (not the overnight-coder default): the first run
+# sends nothing, and a runner-side bot wall fails loudly (exit 1).
+egle_newsroom:
+  enabled: true
+  listing_url: "https://www.michigan.gov/egle/newsroom"
+  recipients:
+    - arbor-hills@trishakunst.com          # Trisha (scoped; never the shared list)
+  gap_min_items: 4    # all listed items new => "you may have missed some" email
+  keywords:
+    # Alert on any hit (title or body).
+    specific: ["Arbor Hills", "GFL", "Emerald RNG", "N2688", "Johnson Creek",
+               "Johnson Drain", "Salem Township", "Arbor Hills Energy"]
+    # Alert only together with a topic term (county names show up in statewide
+    # lists, e.g. the 2026-09-28 spotted-lanternfly item lists Washtenaw).
+    area: ["Washtenaw", "Northville", "Plymouth Township", "Superior Township",
+           "Rouge River", "Middle Rouge", "Wayne County", "Salem"]
+    # Alert if one is in the title, or topic_min_body_hits distinct ones in the body.
+    topic: ["landfill", "landfills", "solid waste", "Part 115", "materials management",
+            "wetland", "wetlands", "water quality monitoring", "monitoring request",
+            "Targeted Monitoring Request", "GLWARM", "public comment", "public hearing",
+            "PFAS", "leachate", "groundwater", "permit to install", "consent order",
+            "consent judgment", "violation notice", "odor", "landfill gas",
+            "renewable natural gas", "methane", "Part 303", "Part 201", "dewatering"]
+    topic_min_body_hits: 2

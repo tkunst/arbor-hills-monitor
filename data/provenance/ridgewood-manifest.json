@@ -1,0 +1,776 @@
+{
+  "generated_at": "2026-10-12T15:50:41Z",
+  "months": {
+    "2020-12": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1GLKF_pAxFSZ4BVKSpToT6574QkPGmGOg/view?usp=drivesdk",
+        "content_hash": "e917bd9e2f7e4a4761d72ae305f4afd01c17536dca05d9dbadc888f55281dd01",
+        "fetched_at": "2026-07-15T04:58:28",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — December 2020",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2020-12_Arbor Hills H2S Data_24-hour ave_5697.pdf",
+        "status": "original"
+      }
+    ],
+    "2021-01": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1q-fM_jKP54n1uPKeYY_TpqZuT28F36iv/view?usp=drivesdk",
+        "content_hash": "e635a1ae6dada1facbdc26175daf7fe8b1abd803268ccfe8201cd7b462b74972",
+        "fetched_at": "2026-07-15T04:58:25",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — January 2021",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2021-01_Arbor Hills H2S Data_24-hour ave_7336.pdf",
+        "status": "original"
+      }
+    ],
+    "2021-02": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1Fyck5RTf6recSn1Zn5M_14iRK5VL6usk/view?usp=drivesdk",
+        "content_hash": "64adfd3a49d3aaef163ebd3ec451006f163be89c87669ffadbb04ae502f64a1d",
+        "fetched_at": "2026-07-15T04:58:21",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — February 2021",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2021-02_Arbor Hills H2S Data_24-hour ave_3255.pdf",
+        "status": "original"
+      }
+    ],
+    "2021-03": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1QNi18nkQvT9kkflVWdstetDbN8b9B7Xd/view?usp=drivesdk",
+        "content_hash": "988ec8afa8115d3b8a52e29f141236b5c213e4e5eb3e38f4e71ee77dc086466b",
+        "fetched_at": "2026-07-15T04:58:17",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — March 2021",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2021-03_Arbor Hills H2S Data_24-hour ave_8186.pdf",
+        "status": "original"
+      }
+    ],
+    "2021-04": [
+      {
+        "archive_link": "https://drive.google.com/file/d/19OVwYQTw4InKnFzbH0a5qDA4FqwQjwfI/view?usp=drivesdk",
+        "content_hash": "a0f69faff0d12f758f09ba0e1c793b30d474cc2d9bd4820257673efd6867ab68",
+        "fetched_at": "2026-07-15T04:58:14",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — April 2021",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2021-04_Arbor Hills H2S Data_24-hour ave_9636.pdf",
+        "status": "original"
+      }
+    ],
+    "2021-05": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1mi_5sd9z5bZefXcf4QR-_Ix6JlzT-18r/view?usp=drivesdk",
+        "content_hash": "e70a1b064911e74321abb9cd19a502b0bbec3f0dba3866ec2a0899ea46ca5798",
+        "fetched_at": "2026-07-15T04:58:11",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — May 2021",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2021-05_Arbor Hills H2S Data_24-hour ave_5848.pdf",
+        "status": "original"
+      }
+    ],
+    "2021-06": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1_PVXtrORXJ0XiR_FTJRIRwmVr1bAcjQI/view?usp=drivesdk",
+        "content_hash": "0f5c1bd66113d37acd91e6e75c76cd143b7197653b56289375ad78f5456a2387",
+        "fetched_at": "2026-07-15T04:58:07",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — June 2021",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2021-06_Arbor Hills H2S Data_24-hour ave.pdf",
+        "status": "original"
+      }
+    ],
+    "2021-07": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1m6bLWSj7jDPeEDeq0thanOU4Y1lYkFIC/view?usp=drivesdk",
+        "content_hash": "835117e76f1af64eaf0ecd694b8a01562a3e0e1d1f93fa39c2f414a7028c987f",
+        "fetched_at": "2026-07-15T04:58:04",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — July 2021",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2021-07_Arbor Hills H2S Data_24-hour ave_486.pdf",
+        "status": "original"
+      }
+    ],
+    "2021-08": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1aVCCpb2SAdL4_8_yBd12y2Ldjl6iw9Bc/view?usp=drivesdk",
+        "content_hash": "7e986b5c77c6467522b7cdb9c3cde503a8f13f42b9b05d9bd66ec7ad246649fe",
+        "fetched_at": "2026-07-15T04:58:00",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — August 2021",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2021-08_Arbor Hills H2S Data_24-hour ave_2864.pdf",
+        "status": "original"
+      }
+    ],
+    "2021-09": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1nTu-V0ySCyxDHFTxnybgujRDCgYR_-Vv/view?usp=drivesdk",
+        "content_hash": "917b6f6849b0f5b792a63be0bde37be039cf77be34e9349305932c3b6fde399e",
+        "fetched_at": "2026-07-15T04:57:56",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — September 2021",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2021-09_Arbor Hills H2S Data_24-hour ave_5251.pdf",
+        "status": "original"
+      }
+    ],
+    "2021-10": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1HaCeImE3t_AMMPcO8AJQCVT1n4z2_qwH/view?usp=drivesdk",
+        "content_hash": "2ebe30fb30f51a669b04f096d4999f88dd0b712e30717cad7c6827c2d40c571c",
+        "fetched_at": "2026-07-15T04:53:05",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — October 2021",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2021-10_Arbor Hills H2S Data_24-hour ave_3714.pdf",
+        "status": "original"
+      }
+    ],
+    "2021-11": [
+      {
+        "archive_link": "https://drive.google.com/file/d/18gidlNRz0NA5oe4R54jVcetPI34xFvxP/view?usp=drivesdk",
+        "content_hash": "e9dc8efb85bb188fd0b9221152a4d6c3d5f1568834c85f1b9661e85300f42ce1",
+        "fetched_at": "2026-07-15T04:53:03",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — November 2021",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2021-11_Arbor Hills H2S Data_24-hour ave_2704.pdf",
+        "status": "original"
+      }
+    ],
+    "2021-12": [
+      {
+        "archive_link": "https://drive.google.com/file/d/17mRZ000sekkRNEUVsI3CVIrhJSrNysu2/view?usp=drivesdk",
+        "content_hash": "59d43c8f6a46130e072b8c12a02c6a01c5b6e665f18e046c1ae73022eed643c0",
+        "fetched_at": "2026-07-15T04:53:00",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — December 2021",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2021-12_Arbor Hills H2S Data_24-hour ave_1851.pdf",
+        "status": "original"
+      }
+    ],
+    "2022-01": [
+      {
+        "archive_link": "https://drive.google.com/file/d/10JRbmv3YuIxxuhJbqpxecRC-Rv6jmkp3/view?usp=drivesdk",
+        "content_hash": "d13bfc61a27e68a78f94d3d11d0cc59b84a08271ea39bbe2789cf04188a41100",
+        "fetched_at": "2026-07-15T04:52:58",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — January 2022",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2022-01_Arbor Hills H2S Data_24-hour ave_5511.pdf",
+        "status": "original"
+      }
+    ],
+    "2022-02": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1FKuJb6xJbg8O5XZVSs2TtIr6YDzjSRtk/view?usp=drivesdk",
+        "content_hash": "c92be07f2e4ff3ac67c4e437f4040b5016a6a7122e931a37e0b357a43f46ff3b",
+        "fetched_at": "2026-07-15T04:52:56",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — February 2022",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2022-02_Arbor Hills H2S Data_24-hour ave_5612.pdf",
+        "status": "original"
+      }
+    ],
+    "2022-03": [
+      {
+        "archive_link": "https://drive.google.com/file/d/16uTzO94igA1O7QVSWBJSXfqGKYo_gddd/view?usp=drivesdk",
+        "content_hash": "a9a62fb51d5e0e7495c36f74344f3be656ebd45ebebaf11e6283ab14e4672791",
+        "fetched_at": "2026-07-15T04:52:53",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — March 2022",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2022-03_Arbor Hills H2S Data_24-hour ave_275.pdf",
+        "status": "original"
+      }
+    ],
+    "2022-04": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1RrP8DaQ2KTtNvRdvJF3RC8TUnlvEGrii/view?usp=drivesdk",
+        "content_hash": "415540aa9ee520aeae35bc655e225492abee53cdd6caf10e411173fe0f848032",
+        "fetched_at": "2026-07-15T04:52:51",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — April 2022",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2022-04_Arbor Hills H2S Data_24-hour ave_5110.pdf",
+        "status": "original"
+      }
+    ],
+    "2022-05": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1Ly4xpH5VKdULWdJ06Jckkc5xj2MgvGQ_/view?usp=drivesdk",
+        "content_hash": "7ffb30c9ffcadd0b559c610230d8b57719d539cd11cb5f826430b11ce4a77b1e",
+        "fetched_at": "2026-07-15T04:52:49",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — May 2022",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2022-05_Arbor Hills H2S Data_24-hour ave_8147.pdf",
+        "status": "original"
+      }
+    ],
+    "2022-06": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1WmVSwmXMxxaFMoH6yuUzqPVuLKOw1kAs/view?usp=drivesdk",
+        "content_hash": "df4bd1415f8754b1bec8b5da71e2a0772799b4019084a29f1ac7911d9a34ef06",
+        "fetched_at": "2026-07-15T04:52:04",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — June 2022",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2022-06_Arbor Hills H2S Data_24-hour ave_8440.pdf",
+        "status": "original"
+      }
+    ],
+    "2022-07": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1A9S0EednuI5Wber5eyu3D3i0rNvSB30s/view?usp=drivesdk",
+        "content_hash": "cb9a5c28b0f41004beb13e7c91d7bc691ac2e15588b5ede5c5c94e6e4a08d4a5",
+        "fetched_at": "2026-07-15T04:52:02",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — July 2022",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2022-07_Arbor Hills H2S Data_24-hour ave_9340.pdf",
+        "status": "original"
+      }
+    ],
+    "2022-08": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1kp4fXW0Fx5FK7oBxCeBrYNU0eY8lVCTi/view?usp=drivesdk",
+        "content_hash": "0f3593ed51308b62d3e7d91f28c455c9495d8c0e05a183485fc80325c9dd43a2",
+        "fetched_at": "2026-07-15T04:52:00",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — August 2022",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2022-08_Arbor Hills H2S Data_24-hour ave_8520.pdf",
+        "status": "original"
+      }
+    ],
+    "2022-09": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1IpzN2xPbfNcXh7X4ZHpNY6jUGH3Ca_sJ/view?usp=drivesdk",
+        "content_hash": "847ba45c853797a47ce3666d04c55bd5d86c6ecc854a9e30ff857719b589f6d6",
+        "fetched_at": "2026-07-15T04:51:57",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — September 2022",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2022-09_Arbor Hills H2S Data_24-hour ave_650.pdf",
+        "status": "original"
+      }
+    ],
+    "2022-10": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1Ifklvp9ayJQXByBH12yJ_euxm7Ko0Mhi/view?usp=drivesdk",
+        "content_hash": "fdad6d462300b52b1e64ea4c7ce4fe8ff149e49db58514af92c7a874c2dae251",
+        "fetched_at": "2026-07-15T04:51:55",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — October 2022",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2022-10_Arbor Hills H2S Data_24-hour ave_924.pdf",
+        "status": "original"
+      }
+    ],
+    "2022-11": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1BmVEp9_2ed_e55uvxjkJ49rFeqN_E2Bq/view?usp=drivesdk",
+        "content_hash": "0c397d9732a04d30a9efdfa05ab4448d0052289dd209336f7aaedff0d484ded0",
+        "fetched_at": "2026-07-15T04:51:53",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — November 2022",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2022-11_Arbor Hills H2S Data_24-hour ave_6178.pdf",
+        "status": "original"
+      }
+    ],
+    "2022-12": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1rtlwjtUHzo2h_R6XaZT23geLSYEfmbri/view?usp=drivesdk",
+        "content_hash": "03f8c1862e0d745d68c8d55744efe079d16db14fa822ee4aa2fdedb69823ecad",
+        "fetched_at": "2026-07-15T04:51:51",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — December 2022",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2022-12_Arbor Hills H2S Data_24-hour ave_3785.pdf",
+        "status": "original"
+      }
+    ],
+    "2023-01": [
+      {
+        "archive_link": "https://drive.google.com/file/d/18Diwk6uSg3ACKzTxwkcbhxBowYz_RCFB/view?usp=drivesdk",
+        "content_hash": "ef1a0c3540b5bfedab7b0b71f147766da33421af601239dfc66ec08953176f2e",
+        "fetched_at": "2026-07-15T04:51:49",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — January 2023",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2023-01_Arbor Hills H2S Data_24-hour ave_5691.pdf",
+        "status": "original"
+      }
+    ],
+    "2023-02": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1ED34EHU3FO99RpjxFO8FpP2_x7CjwQM6/view?usp=drivesdk",
+        "content_hash": "b62b0d22489cfcf1266674e2a712ee93dd72d62e46ca3a7f10767fd7b255653a",
+        "fetched_at": "2026-07-15T04:51:47",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — February 2023",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2023-02_Arbor Hills H2S Data_24-hour ave_2146.pdf",
+        "status": "original"
+      }
+    ],
+    "2023-03": [
+      {
+        "archive_link": "https://drive.google.com/file/d/12CwU8PZuxZrqg_SwEkK-OWWsiS-kS33X/view?usp=drivesdk",
+        "content_hash": "62b73f32c2015ca49e7cca547fd466965cb1093f59c61e9f5dbbb006bab8b7e3",
+        "fetched_at": "2026-07-15T04:51:45",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — March 2023",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2023-03_Arbor Hills H2S Data_24-hour ave_2406.pdf",
+        "status": "original"
+      }
+    ],
+    "2023-04": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1zYn6aSRYkL6QjMlU-c4Flk4Ny6g0xerm/view?usp=drivesdk",
+        "content_hash": "95773762c6cd1e42f6ea856b5f656eba548735369db0ac621fdce5599f4a3414",
+        "fetched_at": "2026-07-15T04:51:43",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — April 2023",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2023-04_Arbor Hills H2S Data_24-hour ave_6491.pdf",
+        "status": "original"
+      }
+    ],
+    "2023-05": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1kW6isyyAfb4QSLdJ-LVGUk7MQPslsF2X/view?usp=drivesdk",
+        "content_hash": "2f590c9d8110b64ef6b20a6e3e3348921ccaeb6a3fc239f54d1b0b54d44179cf",
+        "fetched_at": "2026-07-15T04:51:41",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — May 2023",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2023-05_Arbor Hills H2S Data_24-hour ave_211.pdf",
+        "status": "original"
+      }
+    ],
+    "2023-06": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1lgGEEYcAuR1P2i_gqGjkJNk4jXOqssbo/view?usp=drivesdk",
+        "content_hash": "fc00ae2dc350856bb3f9703526e1490db2b4259de9854f8cdd06de0cc3645f66",
+        "fetched_at": "2026-07-15T04:51:00",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — June 2023",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2023-06_Arbor Hills H2S Data_24-hour ave_3210.pdf",
+        "status": "original"
+      }
+    ],
+    "2023-07": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1tdfq9hSVkJd1MCJFninq6k7eabEl34NL/view?usp=drivesdk",
+        "content_hash": "25319672604e081f0443046739349d9ff8413a5039f3cd24c4b8eac17f576f20",
+        "fetched_at": "2026-07-15T04:50:58",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — July 2023",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2023-07_Arbor Hills H2S Data_24-hour ave_9666.pdf",
+        "status": "original"
+      }
+    ],
+    "2023-08": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1rCV_6nZoQvvGy664mPcv_JLNVazwedlb/view?usp=drivesdk",
+        "content_hash": "f68625cb1758f98b17feb601d40770987174da409aef22905226b6d3acb2a4be",
+        "fetched_at": "2026-07-15T04:50:56",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — August 2023",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2023-08_Arbor Hills H2S Data_24-hour ave_8782.pdf",
+        "status": "original"
+      }
+    ],
+    "2023-09": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1BODmD0VluLeDlmezCAvzv2kX-IzzMREZ/view?usp=drivesdk",
+        "content_hash": "9129450a38247fb28727b5ffa46ffcac28ff9ff7cdba8e27bc6bfbe4ecd77a12",
+        "fetched_at": "2026-07-15T04:50:54",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — September 2023",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2023-09_Arbor Hills H2S Data_24-hour ave_868.pdf",
+        "status": "original"
+      }
+    ],
+    "2023-10": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1JrGCCsqGuTXQKKzxkJxJ1qnNckeJCO-w/view?usp=drivesdk",
+        "content_hash": "6d476bb5b183097c272f01d04fac95f41625dd0e06896a4aabf35676ed1a267d",
+        "fetched_at": "2026-07-15T04:50:52",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — October 2023",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2023-10_Arbor Hills H2S Data_24-hour ave_6457.pdf",
+        "status": "original"
+      }
+    ],
+    "2023-11": [
+      {
+        "archive_link": "https://drive.google.com/file/d/170GZ6sclwI9zyFjf7-tEFiDbktf_exig/view?usp=drivesdk",
+        "content_hash": "325748612f5d06ccf50f9cf0932b09f16fb1fda395d965499ab8daa58c74f83a",
+        "fetched_at": "2026-07-15T04:50:49",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — November 2023",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2023-11_Arbor Hills H2S Data_24-hour ave_1730.pdf",
+        "status": "original"
+      }
+    ],
+    "2023-12": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1wVrEXvozpRldcB6LrW6egMXWMbM0xIkM/view?usp=drivesdk",
+        "content_hash": "41501507e58caf82709397675684c2c97f6a8bcf0dfba687aa9f33b0edfe151d",
+        "fetched_at": "2026-07-15T04:50:47",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — December 2023",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2023-12_Arbor Hills H2S Data_24-hour ave_566.pdf",
+        "status": "original"
+      }
+    ],
+    "2024-01": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1uz4anyRN3wJDMKzWMErPN64UtQCRRBFB/view?usp=drivesdk",
+        "content_hash": "b06e1e6b299d027d7c0b017e46d3f6b2fea32e8503bcd3c4829d8c34c862618c",
+        "fetched_at": "2026-07-15T04:50:45",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — January 2024",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2024-01_Arbor Hills H2S Data_24-hour ave_896.pdf",
+        "status": "original"
+      }
+    ],
+    "2024-02": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1PaDeTrKfZf5xV8VADN38MKJ81v7GlHgy/view?usp=drivesdk",
+        "content_hash": "46702e5235df74ecfda5b346f4f9b556cf036ddad21baf20d979eb9608347bf4",
+        "fetched_at": "2026-07-15T04:50:43",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — February 2024",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2024-02_Arbor Hills H2S Data_24-hour ave_5801.pdf",
+        "status": "original"
+      }
+    ],
+    "2024-03": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1tEn-UsO5s7ka1oYQdbASOH-F6jWWSFIa/view?usp=drivesdk",
+        "content_hash": "6301a43b8478b7fc4fed9ebb11ef47caea4f70935ae63fc74f18af00caf10b0f",
+        "fetched_at": "2026-07-15T04:50:40",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — March 2024",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2024-03_Arbor Hills H2S Data_24-hour ave_5756.pdf",
+        "status": "original"
+      }
+    ],
+    "2024-04": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1axm-8AXpDf_iy190hHiFfVENISu5Yp1r/view?usp=drivesdk",
+        "content_hash": "dc2fdd4b611bd31a2c93ded9e665516e9badcfc1787f786276ece45410e00a1f",
+        "fetched_at": "2026-07-15T04:50:38",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — April 2024",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2024-04_Arbor Hills H2S Data_24-hour ave_5263.pdf",
+        "status": "original"
+      }
+    ],
+    "2024-05": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1RX3whDNM65TQ8x7F48t3H8Q3Kc1Vgk9K/view?usp=drivesdk",
+        "content_hash": "ce08eed5b0f0a3d25ef36e7f65142918dbc9602e9acd23a25d8a82e63328428b",
+        "fetched_at": "2026-07-15T04:50:35",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — May 2024",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2024-05_Arbor Hills H2S Data_24-hour ave_5259.pdf",
+        "status": "original"
+      }
+    ],
+    "2024-06": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1d2G60wh2TLqiUf0LpckzHRG5__9DIxM5/view?usp=drivesdk",
+        "content_hash": "c048777299e580866554f54199682a69078475a0c470d16b9dea89b141767b54",
+        "fetched_at": "2026-07-15T04:49:47",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — June 2024",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2024-06_Arbor Hills H2S Data_24-hour ave_9700.pdf",
+        "status": "original"
+      }
+    ],
+    "2024-07": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1g-N1TUUGN_n54hkqIQHmEvXGyWrWw93A/view?usp=drivesdk",
+        "content_hash": "f97b8bd1df0375b2b1e2e7419aca9f899a8b8e47404efe4c6cadd26665d8c21a",
+        "fetched_at": "2026-07-15T04:49:25",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — July 2024",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2024-07_Arbor Hills H2S Data_24-hour ave_5224.pdf",
+        "status": "original"
+      }
+    ],
+    "2024-08": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1LuRryn8KQNLadrki6o3tFiB2bbhDU_PM/view?usp=drivesdk",
+        "content_hash": "b01e2965defb80bdd340c3618d0b0e15016660989f7da3ae1c8a6999d3002f54",
+        "fetched_at": "2026-07-15T04:49:23",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — August 2024",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2024-08_Arbor Hills H2S Data_24-hour ave_8474.pdf",
+        "status": "original"
+      }
+    ],
+    "2024-09": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1jATfIMQS0_yaS3FbrMZPH79h1OzQ4pxK/view?usp=drivesdk",
+        "content_hash": "9e36de42d9f3cdee452ab3daeef244203370d87a6d62c24b9dd532cbcafa5c2d",
+        "fetched_at": "2026-07-15T04:49:21",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — September 2024",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2024-09_Arbor Hills H2S Data_24-hour ave_9963.pdf",
+        "status": "original"
+      }
+    ],
+    "2024-10": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1G-VKymFLeDZbyvyG9iy3SeUUR0c544IU/view?usp=drivesdk",
+        "content_hash": "70a10f29860d24e0b04e2f9e91e98506dc3f0aee405f9f4b5ad1c8c09326bf09",
+        "fetched_at": "2026-07-15T04:49:19",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — October 2024",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2024-10_Arbor Hills H2S Data_24-hour ave_8846.pdf",
+        "status": "original"
+      }
+    ],
+    "2024-11": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1nkYm9BZ4rze-yEEd3pMtAdCmCKOVwpFH/view?usp=drivesdk",
+        "content_hash": "3f91715412974365334a3d434b35a6ea8ec8de1537480fbc16e85bf7d0655edd",
+        "fetched_at": "2026-07-15T04:49:17",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — November 2024",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2024-11_Arbor Hills H2S Data_24-hour ave_6065.pdf",
+        "status": "original"
+      }
+    ],
+    "2024-12": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1CTr_vRiR5Aacr6OX3_OFGyzYdMhvyOHv/view?usp=drivesdk",
+        "content_hash": "d3cd29a4f19939522df4397bd6a8569d338460a36d6331a886d3fb5e8e086d41",
+        "fetched_at": "2026-07-15T04:49:15",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — December 2024",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2024-12_Arbor Hills H2S Data_24-hour ave_3424.pdf",
+        "status": "original"
+      }
+    ],
+    "2025-01": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1iOvj6-slTmvbz4lAcob1h5G72rl2zYOr/view?usp=drivesdk",
+        "content_hash": "0881a79a8f1fc55a9d132911fbc40728dabb6d3a10544b61b94625568fff47d6",
+        "fetched_at": "2026-07-15T04:49:12",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — January 2025",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2025-01_Arbor Hills H2S Data_24-hour ave_1585.pdf",
+        "status": "original"
+      }
+    ],
+    "2025-02": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1nkUA1qpOa3JW4YqWoGvQwtCn89eW9zvy/view?usp=drivesdk",
+        "content_hash": "1633e57a48b24f6faeefe8b88599eedacd9943c7538f1b7b4b371446d2eaff3c",
+        "fetched_at": "2026-07-15T04:48:51",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — February 2025",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2025-02_Arbor Hills H2S Data_24-hour ave_6688.pdf",
+        "status": "original"
+      }
+    ],
+    "2025-03": [
+      {
+        "archive_link": "https://drive.google.com/file/d/18ofRnUd6Ow0FK21xERy5HfMVXLqQEG5A/view?usp=drivesdk",
+        "content_hash": "aa4edfb1245c1770bde7be23864156a6923d8ee7923a4662569e050aec84e1e4",
+        "fetched_at": "2026-07-15T04:48:49",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — March 2025",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2025-03_Arbor Hills H2S Data_24-hour ave_8114.pdf",
+        "status": "original"
+      }
+    ],
+    "2025-04": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1Qh5bpgbFknbv21mwda7JVi35hTjI7kXX/view?usp=drivesdk",
+        "content_hash": "3540d5b9630eaa82e60785120d31a1e7b9b2b8e9a7ab69fa341e9adeec426593",
+        "fetched_at": "2026-07-15T04:48:47",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — April 2025",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2025-04_Arbor Hills H2S Data_24-hour ave_8366.pdf",
+        "status": "original"
+      }
+    ],
+    "2025-05": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1nBHce6QkUpjqhxkzlC1-rYkBpwjEEtGj/view?usp=drivesdk",
+        "content_hash": "219ef477eee08764b1461835215da9342d95f79239a336e2983fbb9f1ed44727",
+        "fetched_at": "2026-07-15T04:48:44",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — May 2025",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2025-05_Arbor Hills H2S Data_24-hour ave_9106.pdf",
+        "status": "original"
+      }
+    ],
+    "2025-06": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1AAcyu0RaHmeSM1bv82Xm5_DH6dRv4bAU/view?usp=drivesdk",
+        "content_hash": "61ea3b63975e6696e967213c6c67887e931574a2f1a1651f18d1c8e70631f3a8",
+        "fetched_at": "2026-07-15T04:42:09",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — June 2025",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2025-06_Arbor Hills H2S Data_24-hour ave_9448.pdf",
+        "status": "original"
+      }
+    ],
+    "2025-07": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1v6avnWLGf8TMjDbj7CV5GYcpLK_wjOeM/view?usp=drivesdk",
+        "content_hash": "d1e2a7d7250e818366d18750faaa635355bce67f5ea910628599dad6ba875f50",
+        "fetched_at": "2026-07-15T04:42:05",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — July 2025",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2025-07_Arbor Hills H2S Data_24-hour ave_656.pdf",
+        "status": "original"
+      }
+    ],
+    "2025-08": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1-niH-WP82x4t4htHMxlMjAABQGof2e14/view?usp=drivesdk",
+        "content_hash": "10225515317e6dd6af75d854adf0cfc130fb4d11d1ef5a3122237fc91c11d90a",
+        "fetched_at": "2026-07-15T04:42:02",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — August 2025",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2025-08_Arbor Hills H2S Data_24-hour ave_8316.pdf",
+        "status": "original"
+      }
+    ],
+    "2025-09": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1yovyhiXdBiNhQUVR83elq9gjbFqhtjUL/view?usp=drivesdk",
+        "content_hash": "98eb1df49ea8423054c6629eb5e3b0b58f3ac0b452877d7c0d260025ec937a65",
+        "fetched_at": "2026-07-15T04:41:59",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — September 2025",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2025-09_Arbor Hills H2S Data_24-hour ave_9747.pdf",
+        "status": "original"
+      }
+    ],
+    "2025-10": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1fHgTlBYaGqHD3cS0SlBqwE3tdjTxZ8Xs/view?usp=drivesdk",
+        "content_hash": "0be1021cbb9966b10b3e986db90233c32f150e5d2e5d4ac9392e2360726c8e85",
+        "fetched_at": "2026-07-15T04:41:57",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — October 2025",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2025-10_Arbor Hills H2S Data_24-hour ave_2946.pdf",
+        "status": "original"
+      }
+    ],
+    "2025-11": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1otRbhoMxWRdufeOopC8cFCNn3wz5HMgK/view?usp=drivesdk",
+        "content_hash": "66d8872123c00e2cccfc8c3cba0189c26bb126b7a25fb3dbf4eeb658024375c9",
+        "fetched_at": "2026-07-15T04:41:54",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — November 2025",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2025-11_Arbor Hills H2S Data_24-hour ave_9887.pdf",
+        "status": "original"
+      }
+    ],
+    "2025-12": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1ksrFuTaRg_9_5b1tXAFLUKZo2pQ3oy_R/view?usp=drivesdk",
+        "content_hash": "579e5dd36ee0ae85a77b6b765517bb14d39610e9688761378e2c6d35a12a8032",
+        "fetched_at": "2026-07-15T04:41:49",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — December 2025",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2025-12_Arbor Hills H2S Data_24-hour ave_1624.pdf",
+        "status": "original"
+      }
+    ],
+    "2026-01": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1f2Dvm85JO8L0YJrYxDuRlYzM-1T339rm/view?usp=drivesdk",
+        "content_hash": "31a563fbb11faa59461b1b4338ac044f7e63831c86ad56d0a4d1fad7d5f24c4f",
+        "fetched_at": "2026-07-15T04:41:42",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — January 2026",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2026-01_Arbor Hills H2S Data_24-hour ave_2754.pdf",
+        "status": "original"
+      }
+    ],
+    "2026-02": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1-dtzRSTgQtGke3dCFuzbcTZ4QDfQk01V/view?usp=drivesdk",
+        "content_hash": "23930824c266fdabe6ebd931a7107e6de6e954575e1649b9f08b4e3eee5b33fd",
+        "fetched_at": "2026-07-15T04:41:39",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — February 2026",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2026-02_Arbor Hills H2S Data_24-hour ave_4827.pdf",
+        "status": "original"
+      }
+    ],
+    "2026-03": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1JP--urSzCL-g27r4WBYFvYj7HXXsv0Tq/view?usp=drivesdk",
+        "content_hash": "f9262e9b645a6a51ca9237923418376c7ff1cdf6420fcd4274a1c3d9b31279f2",
+        "fetched_at": "2026-07-15T04:41:36",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — March 2026",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2026-03_Arbor Hills H2S Data_24-hour ave_5918.pdf",
+        "status": "original"
+      }
+    ],
+    "2026-04": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1BV8Pgxj-yKJKFwmp-FN7cIocqKamEpM9/view?usp=drivesdk",
+        "content_hash": "df628ee4a9663bac2a3df0b4807c35e477e4e8e9910c26cf819c7851ef36c4e7",
+        "fetched_at": "2026-07-15T04:41:33",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — April 2026",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2026-04_Arbor Hills H2S Data_24-hour ave_3486.pdf",
+        "status": "original"
+      }
+    ],
+    "2026-05": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1Z3VXLclUDuvVIT8uCmeLA1wa6lmddY6_/view?usp=drivesdk",
+        "content_hash": "15fad46cc3f9db18a70548e56b5d2a908fc3403c9ea48b6f42ef8acf0d60ed68",
+        "fetched_at": "2026-07-15T04:41:30",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — May 2026",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2026-05_Arbor Hills H2S Data_24-hour ave.pdf",
+        "status": "original"
+      }
+    ],
+    "2026-06": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1gGmudbcg10EIjMv5N89IQTFJjzgX-65Y/view?usp=drivesdk",
+        "content_hash": "f43b1d001852c874b048fdab3f0058c22c864591ec74ca8ea65d07fbb3e55761",
+        "fetched_at": "2026-07-16T15:38:05",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — June 2026",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2026-06_Arbor Hills H2S Data_24-hour ave.pdf",
+        "status": "original"
+      }
+    ],
+    "2026-07": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1YSbuYMMFxwUU3Ga1Ph8kYhPPUdJV70V8/view?usp=drivesdk",
+        "content_hash": "d915a4b191680bcfb1ee219714f4c1c94f1dac1c44a6e89ec14260df9040a32e",
+        "fetched_at": "2026-08-19T14:30:25",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — July 2026",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2026-07_Arbor Hills H2S Data_24-hour ave.pdf",
+        "status": "original"
+      }
+    ],
+    "2026-08": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1CfNuMTyeHByjgb-JZNeQL3tLbig4X7rY/view?usp=drivesdk",
+        "content_hash": "bf45080973e22f3e6ba54092de7b51874a2cb6fee962266cca8a9edd57648582",
+        "fetched_at": "2026-09-17T17:55:25",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — August 2026",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2026-08_Arbor Hills H2S Data_24-hour ave.pdf",
+        "status": "original"
+      }
+    ],
+    "2026-09": [
+      {
+        "archive_link": "https://drive.google.com/file/d/1Nus43ardM56N63Jcrmz3KCwK5IZI9PQb/view?usp=drivesdk",
+        "content_hash": "da511cbfac057471d93b0ff01a2b086e9fa781c01fe07f5246595c95fbc34062",
+        "fetched_at": "2026-10-09T19:14:59",
+        "last_verified": "2026-10-12",
+        "report_title": "Ridge Wood Elementary H2S 24-hr averages — September 2026",
+        "source_url": "https://www.arborhillsmonitoring.com/Files/2026-09_Arbor Hills H2S Data_24-hour ave.pdf",
+        "status": "original"
+      }
+    ]
+  },
+  "schema_version": 1
+}

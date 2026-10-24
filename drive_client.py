@@ -15,11 +15,74 @@ processing state lives in the Sheet's _state/_meta tabs (see ADR 006, which
 supersedes ADR 001). The Drive helpers below (list/find/download/upload) are
 intentionally OFF the deploy path; they are retained for a future OAuth-as-user
 archive job that would re-add a durable PDF mirror without the quota limit.
+
+ADDENDUM (2026-10-14, the backfill-mirror-ocr hang — see ADR 069's own
+addendum for the full incident writeup): `drive_service()`/`sheets_service()`
+below, and `archive_client.oauth_drive_service()`, now build their http
+transport explicitly via `authorized_http()` instead of handing `build()` a
+bare `credentials=`. **Corrected framing, found by direct inspection of the
+installed library before writing this fix:** `build(credentials=...)`
+already resolves, internally, to `googleapiclient.http.build_http()`, which
+sets `httplib2.Http(timeout=60)` by default — NOT `timeout=None` as it first
+appeared from testing a bare `httplib2.Http()` in isolation. So this change
+does not newly bound a previously-unbounded call; `HTTP_TIMEOUT_S` below is
+set to that SAME 60s default on purpose, to not loosen anything. What it
+does do: makes that bound explicit and in-repo (previously it was tribal
+knowledge buried in a third-party library default, invisible to anyone
+reading this file), and gives tests something concrete to assert on — see
+`tests/test_drive_client.py`.
 """
 from __future__ import annotations
 
 import os
 from typing import Optional
+
+# Explicit, in-repo version of googleapiclient's own 60s default (see the
+# ADDENDUM above) for every httplib2-backed Drive/Sheets call this module
+# and archive_client.py make. GOOGLE_API_NUM_RETRIES below already treats a
+# socket timeout as transient and retries it, so this composes with that
+# retry logic rather than fighting it (worst case per logical call: up to
+# GOOGLE_API_NUM_RETRIES attempts at up to HTTP_TIMEOUT_S each, plus backoff
+# — see GOOGLE_API_NUM_RETRIES's own comment).
+HTTP_TIMEOUT_S = 60
+
+
+def authorized_http(credentials, timeout: int = HTTP_TIMEOUT_S):
+    """An AuthorizedHttp wrapping an httplib2.Http with an EXPLICIT socket
+    timeout, for `build(http=authorized_http(creds), ...)` in place of
+    `build(credentials=creds, ...)` — the two are mutually exclusive on
+    build() (it raises ValueError if both are given). google_auth_httplib2
+    and httplib2 are both already pinned in requirements.txt for other
+    reasons (see requirements.in's own comment) — no new dependency.
+
+    HIGH finding, fixed before merge (Step 5 independent review,
+    2026-10-14): the first version of this function built a BARE
+    `httplib2.Http(timeout=timeout)` directly, which drops something
+    `googleapiclient.http.build_http()` — what `build(credentials=...)`
+    was already using internally before this PR — does on top of setting
+    the timeout: `http.redirect_codes = http.redirect_codes - {308}`.
+    308 is used by Drive/YouTube resumable uploads as "Resume Incomplete,"
+    not a real redirect; without that line, httplib2 tries to follow a
+    mid-upload 308 as an actual redirect (no `Location` header present)
+    and the upload fails. Every resumable upload in this codebase
+    (`archive_client.upload_file()`, `archive_client.update_file_content()`
+    — this backfill script's own re-upload step — and drive_client's own
+    upload helper, all `MediaFileUpload(..., resumable=True)`) would have
+    broken on any file large enough to span multiple chunks. Confirmed
+    directly against this repo's pinned libraries (not just upstream
+    source): `build_http().redirect_codes` excludes 308; a bare
+    `httplib2.Http()` includes it; the original `authorized_http()`
+    return value included it too. Fixed by building on `build_http()`
+    itself (so `redirect_codes` is correct) and only overriding `.timeout`
+    to make it an explicit, in-repo value instead of relying on
+    `build_http()`'s own `socket.getdefaulttimeout()`-dependent default
+    resolution."""
+    import google_auth_httplib2
+    from googleapiclient.http import build_http
+
+    http = build_http()
+    http.timeout = timeout
+    return google_auth_httplib2.AuthorizedHttp(credentials, http=http)
 
 SCOPES = [
     "https://www.googleapis.com/auth/drive",
@@ -52,13 +115,13 @@ def _credentials():
 def drive_service():
     from googleapiclient.discovery import build
 
-    return build("drive", "v3", credentials=_credentials(), cache_discovery=False)
+    return build("drive", "v3", http=authorized_http(_credentials()), cache_discovery=False)
 
 
 def sheets_service():
     from googleapiclient.discovery import build
 
-    return build("sheets", "v4", credentials=_credentials(), cache_discovery=False)
+    return build("sheets", "v4", http=authorized_http(_credentials()), cache_discovery=False)
 
 
 def list_files(service, folder_id: str) -> list[dict]:

@@ -36,6 +36,43 @@ authorized: yes, as long as this document was in effect and every gate
 below was actually met — check the PR's CI status and review history to
 confirm, don't just take the merge on faith.
 
+## Cloud mode (Claude Code cloud sessions)
+
+This loop can also run as a **cloud session** (`claude --cloud`, or
+claude.ai/code), which clones this repo from GitHub onto Anthropic's servers
+instead of running on Trisha's Mac. **Detect it at Step 1:** if
+`/Volumes/Samsung-Pro-2TB` does not exist, you are in cloud mode, and these
+overrides apply on top of everything else in this document:
+
+- **No merge, ever: always end at a draft PR.** The privacy pre-push gate
+  (`.githooks/pre-push` + Trisha's private terms list) exists only on her
+  Mac, so a cloud push to this PUBLIC repo is unscanned. Trisha's review of
+  the draft PR is the privacy gate. Steps 3–7 run as normal (tests, the
+  Step 5 subagent review, `/security-review`, convergence); Step 8 stops
+  after the closing summary, with the PR left as a **draft** and NOT merged.
+  The Standing authorization above does not apply in cloud mode.
+- **Privacy self-check before every push.** Never write a person's name
+  that isn't already in the repo, a home address, a phone number, an email
+  other than a project address, or anything about Trisha's family. When in
+  doubt, leave it out and say so in the PR.
+- **Skip Step 9 and the "STOPPED" queue annotation.** The Lotext queue is
+  on Trisha's Mac and unreachable. Instead, end the PR description with a
+  `## Queue bookkeeping` block: the `coder:<slug>` (if known from the
+  handoff), the outcome (DONE-pending-merge or STOPPED + one-line reason),
+  and any worker pin to release. A local session applies it to the queue.
+- **No live credentials.** There is no `gdrive-sa-key.json`, Sheet access,
+  SMTP, or GitHub Actions secrets, and outbound network to EGLE/ArcGIS may be
+  blocked. Do not try to obtain or recreate credentials. If the goal needs a
+  live-source feasibility spike or a real-specimen check that can't run
+  here, build what can be tested offline, then stop with a draft PR that
+  says exactly what must be verified locally.
+- **Coordination.** You can't see the Mac's `.claude/COORDINATION.md`
+  (it's untracked). Touch only the files the goal needs; the launching
+  session logs your claim there on your behalf.
+- **The handoff must be on GitHub.** If the `Goal + full spec:` file is
+  missing from your clone, stop immediately and say so — don't guess the
+  goal.
+
 ## Inputs
 
 - **The goal** — supplied at invocation time, not read from a backlog. If

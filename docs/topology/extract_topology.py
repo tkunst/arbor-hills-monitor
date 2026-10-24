@@ -48,7 +48,7 @@ def _repo_root(start):
 REPO = _repo_root(__file__)
 OUTDIR = os.path.dirname(os.path.abspath(__file__))   # emit outputs next to this script
 OUT = os.path.join(OUTDIR, "topology.json")
-SYSTEM = "Arbor Hills Landfill Monitor"
+SYSTEM = "Arbor Hills Monitor"
 
 # --- Layer 3 curated tables (documented derivations) -----------------------
 
@@ -67,42 +67,102 @@ DOMAIN = {
     "ride_watcher": "orchestration",   # daily RIDE / Part 201 + UST status watch — Stream J (ADR 019)
     "gfl_info_site_watcher": "orchestration", # daily GFL info-site change-watch — Stream S (ADR 041)
     "pfas_pws_watcher": "orchestration", # daily Public Water Supply PFAS watch — Stream R (ADR 042)
+    "doc_pipeline": "orchestration",   # the one per-document pipeline behind watcher + backfill (consolidation PR 3)
+    "civicclerk_archiver": "orchestration",  # DPW + BOC Agenda/Minutes mirror (ADR 037)
+    "rop_watcher": "orchestration",    # daily ROP (Title V) watch — Stream H (ADR 017)
+    "mmd_watcher": "orchestration",    # daily MMD registry watch — Stream I (ADR 018)
+    "nsite_submissions_watcher": "orchestration",       # Stream K (ADR 020/021)
+    "nsite_violations_watcher": "orchestration",        # Stream L (ADR 023)
+    "nsite_compliance_actions_watcher": "orchestration",# Stream M (ADR 028)
+    "nsite_evaluations_watcher": "orchestration",       # Stream N (ADR 029)
+    "nsite_permits_watcher": "orchestration",           # Stream O (ADR 030)
+    "nsite_complaints_watcher": "orchestration",        # Stream P (ADR 031)
+    "nsite_public_notices_watcher": "orchestration",    # Stream Q (ADR 032)
+    "nsite_watch_common": "orchestration",  # shared run_profile_watch for the six L-Q watchers
+    "ride_docs_watcher": "orchestration",   # RIDE document listing watch, private — Stream T (ADR 061)
+    "govqa_watcher": "orchestration",  # GovQA FOIA archive watch, private — Stream U (ADR 059)
+    "mpart_watcher": "orchestration",  # MPART PFAS open-data watch — Stream V (ADR 060)
+    "egle_newsroom_watcher": "orchestration",  # EGLE newsroom keyword watch (every 3 h)
+    "gfl_air_hourly_capture": "orchestration", # hourly durable capture of the GFL air feed (ADR 026 addendum)
+    "gfl_feed_snapshot": "orchestration",      # monthly full GFL feed snapshot + change check (ADR 063)
+    "ridgewood_reverify": "orchestration",     # monthly Ridge Wood re-verification + manifest (ADR 066)
     # Ingestion — one client per external source (nSITE, WDS, MMPC, PFAS, GFL air, Ridge Wood, RIDE, GFL info site)
     "nsite_client": "ingestion", "mmpc_client": "ingestion",
     "wds_watcher": "ingestion", "wds_client": "ingestion",
     "pfas_client": "ingestion",        # PFAS page fetch + content-hash normalize (ADR 012)
     "gfl_air_client": "ingestion",     # GFL ArcGIS FeatureServer fetch + ADR-004 mapping (ADR 014)
+    "gfl_air_episodes": "processing",  # Stream E episode state machine + ET time helpers (ADR 039)
+    "gfl_air_emails": "processing",    # Stream E exceedance / SCREENING / CLOSEOUT email rendering
+    "gfl_air_liveness": "processing",  # Stream E liveness decision + body (ADR 014 addendum)
+    "doc_pipeline_liveness": "processing",  # document-pipeline stall guard: health update + decision + body (stall-hardening)
     "gfl_info_site_client": "ingestion",  # GFL info-site fetch + <main> normalize (ADR 041)
     "pfas_pws_client": "ingestion",    # EGLE PWS PFAS ArcGIS fetch + classify (ADR 042)
     "ridgewood_client": "ingestion",   # Ridge Wood H2S report scrape + fail-safe extract (ADR 016)
     "ride_client": "ingestion",        # RIDE RRDOpenData ArcGIS fetch + canonicalize (ADR 019)
+    "rop_client": "ingestion",         # EPA ROP CSV + N2688 folder + statewide notice PDF (ADR 017)
+    "mmd_client": "ingestion",         # EGLE MMD Open Data ArcGIS (ADR 018)
+    "mpart_client": "ingestion",       # MPART PFAS ArcGIS layers (ADR 060)
+    "ride_docs_client": "ingestion",   # RIDE anonymous document listing (ADR 061)
+    "govqa_client": "ingestion",       # GovQA FOIA archive: Playwright grid + requests (ADR 059)
     # Document processing & risk
     "egle_doc_parser": "processing", "risk_register": "processing",
     "retry_policy": "processing", "woi_table_parser": "processing",
     "woi_router": "processing",         # routes WOI Status Reports to woi_table_parser (ADR 005)
+    "well_aliases": "processing",       # curated well-ID alias map loader + exact-match rule (ADR 068)
+    "review_flags": "processing",       # Parser Review Flags log, private Sheet (ADR 067 amendment)
+    "backfill_well_aliases": "ops",     # one-shot dry-run-default Measurements relabel (ADR 068)
     "poison_doc_extractor": "processing",  # .msg/.docx -> synthesized PDF (ADR 011)
     "backfill_metric_taxonomy": "processing",  # one-shot `other`-bucket reclassify — ADR 034
+    "ocr_util": "processing",           # shared OCR: classify / ocr_in_place / ensure_searchable (ADR 069)
+    "kdp_check": "processing",          # deterministic key-data-point temperature check (ADR 067)
+    "document_titles": "processing",    # generic-title detection + display names (ADR 065)
+    "poison_stub": "processing",        # terminal step for an unreadable document (issue #82)
+    "well_watch": "processing",         # named single-well temperature trip-wires (ADR 058)
+    "neshap_table_parser": "processing",# dataset tool, imported only by tests
+    "name_check": "processing",         # name denylist used before anything is published
     # Persistence & notification
     "sheet_writer": "persistence", "drive_client": "persistence",
     "archive_client": "persistence", "email_alerts": "persistence",
+    "snapshot_exporter": "persistence",  # snapshot -> immutable Drive file for ROP/MMD/Submissions/PFAS (ADR 072, default off)
+    "owner_notices": "persistence",    # owner-only weekly email + same-day owner alerts (ADR 070)
+    "dataset_provenance": "persistence",  # Dataset Provenance tab + annotation columns (coder:dataset-provenance-sheet)
+    "upcoming": "persistence",         # private Sheet "Upcoming" tab for the Sunday digest
+    # Public site publishing (GitHub Pages)
+    "findings_feed": "publishing",     # public-records pages + search index renderer (pure)
+    "public_comment_feed": "publishing",  # public comment periods page renderer (ADR 035)
+    "gen_findings_feed": "publishing", "gen_public_comment_feed": "publishing",
+    "gen_sitemap": "publishing", "check_publish_safety": "publishing",
+    "sync_data_notes": "publishing",
     # Config
     "config_loader": "config",
     # Ops / manual jobs (scripts/)
     "seed_wds_state": "ops", "verify_state": "ops", "smoke_one": "ops",
     "oauth_setup": "ops", "co_summary": "ops", "woi_summary": "ops",
     "dump_wds_historical": "ops",      # one-off WDS backfill dump (ADR 009)
+    "backfill_document_dates_titles": "ops", "backfill_mirror_ocr": "ops",
+    "check_handcurated_sources": "ops", "create_oauth_folder": "ops",
+    "gen_stream_status": "ops", "recheck_key_data_points": "ops",
+    "route_hand_curated": "ops", "send_scoped_test": "ops", "term_search": "ops",
+    "sync_dataset_provenance": "ops",  # one-time provenance seed, dry-run by default
 }
 DOMAIN_NAME = {
     "orchestration": "Orchestration / Runners",
-    "ingestion": "Ingestion (EGLE / MMPC sources)",
+    "ingestion": "Ingestion (external source clients)",
     "processing": "Document Processing & Risk",
     "persistence": "Persistence & Notification",
     "config": "Config",
+    "publishing": "Public Site Publishing",
     "ops": "Ops / Manual Jobs",
     "data": "Data stores",
 }
 JOB_MODULES = {"seed_wds_state", "verify_state", "smoke_one", "oauth_setup",
-               "co_summary", "woi_summary", "dump_wds_historical"}
+               "co_summary", "woi_summary", "dump_wds_historical",
+               "backfill_document_dates_titles", "backfill_mirror_ocr",
+               "check_handcurated_sources", "create_oauth_folder", "gen_stream_status",
+               "recheck_key_data_points", "route_hand_curated", "send_scoped_test",
+               "term_search", "backfill_well_aliases", "gen_findings_feed", "gen_public_comment_feed",
+               "gen_sitemap", "check_publish_safety", "sync_data_notes",
+               "sync_dataset_provenance"}
 
 # Data stores — LOGICAL identifiers only. The physical binding (Sheet ID, SA key,
 # SMTP host, API key) is the external code<->storage join: it lives in GitHub
@@ -111,7 +171,7 @@ JOB_MODULES = {"seed_wds_state", "verify_state", "smoke_one", "oauth_setup",
 DATASTORES = [
     ("ds:case-file-sheet", "Case-File Sheet"),
     ("ds:drive-archive", "Google Drive PDF Archive"),
-    ("ds:nsite", "EGLE nSITE Portal (Air)"),
+    ("ds:nsite", "EGLE nSITE / MiEnviro (documents + 7 profiles)"),
     ("ds:wds", "EGLE WDS Portal (Solid Waste)"),
     ("ds:mmpc", "Washtenaw County MMPC Site"),
     ("ds:pfas", "EGLE PFAS Investigation Pages (michigan.gov)"),
@@ -120,15 +180,26 @@ DATASTORES = [
     ("ds:ride", "EGLE RIDE RRDOpenData ArcGIS Service (Part 201 + UST, public)"),
     ("ds:gfl-info-site", "GFL Info Website (arborhillslandfill.com, Cloudflare)"),
     ("ds:pws-pfas", "EGLE Public Water Supply PFAS ArcGIS Service (MPART, public)"),
+    ("ds:rop", "EGLE ROP sources (EPA monthly CSV, N2688 folder, statewide notice PDF)"),
+    ("ds:mmd", "EGLE MMD Open Data ArcGIS (public)"),
+    ("ds:mpart", "MPART PFAS ArcGIS layers (public)"),
+    ("ds:ride-docs", "EGLE RIDE document listing (anonymous Public User session)"),
+    ("ds:govqa", "EGLE GovQA public FOIA archive"),
+    ("ds:egle-newsroom", "EGLE newsroom landing page (michigan.gov)"),
+    ("ds:private-sheet", "Private Sheet (owner only: GovQA, RRD Documents, Upcoming, Owner Notices, Parser Review Flags)"),
+    ("ds:public-site", "Public site pages (GitHub Pages: public records, comment periods, sitemap)"),
     ("ds:smtp", "Email Recipients (SMTP)"),
     ("ds:anthropic", "Anthropic Claude API"),
     ("ds:config", "config.yml (risk register + settings)"),
+    ("ds:well-aliases", "data/well_aliases.json (generated well-ID alias map, ADR 068)"),
 ]
 # code<->store read/write edges, attributed to the module that issues the I/O
 # (the client that actually calls the API), verified by reading each module.
 DATA_EDGES = [
     ("sheet_writer", "ds:case-file-sheet", "read"),
     ("sheet_writer", "ds:case-file-sheet", "write"),
+    ("dataset_provenance", "ds:case-file-sheet", "read"),   # provenance tab = the upsert's key index (raises)
+    ("dataset_provenance", "ds:case-file-sheet", "write"),  # provenance rows + annotation cells
     ("archive_client", "ds:drive-archive", "write"),
     ("nsite_client", "ds:nsite", "read"),
     ("wds_client", "ds:wds", "read"),
@@ -138,6 +209,7 @@ DATA_EDGES = [
     ("email_alerts", "ds:smtp", "write"),
     ("egle_doc_parser", "ds:anthropic", "read"),   # sends doc, reads classification
     ("config_loader", "ds:config", "read"),
+    ("well_aliases", "ds:well-aliases", "read"),   # loaded once per run; fails loudly (ADR 068)
     ("wds_archiver", "ds:wds", "read"),            # fetches the 5 collection pages
     ("wds_archiver", "ds:drive-archive", "write"), # uploads raw-HTML snapshots
     ("mmpc_archiver", "ds:drive-archive", "write"),# uploads MMPC PDFs (Mirror D, ADR 010)
@@ -146,6 +218,33 @@ DATA_EDGES = [
     ("ride_client", "ds:ride", "read"),            # query RRDOpenData Layer 0/1 (Stream J, ADR 019)
     ("gfl_info_site_client", "ds:gfl-info-site", "read"),  # GET + normalize GFL info-site pages (Stream S, ADR 041)
     ("pfas_pws_client", "ds:pws-pfas", "read"),    # query the PWS PFAS FeatureServer (Stream R, ADR 042)
+    ("rop_client", "ds:rop", "read"),              # Stream H (ADR 017)
+    ("mmd_client", "ds:mmd", "read"),              # Stream I (ADR 018)
+    ("mpart_client", "ds:mpart", "read"),          # Stream V (ADR 060)
+    ("ride_docs_client", "ds:ride-docs", "read"),  # Stream T (ADR 061)
+    ("govqa_client", "ds:govqa", "read"),          # Stream U (ADR 059)
+    ("egle_newsroom_watcher", "ds:egle-newsroom", "read"),  # fetches the landing page itself
+    # Private-Sheet I/O, attributed to the module that targets GSHEET_ID_PRIVATE
+    # (the write itself goes through sheet_writer helpers).
+    ("govqa_watcher", "ds:private-sheet", "read"), ("govqa_watcher", "ds:private-sheet", "write"),
+    ("ride_docs_watcher", "ds:private-sheet", "read"), ("ride_docs_watcher", "ds:private-sheet", "write"),
+    ("upcoming", "ds:private-sheet", "read"),
+    ("owner_notices", "ds:private-sheet", "write"),
+    ("dataset_provenance", "ds:case-file-sheet", "write"),
+    ("review_flags", "ds:private-sheet", "write"),
+    # Drive mirrors (via archive_client)
+    ("civicclerk_archiver", "ds:drive-archive", "write"),
+    ("ridgewood_reverify", "ds:drive-archive", "write"),
+    ("gfl_air_hourly_capture", "ds:drive-archive", "write"),
+    ("gfl_feed_snapshot", "ds:drive-archive", "write"),
+    ("govqa_watcher", "ds:drive-archive", "write"),     # private staging folder
+    ("ride_docs_watcher", "ds:drive-archive", "write"), # private mirror folder
+    ("snapshot_exporter", "ds:drive-archive", "write"), # ROP/MMD/Submissions/PFAS snapshot files (ADR 072, when enabled)
+    # Public site
+    ("gen_findings_feed", "ds:public-site", "write"),
+    ("gen_public_comment_feed", "ds:public-site", "write"),
+    ("gen_sitemap", "ds:public-site", "write"),
+    ("check_publish_safety", "ds:public-site", "read"),
 ]
 # DISPATCH edges — call targets resolved against config, not a static symbol.
 # Represented as `dispatch` (and the equivalent plain import edge is suppressed,
@@ -157,74 +256,54 @@ DATA_EDGES = [
 DISPATCH_EDGES = [("watcher", "wds_watcher"), ("wds_watcher", "wds_client")]
 
 OBSERVATIONS = [
-    "watcher.py is a single orchestration hub importing ~10 of the 24 runtime "
-    "modules — a star topology and the daily run's single point of failure. "
-    "Partly mitigated: the Stream C (WDS) step is wrapped in its own try/except "
-    "so a fault there can't sink the nSITE path.",
-    "sheet_writer + the case-file Google Sheet is the data spine — the only "
-    "read+write store, backing the append-only processing log (_state) plus the "
-    "_meta singletons (digest queue, WDS seen-set + snapshot hashes, last-run) and "
-    "the per-tab feeds (New/Historical, Evidence, MMPC Archived Files, PFAS Page "
-    "Watch). Single point of failure and a scaling ceiling (50k-char cells).",
+    "Three shared hubs carry almost every stream: drive_client and config_loader "
+    "(42 importers each) and sheet_writer (41). sheet_writer is the only module "
+    "that talks to the Sheets API, so it is the single point of failure for all "
+    "persistence; since PR #135 every state/snapshot read raises on a transport "
+    "failure instead of silently returning an empty list.",
+    "doc_pipeline is the one per-document path (download, parse, titles, Drive "
+    "mirror, WOI routing, Sheet row, processed state) behind both watcher and "
+    "backfill, so a cross-cutting change to document handling is wired once there. "
+    "watcher remains the daily orchestration hub (nSITE documents + Stream C WDS + "
+    "digest + the owner-only weekly email).",
     "egle_doc_parser -> Anthropic is the only external-LLM dependency and the "
-    "sole per-document cost driver; it is isolated to one module (swappable) and "
-    "reached only on the backfill/watcher classify path.",
-    "Six ingestion streams — nSITE/Air, WDS/Solid-Waste, MMPC (CivicClerk), PFAS "
-    "pages, GFL perimeter air (ArcGIS FeatureServer), and Ridge Wood Elementary H2S "
-    "(monthly Barr report PDFs) — are cleanly separated into their own client modules "
-    "with no cross-talk (good service-extraction seams). Stream E (gfl_air_watcher -> "
-    "gfl_air_client, ADR 014) is the first source of real fenceline READINGS (H2S/CH4), "
-    "not documents; config-gated (gfl_air.enabled, off by default). Stream G "
-    "(ridgewood_archiver -> ridgewood_client, ADR 016) is the school-adjacent Barr/EPA "
-    "H2S monitor — a document-archive stream whose 72 ppb action level cross-confirms "
-    "Stream E's H2S threshold; config-gated (ridgewood.enabled, off by default). The "
-    "MMPC minutes *reminder* was retired (ADR 013); MMPC is now archive-only via Mirror "
-    "D (mmpc_archiver -> mmpc_client), plus a meeting-change watch (Stream F, "
-    "civicclerk_watcher -> mmpc_client.fetch_event, ADR 015). Stream C (wds_watcher -> "
-    "wds_client) is config-gated and active.",
-    "Independent runners now write to the Sheet/Drive spine, each on its own cron + "
-    "concurrency group so they never race the shared _meta state: archiver (nSITE "
-    "PDFs, 3am), wds_archiver (WDS HTML snapshots, 4am), mmpc_archiver (MMPC PDFs, "
-    "5am), watcher (nSITE + WDS + alerts, 6am), pfas_watcher (PFAS page hash, 7am), "
-    "gfl_air_watcher (GFL perimeter air, 8am), ridgewood_archiver (Ridge Wood H2S, "
-    "9am), plus civicclerk_watcher (meeting-change watch, twice daily). backfill is "
-    "manual-only. Like pfas_watcher / gfl_air_watcher, ridgewood_archiver keeps its "
-    "dedup state in its OWN append-only tab (Ridge Wood Reports), never _meta — a "
-    "separate workflow must not write the shared _meta cell (ADR 014 / 016).",
-    "Four runners write into the Drive archive store (archive_client for nSITE PDFs, "
-    "wds_archiver for WDS HTML snapshots, mmpc_archiver for MMPC PDFs, and "
-    "ridgewood_archiver for Ridge Wood H2S PDFs) — watch for a shared-folder or quota "
-    "coupling as they scale. Each mirror uses a DISTINCT Drive folder (Mirror B/C "
-    "share one; Mirror D and Ridge Wood each have their own), and Ridge Wood's mirror "
-    "is optional — its extract+alert path runs even without the Drive folder secret.",
-    "poison_doc_extractor (ADR 011) lets nsite_client salvage legacy .msg/.docx "
-    "sources the downloadpdf endpoint can't render, synthesizing a PDF from the "
-    "extracted text + embedded images. Reached only from the ingestion path; a "
-    "known gap remains — image-only pages extract but are not vision-classified.",
-    "The WOI extractor (woi_table_parser) is now wired into the daily runtime via "
-    "woi_router: watcher and backfill route WOI Status Reports (detected by the "
-    "'Gas Extraction Report' header + page count, NOT the nSITE filename) to it, "
-    "replacing the windowed measurements before is_urgent so a buried exceedance "
-    "still alerts (ADR 005). co_summary + woi_summary remain manual hand-to-EGLE "
-    "generators built on the same parser.",
+    "sole per-document cost driver; filing text and metadata reach it fenced as "
+    "untrusted input (PR #142), with a deterministic urgency floor afterwards.",
+    "Each external source has its own client module (nSITE, WDS, CivicClerk, PFAS "
+    "pages, GFL perimeter air, Ridge Wood, RIDE status + documents, ROP, MMD, PFAS "
+    "PWS, MPART, GovQA, EGLE newsroom) and its own runner on its own cron + "
+    "concurrency group, so streams never race one another's state.",
+    "The nsite_client -> poison_doc_extractor edge is DEFERRED, not a "
+    "module-load edge: since 2026-10-23 the import sits inside download_pdf() "
+    "(its only user), so the seven nSITE profile watchers (K-Q), which only poll "
+    "the JSON profiles, no longer load fitz/defusedxml by importing the client "
+    "(tests/test_nsite_import_isolation.py pins this). The ast-derived call graph "
+    "still draws the edge because ast.walk sees function-level imports too — read "
+    "it as 'reachable from download_pdf()', not 'loaded on import'. The six L-Q "
+    "watchers share nsite_watch_common.run_profile_watch.",
+    "Two Sheets with different visibility: the public case-file Sheet, and a "
+    "private Sheet (owner only) that the GovQA / RIDE-document watchers, the "
+    "Upcoming reader, owner_notices and review_flags target; the writers fail "
+    "closed if the target looks like the public Sheet.",
     "Unresolved-at-extraction dynamic dispatch: which WDS fetchers run depends on "
-    "config `wds.collections` at runtime; watcher -> wds_watcher fires only when "
-    "`wds.enabled` is true. Both are surfaced as dispatch edges, not calls.",
+    "config `wds.collections` at runtime; watcher -> wds_watcher is gated on "
+    "`wds.enabled`. Both are surfaced as dispatch edges, not calls. The only dead-end "
+    "candidate, neshap_table_parser, is a dataset tool imported only by tests.",
 ]
 
 # Persona flows — the people who EXPERIENCE the monitor's output. Node ids are
 # validated against the tree before write.
 FLOWS = [
     {
-        "name": "A new EGLE Air filing is caught and triaged",
+        "name": "A new EGLE filing is caught and triaged",
         "persona": "N2688 monitor reader",
-        "description": "The monitor spots a new Air permit filing for the "
+        "description": "The monitor spots a new EGLE filing for the "
                        "landfill, classifies its risk, and alerts the advocate.",
         "steps": [
             {"label": "The daily monitor wakes at 6am",
              "nodes": ["watcher", "config_loader", "ds:config"]},
-            {"label": "Check EGLE nSITE for new Air filings",
-             "nodes": ["watcher", "nsite_client", "ds:nsite"]},
+            {"label": "Check EGLE nSITE for new filings and hand each to the per-document pipeline",
+             "nodes": ["watcher", "nsite_client", "ds:nsite", "doc_pipeline"]},
             {"label": "Read each new PDF and classify it against the risk register with Claude",
              "nodes": ["egle_doc_parser", "risk_register", "ds:anthropic"]},
             {"label": "Record the finding as a row in the case-file Sheet",
@@ -236,10 +315,10 @@ FLOWS = [
     {
         "name": "A solid-waste change at the landfill (Stream C)",
         "persona": "N2688 monitor reader",
-        "description": "When Stream C is enabled, a new construction permit or "
+        "description": "A new construction permit or "
                        "groundwater exceedance in the Waste Data System reaches the advocate.",
         "steps": [
-            {"label": "If Stream C is enabled, the daily run also polls solid-waste",
+            {"label": "The daily run also polls solid-waste (Stream C, wds.enabled)",
              "nodes": ["watcher", "config_loader", "wds_watcher"]},
             {"label": "Poll the EGLE Waste Data System collections",
              "nodes": ["wds_watcher", "wds_client", "ds:wds"]},
@@ -277,6 +356,8 @@ FLOWS = [
              "nodes": ["pfas_watcher", "pfas_client", "ds:pfas"]},
             {"label": "Compare the hash to the last snapshot in the PFAS Page Watch tab",
              "nodes": ["pfas_watcher", "sheet_writer", "ds:case-file-sheet"]},
+            {"label": "On a change, export the normalized text to Drive first (ADR 072, when enabled), then append the row",
+             "nodes": ["snapshot_exporter", "archive_client", "ds:drive-archive"]},
             {"label": "Email a visible-text diff when the page has changed",
              "nodes": ["email_alerts", "ds:smtp"]},
         ],
@@ -353,7 +434,8 @@ def entry_points_from_workflows() -> dict:
         cron = re.findall(r"cron:\s*\"([^\"]+)\"", text)
         commented = re.findall(r"#\s*-\s*cron:", text)  # disabled schedules
         has_dispatch = "workflow_dispatch:" in text
-        for m in re.finditer(r"run:\s*python\s+([A-Za-z0-9_./]+\.py)", text):
+        # `run: python X.py` on one line, or `python X.py` inside a `run: |` block
+        for m in re.finditer(r"(?m)(?:run:\s*|^\s+)python3?\s+([A-Za-z0-9_./]+\.py)", text):
             mod = os.path.splitext(os.path.basename(m.group(1)))[0]
             trig = []
             if cron:
@@ -379,14 +461,14 @@ def build():
     # Tree: domains -> leaves.
     by_domain = {}
     for name, rel in mods.items():
-        dom = DOMAIN.get(name, "processing")
+        dom = DOMAIN[name]  # every module must be classified on purpose (KeyError otherwise)
         kind = "job" if name in JOB_MODULES else "module"
         by_domain.setdefault(dom, []).append({
             "id": name, "name": name, "kind": kind,
             "language": "python", "loc": loc(os.path.join(REPO, rel)), "file": rel,
         })
     domain_children = []
-    for dom in ["orchestration", "ingestion", "processing", "persistence", "config", "ops"]:
+    for dom in ["orchestration", "ingestion", "processing", "persistence", "config", "publishing", "ops"]:
         if by_domain.get(dom):
             domain_children.append({
                 "id": f"dom:{dom}", "name": DOMAIN_NAME[dom], "kind": "domain",

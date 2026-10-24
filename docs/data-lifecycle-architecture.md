@@ -203,7 +203,36 @@ human-facing signal never precedes the durable copy.
 
 ---
 
+## Per-stream Tier-1 status: the snapshot-diff watchers (ADR 072)
+
+Four watchers record their full snapshot payload only to a Tier-2 append-only
+tab (ROP Watch, MMD Watch, Submissions Watch, PFAS Page Watch). ADR 072 adds
+one shared exporter, `snapshot_exporter.py`, that each of them calls
+immediately BEFORE its snapshot append, so the write order above holds:
+Drive file → Sheet row → alert. It ships behind
+`data_lifecycle.snapshot_export.enabled` (default `false`) and one shared
+app-only folder, `GOAUTH_SNAPSHOT_FOLDER_ID`. Until Trisha activates it the
+"Tier 1" column below reads *on flag*; once activated it reads *yes* from the
+next observed change onward (no backfill of past rows).
+
+| Stream | Watcher | Tier 2 (today) | Tier 1 (ADR 072) | Exported payload |
+|---|---|---|---|---|
+| ROP (Stream H) | `rop_watcher.py` | ROP Watch tab, one row per item per change | on flag — `rop_<key>_<date>_<hash>.json` | the row's `snapshot_json` (sorted-keys JSON) |
+| MMD (Stream I) | `mmd_watcher.py` | MMD Watch tab | on flag — `mmd_<key>_<date>_<hash>.json` | the row's `snapshot_json` |
+| nSITE Submissions (Stream K) | `nsite_submissions_watcher.py` | Submissions Watch tab | on flag — `subm_<key>_<date>_<hash>.json` | the row's `snapshot_json` |
+| PFAS page watch (ADR 012) | `pfas_watcher.py` | PFAS Page Watch tab | on flag — `pfas_<label>_<date>_<hash>.txt` | the row's normalized page text |
+
+The filename's `(date, key, hash)` is the same triple the Sheet row carries, so
+U2's join needs no new column. U3 is satisfied in the literal sense (a
+self-contained Drive file behind a permanent link) for the RAW payload only; a
+human-readable rendering is deliberately deferred until an exhibit is actually
+needed (Trisha's 2026-07-26 ruling). RIDE (`ride_watcher.py`) is NOT wired —
+ADR 019 owns its plan; the helper is generic enough to take it later.
+
+---
+
 *Architecture reference. File and line references reflect the repository as of
-2026-07-26; cite by module and symbol, which are stable, when line numbers have
-drifted. This document is descriptive of the durability model only; per-stream
-status and remediation are tracked in `docs/roadmap.md` and the ADRs.*
+2026-07-26 (per-stream table added 2026-10-23); cite by module and symbol,
+which are stable, when line numbers have drifted. This document is descriptive
+of the durability model only; per-stream status and remediation are tracked in
+`docs/roadmap.md` and the ADRs.*

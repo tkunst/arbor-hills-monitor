@@ -1,0 +1,111 @@
+name: ridgewood-reverify
+
+# ADR 066: monthly re-verification of every Ridge Wood Elementary H2S report Stream
+# G (ridgewood.yml) has already archived, plus a committed provenance manifest
+# (data/provenance/ridgewood-manifest.json — the git commit history is the
+# "signature", per Trisha's 2026-10-08 ruling). Detects a silently REVISED PDF (the
+# new version is mirrored and recorded; the old copy is never touched) and a report
+# that disappears from Barr's page. Change/removal alerts go to the owner list
+# only, never the public/commissioner lists.
+#
+# Safe to leave scheduled from day one: ridgewood.reverify_enabled is false by
+# default, so ridgewood_reverify._should_run() makes every run a quiet no-op (exit
+# 0) until Trisha reviews it and flips it on. Monthly cadence, off the hour and
+# clear of the other jobs that touch main/this Sheet (daily.yml 11am UTC,
+# findings-feed 11:30am UTC, ridgewood.yml 2pm UTC daily, gfl-feed-snapshot 14:17
+# UTC on the 2nd).
+on:
+  schedule:
+    - cron: "10 8 3 * *"    # 3rd of each month, ~4:10am ET / 8:10am UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (no Drive upload, no Sheet write, no email, manifest not saved)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # commits the provenance manifest back to main
+
+concurrency:
+  group: ridgewood-reverify
+  cancel-in-progress: false
+
+jobs:
+  reverify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install system OCR tooling
+        # continue-on-error (found by the advisor, 2026-10-13): a flaky apt
+        # mirror must never fail this whole job -- ensure_searchable()/
+        # ocr_in_place() already fail open when ocrmypdf is missing, and
+        # ridgewood.yml's H2S safety-alert logic specifically must not
+        # depend on this step succeeding (ADR 016).
+        continue-on-error: true
+        run: sudo apt-get update && sudo apt-get install -y ocrmypdf
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Re-verify Ridge Wood reports
+        env:
+          # Sheets I/O uses the service account; the PDF mirror uses OAuth-as-user
+          # (GOAUTH_*, into the SAME GOAUTH_RIDGEWOOD_FOLDER_ID Stream G mirrors
+          # into); change/removal alerts use SMTP + the owner-only recipient lists.
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID_KUNST }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET_KUNST }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN_KUNST }}
+          GOAUTH_RIDGEWOOD_FOLDER_ID: ${{ secrets.GOAUTH_RIDGEWOOD_FOLDER_ID }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          MONITOR_OWNER_EMAILS: ${{ secrets.MONITOR_OWNER_EMAILS }}
+          UNSUBSCRIBED_EMAILS: ${{ secrets.UNSUBSCRIBED_EMAILS }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python ridgewood_reverify.py --dry-run
+          else
+            python ridgewood_reverify.py
+          fi
+      - name: Commit the provenance manifest if it changed
+        if: ${{ inputs.dry_run != 'true' }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # While ridgewood.reverify_enabled is false (ships this way) run() returns
+          # before ever calling save_manifest() -- the file doesn't exist yet. `git
+          # add` on a nonexistent explicit path is a fatal pathspec error under
+          # set -euo pipefail, so check for the file first rather than letting that
+          # abort the step on every scheduled no-op run.
+          if [ ! -f data/provenance/ridgewood-manifest.json ]; then
+            echo "No manifest written this run (disabled, or nothing archived yet) -- nothing to commit."
+            exit 0
+          fi
+          git add data/provenance/ridgewood-manifest.json
+          if git diff --cached --quiet; then
+            echo "No change to the provenance manifest."
+            exit 0
+          fi
+          # Commit locally BEFORE pulling -- save_manifest() rewrites the file (at
+          # minimum its generated_at timestamp) on every real run, so the working
+          # tree is dirty at this point; `git pull --rebase` on a dirty tree fails.
+          git commit -m "chore(ridgewood): monthly re-verification manifest update"
+          git pull --rebase origin main
+          git push origin HEAD:main

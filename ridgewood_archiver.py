@@ -64,6 +64,7 @@ except Exception:  # pragma: no cover
 import drive_client as dc
 import sheet_writer as sw
 import archive_client as ac
+import ocr_util
 import ridgewood_client as rc
 import email_alerts as ea
 from config_loader import load_config
@@ -100,7 +101,7 @@ def _should_run(cfg: dict) -> tuple[bool, str]:
 # Pure helpers (no network / no Sheets) — unit-tested directly
 # ---------------------------------------------------------------------------
 
-def build_measurement(month: str, verdict: dict) -> dict | None:
+def build_measurement(month: str, verdict: dict, ocr_applied: bool = False) -> dict | None:
     """One Measurements-tab reading dict for the month's MAXIMUM daily 24-hr average
     (the decision-relevant, exceedance-determining number), or None when nothing
     parsed (a scanned/format-changed report — the archiver still mirrors it and
@@ -108,7 +109,12 @@ def build_measurement(month: str, verdict: dict) -> dict | None:
     report presents it ("<1" below resolution, else the numeric max); the qualifier
     lives in Note, and exceedance logic runs on numerics only, so "<1" never touches
     the >=72 check. Monthly granularity per the handoff (as_of_date = report month);
-    the daily detail lives in the mirrored PDF, not ~2000 rows of "<1"."""
+    the daily detail lives in the mirrored PDF, not ~2000 rows of "<1".
+
+    `ocr_applied` (coder:mirror-ocr, 2026-10-13): True when this month's report had
+    no native text layer and ensure_searchable() OCR'd it to get this value at all —
+    recorded directly on the public Measurements row (not just the Reports tab's
+    Alert cell) so a reader of the raw data sees the provenance caveat too."""
     if not verdict.get("value_token"):
         return None
     n_days = verdict.get("n_days", 0)
@@ -118,6 +124,9 @@ def build_measurement(month: str, verdict: dict) -> dict | None:
         f"— not GFL self-report, not an EGLE measurement.")
     if verdict.get("all_days_below_1"):
         note += " All days < 1 ppb (below the 1 ppb reporting resolution)."
+    if ocr_applied:
+        note += (" Value extracted via OCR (report PDF had no native text layer) — "
+                  "verify against the original scan before relying on it.")
     return {
         "as_of_date": f"{month}-01",   # first of the report month (monthly summary)
         "well_id": _WELL_ID,
@@ -243,10 +252,44 @@ def run() -> int:
         month = r["month"]
         source_url = r["url"]
         local = os.path.join(tmp, f"ridgewood-{month}.pdf")
+        searchable_local = local  # overwritten below; safe default for the finally cleanup
         try:
             rc.download_report(source_url, local)
-            chash = rc.content_hash(local)
+            chash = rc.content_hash(local)  # on the ORIGINAL bytes — never the OCR'd copy
+
+            # coder:mirror-ocr (2026-10-13): ADR 016 deferred OCR for this stream
+            # (a scanned month was mirrored + flagged for manual review, never
+            # fixed). Now that archive_client.upload_pdf() OCRs on upload anyway,
+            # run the SAME check here FIRST so extraction can use the OCR'd text
+            # too — ensure_searchable() returns `local` unchanged (fast, no
+            # subprocess) for the common born-digital case, or a searchable TEMP
+            # COPY for a scanned month. Never raises; never touches `local` itself
+            # (content_hash above and the ADR 066 manifest both need the original
+            # bytes untouched).
+            searchable_local = ocr_util.ensure_searchable(local)
+            # `ocr_applied` must mean "this month's value came from OCR'd
+            # text", not just "ensure_searchable() changed the file" — a born-
+            # digital report with one unrelated image-only page (a logo, a
+            # stamp) still has its real data table natively readable, and
+            # forcing review-tier on every such report would be a false
+            # alarm. Try the NATIVE extraction first; only fall back to the
+            # OCR'd copy (and only then set ocr_applied) when the native pass
+            # found nothing.
             text, npages, has_text = rc.extract_text(local)
+            ocr_applied = False
+            if not has_text and searchable_local != local:
+                try:
+                    text, npages, has_text = rc.extract_text(searchable_local)
+                    ocr_applied = has_text
+                except Exception:  # noqa: BLE001 — found by round-2 independent review: on
+                    # `main`, a scanned month always got mirrored + flagged for review
+                    # (ADR 016's fail-safe). If the OCR'd copy's own extraction raises
+                    # (ocrmypdf produced something fitz/extract_text can't parse), that
+                    # fail-safe must still fire -- fall back to has_text=False so the
+                    # "no text layer" branch below still writes a row, instead of
+                    # letting this propagate to the per-month handler and skip the
+                    # month entirely (no row, no alert -- a real regression from main).
+                    has_text = False
 
             # (1) Drive mirror (optional, idempotent) — BEST-EFFORT per file, then
             # classify + extract. The upload is wrapped so a transient Drive failure
@@ -255,33 +298,55 @@ def run() -> int:
             # the transient case as well as the not-configured case (a dead token still
             # fails loudly up front in _resolve_drive). A month whose upload fails is
             # recorded + alerted with a blank archive link; re-mirroring it is a manual
-            # re-run (remove its row from the tab). See ADR 016.
+            # re-run (remove its row from the tab). See ADR 016. Uploads the ALREADY-
+            # searchable copy — upload_pdf()'s own internal ensure_searchable() call
+            # sees a file with no image-only pages left and passes it straight through,
+            # no second OCR pass.
             archive_link = ""
             if drive is not None:
                 try:
                     archive_link = ac.upload_pdf(
-                        drive, local, f"ridgewood-h2s-{month}.pdf", ac.folder_id(FOLDER_ENV))
+                        drive, searchable_local, f"ridgewood-h2s-{month}.pdf", ac.folder_id(FOLDER_ENV))
                 except Exception as e:  # noqa: BLE001 — mirror best-effort; never block the alert
                     print(f"      Drive mirror FAILED for {month} "
                           f"(recorded + alerted with no mirror link): {e}")
 
             if has_text:
                 verdict = rc.classify_report(text, thresholds)
+                if ocr_applied:
+                    # This month's own PDF had no native text layer; ensure_searchable()
+                    # OCR'd it so a value could be extracted at all, but an OCR misread
+                    # of a digit could turn a real exceedance into a false "all clear" —
+                    # exactly the silent miss ADR 016's fail-safe exists to prevent.
+                    # Force review-tier regardless of what classify_report found,
+                    # WITHOUT suppressing a real exceed_24h determination (a true
+                    # exceedance still reaches the full alert_recipients list — see the
+                    # alert-routing below, keyed on exceed_24h, not on this flag).
+                    verdict = dict(verdict)
+                    verdict["alert"] = True
+                    verdict["severity"] = "alert"   # classify_report always returns a truthy
+                                                    # severity string ("routine"/"alert"), so
+                                                    # `x or "alert"` was dead -- set it directly.
+                    verdict["reasons"] = list(verdict.get("reasons") or []) + [
+                        "text extracted via OCR (no native text layer) — verify the "
+                        "numeric values against the original scan before relying on them"]
             else:
-                # Scanned / no text layer — mirror it, write no measurement, alert for
-                # OCR/manual review (fail-safe: the month is archived, never dropped).
+                # Still no text layer after OCR (ensure_searchable is fail-open: a
+                # truly stubborn scan, a corrupt file, or ocrmypdf unavailable) —
+                # mirror it, write no measurement, alert for manual review (fail-safe:
+                # the month is archived, never dropped).
                 verdict = {
                     "n_days": 0, "max_numeric": None, "value_token": "",
                     "all_days_below_1": False, "all_clear": False, "exceed_24h": False,
                     "parse_anomaly": True, "alert": True, "severity": "alert",
-                    "reasons": [f"report PDF has no text layer ({npages} page(s)) — "
+                    "reasons": [f"report PDF has no text layer after OCR ({npages} page(s)) — "
                                 f"likely scanned; mirror archived, review/OCR manually"],
                 }
 
             title = rc.report_title(month)
 
             # (2) Measurements (system of record) BEFORE the dedup row.
-            meas = build_measurement(month, verdict)
+            meas = build_measurement(month, verdict, ocr_applied=ocr_applied)
             if meas is not None:
                 parsed = SimpleNamespace(measurements=[meas])
                 rows = sw.measurement_rows(parsed, _measure_metadata(title),
@@ -316,6 +381,8 @@ def run() -> int:
         except Exception as e:  # noqa: BLE001 — one month's failure must not abort the batch
             print(f"  ERR {month}: {e}")
         finally:
+            if searchable_local != local and os.path.exists(searchable_local):
+                os.remove(searchable_local)
             if os.path.exists(local):
                 os.remove(local)
 

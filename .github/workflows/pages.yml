@@ -42,7 +42,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # workflow_run's default ref/SHA resolution points at the state
           # findings-feed started from, not the commit it just pushed (that
@@ -51,11 +51,11 @@ jobs:
           # check out `main` explicitly rather than trust the event's default.
           ref: ${{ github.event_name == 'workflow_run' && 'main' || github.sha }}
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Upload site/ as the Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: 'site'
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

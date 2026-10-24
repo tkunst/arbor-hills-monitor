@@ -31,6 +31,12 @@ import sheet_writer  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.join(REPO_ROOT, "site", "public-records")
+# Must stay equal to check_publish_safety.SEARCH_INDEX_FILENAME -- the two
+# scripts are separate entry points with no shared import between them, so
+# this isn't enforced by the type system; tests/test_gen_findings_feed.py
+# pins the two constants equal so a rename on one side without the other
+# fails CI instead of silently degrading the gate to "file not found, skip."
+SEARCH_INDEX_FILENAME = "search-index.json"
 
 
 _COUNT_RE = re.compile(r'class="findings-count">([\d,]+) documents')
@@ -50,7 +56,11 @@ def _previous_total(out_dir: str) -> int | None:
     return int(m.group(1).replace(",", "")) if m else None
 
 
-def _tab_values(service, sheet_id: str, tab: str, a1: str = "A2:I") -> list:
+def _tab_values(service, sheet_id: str, tab: str, a1: str = "A2:K") -> list:
+    # Default width matches sheet_writer.FEED_HEADERS (11 columns, A-K, incl.
+    # ADR 065's trailing Document Date / EGLE Title) -- New/Historical
+    # Documents' shared schema. Callers reading a different tab/schema (the
+    # Archived PDFs / Hand-Curated Files calls below) pass their own `a1`.
     resp = (
         service.spreadsheets()
         .values()
@@ -75,10 +85,10 @@ def main() -> None:
 
     new_rows = _tab_values(service, sheet_id, sheet_writer.TAB_NEW)
     historical_rows = _tab_values(service, sheet_id, sheet_writer.TAB_HISTORICAL)
-    # Hand-Curated Files has 13 columns (A:M) -- wider than the default "A2:I"
-    # (New/Historical Documents' 9-column FEED_HEADERS width), so the range must
-    # be given explicitly or columns get silently truncated. Column M is
-    # `source_public` -- the redacted external source the feed publishes; the
+    # Hand-Curated Files has 13 columns (A:M) -- wider than the default "A2:K"
+    # (New/Historical Documents' 11-column FEED_HEADERS width, ADR 065), so the
+    # range must be given explicitly or columns get silently truncated. Column
+    # M is `source_public` -- the redacted external source the feed publishes; the
     # internal `source` (col C, may carry names) is never published.
     handcurated_rows = _tab_values(service, sheet_id, sheet_writer.TAB_HANDCURATED, "A2:M")
     rows = findings_feed.merge_and_sort(new_rows, historical_rows)
@@ -91,7 +101,13 @@ def main() -> None:
     rows = findings_feed.merge_handcurated(rows, handcurated_rows)
 
     previous_total = _previous_total(OUT_DIR)
-    if findings_feed.is_suspicious_shrink(previous_total, len(rows)):
+    # A DELIBERATE shrink (e.g. ADR 064 moving neighbor-site rows off the feed)
+    # is let through only when the operator states the exact expected count —
+    # a bad Sheet read would have to land on that same number to slip past.
+    expected = os.environ.get("FINDINGS_EXPECTED_TOTAL", "").strip()
+    if expected == str(len(rows)):
+        print(f"Deliberate shrink acknowledged: {previous_total} -> {len(rows)}.")
+    elif findings_feed.is_suspicious_shrink(previous_total, len(rows)):
         raise SystemExit(
             f"Refusing to write: {len(rows)} document(s) read, down from "
             f"{previous_total} last run (more than a "
@@ -103,6 +119,10 @@ def main() -> None:
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     pages = findings_feed.build_pages(rows, generated_at)
+    # Same `rows`, same run as `pages` above -- no second Sheet read, so the
+    # HTML and the JSON search index can never drift out of lockstep with
+    # each other (ADR 062 Phase 2).
+    index_json = findings_feed.build_search_index(rows)
 
     os.makedirs(OUT_DIR, exist_ok=True)
     # Clear existing pages first — a shrinking dataset (a purge/re-dump) must
@@ -114,6 +134,10 @@ def main() -> None:
     for filename, page_html in pages.items():
         with open(os.path.join(OUT_DIR, filename), "w", encoding="utf-8") as f:
             f.write(page_html)
+
+    index_path = os.path.join(OUT_DIR, SEARCH_INDEX_FILENAME)
+    with open(index_path, "w", encoding="utf-8") as f:
+        f.write(index_json)
 
     print(f"Wrote {len(pages)} page(s), {len(rows)} document(s), to {OUT_DIR}")
 

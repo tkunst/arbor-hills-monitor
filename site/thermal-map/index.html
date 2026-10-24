@@ -1,6 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
 <!--
+  Arbor Hills Monitor — Two-Cluster Thermal Map
+  Copyright (c) 2026 Trisha Kunst
+
+  Code:          SPDX-License-Identifier: MIT
+  Data & charts: SPDX-License-Identifier: CC-BY-4.0
+
+  You may embed, reproduce, and adapt this visualization royalty-free.
+  Attribution: "Arbor Hills Monitor — arborhillsmonitor.org"
+  Full terms: https://opensource.org/license/mit  and
+              https://creativecommons.org/licenses/by/4.0/
+-->
+<!--
   MAINTENANCE NOTE: a button-free copy of this map lives at ../thermal-map-embed/
   for iframe embedding (e.g. an external blog). The DATA files (spatial-data.js,
   parcels.js) are SHARED between the two pages, so data rebuilds propagate to both
@@ -122,6 +134,12 @@
     aside.open{transform:translateX(0)}
     #panelToggle{display:inline-block}
   }
+  footer.license-foot{flex:0 0 auto;padding:7px 20px;border-top:1px solid var(--line);
+    background:var(--panel);font-size:12px;color:var(--muted);text-align:center}
+  footer.license-foot a{color:var(--accent);text-decoration:none}
+  footer.license-foot a:hover{text-decoration:underline}
+  /* Chrome/Safari draw a focus box around a clicked Leaflet polygon's bounding box; keep it for keyboard focus only. */
+  .leaflet-interactive:focus:not(:focus-visible){outline:none}
 </style>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
@@ -187,6 +205,10 @@
       <h3>Hottest in view</h3>
       <div id="top" style="font-size:13px"></div>
     </div>
+    <div class="stat">
+      <h3>Hot wells not on the map</h3>
+      <div id="unmapped" style="font-size:13px"></div>
+    </div>
     <div class="stat legend">
       <h3>Legend</h3>
       <div><span class="pill dot-east"></span>Eastern cluster (hot core)</div>
@@ -199,6 +221,8 @@
     <div class="note" id="foot"></div>
   </aside>
 </div>
+
+<footer class="license-foot">Source: <a href="https://arborhillsmonitor.org/" target="_blank" rel="noopener">Arbor Hills Monitor</a> &middot; <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY-4.0</a></footer>
 
 <script src="leaflet.js"></script>
 <script src="spatial-data.js"></script>
@@ -261,6 +285,9 @@ map.on("moveend zoomend", writeHash);
 
 const overlay = L.layerGroup().addTo(map);
 
+// SEC-009: every value from spatial-data.js / parcels.js is escaped before it is
+// inserted as HTML (innerHTML, Leaflet tooltips). Plain text renders identically.
+const esc = v => String(v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
 function tip(m, html){ m.bindTooltip(html, {direction:"top", offset:[0,-2], sticky:true}); return m; }
 
 function build(){
@@ -288,17 +315,17 @@ function build(){
   overlay.clearLayers();
   // real Section-13 current-landfill parcels (Washtenaw County GIS): GFL-owned + Salem-Township-owned
   L.polygon(PARCELS.gfl.ring, {color:"#22e0ef",weight:3,opacity:0.95,fillColor:"#22e0ef",fillOpacity:0.07})
-    .bindTooltip(`GFL-owned parcel, ${PARCELS.gfl.acres} ac`,{sticky:true}).addTo(overlay);
+    .bindTooltip(`GFL-owned parcel, ${esc(PARCELS.gfl.acres)} ac`,{sticky:true}).addTo(overlay);
   L.polygon(PARCELS.salem.ring, {color:"#e05cc8",weight:2,opacity:0.95,fillColor:"#e05cc8",fillOpacity:0.07})
-    .bindTooltip(`Salem Township-owned parcel, ${PARCELS.salem.acres} ac`,{sticky:true}).addTo(overlay);
+    .bindTooltip(`Salem Township-owned parcel, ${esc(PARCELS.salem.acres)} ac`,{sticky:true}).addTo(overlay);
   // Section-12 proposed-expansion parcel (GFL-owned), dashed = not yet built
   if(showExp){
     L.polygon(PARCELS.expansion.ring, {color:"#ffd24a",weight:2.5,opacity:0.95,dashArray:"7 6",fillColor:"#caa020",fillOpacity:0.22})
-      .bindTooltip(`Expansion parcel: GFL-owned land, Section 12, ${PARCELS.expansion.acres} ac`,{sticky:true}).addTo(overlay);
+      .bindTooltip(`Expansion parcel: GFL-owned land, Section 12, ${esc(PARCELS.expansion.acres)} ac`,{sticky:true}).addTo(overlay);
   }
   // schools (orange markup); Ridge Wood dashed = roughly hand-drawn (approx.)
   Object.values(SCHOOLS).forEach(s=>{
-    const label = s.name + (s.note?`<br>(${s.note})`:"");
+    const label = esc(s.name) + (s.note?`<br>(${esc(s.note)})`:"");
     L.polygon(s.ring, {color:"#f0932b",weight:2,opacity:0.95,dashArray:s.approx?"6 5":null,
       fillColor:"#f0932b",fillOpacity:0.4})
       .bindTooltip(label, {className:"school-label",permanent:true,direction:"center"}).addTo(overlay);
@@ -317,13 +344,13 @@ function build(){
   if(showCtx){
     D.context.forEach(w=>{
       tip(L.circleMarker([w.lat,w.lon],{radius:3.5,color:"#0e1a27",weight:1,opacity:0.85,
-        fillColor:"#c7d6e6",fillOpacity:0.75}), `${w.id}<br>peak ${w.peak==null?"n/a":w.peak+"°F"}`).addTo(overlay);
+        fillColor:"#c7d6e6",fillOpacity:0.75}), `${esc(w.id)}<br>peak ${w.peak==null?"n/a":esc(w.peak)+"°F"}`).addTo(overlay);
     });
   }
   // perimeter monitors
   D.perimeter.forEach(p=>{
     tip(L.circleMarker([p.lat,p.lon],{radius:6,color:"#7fd1ff",weight:1.5,
-      fillColor:"#7fd1ff",fillOpacity:0.5}), `${p.station}: perimeter air monitor`).addTo(overlay);
+      fillColor:"#7fd1ff",fillOpacity:0.5}), `${esc(p.station)}: perimeter air monitor`).addTo(overlay);
   });
   // Ridge Wood Elementary H2S air monitor; coordinate read from Google Maps imagery
   // (the small equipment enclosure on the school property, east of the parking lot)
@@ -337,11 +364,11 @@ function build(){
       const yrs = Object.keys(w.years);
       let pk = yrs.length ? yrs.reduce((a,b)=> w.years[b]>w.years[a] ? b : a) : null;
       if(pk && w.years[pk] !== w.peak) pk = null;   // peak came from an unlisted year → don't assert one
-      const temp = overall ? `peak ${w.peak}°F${pk?` (${pk})`:""}`
-                           : `${w.years[yr]}°F · ${yr}`;
+      const temp = overall ? `peak ${esc(w.peak)}°F${pk?` (${esc(pk)})`:""}`
+                           : `${esc(w.years[yr])}°F · ${yr}`;
       tip(L.circleMarker([w.lat,w.lon],{radius:radFor(w.peak),color:"#0b0f14",weight:0.8,
         fillColor:color,fillOpacity:0.9}),
-        `<b>${w.id}</b><br>${temp}${w.exact?"":"<br><i>position approx (rebore)</i>"}`).addTo(overlay);
+        `<b>${esc(w.id)}</b><br>${temp}${w.exact?"":"<br><i>position approx (rebore)</i>"}`).addTo(overlay);
     });
   }
   drawHot(westWells,"#f0932b");
@@ -380,11 +407,19 @@ function build(){
   const pool = [...eastWells.map(w=>({...w,side:"E"})), ...westWells.map(w=>({...w,side:"W"}))]
     .sort((a,b)=>b.peak-a.peak).slice(0,6);
   document.getElementById("top").innerHTML = pool.map(w=>
-    `<div class="row"><span><span class="pill dot-${w.side==="E"?"east":"west"}"></span>${w.id}</span>`
-    +`<span>${w.peak}°F</span></div>`).join("") || "<span style='color:var(--muted)'>none</span>";
+    `<div class="row"><span><span class="pill dot-${w.side==="E"?"east":"west"}"></span>${esc(w.id)}</span>`
+    +`<span>${esc(w.peak)}°F</span></div>`).join("") || "<span style='color:var(--muted)'>none</span>";
+  // wells with no published coordinates (data: D.unplaceable) are listed here so
+  // their readings stay visible; the record high (AHWW16R6, 182.5°F) is one of them.
+  const unpl = (D.unplaceable||[]).slice().sort((a,b)=>b.peak-a.peak);
+  const recordPeak = Math.max(...D.runA.wells.map(w=>w.peak), ...D.runB.wells.map(w=>w.peak), ...unpl.map(u=>u.peak));
+  document.getElementById("unmapped").innerHTML = unpl.map(u=>
+    `<div class="row"><span>${esc(u.id)}</span><span>${esc(u.peak)}°F${u.peak_year?` (${esc(u.peak_year)})`:""}</span></div>`
+    +(u.peak===recordPeak?`<div style="color:var(--muted);font-size:12px;margin:-2px 0 4px">Highest wellhead reading in the 2021–2026 record</div>`:"")).join("")
+    +`<div style="color:var(--muted);font-size:12px;margin-top:4px">No published well coordinates, so these wells can't be placed on the map.</div>`;
   document.getElementById("foot").innerHTML =
-    `${RUN.n_placed}/${RUN.n_hot} ever-hot wells placed · ${D.context.length} other located wells for context.`
-    +` Clusters: single-linkage at 400 ft. Coordinates: operator tuning table ∪ Well Master List. Generated ${D.generated}.`;
+    `${esc(RUN.n_placed)}/${esc(RUN.n_hot)} ever-hot wells placed · ${D.context.length} other located wells for context.`
+    +` Clusters: single-linkage at 400 ft. Coordinates: operator tuning table ∪ Well Master List. Generated ${esc(D.generated)}.`;
 }
 
 // controls

@@ -38,6 +38,17 @@ layout break is far more likely to persist than a network blip, and letting it
 go quiet behind a baseline would hide a real EGLE format change forever (the
 same silent-stall class ADR 014's liveness guard exists to catch).
 
+PER-ITEM ISOLATION: each of the 7 items (3 csv:SRN, 1 folder:N2688, 3 notice:SRN)
+is diffed/recorded/alerted in its own try/except — a Sheets read raise (state-
+reads-raise, ADR 018/023) or any other failure on ONE item is logged (class-only,
+never the raw exception string — it can embed the spreadsheet id) and the run
+continues to the next item, returning exit 1 at the end rather than crashing
+mid-run and losing every item after the one that failed. `_all_baselined`'s
+batched read (one source's keys at once, inside each `except RopFetchError`
+handler) is deliberately left OUTSIDE this isolation — a failure there fails the
+whole run, since there is nothing smaller to isolate without paying N separate
+full-tab reads.
+
 GATED on rop.enabled (false by default). A brand-new poller against a live
 external system ships disabled and a human flips it on (overnight-coder
 procedure). Until enabled: true is on main, every run is a quiet no-op.
@@ -66,6 +77,7 @@ import drive_client as dc
 import sheet_writer as sw
 import rop_client as rc
 import email_alerts as ea
+import snapshot_exporter as se
 from config_loader import load_config
 
 
@@ -240,12 +252,17 @@ def summarize_notice_change(old: dict, new: dict, srn: str = "N2688") -> tuple[s
     return "changed (mention status unchanged, context text shifted)", new.get("context", "")
 
 
-def format_change_body(label: str, note: str, body: str) -> str:
-    """The change-alert email body. Pure — unit-tested."""
+def format_change_body(label: str, url: str, note: str, body: str) -> str:
+    """The change-alert email body. Pure — unit-tested. `url` is the one actual
+    EGLE source this item was fetched from (the CSV, the N2688 folder, or the
+    statewide notice PDF — see run()'s three call sites) — same "Link:" idiom
+    civicclerk_watcher/gfl_info_site_watcher/pfas_watcher already use, so a
+    reader can jump straight to the source instead of hunting for it."""
     shown = body or "(no further detail — see the ROP Watch tab's Snapshot JSON.)"
     return (
         "A watched Arbor Hills ROP (air Title V permit) source changed.\n\n"
         f"Source:  {label}\n"
+        f"Link:    {url}\n"
         f"Change:  {note}\n\n"
         "What changed:\n\n"
         f"{shown}\n\n"
@@ -261,17 +278,24 @@ def format_change_body(label: str, note: str, body: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _diff_and_record(sheets, sheet_id, today, key, label, snap, summarize_fn,
-                      cfg, recipients) -> str:
+def _diff_and_record(sheets, sheet_id, today, key, label, source_url, snap,
+                      summarize_fn, cfg, recipients) -> str:
     """Baseline/compare/record/alert for one item. Returns "baseline" / "changed"
     / "unchanged". Durable row FIRST, alert email SECOND (best-effort) — a crash
     between them loses the alert, never the record, and never re-fires next run
-    since the row already advanced the stored hash."""
+    since the row already advanced the stored hash. `source_url` is the one
+    EGLE URL this item's data actually came from (passed straight through to
+    format_change_body); it never varies per-call within one source (`run()`
+    always fetches with rop_client's own default URL), so it isn't part of the
+    snapshot/hash — only the alert email cares about it."""
     new_hash = snapshot_hash(snap)
     snap_json = json.dumps(snap, sort_keys=True, ensure_ascii=False)
     last = sw.last_rop_snapshot(sheets, sheet_id, key)
 
     if last is None:
+        # Tier-1 Drive copy BEFORE the Tier-2 row (ADR 072 write order; a
+        # best-effort no-op unless data_lifecycle.snapshot_export is enabled).
+        se.export_snapshot(snap_json, se.snapshot_name("rop", key, today, new_hash), cfg)
         sw.append_rop_watch_row(sheets, sheet_id, today, key, label, "baseline",
                                  new_hash, "initial snapshot (no alert)", _now(), snap_json)
         print(f"[rop-watch] {label}: baseline recorded ({new_hash}).")
@@ -284,6 +308,7 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, summarize_fn,
 
     old_snap = _load_json(last_snap_json, {})
     note, body = summarize_fn(old_snap, snap)
+    se.export_snapshot(snap_json, se.snapshot_name("rop", key, today, new_hash), cfg)
     sw.append_rop_watch_row(sheets, sheet_id, today, key, label, "changed",
                              new_hash, note, _now(), snap_json)
     print(f"[rop-watch] {label}: CHANGED ({last_hash} -> {new_hash}; {note}).")
@@ -295,7 +320,7 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, summarize_fn,
     # notice check) — the "partial activation block, not all-or-nothing"
     # guarantee (ADR 017 section 4) applies per ITEM, not just per SOURCE.
     try:
-        email_body = format_change_body(label, note, body)
+        email_body = format_change_body(label, source_url, note, body)
     except Exception as e:  # noqa: BLE001 — formatting is best-effort; row is recorded
         print(f"[rop-watch] {label}: change recorded but alert body FORMATTING failed: {e}")
         return "changed"
@@ -369,10 +394,18 @@ def run() -> int:
     if rows is not None:
         for srn in srns:
             label = f"ROP monthly report — {srn}"
-            snap = facility_snapshot(rows, srn)
-            result = _diff_and_record(sheets, sheet_id, today, f"csv:{srn}", label,
-                                       snap, summarize_facility_change, cfg, recipients)
-            counts[result] += 1
+            try:
+                snap = facility_snapshot(rows, srn)
+                result = _diff_and_record(sheets, sheet_id, today, f"csv:{srn}", label,
+                                           rc.DEFAULT_CSV_URL, snap,
+                                           summarize_facility_change, cfg, recipients)
+                counts[result] += 1
+            except Exception as e:  # noqa: BLE001 — isolate ONE item's failure (a
+                # strict-reader raise on last_rop_snapshot, or anything else); the
+                # other csv/folder/notice items below still get processed this run.
+                print(f"[rop-watch] csv:{srn}: FAILED this run ({type(e).__name__}) "
+                      "— other items continue.")
+                exit_code = 1
 
     # --- 2. N2688 folder listing --------------------------------------------
     entries = None
@@ -390,11 +423,17 @@ def run() -> int:
             exit_code = 1
 
     if entries is not None:
-        snap = folder_snapshot(entries)
-        result = _diff_and_record(sheets, sheet_id, today, "folder:N2688",
-                                   "N2688 ROP renewal folder — file list", snap,
-                                   summarize_folder_change, cfg, recipients)
-        counts[result] += 1
+        try:
+            snap = folder_snapshot(entries)
+            result = _diff_and_record(sheets, sheet_id, today, "folder:N2688",
+                                       "N2688 ROP renewal folder — file list",
+                                       rc.DEFAULT_N2688_FOLDER_URL, snap,
+                                       summarize_folder_change, cfg, recipients)
+            counts[result] += 1
+        except Exception as e:  # noqa: BLE001 — isolate this item's failure
+            print(f"[rop-watch] folder:N2688: FAILED this run "
+                  f"({type(e).__name__}) — other items continue.")
+            exit_code = 1
 
     # --- 3. Statewide public-notice PDF (one item per target SRN) -----------
     # One notice:<SRN> item per facility, NOT a single N2688 check — a renewal for
@@ -421,14 +460,20 @@ def run() -> int:
 
     if per_srn is not None:
         for srn in srns:
-            mentioned, context = per_srn[srn]
-            snap = notice_snapshot(mentioned, context)
-            result = _diff_and_record(
-                sheets, sheet_id, today, f"notice:{srn}",
-                f"Statewide ROP public notice — {srn} mention", snap,
-                lambda o, n, _srn=srn: summarize_notice_change(o, n, _srn),
-                cfg, recipients)
-            counts[result] += 1
+            try:
+                mentioned, context = per_srn[srn]
+                snap = notice_snapshot(mentioned, context)
+                result = _diff_and_record(
+                    sheets, sheet_id, today, f"notice:{srn}",
+                    f"Statewide ROP public notice — {srn} mention",
+                    rc.DEFAULT_NOTICE_URL, snap,
+                    lambda o, n, _srn=srn: summarize_notice_change(o, n, _srn),
+                    cfg, recipients)
+                counts[result] += 1
+            except Exception as e:  # noqa: BLE001 — isolate ONE item's failure
+                print(f"[rop-watch] notice:{srn}: FAILED this run "
+                      f"({type(e).__name__}) — other items continue.")
+                exit_code = 1
 
     print(f"[rop-watch] done — {counts['changed']} changed, {counts['baseline']} "
           f"baselined, {counts['unchanged']} unchanged.")

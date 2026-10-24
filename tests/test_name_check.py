@@ -33,7 +33,25 @@ def test_heuristic_skips_org_and_term_parentheticals():
     for txt in ("EGLE SSO (Subsurface Oxidation) Records-Review Email",
                 "'Notation - WDS Link' reference record (Waste Data System)",
                 "Air Quality Division (Jackson District Office)",
-                "compliance filing (GFL)"):
+                "compliance filing (GFL)",
+                "Sauk Trail Hills Landfill sampling letter (Republic Services)"):
+        assert nc.find_heuristic_hits(txt) == [], txt
+
+
+def test_heuristic_skips_the_2026_09_28_hand_curated_titles():
+    # findings-feed run 36466849245 blocked on these real hand-curated titles --
+    # each token is a genuine org/place/agency, not a person.
+    for txt in (
+        "Water well and pump record for the landfill's Type II supply well #1 at the "
+        "administrative building (Well ID 81000002425, WSSN 2046881), Salem Twp Sec. 13 "
+        "(printed August 7, 2026) -- Source: EGLE (Wellogic)",
+        "Wayne County Health Department letter to a Six Mile Rd (Northville Twp) household "
+        "with its November 14, 1985 well results",
+        "MDNR Jackson District response to Wayne County Health Department's November 19, "
+        "1985 letter on the Holloway Landfill property, November 25, 1985",
+        "MDNR acknowledgement of Holloway Sand & Gravel's comments on the Act 307 Priority "
+        "List screening of the Holloway Landfill, October 15, 1985",
+    ):
         assert nc.find_heuristic_hits(txt) == [], txt
 
 

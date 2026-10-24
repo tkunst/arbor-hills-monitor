@@ -7,6 +7,7 @@ real rows from the 2026-07-15 EPA ROP Monthly Report (the handoff's baseline) �
 not fabricated data — so the M3333-exclusion and column-layout assumptions are
 pinned against the real export shape."""
 import copy
+import re
 
 import fitz
 import pytest
@@ -236,6 +237,59 @@ def test_notice_mentions_srn_true_with_context():
     assert "N2688" in context
 
 
+# --- per-entity context extraction (the N1504 false-alert fix) --------------
+#
+# The real statewide PDF lists dozens of unrelated facilities, each as a
+# "<Name> - SRN: <code>" header line followed by that facility's own notice
+# text. The bug: a fixed ±150-char window around the match shifts whenever an
+# EARLIER facility's entry changes length, producing a spurious "context text
+# shifted" alert for an SRN whose own entry never changed (live on N1504:
+# 2026-08-24/09-22/10-01, all showing the identical already-closed comment
+# period). The fix bounds the context by the document's own per-entity
+# delimiter instead of a byte offset.
+
+def _entry(name: str, srn: str, body: str) -> str:
+    return f"{name} - SRN: {srn} \n{body}\n"
+
+
+def test_notice_context_unaffected_by_an_earlier_unrelated_entrys_length():
+    # THE regression test: padding ONLY the entry BEFORE our target SRN must
+    # not change our target's own extracted context at all.
+    target = _entry("Arbor Hills Energy, LLC", "N1504",
+                     "EGLE is holding a public comment period from August 10, 2026 "
+                     "until September 9, 2026 on a draft ROP renewal.")
+    short_pdf = make_notice_pdf(_entry("Corteva LLC", "B4942", "Short notice text.") + target)
+    long_pdf = make_notice_pdf(
+        _entry("Corteva LLC", "B4942",
+               "A much longer notice with extra unrelated padding text that "
+               "changes nothing about N1504's own entry below it at all.")
+        + target)
+    _, short_ctx = rc.notice_mentions_srn(short_pdf, "N1504")
+    _, long_ctx = rc.notice_mentions_srn(long_pdf, "N1504")
+    assert short_ctx == long_ctx
+    assert "N1504" in short_ctx and "September 9, 2026" in short_ctx
+
+
+def test_notice_context_does_not_bleed_into_the_next_entry():
+    pdf = make_notice_pdf(
+        _entry("Corteva LLC", "B4942", "First company's own notice text.")
+        + _entry("Arbor Hills Energy, LLC", "N1504", "Second company's own notice text.")
+        + _entry("Third Company", "P9999", "Third company's own notice text, unique marker ZZQQ."))
+    _, context = rc.notice_mentions_srn(pdf, "N1504")
+    assert "Second company" in context
+    assert "ZZQQ" not in context and "Third Company" not in context
+
+
+def test_notice_context_falls_back_to_window_without_an_entry_header():
+    # No "<Name> - SRN: <code>" line at all (an unexpected layout) -- must
+    # still return SOME context via the old fixed-window extraction, not an
+    # empty string, since `mentioned` is already True from the generic search.
+    pdf = make_notice_pdf("Some free-form mention of N1504 with no entry header format.")
+    mentioned, context = rc.notice_mentions_srn(pdf, "N1504")
+    assert mentioned is True
+    assert "N1504" in context
+
+
 def test_notice_mentions_srn_false_when_absent():
     pdf = make_notice_pdf("Public notice for an unrelated facility N9999.")
     mentioned, context = rc.notice_mentions_srn(pdf, "N2688")
@@ -435,8 +489,10 @@ def test_summarize_notice_change_names_the_passed_srn():
 
 
 def test_format_change_body_has_essentials():
-    body = rw.format_change_body("ROP monthly report — N2688", "task/version row updated", "~ CHANGED foo")
+    body = rw.format_change_body("ROP monthly report — N2688", "http://x/EPA Monthly Report.csv",
+                                  "task/version row updated", "~ CHANGED foo")
     assert "N2688" in body and "task/version row updated" in body and "CHANGED foo" in body
+    assert "http://x/EPA Monthly Report.csv" in body
 
 
 # --- gate (pure) ------------------------------------------------------------
@@ -553,6 +609,7 @@ def test_csv_task_status_change_emails_full_recipient_list(monkeypatch):
     matches = [s for s in sent if "N2688" in s[0]]
     assert len(matches) == 1
     assert matches[0][2] is None   # None -> send_email resolves the full alert_recipients list
+    assert rw.rc.DEFAULT_CSV_URL in matches[0][1]   # alert links to the actual EGLE source
 
 
 def test_folder_new_file_emails_alert(monkeypatch):
@@ -569,6 +626,7 @@ def test_folder_new_file_emails_alert(monkeypatch):
     matches = [s for s in sent if "folder" in s[0].lower() or "N2688" in s[0]]
     assert len(matches) == 1
     assert "Draft Renewal" in matches[0][1]
+    assert rw.rc.DEFAULT_N2688_FOLDER_URL in matches[0][1]
 
 
 def test_notice_mention_appearing_emails_alert(monkeypatch):
@@ -578,6 +636,7 @@ def test_notice_mention_appearing_emails_alert(monkeypatch):
                         lambda url=None, timeout=60: _notice_bytes_ok(mentioned=True))
     assert rw.run() == 0
     assert any("public comment window" in body for _, body, _ in sent)
+    assert any(rw.rc.DEFAULT_NOTICE_URL in body for _, body, _ in sent)
 
 
 def test_notice_p1488_appearing_emails_alert_the_exact_gap(monkeypatch):
@@ -711,10 +770,10 @@ def test_alert_formatting_crash_on_one_item_does_not_abort_the_run(monkeypatch):
 
     real_format = rw.format_change_body
 
-    def _boom(label, note, body):
+    def _boom(label, url, note, body):
         if label == "ROP monthly report — N2688":
             raise RuntimeError("simulated formatting bug")
-        return real_format(label, note, body)
+        return real_format(label, url, note, body)
 
     monkeypatch.setattr(rw, "format_change_body", _boom)
 
@@ -766,3 +825,93 @@ def test_last_rop_snapshots_batches_into_one_tab_read(monkeypatch):
     assert result["csv:N1504"] == ("h2", "{}")
     assert result["csv:P1488"] is None
     assert len(calls) == 1  # one tab read for three keys, not three
+
+
+def _arm_tab_failure(fake, boom_tab):
+    """Wrap fake._values.get so a read of `boom_tab` raises; every other tab
+    read behaves normally. Exercises the REAL _tab_rows_strict path end to
+    end, rather than monkeypatching sheet_writer's reader function away."""
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+
+def _arm_tab_failures_at(fake, boom_tab, fail_on_calls):
+    """Wrap fake._values.get so every call number in `fail_on_calls`
+    (1-indexed, counted per-tab) against `boom_tab` raises; every other call
+    behaves normally. Used to pin per-item isolation: every item's read hits
+    the same tab, so this is how specific items' reads fail while the rest
+    still succeed."""
+    real_get = fake._values.get
+    counter = {"n": 0}
+    fail_on_calls = set(fail_on_calls)
+
+    def _maybe_boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            counter["n"] += 1
+            if counter["n"] in fail_on_calls:
+                raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _maybe_boom_get
+
+
+def test_run_returns_1_without_writing_when_rop_watch_read_fails(monkeypatch):
+    """state-reads-raise + per-item isolation: a transient read failure on the
+    ROP Watch tab is now caught PER ITEM (no longer propagated out of run())
+    -- but it must still redden the run (exit 1) rather than reading as
+    "never snapshotted" (which would silently re-baseline every item,
+    erasing an un-alerted status change), and write nothing."""
+    fake, sent = _wire(monkeypatch, ROP_CFG)
+    assert rw.run() == 0        # baseline run: 7 rows
+    baseline_rows = _rows(fake)
+    assert len(baseline_rows) == 7
+
+    _arm_tab_failure(fake, sw.TAB_ROP)
+    assert rw.run() == 1                  # isolated per item, but the run is red
+    assert _rows(fake) == baseline_rows   # no new/changed rows written
+    assert sent == []
+
+
+def test_one_items_read_failure_isolates_others_still_processed(monkeypatch):
+    """Per-item isolation: csv:N1504's Sheets read (call ordinal 2 of 7) fails
+    on the second run, but notice:N2688 (call ordinal 5, independent item, SAME
+    run) still records its real change and alerts -- proving the failure
+    doesn't abort the rest of run()."""
+    fake, sent = _wire(monkeypatch, ROP_CFG)
+    assert rw.run() == 0
+    baseline_rows = _rows(fake)
+    assert len(baseline_rows) == 7
+
+    _arm_tab_failures_at(fake, sw.TAB_ROP, fail_on_calls={2})  # csv:N1504
+    monkeypatch.setattr(rw.rc, "fetch_notice_pdf",
+                         lambda url=None, timeout=60: _notice_bytes_ok(mentioned=True))
+    assert rw.run() == 1
+    rows = _rows(fake)
+    assert len(rows) == 8                 # only notice:N2688's new row
+    new_row = rows[-1]
+    assert new_row[1] == "notice:N2688" and new_row[3] == "changed"
+    assert len(sent) == 1
+
+
+def test_item_failure_logs_class_only_not_the_raw_message(monkeypatch, capsys):
+    """Rule: a per-item isolation catch must never print the raw exception
+    string -- an HttpError's str() embeds the request URI, which contains the
+    spreadsheet id -- only the exception class name."""
+    fake, sent = _wire(monkeypatch, ROP_CFG)
+    assert rw.run() == 0
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == sw.TAB_ROP:
+            raise RuntimeError("SENTINEL-DO-NOT-PRINT https://sheets.googleapis.com/SID")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+    assert rw.run() == 1
+    out = capsys.readouterr().out
+    assert "SENTINEL-DO-NOT-PRINT" not in out
+    assert "RuntimeError" in out

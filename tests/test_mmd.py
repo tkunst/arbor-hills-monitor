@@ -8,6 +8,7 @@ canonicalization and hidden-record (show=0) assumptions are pinned against the
 real service shape."""
 import copy
 import json
+import re
 
 import pytest
 
@@ -384,3 +385,90 @@ def test_alert_email_failure_still_records_the_row(monkeypatch):
     monkeypatch.setattr(mw.ea, "send_email", _mail_boom)
     assert mw.run() == 0                     # best-effort alert never fails the run
     assert any(r[3] == "changed" for r in _data_rows(fake))  # durable row landed
+
+
+def _arm_tab_failure(fake, boom_tab):
+    """Wrap fake._values.get so a read of `boom_tab` raises; every other tab
+    read behaves normally (the test_rop.py idiom)."""
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+
+def _arm_tab_failures_at(fake, boom_tab, fail_on_calls):
+    """Wrap fake._values.get so every call number in `fail_on_calls`
+    (1-indexed, counted per-tab) against `boom_tab` raises; every other call
+    behaves normally."""
+    real_get = fake._values.get
+    counter = {"n": 0}
+    fail_on_calls = set(fail_on_calls)
+
+    def _maybe_boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            counter["n"] += 1
+            if counter["n"] in fail_on_calls:
+                raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _maybe_boom_get
+
+
+def test_run_returns_1_without_writing_when_mmd_watch_read_fails(monkeypatch):
+    """state-reads-raise + per-item isolation: a transient read failure on the
+    MMD Watch tab is now caught PER WDSID (no longer propagated out of
+    run()) -- but it must still redden the run (exit 1), never silently
+    re-baseline, and write nothing."""
+    fake, sent = _wire(monkeypatch)
+    assert mw.run() == 0
+    baseline_rows = _data_rows(fake)
+    assert len(baseline_rows) >= 1
+
+    _arm_tab_failure(fake, sw.TAB_MMD)
+    assert mw.run() == 1                       # isolated per item, but the run is red
+    assert _data_rows(fake) == baseline_rows   # no new/changed rows written
+    assert sent == []
+
+
+def test_one_wdsids_read_failure_isolates_the_other(monkeypatch):
+    """Per-item isolation: mmd:475946 (ordinal 1) fails its Sheets read, but
+    mmd:465941 (ordinal 2, an independent item in the SAME run) still records
+    its real change (the compost area appearing) and alerts."""
+    fake, sent = _wire(monkeypatch)
+    assert mw.run() == 0
+    assert len(_data_rows(fake)) == 2
+
+    appeared = baseline_records() + [dict(_LANDFILL_ATTRS, OID=999, wdsid=465941,
+                                          legalsitename="ARBOR HILLS COMPOST AREA")]
+    monkeypatch.setattr(mw.mc, "fetch_records",
+                        lambda wdsids=None, url=None, timeout=60: copy.deepcopy(appeared))
+    _arm_tab_failures_at(fake, sw.TAB_MMD, fail_on_calls={1})  # mmd:475946
+    assert mw.run() == 1
+    rows = _data_rows(fake)
+    assert len(rows) == 3                      # only mmd:465941's new row
+    new_row = rows[-1]
+    assert new_row[1] == "mmd:465941" and new_row[3] == "changed"
+    assert len(sent) == 1 and "NOW APPEARS" in sent[0][1]
+
+
+def test_item_failure_logs_class_only_not_the_raw_message(monkeypatch, capsys):
+    """Rule: a per-item isolation catch must never print the raw exception
+    string -- an HttpError's str() embeds the request URI, which contains the
+    spreadsheet id -- only the exception class name."""
+    fake, sent = _wire(monkeypatch)
+    assert mw.run() == 0
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == sw.TAB_MMD:
+            raise RuntimeError("SENTINEL-DO-NOT-PRINT https://sheets.googleapis.com/SID")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+    assert mw.run() == 1
+    out = capsys.readouterr().out
+    assert "SENTINEL-DO-NOT-PRINT" not in out
+    assert "RuntimeError" in out
+    assert sent == []

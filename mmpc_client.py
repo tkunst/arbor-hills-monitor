@@ -25,6 +25,8 @@ and uploading to Drive is mmpc_archiver.py.
 """
 from __future__ import annotations
 
+import re
+import time
 import urllib.parse
 from typing import Iterator
 
@@ -47,6 +49,54 @@ def make_session() -> requests.Session:
     return s
 
 
+# CivicClerk's API intermittently read-times-out mid-pagination: observed
+# 2026-09-10 and 2026-09-14, a 30s timeout on a deep $skiptoken page failed the
+# whole civicclerk-archive run even though the very next scheduled run succeeded
+# with no change. Because a failed fetch RAISES (MMPCFetchError) rather than
+# returning a partial list — the "never mistake a truncated fetch for zero
+# documents" contract every caller here depends on — a single transient blip
+# aborts an entire mirror/watch. Retrying the GET a few times with exponential
+# backoff absorbs the momentary blip while a genuinely sustained outage still
+# surfaces (loudly) once the retries are exhausted.
+_GET_TIMEOUT = 30          # seconds per attempt (unchanged from the original)
+_GET_RETRIES = 3           # retries AFTER the first attempt -> up to 4 attempts
+_GET_BACKOFF_BASE = 1.0    # seconds; waits grow 1s, 2s, 4s between attempts
+
+
+def _get_with_retry(session, url, *, timeout=None, retries=None,
+                    sleep=time.sleep) -> requests.Response:
+    """GET `url`, retrying on a TRANSIENT network error (requests.RequestException
+    — read timeout, dropped connection) up to `retries` times with exponential
+    backoff, then returning the requests.Response. If every attempt fails the
+    LAST exception is re-raised unchanged, so each caller wraps it in
+    MMPCFetchError exactly as before — the retry is invisible to the failure
+    contract, and a genuinely sustained outage still raises.
+
+    `timeout`/`retries` default to the module constants and are resolved LIVE
+    (None -> _GET_TIMEOUT / _GET_RETRIES) rather than snapshotted as default-arg
+    values, so all three tunables (incl. _GET_BACKOFF_BASE, read live below)
+    behave consistently under a monkeypatch — no silent "patched the constant but
+    the default arg already captured the old value" footgun.
+
+    Deliberately narrow: only the network-level EXCEPTION is retried. A response
+    that arrives carrying a 4xx/5xx STATUS is returned as-is for the caller's own
+    `status_code != 200 -> MMPCFetchError` check (unchanged) — a 5xx is a
+    server-side condition distinct from the read-timeout this addresses, and
+    retrying it is out of scope. `sleep` is injectable purely so tests stay
+    hermetic (a no-op); production always uses time.sleep."""
+    timeout = _GET_TIMEOUT if timeout is None else timeout
+    retries = _GET_RETRIES if retries is None else retries
+    for attempt in range(retries + 1):
+        try:
+            return session.get(url, timeout=timeout)
+        except requests.RequestException:
+            if attempt >= retries:
+                raise  # exhausted — re-raise the last failure for the caller to wrap
+            sleep(_GET_BACKOFF_BASE * (2 ** attempt))
+    # Unreachable: retries >= 0, so the loop always returns or raises above.
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 def fetch_mmpc_files(session: requests.Session, category_id: int = 72) -> list[dict]:
     """Return one flat dict per published document across every MMPC event,
     newest first isn't guaranteed (API order is whatever the OData default is;
@@ -66,7 +116,7 @@ def fetch_mmpc_files(session: requests.Session, category_id: int = 72) -> list[d
             raise MMPCFetchError(f"@odata.nextLink loop detected at {url}")
         seen_urls.add(url)
         try:
-            r = session.get(url, timeout=30)
+            r = _get_with_retry(session, url)
         except requests.RequestException as e:
             raise MMPCFetchError(f"GET {url} failed: {e}") from e
         if r.status_code != 200:
@@ -82,7 +132,11 @@ def fetch_mmpc_files(session: requests.Session, category_id: int = 72) -> list[d
             event_name = ev.get("eventName", "")
             for f in ev.get("publishedFiles") or []:
                 file_id = f.get("fileId")
-                if file_id is None:
+                # SEC-007 (CWE-22): the id goes into temp paths, Drive names and
+                # the download URL, so only a real integer id is kept.
+                if isinstance(file_id, bool) or not isinstance(file_id, int):
+                    if file_id is not None:
+                        print("[civicclerk] skipped a published file with a non-integer fileId")
                     continue
                 out.append({
                     "file_id": file_id,
@@ -127,7 +181,7 @@ def fetch_category_events(session: requests.Session, category_id: int) -> list[d
             raise MMPCFetchError(f"@odata.nextLink loop detected at {url}")
         seen_urls.add(url)
         try:
-            r = session.get(url, timeout=30)
+            r = _get_with_retry(session, url)
         except requests.RequestException as e:
             raise MMPCFetchError(f"GET {url} failed: {e}") from e
         if r.status_code != 200:
@@ -158,7 +212,7 @@ def fetch_event(session: requests.Session, event_id) -> dict | None:
     quoted = urllib.parse.quote(f"id eq {event_id}")
     url = f"{_BASE}/Events?$filter={quoted}"
     try:
-        r = session.get(url, timeout=30)
+        r = _get_with_retry(session, url)
     except requests.RequestException as e:
         raise MMPCFetchError(f"GET event {event_id} failed: {e}") from e
     if r.status_code != 200:
@@ -179,6 +233,10 @@ def download_file_bytes(session: requests.Session, file_id, timeout: int = 60) -
     body downstream. Used by the keyword-scan feature (ADR 015 addendum), which
     only needs the text layer, never a Drive upload — mmpc_archiver.py's Mirror D
     keeps using download_file() below, unchanged."""
+    # SEC-007: the id is interpolated into the URL (and, by callers, temp paths
+    # and Drive names): refuse anything that isn't an integer.
+    if isinstance(file_id, bool) or not re.fullmatch(r"\d{1,12}", str(file_id)):
+        raise MMPCFetchError("download refused: non-integer fileId")
     url = f"{_BASE}/Meetings/GetMeetingFileStream(fileId={file_id},plainText=false)"
     try:
         r = session.get(url, timeout=timeout)

@@ -88,9 +88,10 @@ def cfemail_hex(email, key=0x42):
 
 
 class FakeResp:
-    def __init__(self, status, text):
+    def __init__(self, status, text, headers=None):
         self.status_code = status
         self.text = text
+        self.headers = headers or {}
 
 
 class Router:
@@ -121,7 +122,7 @@ class Router:
         return (f'<?xml version="1.0"?><sitemapindex><sitemap>'
                 f'<loc>{self.base}/page-sitemap.xml</loc></sitemap></sitemapindex>')
 
-    def get(self, url, headers=None, timeout=None):
+    def get(self, url, headers=None, timeout=None, **_kw):
         if url == f"{self.base}/sitemap.xml":
             return FakeResp(200 if self.sitemap_ok else 503,
                             self._index() if self.sitemap_ok else "err")
@@ -188,7 +189,7 @@ def test_discovery_never_fetches_cross_host_child_sitemap(monkeypatch):
     child = ('<?xml version="1.0"?><urlset>'
              '<url><loc>http://site.test/faq</loc></url></urlset>')
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, headers=None, timeout=None, **_kw):
         fetched.append(url)
         if url == f"{base}/sitemap.xml":
             return FakeResp(200, index)
@@ -433,6 +434,134 @@ def test_unchanged_second_run_is_noop(monkeypatch):
     gw.run()
     gw.run()
     assert len(_rows(fake)) == 2             # no new rows
+    assert sent == []
+
+
+def _arm_tab_failure(fake, boom_tab):
+    """Wrap fake._values.get so a read of `boom_tab` raises; every other tab
+    read behaves normally (the test_rop.py idiom)."""
+    real_get = fake._values.get
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+
+def test_run_raises_without_a_mass_rebaseline_when_the_watch_read_fails(monkeypatch):
+    """state-reads-raise: the THREE first-run-check reads
+    (gfl_info_site_tab_is_empty, all_gfl_info_site_urls, last_gfl_info_site_row)
+    now use the strict reader. A transient read failure on ANY of them must
+    propagate out of run() rather than reading as "first run ever" (a false
+    is_initial=True) or "never seen" -- either of which would silently
+    re-baseline every already-watched page, including ones already flagged
+    changed/removed, as if this were the launch run."""
+    r = _router_with_pages("/", "/faq", "/what-we-do")
+    fake, sent, appends = _wire(monkeypatch, r)
+    assert gw.run() == 0                      # real baseline: 3 pages
+    baseline_rows = _rows(fake)
+    assert len(baseline_rows) == 3
+
+    _arm_tab_failure(fake, sw.TAB_GFL_INFO_SITE)
+    with pytest.raises(RuntimeError):
+        gw.run()
+    assert _rows(fake) == baseline_rows        # no silent mass re-baseline
+
+
+def _arm_tab_failures_at(fake, boom_tab, fail_on_calls):
+    """Wrap fake._values.get so every call number in `fail_on_calls`
+    (1-indexed, counted per-tab) against `boom_tab` raises; every other call
+    (any tab, any other number) behaves normally. Used to pin per-item
+    isolation: with every page's read hitting the same tab/range, this is how
+    SPECIFIC pages' reads fail while the rest still succeed. Call numbers 1
+    and 2 are always the pre-loop gfl_info_site_tab_is_empty/
+    all_gfl_info_site_urls reads (unisolated by design); per-URL reads start
+    at call 3, in check_set's sorted order."""
+    real_get = fake._values.get
+    counter = {"n": 0}
+    fail_on_calls = set(fail_on_calls)
+
+    def _maybe_boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == boom_tab:
+            counter["n"] += 1
+            if counter["n"] in fail_on_calls:
+                raise RuntimeError("HTTP 503")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _maybe_boom_get
+
+
+def test_one_urls_read_failure_isolates_others_still_processed(monkeypatch):
+    """Per-item isolation (Phase 1 only): root's ("/") Sheets read fails on the
+    second run, but /faq (an independent page, same run) is still
+    diffed/recorded/alerted normally -- proving the failure doesn't abort the
+    rest of run(). check_set sorts "http://site.test/" before
+    "http://site.test/faq", so root is the 3rd tab read this run (after the 2
+    pre-loop reads) and /faq is the 4th."""
+    r = _router_with_pages("/", "/faq")
+    fake, sent, _ = _wire(monkeypatch, r)
+    assert gw.run() == 0
+    baseline_rows = _rows(fake)
+    assert len(baseline_rows) == 2
+
+    r.set_page("/faq", build_page("FAQ UPDATED."))
+    _arm_tab_failures_at(fake, sw.TAB_GFL_INFO_SITE, fail_on_calls={3})
+    assert gw.run() == 1
+    rows = _rows(fake)
+    assert len(rows) == 3                      # only /faq's changed row was written
+    changed = [row for row in rows if row[3] == gw._CHANGE_CHANGED]
+    assert len(changed) == 1 and changed[0][2] == "http://site.test/faq"
+    assert len(sent) == 1
+
+
+def test_anti_stampede_counts_read_failed_candidates_too(monkeypatch):
+    """Invariant trap: a partial Sheets outage during Phase 1 must not let a
+    REAL stampede slip under the cap. 5 pages would look new at once (cap=3),
+    but only 3 of them (a, b, c) successfully classify this run -- d and e's
+    reads fail. The failure-aware count (3 classified + 2 read-failed = 5 >
+    cap) must still trigger the silent re-baseline/no-alert path for a, b, c --
+    NOT individually alert 3 of them just because the cap looks satisfied by
+    the successfully-classified subset alone."""
+    r = _router_with_pages("/", "/faq")
+    fake, sent, _ = _wire(monkeypatch, r, cfg=_cfg(max_new=3))
+    assert gw.run() == 0                       # baseline the two seeds
+
+    for p in ("/a", "/b", "/c", "/d", "/e"):
+        r.set_page(p, build_page(f"Page {p}."))
+    # check_set sorted: root(1), a(2), b(3), c(4), d(5), e(6), faq(7) -- tab
+    # reads: 1,2 = pre-loop (unisolated); 3=root, 4=a, 5=b, 6=c, 7=d, 8=e, 9=faq.
+    _arm_tab_failures_at(fake, sw.TAB_GFL_INFO_SITE, fail_on_calls={7, 8})  # d, e
+    assert gw.run() == 1
+    assert sent == []                          # no individual new-page alerts
+    rebaselined = {row[2] for row in _rows(fake)
+                   if row[3] == "baseline" and "re-baseline" in row[6]}
+    assert rebaselined == {"http://site.test/a", "http://site.test/b",
+                            "http://site.test/c"}
+
+
+def test_item_failure_logs_class_only_not_the_raw_message(monkeypatch, capsys):
+    """Rule: a per-item isolation catch must never print the raw exception
+    string -- an HttpError's str() embeds the request URI, which contains the
+    spreadsheet id -- only the exception class name."""
+    r = _router_with_pages("/", "/faq")
+    fake, sent, _ = _wire(monkeypatch, r)
+    assert gw.run() == 0
+    real_get = fake._values.get
+    counter = {"n": 0}
+
+    def _boom_get(spreadsheetId, range):
+        if re.match(r"'([^']+)'", range).group(1) == sw.TAB_GFL_INFO_SITE:
+            counter["n"] += 1
+            if counter["n"] == 3:   # root's read -- the first per-URL read
+                raise RuntimeError(
+                    "SENTINEL-DO-NOT-PRINT https://sheets.googleapis.com/SID")
+        return real_get(spreadsheetId=spreadsheetId, range=range)
+    fake._values.get = _boom_get
+
+    assert gw.run() == 1
+    out = capsys.readouterr().out
+    assert "SENTINEL-DO-NOT-PRINT" not in out
+    assert "RuntimeError" in out
     assert sent == []
 
 
@@ -720,3 +849,77 @@ def test_new_email_contact_surfaced_in_change(monkeypatch):
     body = sent[0][1]
     assert "NEW EMAIL CONTACT" in body
     assert "info@gfl.example" in body
+
+
+# --- SEC-005: redirects are followed by hand, same host only -----------------
+
+def _redirecting_get(table, fetched):
+    def get(url, headers=None, timeout=None, allow_redirects=True, **_kw):
+        assert allow_redirects is False  # requests must never follow on its own
+        fetched.append(url)
+        return table[url]
+    return get
+
+
+def test_fetch_page_follows_a_same_host_redirect(monkeypatch):
+    body = "<main id=SiteContent>" + "x" * 600 + "</main>"
+    fetched = []
+    monkeypatch.setattr(gc.requests, "get", _redirecting_get({
+        "https://site.test/faq": FakeResp(301, "", {"Location": "/faq/"}),
+        "https://site.test/faq/": FakeResp(200, body)}, fetched))
+    assert gc.fetch_page("https://site.test/faq") == body
+    assert fetched == ["https://site.test/faq", "https://site.test/faq/"]
+
+
+@pytest.mark.parametrize("location", [
+    "http://169.254.169.254/latest/meta-data/",   # off-host (metadata endpoint)
+    "https://evil.test/faq",                       # off-host
+    "http://site.test/faq",                        # https -> http downgrade
+    "file:///etc/passwd",
+    "https://site.test:8443/faq",                  # different port
+    "https://site.test@evil.test/faq",             # userinfo trick
+    "https://site.test./faq",                      # trailing dot
+    "https://site.test.evil.test/faq",             # sibling host
+    "//evil.test/faq",                             # protocol-relative
+])
+def test_fetch_page_refuses_an_off_host_or_downgrading_redirect(monkeypatch, location):
+    fetched = []
+    monkeypatch.setattr(gc.requests, "get", _redirecting_get({
+        "https://site.test/faq": FakeResp(302, "", {"Location": location})}, fetched))
+    with pytest.raises(gc.GFLInfoSiteFetchError):
+        gc.fetch_page("https://site.test/faq")
+    assert fetched == ["https://site.test/faq"]  # the redirect target is never fetched
+
+
+def test_fetch_page_gives_up_after_too_many_redirects(monkeypatch):
+    monkeypatch.setattr(gc.requests, "get", lambda url, **k: FakeResp(
+        302, "", {"Location": url + "x"}))
+    with pytest.raises(gc.GFLInfoSiteFetchError):
+        gc.fetch_page("https://site.test/a")
+
+
+def test_discovery_fetch_refuses_an_off_host_redirect(monkeypatch):
+    fetched = []
+    monkeypatch.setattr(gc.requests, "get", _redirecting_get({
+        "https://site.test/sitemap.xml": FakeResp(301, "", {"Location": "http://10.0.0.1/s.xml"})},
+        fetched))
+    assert gc._fetch_text_or_none("https://site.test/sitemap.xml", 5) is None
+    assert fetched == ["https://site.test/sitemap.xml"]
+
+
+def test_fetch_page_carries_cookies_across_a_same_host_redirect(monkeypatch):
+    body = "<main id=SiteContent>" + "x" * 600 + "</main>"
+    seen = []
+
+    class _R(FakeResp):
+        pass
+
+    first = _R(301, "", {"Location": "/faq/"})
+    first.cookies = gc.requests.cookies.cookiejar_from_dict({"cf_clearance": "v"})
+
+    def get(url, headers=None, timeout=None, allow_redirects=True, cookies=None):
+        seen.append(dict(cookies or {}))
+        return first if url.endswith("/faq") else FakeResp(200, body)
+    monkeypatch.setattr(gc.requests, "get", get)
+    assert gc.fetch_page("https://site.test/faq") == body
+    assert seen == [{}, {"cf_clearance": "v"}]

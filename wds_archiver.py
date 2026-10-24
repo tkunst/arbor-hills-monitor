@@ -23,6 +23,16 @@ last snapshot taken (state["wds_snapshot_hashes"][collection][page]) — so a
 nightly run doesn't pile up ~5-20 near-identical files every single night
 forever. The job still polls nightly; it just doesn't always write.
 
+PER-ITEM ISOLATION: each collection's fetch/upload/_meta-write is isolated in
+its own try/except — a Sheets _meta read/write raise (state-reads-raise,
+ADR 023) or a per-page Drive-upload failure on ONE collection is logged
+(class-only, never the raw exception string) and the run continues to the next
+collection, returning exit 1 at the end rather than a silent green run. (A
+per-page upload failure used to be swallowed into exit 0 before this change —
+see the per-page except below.) The pre-loop `read_meta` call stays
+unisolated: it feeds every collection's hash-skip check before any upload
+happens, so a failure there fails the whole run.
+
 GATED ON wds.enabled, same as every other Stream C entry point (check_wds,
 the WDS tabs, the historical dump). The workflow is scheduled from day one and
 GOAUTH_* is already configured (the sibling PDF archiver has used it for
@@ -116,6 +126,7 @@ def run() -> int:
     # share the Utilization page). The snapshot is per PAGE, so record each distinct
     # URL once — the first collection that owns it snapshots it, later siblings skip.
     uploaded = skipped = 0
+    exit_code = 0
     snapshotted_urls: set[str] = set()
     for name in enabled_collections:
         if name not in ww.COLLECTIONS:
@@ -160,8 +171,14 @@ def run() -> int:
                 col_hashes[key] = h
                 uploaded += 1
                 print(f"  ok  {name} page {i}: snapshot uploaded ({h})")
-            except Exception as e:  # noqa: BLE001
-                print(f"  ERR {name} page {i}: {e}")
+            except Exception as e:  # noqa: BLE001 — isolate ONE page's failure;
+                # this was already swallowed into a green run before this change
+                # (the same bug class PR #135 fixed in pfas_pws_watcher) — now
+                # marks the run red too, without changing the skip-and-continue
+                # behavior itself.
+                print(f"  ERR {name} page {i}: ({type(e).__name__}) — other "
+                      "pages/collections continue.")
+                exit_code = 1
             finally:
                 if os.path.exists(local):
                     os.remove(local)
@@ -172,13 +189,29 @@ def run() -> int:
         # this exact read-then-write, but this shrinks the clobber window from
         # "the whole run" to "one read+write per collection" instead of writing
         # a single stale copy of everything at the very end.
-        fresh_meta = sw.read_meta(sheets, sheet_id)
-        fresh_meta["wds_snapshot_hashes"] = hashes
-        sw.write_meta(sheets, sheet_id, fresh_meta)
+        #
+        # PER-ITEM ISOLATION: a strict-reader raise here (state-reads-raise,
+        # ADR 023) or any other failure isolates to THIS collection — the
+        # others still get their own read+write below. Because `hashes` is one
+        # shared in-memory dict across the whole loop, a collection whose own
+        # write fails here can still have its hash persisted later by a
+        # SUBSEQUENT collection's write (which re-reads _meta fresh and writes
+        # back the WHOLE accumulated `hashes` dict) — so this collection's
+        # already-uploaded pages are not re-uploaded next run purely because of
+        # this failure (idempotent by filename regardless), but its hash cache
+        # may or may not have actually advanced depending on what runs after it.
+        try:
+            fresh_meta = sw.read_meta(sheets, sheet_id)
+            fresh_meta["wds_snapshot_hashes"] = hashes
+            sw.write_meta(sheets, sheet_id, fresh_meta)
+        except Exception as e:  # noqa: BLE001 — isolate ONE collection's meta write
+            print(f"[wds-archive] {name}: _meta read/write FAILED "
+                  f"({type(e).__name__}) — other collections continue.")
+            exit_code = 1
 
     print(f"[wds-archive] {uploaded} page(s) snapshotted (content changed), "
           f"{skipped} unchanged (skipped) this run.")
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

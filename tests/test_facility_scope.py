@@ -1,0 +1,242 @@
+"""Facility scope (ADR 064): a `scope: related` facility's documents land ONLY in
+the Related Documents tab — never New/Historical Documents, Evidence by Risk,
+Measurements, Compliance Deadlines, the Sunday digest or an urgent alert — and
+the eight neighbor-development sites are not collected at all.
+"""
+import pytest
+
+import backfill as bf
+import nsite_client as nc
+import sheet_writer as sw
+import watcher as w
+from config_loader import load_config
+from egle_doc_parser import ParsedDoc
+
+CORE = {"RA", "WRD", "N1504", "P1488", "N2688", "AHLI", "NAPR", "PTI87", "BORE15", "MITIG"}
+RELATED = {"JCDR", "CHUBB18", "CHUBBRD", "WIP25", "BDPH", "WIP19", "FP89", "ASB26", "CMP23", "H95"}
+DROPPED = {"COLDR", "TOLL", "RIDGE", "PTEX", "LUMB", "DTE5M", "FMCOM", "NTWP"}
+
+
+# --- config pin -------------------------------------------------------------
+
+def test_config_facility_scopes_are_pinned():
+    # Adding a facility means classifying it on purpose: update this test.
+    facs = load_config()["facilities"]
+    scope = {f["srn"]: f.get("scope", "core") for f in facs}
+    assert {s for s, v in scope.items() if v == "core"} == CORE
+    assert {s for s, v in scope.items() if v == "related"} == RELATED
+    assert set(scope.values()) <= set(nc.FACILITY_SCOPES)
+
+
+def test_dropped_sites_left_documents_but_keep_profile_watches():
+    cfg = load_config()
+    assert not DROPPED & {f["srn"] for f in cfg["facilities"]}
+    # Still in the shared registry, so the Trisha-only profile watches go on.
+    assert DROPPED <= {s["srn"] for s in cfg["nsite_sites"]}
+
+
+# --- nsite_client tagging ---------------------------------------------------
+
+def _cfg(*facs):
+    return {"facilities": list(facs)}
+
+
+def test_fetch_all_documents_tags_scope(monkeypatch):
+    monkeypatch.setattr(nc, "fetch_site_documents",
+                        lambda session, fid: [{"doc_id": f"d{fid}"}])
+    docs = nc.fetch_all_documents(None, _cfg(
+        {"srn": "A", "name": "Core", "id": "1"},
+        {"srn": "B", "name": "Near", "id": "2", "scope": "related"},
+    ))
+    assert [d["facility_scope"] for d in docs] == ["core", "related"]
+
+
+def test_fetch_all_documents_refuses_unknown_scope(monkeypatch):
+    fetched = []
+    monkeypatch.setattr(nc, "fetch_site_documents",
+                        lambda session, fid: fetched.append(fid) or [])
+    with pytest.raises(ValueError, match="relatd"):
+        nc.fetch_all_documents(None, _cfg(
+            {"srn": "A", "name": "Core", "id": "1"},
+            {"srn": "B", "name": "Near", "id": "2", "scope": "relatd"},
+        ))
+    assert fetched == []  # validated before any fetch
+
+
+# --- sheet_writer routing ---------------------------------------------------
+
+def _parsed(severity="routine"):
+    return ParsedDoc(
+        summary="s", key_data_point="k", doc_type="evidence", risks=["R5"],
+        severity=severity, full_text="", ocr_applied=False, page_count=1,
+        measurements=[{"metric": "temperature", "value": 150, "unit": "F",
+                       "basis": "measured"}],
+    )
+
+
+def test_feed_tab_for():
+    assert sw.feed_tab_for({"facility_scope": "related"}, sw.TAB_NEW) == sw.TAB_RELATED
+    assert sw.feed_tab_for({"facility_scope": "core"}, sw.TAB_NEW) == sw.TAB_NEW
+    assert sw.feed_tab_for({}, sw.TAB_HISTORICAL) == sw.TAB_HISTORICAL
+
+
+def test_related_tab_is_created_and_purgeable():
+    assert sw._TAB_HEADERS[sw.TAB_RELATED] == sw.FEED_HEADERS
+    assert sw.TAB_RELATED in {t for t, _ in sw._PURGE_TABS}
+
+
+def test_write_related_document_touches_only_related_tab(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sw, "append_rows",
+                        lambda svc, sid, tab, rows: calls.append((tab, list(rows))))
+    sw.write_related_document(None, "SID", _parsed(), {"facility_name": "Near"}, "L")
+    assert [t for t, _ in calls] == [sw.TAB_RELATED]
+
+
+def test_stub_row_for_related_doc_goes_to_related_tab(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sw, "append_rows",
+                        lambda svc, sid, tab, rows: calls.append(tab))
+    sw.write_stub_row(None, "SID", {"facility_scope": "related"}, "L", "bad",
+                      feed_tab=sw.TAB_NEW)
+    assert calls == [sw.TAB_RELATED]
+
+
+# --- watcher / backfill end to end -----------------------------------------
+
+DOCS = [
+    {"doc_id": "core1", "document_name": "Core filing", "date_filed": "2026-10-07",
+     "facility_srn": "N2688", "facility_name": "Arbor Hills Landfill",
+     "facility_scope": "core"},
+    {"doc_id": "rel1", "document_name": "Neighbor filing", "date_filed": "2026-10-07",
+     "facility_srn": "JCDR", "facility_name": "Johnson Creek", "facility_scope": "related"},
+]
+
+
+ALIAS_SENTINEL = {"AHWW0177": "AHWW177R"}
+REGISTRY_SENTINEL = __import__("well_aliases").WellRegistry(
+    __import__("types").MappingProxyType(dict(ALIAS_SENTINEL)), frozenset(),
+    frozenset({"AHMP0002"}), __import__("types").MappingProxyType({}))
+
+
+def _wire(monkeypatch, mod, severity):
+    """Fake every external call `mod.run()` makes; return the recorded writes."""
+    rec = {"append": [], "urgent": [], "deadlines": [], "woi": [], "processed": []}
+    state = {"processed": {}, "skipped": {}, "errors": {}, "pending_digest": [],
+             "pending_urgent_recap": []}
+    cfg = {"anthropic_model": "m", "large_doc_page_threshold": 1,
+           "large_doc_max_keyword_pages": 1, "classification_max_tokens": 1,
+           "backfill_batch_size": 50, "watcher": {"max_new_docs_per_run": 25}}
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.setattr(mod, "load_config", lambda: cfg)
+    monkeypatch.setattr(mod.dc, "sheets_service", lambda: object())
+    monkeypatch.setattr(mod.sw, "ensure_tabs", lambda *a: None)
+    monkeypatch.setattr(mod.sw, "read_state", lambda *a: state)
+    monkeypatch.setattr(mod.sw, "write_meta", lambda *a: None)
+    monkeypatch.setattr(mod.sw, "rebuild_risk_register_tab", lambda *a: None)
+    monkeypatch.setattr(mod.sw, "mark_processed",
+                        lambda svc, sid, did, payload, ts: rec["processed"].append(did))
+    monkeypatch.setattr(mod.sw, "append_rows",
+                        lambda svc, sid, tab, rows: rec["append"].append((tab, list(rows))))
+    monkeypatch.setattr(mod.sw, "write_compliance_deadlines",
+                        lambda *a, **k: rec["deadlines"].append(a))
+    monkeypatch.setattr(mod.nc, "make_session", lambda: None)
+    monkeypatch.setattr(mod.nc, "fetch_all_documents", lambda s, c: [dict(d) for d in DOCS])
+    monkeypatch.setattr(mod.nc, "download_pdf", lambda *a: None)
+    rec["alias_kwargs"] = []
+    monkeypatch.setattr(mod.well_aliases, "load_alias_map", lambda *a, **k: ALIAS_SENTINEL)
+    monkeypatch.setattr(mod.well_aliases, "load_registry", lambda *a, **k: REGISTRY_SENTINEL)
+
+    def fake_parse(*a, **k):
+        rec["alias_kwargs"].append(("parse", k.get("well_alias_map")))
+        return _parsed(severity)
+    monkeypatch.setattr(mod, "parse_document", fake_parse)
+    monkeypatch.setattr(mod.av, "mirror_one_now", lambda *a, **k: "LINK-" + a[3]["doc_id"])
+    monkeypatch.setattr(mod.woi_router, "route_measurements",
+                        lambda parsed, local, d, cfg, **k: rec["woi"].append(d["doc_id"])
+                        or rec["alias_kwargs"].append(("route", k.get("alias_map")))
+                        or rec.setdefault("registry_kwargs", []).append(k.get("registry")))
+    if mod is w:
+        monkeypatch.setattr(w, "_today", lambda: __import__("datetime").date(2026, 10, 7))
+        monkeypatch.setattr(w.ea, "is_urgent", lambda parsed, cfg: parsed.severity == "urgent")
+        monkeypatch.setattr(w.ea, "send_urgent_alert",
+                            lambda parsed, d, link, cfg: rec["urgent"].append(d["doc_id"]) or True)
+    return rec, state
+
+
+def _tabs_for(rec, doc_id):
+    return {tab for tab, rows in rec["append"] for r in rows if f"LINK-{doc_id}" in r}
+
+
+@pytest.mark.parametrize("severity", ["routine", "urgent"])
+def test_watcher_routes_related_doc_to_related_tab_only(monkeypatch, severity):
+    rec, state = _wire(monkeypatch, w, severity)
+    assert w.run() == 0
+    assert _tabs_for(rec, "rel1") == {sw.TAB_RELATED}
+    assert sw.TAB_NEW in _tabs_for(rec, "core1")
+    assert sw.TAB_MEASUREMENTS in _tabs_for(rec, "core1")
+    assert rec["woi"] == ["core1"]
+    assert "rel1" not in rec["urgent"]
+    links = [r["link"] for r in state["pending_digest"] + state["pending_urgent_recap"]]
+    assert "LINK-rel1" not in links and "LINK-core1" in links
+    assert sorted(rec["processed"]) == ["core1", "rel1"]
+    # ADR 068: the run-start alias map reaches BOTH the parser and the WOI router
+    assert ("route", ALIAS_SENTINEL) in rec["alias_kwargs"]
+    assert {v is ALIAS_SENTINEL for _, v in rec["alias_kwargs"]} == {True}
+    # ADR 068 addendum 2026-10-22: the run-start registry reaches the router
+    assert rec["registry_kwargs"] == [REGISTRY_SENTINEL]
+
+
+def test_backfill_routes_related_doc_to_related_tab_only(monkeypatch):
+    rec, _ = _wire(monkeypatch, bf, "routine")
+    for env in ("RETRY_POISONED", "RETRY_DOC_IDS", "FORCE_REPROCESS_DOC_IDS",
+                "FORCE_REPROCESS_APPLY"):
+        monkeypatch.delenv(env, raising=False)
+    assert bf.run() == 0
+    assert _tabs_for(rec, "rel1") == {sw.TAB_RELATED}
+    assert sw.TAB_HISTORICAL in _tabs_for(rec, "core1")
+    assert rec["woi"] == ["core1"]
+    assert sorted(rec["processed"]) == ["core1", "rel1"]
+    assert ("route", ALIAS_SENTINEL) in rec["alias_kwargs"]
+    assert {v is ALIAS_SENTINEL for _, v in rec["alias_kwargs"]} == {True}
+    assert rec["registry_kwargs"] == [REGISTRY_SENTINEL]
+
+
+# --- review flags reach the log on both paths (coder:woi-layout-guard) ------
+
+@pytest.mark.parametrize("mod", [w, bf])
+def test_review_flags_logged_for_core_docs_only(monkeypatch, mod):
+    import review_flags as rf
+    rec, _ = _wire(monkeypatch, mod, "routine")
+    for env in ("RETRY_POISONED", "RETRY_DOC_IDS", "FORCE_REPROCESS_DOC_IDS",
+                "FORCE_REPROCESS_APPLY"):
+        monkeypatch.delenv(env, raising=False)
+    monkeypatch.setattr(mod.sw, "ensure_tab", lambda *a: None)
+    monkeypatch.setenv("GSHEET_ID_PRIVATE", "PRIV")
+    monkeypatch.setattr(rf, "_is_public_sheet", lambda svc, sid: False)
+
+    def fake_route(parsed, local, d, cfg, **k):
+        k["review_flags"].append(rf.flag(rf.KIND_WOI_TEMP, value_f=526.8, well_id="AHWW0402"))
+        return None
+    monkeypatch.setattr(mod.woi_router, "route_measurements", fake_route)
+    assert mod.run() == 0
+    flag_rows = [r for tab, rows in rec["append"] if tab == rf.TAB_REVIEW_FLAGS for r in rows]
+    assert [(r[1], r[3], r[4]) for r in flag_rows] == [("core1", rf.KIND_WOI_TEMP, "526.8")]
+    assert sorted(rec["processed"]) == ["core1", "rel1"]
+
+
+def test_watcher_gives_well_watch_the_readings_without_probes(monkeypatch):
+    # ADR 068 addendum 2026-10-22: well_watch gets routed["well_readings"]
+    rec, _ = _wire(monkeypatch, w, "routine")
+    routed = {"summary": [], "readings": ["WELL", "PROBE"], "well_readings": ["WELL"],
+              "n_probes": 1}
+    monkeypatch.setattr(w.woi_router, "route_measurements", lambda *a, **k: routed)
+    monkeypatch.setattr(w.woi_router, "apply_deterministic_headline", lambda *a, **k: None)
+    monkeypatch.setattr(w.woi_router, "recheck_severity_floor", lambda *a, **k: None)
+    monkeypatch.setattr(w.sw, "ensure_woi_tabs", lambda *a, **k: None)
+    monkeypatch.setattr(w.sw, "write_woi_summary", lambda *a, **k: None)
+    seen = []
+    monkeypatch.setattr(w.well_watch, "check_and_alert",
+                        lambda readings, d, link, cfg: seen.append(list(readings)) or 0)
+    assert w.run() == 0
+    assert seen == [["WELL"]]

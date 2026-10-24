@@ -34,6 +34,14 @@ schema fields gone) is ALWAYS loud regardless of baseline status — a service
 reorganization persists across runs, and going quiet would hide it forever
 (same posture as rop_watcher's RopParseError).
 
+PER-ITEM ISOLATION: each watched wdsid is diffed/recorded/alerted in its own
+try/except — a Sheets read raise (state-reads-raise, ADR 018/023) or any other
+failure on ONE wdsid is logged (class-only, never the raw exception string) and
+the run continues to the next wdsid, returning exit 1 at the end rather than
+crashing mid-loop. The fetch-failure path's `last_mmd_snapshots` batched
+all-baselined check stays unisolated — one read for the whole wdsid set, so a
+failure there fails the whole run.
+
 GATED on mmd.enabled. Runs daily (see .github/workflows/mmd-watch.yml).
 
 NO DRIVE / OAUTH (same scope call as pfas_watcher/rop_watcher, ADR 012): the
@@ -58,6 +66,7 @@ import drive_client as dc
 import sheet_writer as sw
 import mmd_client as mc
 import email_alerts as ea
+import snapshot_exporter as se
 from config_loader import load_config
 
 # Human-readable names for the default watched wdsids (label context only —
@@ -215,6 +224,9 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg,
     last = sw.last_mmd_snapshot(sheets, sheet_id, key)
 
     if last is None:
+        # Tier-1 Drive copy BEFORE the Tier-2 row (ADR 072 write order; a
+        # best-effort no-op unless data_lifecycle.snapshot_export is enabled).
+        se.export_snapshot(snap_json, se.snapshot_name("mmd", key, today, new_hash), cfg)
         sw.append_mmd_watch_row(sheets, sheet_id, today, key, label, "baseline",
                                 new_hash, "initial snapshot (no alert)", _now(), snap_json)
         print(f"[mmd-watch] {label}: baseline recorded ({new_hash}).")
@@ -227,6 +239,7 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg,
 
     old_snap = _load_json(last_snap_json, {})
     note, body = summarize_change(old_snap, snap)
+    se.export_snapshot(snap_json, se.snapshot_name("mmd", key, today, new_hash), cfg)
     sw.append_mmd_watch_row(sheets, sheet_id, today, key, label, "changed",
                             new_hash, note, _now(), snap_json)
     print(f"[mmd-watch] {label}: CHANGED ({last_hash} -> {new_hash}; {note}).")
@@ -281,15 +294,23 @@ def run() -> int:
         return 1
 
     counts = {"baseline": 0, "changed": 0, "unchanged": 0}
+    exit_code = 0
     for wdsid in wdsids:
-        snap = wdsid_snapshot(records, wdsid)
-        result = _diff_and_record(sheets, sheet_id, today, f"mmd:{wdsid}",
-                                  item_label(wdsid), snap, cfg, recipients)
-        counts[result] += 1
+        try:
+            snap = wdsid_snapshot(records, wdsid)
+            result = _diff_and_record(sheets, sheet_id, today, f"mmd:{wdsid}",
+                                      item_label(wdsid), snap, cfg, recipients)
+            counts[result] += 1
+        except Exception as e:  # noqa: BLE001 — isolate ONE wdsid's failure (a
+            # strict-reader raise on last_mmd_snapshot, or anything else); the
+            # other watched wdsids still get processed this run.
+            print(f"[mmd-watch] mmd:{wdsid}: FAILED this run "
+                  f"({type(e).__name__}) — other items continue.")
+            exit_code = 1
 
     print(f"[mmd-watch] done — {counts['changed']} changed, {counts['baseline']} "
           f"baselined, {counts['unchanged']} unchanged.")
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

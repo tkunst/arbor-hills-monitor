@@ -438,6 +438,7 @@ def render_page(open_entries: list[dict], closed_entries: list[dict],
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Public Comment Periods &middot; Arbor Hills Monitor</title>
 <meta name="description" content="Michigan EGLE public-comment periods for the Arbor Hills Landfill complex -- open now with deadlines, and closed with outcomes.">
+<link rel="canonical" href="https://arborhillsmonitor.org/public-comment/">
 <link rel="stylesheet" href="../style.css">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
@@ -446,7 +447,7 @@ def render_page(open_entries: list[dict], closed_entries: list[dict],
 <body>
 <div class="wrap">
 
-<p><a href="../index.html">&larr; Arbor Hills Monitor</a></p>
+<p><a href="../">&larr; Arbor Hills Monitor</a></p>
 
 <h1>Public Comment Periods</h1>
 {intro}<p class="findings-count">{n_open} open for comment now</p>
@@ -458,7 +459,7 @@ def render_page(open_entries: list[dict], closed_entries: list[dict],
 {_COUNTDOWN_SCRIPT}
 
 <footer class="site-footer">
-<p>Generated {_esc(generated_at)} from Michigan EGLE's public notices. This is an informational summary, not a legal notice; always confirm the deadline and details on EGLE's own portal before relying on them. An independent project. All source data is public regulatory filings from Michigan EGLE.</p>
+<p>Generated {_esc(generated_at)} from Michigan EGLE's public notices. This is an informational summary, not a legal notice; always confirm the deadline and details on EGLE's own portal before relying on them. An independent project of Landfill Records Project LLC. All source data is public regulatory filings from Michigan EGLE.</p>
 </footer>
 
 </div>

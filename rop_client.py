@@ -244,10 +244,64 @@ def fetch_notice_pdf(url: str = DEFAULT_NOTICE_URL, timeout: int = 60) -> bytes:
     return body
 
 
+# Each facility's own entry in the statewide notice is a self-delimiting block:
+# a "<Name> - SRN: <code>" header line (en-dash/em-dash/hyphen all seen live),
+# immediately followed by that facility's own notice text, immediately followed
+# by the NEXT facility's header line (or a page break, or end of document).
+# Verified live against the real ~22,000-char / 24-page PDF: this pattern
+# matches all 68 entries present, cleanly, with no false matches.
+_ENTRY_START_RE = re.compile(r"^(.*?)\s*[-–—]\s*SRN:\s*([A-Z0-9]+)\s*$", re.MULTILINE)
+# The repeating page header/footer ("Title V Renewable Operating Permit (ROP)
+# / Public Notice Documents / Page N") that PDF text extraction splices into
+# the middle of an entry's own text whenever that entry straddles a page
+# break — stripped so it never pollutes one SRN's context with another page's
+# boilerplate, and so a page break landing a character or two differently
+# (itself a product of EARLIER content's length) can't perturb the hash.
+_PAGE_BOILERPLATE_RE = re.compile(
+    r"Title V Renewable Operating Permit \(ROP\)\s*\nPublic Notice Documents\s*\nPage\s*\d+\s*\n?"
+)
+# Generous enough to hold a real single-entry block in full (observed ~300-350
+# chars collapsed) with headroom, while still bounding the one structural edge
+# case this can't fully clean up on its own: an SRN that happens to be the
+# LAST entry in a notice-type section, where the "next entry" lookup instead
+# lands on a different section's long explanatory header paragraph.
+_CONTEXT_MAX_CHARS = 400
+
+
+def _notice_context(text: str, srn: str, fallback_match: re.Match) -> str:
+    """The context text for one SRN's mention — that SRN's own per-entity
+    notice block (`_ENTRY_START_RE`'s header line through to the next entry's
+    header line), not a fixed character window around the match. The
+    statewide PDF lists dozens of unrelated facilities; a fixed-offset window
+    shifts whenever any EARLIER facility's entry changes length (one added or
+    removed elsewhere in the document), producing a spurious "context text
+    shifted" alert even though THIS SRN's own entry is unchanged — confirmed
+    live on N1504 (three such false alerts, 2026-08-24/09-22/10-01, each
+    showing the identical already-closed Aug 10 - Sep 9 comment period).
+    Bounding by the document's own per-entity delimiter instead means the
+    captured text only changes when the content actually about this SRN
+    changes. Falls back to the old fixed ±150-char window if the header-line
+    pattern isn't found for this SRN (an unexpected PDF layout) — `mentioned`
+    is already decided by the caller's generic whole-word search, so this
+    fallback only affects the informational context text, never detection."""
+    entries = list(_ENTRY_START_RE.finditer(text))
+    idx = next((i for i, e in enumerate(entries) if e.group(2) == srn), None)
+    if idx is None:
+        start, end = max(0, fallback_match.start() - 150), min(len(text), fallback_match.end() + 150)
+        return " ".join(text[start:end].split())
+    block_end = entries[idx + 1].start() if idx + 1 < len(entries) else len(text)
+    block = _PAGE_BOILERPLATE_RE.sub(" ", text[entries[idx].start():block_end])
+    cleaned = " ".join(block.split())
+    if len(cleaned) <= _CONTEXT_MAX_CHARS:
+        return cleaned
+    return cleaned[:_CONTEXT_MAX_CHARS].rstrip() + "..."
+
+
 def notice_mentions_srn(pdf_bytes: bytes, srn: str = "N2688") -> tuple[bool, str]:
     """(mentioned, context): whether `srn` appears in the notice's text (a
     whole-word match, so N2688 doesn't accidentally match inside a longer token),
-    and a short surrounding-text excerpt when it does (empty string otherwise).
+    and a short, stable surrounding-text excerpt when it does (empty string
+    otherwise) — see `_notice_context`.
 
     Raises RopFetchError if the bytes can't actually be parsed as a PDF — the
     `%PDF` magic-byte check in fetch_notice_pdf only confirms the HEADER; a
@@ -272,5 +326,4 @@ def notice_mentions_srn(pdf_bytes: bytes, srn: str = "N2688") -> tuple[bool, str
     m = re.search(rf"\b{re.escape(srn)}\b", text)
     if not m:
         return False, ""
-    start, end = max(0, m.start() - 150), min(len(text), m.end() + 150)
-    return True, " ".join(text[start:end].split())
+    return True, _notice_context(text, srn, m)

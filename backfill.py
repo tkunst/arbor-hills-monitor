@@ -27,23 +27,67 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 from datetime import datetime
 
 import drive_client as dc
 import sheet_writer as sw
 import nsite_client as nc
-import retry_policy as rp
-import woi_router
-import archiver as av
+import well_aliases
+import woi_router  # noqa: F401 — tests patch through this module name
+import archiver as av  # noqa: F401 — tests patch through this module name
+import poison_stub
+import doc_pipeline as dp
 from egle_doc_parser import parse_document
-from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS, RISK_NAMES
+from risk_register import RISK_REGISTER
 from config_loader import load_config
 
-MAX_ERRORS_PER_DOC = 3  # give up on a poison doc after this many failures
+MAX_ERRORS_PER_DOC = poison_stub.MAX_ERRORS_PER_DOC  # give up on a poison doc after this many failures
 
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def _http_status(exc: BaseException):
+    """The HTTP status an exception carries, duck-typed the way
+    sheet_writer._is_absent_tab_error does (googleapiclient's HttpError exposes
+    `.status_code` and `.resp.status`; a bare RuntimeError has neither)."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "resp", None), "status", None)
+    return status if isinstance(status, int) and not isinstance(status, bool) else None
+
+
+def _is_rate_limited(exc: BaseException) -> bool:
+    return _http_status(exc) == 429
+
+
+# How long to sleep so the Sheets per-minute read quota ("Read requests per
+# minute per user", 60) has rolled over. A full minute plus one second covers
+# the window whether Google counts it from the wall-clock minute or as a
+# sliding 60 s behind the last request; `execute(num_retries=...)` alone only
+# backs off for seconds.
+QUOTA_WAIT_S = 61
+
+_sleep = time.sleep  # module attribute so tests can stub the minute-long wait
+
+
+def _waiting_out_quota(fn, *args, **kwargs):
+    """Call fn(*args, **kwargs); on a Sheets 429 (and ONLY a 429) log the wait,
+    sleep to the next minute window and retry ONCE. A second 429, or any other
+    error, propagates exactly as before (coder:backfill-purge-read-cache).
+    `googleapiclient`'s own num_retries backoff runs first inside fn; this is
+    the one extra, minute-long wait layered on top of it."""
+    try:
+        return fn(*args, **kwargs)
+    except Exception as e:  # noqa: BLE001 — only a 429 is handled; the rest re-raise
+        if not _is_rate_limited(e):
+            raise
+        print(f"[backfill] Sheets quota hit (HTTP 429) in {getattr(fn, '__name__', fn)}: "
+              f"waiting {QUOTA_WAIT_S}s for the next minute window, then retrying once.")
+        _sleep(QUOTA_WAIT_S)
+        return fn(*args, **kwargs)
 
 
 def _retry_poisoned() -> bool:
@@ -158,18 +202,46 @@ def count_remaining(docs: list, state: dict) -> int:
     )
 
 
+def _backfill_payload(parsed, d: dict) -> dict:
+    """The backfill's _state payload (adds ocr_applied/page_count to the
+    watcher's fields)."""
+    return {
+        "document_name": d["document_name"],
+        "date_filed": d["date_filed"],
+        "doc_type": parsed.doc_type,
+        "severity": parsed.severity,
+        "risks": parsed.risks,
+        "ocr_applied": parsed.ocr_applied,
+        "page_count": parsed.page_count,
+        # ADR 065 — see watcher.py's _processed_payload for why these
+        # are carried (archiver.py's nightly catch-up run needs them).
+        "document_date": d.get("document_date", ""),
+        "egle_title": d.get("egle_title") or d["document_name"],
+    }
+
+
 def run() -> int:
     cfg = load_config()
     sheet_id = os.environ["GSHEET_ID"]
     model = cfg["anthropic_model"]
     batch_size = cfg["backfill_batch_size"]
-    page_threshold = cfg["large_doc_page_threshold"]
-    max_kw_pages = cfg["large_doc_max_keyword_pages"]
+    # Fail fast on a missing key (doc_pipeline reads these per document).
+    cfg["large_doc_page_threshold"], cfg["large_doc_max_keyword_pages"]
+    # ADR 065: see watcher.py's identical block for the no-op-when-empty note.
+    generic_exact, generic_prefixes, title_overrides = dp.title_config(cfg)
+    # ADR 068: the curated well-ID alias map, loaded ONCE here — outside the
+    # per-doc try — so a missing/malformed map fails the run red instead of
+    # becoming per-doc poison strikes or a silent WOI-routing fallback.
+    well_alias_map = well_aliases.load_alias_map()
+    # ADR 068 addendum 2026-10-22: the registry (probes, ruled wells) and the
+    # check that the generated alias map still equals it. Both fail loudly.
+    well_registry = well_aliases.load_registry()
+    well_aliases.check_alias_map_matches(well_alias_map, well_registry)
 
     sheets = dc.sheets_service()
-    sw.ensure_tabs(sheets, sheet_id)
+    _waiting_out_quota(sw.ensure_tabs, sheets, sheet_id)
 
-    state = sw.read_state(sheets, sheet_id)
+    state = _waiting_out_quota(sw.read_state, sheets, sheet_id)
 
     session = nc.make_session()
     docs = nc.fetch_all_documents(session, cfg)
@@ -199,18 +271,34 @@ def run() -> int:
     batch = todo[:batch_size]
     tmp = tempfile.gettempdir()
     processed_this_run = 0
-    # Reused across every doc this run so the OAuth handshake + Archived PDFs
-    # index read happen at most once — see archiver.mirror_one_now().
-    drive_state = {}
+    ctx = dp.RunContext(
+        cfg=cfg, sheets=sheets, sheet_id=sheet_id, session=session, model=model,
+        well_alias_map=well_alias_map, well_registry=well_registry, parse=parse_document,
+        now=_now,
+        generic_exact=generic_exact, generic_prefixes=generic_prefixes,
+        title_overrides=title_overrides)
+    # The backfill's half of the shared per-document pipeline (doc_pipeline.py):
+    # Historical Documents feed, no alerts (backfill never calls is_urgent, so
+    # re-extracting history fires nothing stale), error count cleared on success.
+    job = dp.Job(name="backfill", feed_tab=sw.TAB_HISTORICAL, payload=_backfill_payload,
+                 clear_errors_on_success=True)
+    # FORCE_REPROCESS: one read cache for the whole run, so the purge preview /
+    # purge reads the metadata, the archive index and each purge tab ONCE (~8
+    # reads) instead of once per doc (~8 x 58 = the 429 of run 39699682035).
+    # It is (re)filled HERE, outside process_one_doc, so a 429 on a fill reaches
+    # the once-only quota wait instead of being swallowed as a per-doc skip.
+    purge_cache = sw.PurgeReadCache() if force_ids else None
 
     for d in batch:
         did = d["doc_id"]
-        local = os.path.join(tmp, f"{d.get('facility_srn', 'N2688')}_{did}.pdf")
         is_force = did in force_ids
+        if is_force:
+            _waiting_out_quota(purge_cache.fill, sheets, sheet_id)
         if is_force and not force_apply:
             # DRY RUN: preview which rows a purge would remove, then re-extract.
             # Download/classify nothing; mutate nothing.
-            preview = sw.purge_doc_rows(sheets, sheet_id, did, dry_run=True)
+            preview = _waiting_out_quota(sw.purge_doc_rows, sheets, sheet_id, did,
+                                         dry_run=True, cache=purge_cache)
             print(f"  [FORCE dry-run] {d['date_filed']} {d['document_name'][:40]}: "
                   f"would PURGE {sum(preview.values())} row(s) {preview}, then "
                   f"re-extract this doc.")
@@ -222,106 +310,17 @@ def run() -> int:
                   "(it indexes the unchanged Drive-mirrored PDF). "
                   "Set FORCE_REPROCESS_APPLY=1 to execute.")
             continue
-        try:
-            nc.download_pdf(session, d, local)
-
-            parsed = parse_document(
-                local, d, RISK_REGISTER,
-                model=model, signal_keywords=SIGNAL_KEYWORDS,
-                page_threshold=page_threshold, max_keyword_pages=max_kw_pages,
-                max_tokens=cfg["classification_max_tokens"],
-            )
-
-            # Mirror to Drive inline (best-effort; falls back to the nSITE link
-            # on any failure — see archiver.mirror_one_now()) so the Sheet row
-            # links somewhere that survives a Google-referer click-through
-            # (Gmail, a Sheets cell), same as watcher.py's new-doc path.
-            link = av.mirror_one_now(
-                session, sheets, sheet_id, d, drive_state, local_path=local)
-
-            # Route WOI Status Reports to the exhaustive woi_table_parser and
-            # REPLACE parsed.measurements before write_document (see woi_router /
-            # ADR 005). Backfill deliberately never calls is_urgent, so re-
-            # extracting historical reports through this path fires no stale
-            # alerts. Best-effort: a routing failure degrades to the generic
-            # parse (logged), never drops the filing.
-            try:
-                routed = woi_router.route_measurements(parsed, local, d, cfg)
-            except Exception as we:  # noqa: BLE001 — degrade to the generic parse
-                print(f"  WOI routing failed, using generic parse: {we}")
-                routed = None
-
-            # FORCE_REPROCESS (apply): remove this doc's stale rows BEFORE writing
-            # the fresh ones, so the re-extract is clean, not additive. Done only
-            # after a successful download+parse+route above — a fetch/parse failure
-            # lands in the except block with nothing purged, leaving rows intact.
-            if is_force:
-                purged = sw.purge_doc_rows(sheets, sheet_id, did)
-                print(f"  [FORCE] purged {sum(purged.values())} stale row(s) {purged} "
-                      f"for {did} before re-extract")
-
-            # Sheet row FIRST, then state — order matters for crash-safety.
-            sw.write_document(
-                sheets, sheet_id, parsed, d, link, RISK_NAMES,
-                feed_tab=sw.TAB_HISTORICAL,
-            )
-            if routed is not None:
-                try:
-                    sw.ensure_woi_tabs(sheets, sheet_id)
-                    sw.write_woi_summary(sheets, sheet_id, routed["summary"], d, link)
-                except Exception as we:  # noqa: BLE001 — summary tab is best-effort
-                    print(f"  WOI summary-tab write skipped (doc still recorded): {we}")
-            payload = {
-                "document_name": d["document_name"],
-                "date_filed": d["date_filed"],
-                "doc_type": parsed.doc_type,
-                "severity": parsed.severity,
-                "risks": parsed.risks,
-                "ocr_applied": parsed.ocr_applied,
-                "page_count": parsed.page_count,
-            }
-            state["processed"][did] = payload
-            state["errors"].pop(did, None)
-            sw.mark_processed(sheets, sheet_id, did, payload, _now())
+        # Not wrapped in _waiting_out_quota on purpose: process_one_doc already
+        # treats a 429 as a per-doc transient (no strike, retried next run), and
+        # its purge reads are cache hits after the fill above. A re-run here
+        # would re-download and re-classify the doc for a second strike.
+        if dp.process_one_doc(ctx, state, d, job, dp.local_path(tmp, d),
+                              purge_first=is_force, purge_cache=purge_cache) == "processed":
             processed_this_run += 1
-            print(f"  ok  {d['date_filed']}  [{parsed.doc_type}/{parsed.severity}]  "
-                  f"{d['document_name'][:50]}")
-        except Exception as e:  # noqa: BLE001
-            if rp.is_transient(e):
-                # Infrastructure/quota error (API cap, 429, 5xx, network) — not the
-                # document's fault. Retry on a later run WITHOUT a poison strike, so
-                # a capped or outage window can't falsely stub+skip a real filing
-                # (the 2026-07-07 incident). The doc stays in `todo`.
-                print(f"  RETRY (transient, no strike) {d['document_name'][:50]}: {e}")
-                continue
-            cnt = state["errors"].get(did, 0) + 1
-            state["errors"][did] = cnt
-            sw.mark_error(sheets, sheet_id, did, cnt, _now())
-            print(f"  ERR {d['document_name'][:50]}: {e} "
-                  f"(attempt {cnt}/{MAX_ERRORS_PER_DOC})")
-            # On the terminal failure, make the doc VISIBLE instead of silently
-            # dropping it: write a stub feed row (title/date/native-download link)
-            # and mark it 'skipped' so it isn't retried. The link uses the
-            # downloadfile endpoint (serves the original bytes for legacy .doc /
-            # zips / images that downloadpdf 400s on), so a human can open it.
-            if cnt >= MAX_ERRORS_PER_DOC and did not in state["skipped"]:
-                reason = f"Source not classifiable after {cnt} attempts: {str(e)[:140]}"
-                link = nc.native_download_url(did)
-                try:
-                    sw.write_stub_row(sheets, sheet_id, d, link, reason)
-                    sw.mark_skipped(sheets, sheet_id, did,
-                                    {"document_name": d["document_name"],
-                                     "date_filed": d["date_filed"], "reason": reason},
-                                    _now())
-                    state["skipped"][did] = {"reason": reason}
-                    state["errors"].pop(did, None)
-                    print(f"  ->  stubbed + skipped (now visible in feed): "
-                          f"{d['document_name'][:50]}")
-                except Exception as e2:  # noqa: BLE001
-                    print(f"  ->  stub/skip write failed: {e2}")
-        finally:
-            if os.path.exists(local):
-                os.remove(local)
+
+    if purge_cache is not None:
+        print(f"[backfill] FORCE_REPROCESS purge reads this run: {purge_cache.reads} "
+              f"values().get call(s) (cached per tab; a purged tab is re-read once).")
 
     # A pure FORCE_REPROCESS dry run mutates NOTHING — skip the derived-tab
     # rebuilds below and return. (A force run's todo is only the named docs, which

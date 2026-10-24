@@ -2,23 +2,32 @@ graph TD
   %% domain-level call graph — arbor-hills-monitor
   %% entry-point domains (scheduled/manual runners) highlighted
   dom_orchestration["Orchestration / Runners"]
-  dom_ingestion["Ingestion (EGLE / MMPC sources)"]
+  dom_ingestion["Ingestion (external source clients)"]
   dom_processing["Document Processing & Risk"]
   dom_persistence["Persistence & Notification"]
   dom_config["Config"]
+  dom_publishing["Public Site Publishing"]
   dom_ops["Ops / Manual Jobs"]
   dom_ingestion --> dom_processing
   dom_ops --> dom_config
   dom_ops --> dom_ingestion
   dom_ops --> dom_persistence
   dom_ops --> dom_processing
+  dom_ops --> dom_publishing
   dom_orchestration --> dom_config
   dom_orchestration --> dom_ingestion
   dom_orchestration --> dom_persistence
   dom_orchestration --> dom_processing
+  dom_persistence --> dom_config
+  dom_persistence --> dom_ingestion
+  dom_persistence --> dom_processing
   dom_processing --> dom_config
   dom_processing --> dom_ingestion
   dom_processing --> dom_persistence
-  style dom_orchestration fill:#2563eb,color:#fff,stroke:#1e40af
+  dom_publishing --> dom_config
+  dom_publishing --> dom_ingestion
+  dom_publishing --> dom_persistence
+  dom_publishing --> dom_processing
   style dom_ops fill:#2563eb,color:#fff,stroke:#1e40af
-  style dom_processing fill:#2563eb,color:#fff,stroke:#1e40af
+  style dom_publishing fill:#2563eb,color:#fff,stroke:#1e40af
+  style dom_orchestration fill:#2563eb,color:#fff,stroke:#1e40af

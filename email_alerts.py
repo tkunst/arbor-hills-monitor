@@ -14,22 +14,77 @@ from __future__ import annotations
 import os
 import re
 import smtplib
+import ssl
 from email.message import EmailMessage
 from email.utils import parseaddr
 from typing import Optional
 
-# Matches "180F", "180 F", "180°F", "180 degrees F", "180 deg F"
-_TEMP_RE = re.compile(r"(\d{2,4})\s*(?:°|deg(?:rees)?\.?\s*)?\s*f\b", re.IGNORECASE)
+# Matches "180F", "180 F", "180°F", "180 degrees F", "180 deg F", and reads a
+# thousands separator whole: "2,145°F" is 2145 (a flare value the plausibility
+# ceiling then skips), never 145 (which would false-fire an URGENT alert).
+_TEMP_RE = re.compile(r"(?<!\d)(?<!\d,)(\d{1,3}(?:,\d{3})+|\d{2,4})\s*(?:°|deg(?:rees)?\.?\s*)?\s*f\b",
+                      re.IGNORECASE)
+
+# An EPA Method 19 F-factor label: "F-factor", "Fd factor", "F (factor)", and the
+# OCR forms of a subscripted F, "Fy (factor)", "F,, (factor)", "F, (factor)", "F d
+# factor". A lab sheet prints them as a column, which OCR reads as "Fy (factor) 9340
+# F,, (factor) 11356 F, (factor) 1729", so a bare _TEMP_RE read "9340 F" from the
+# NEXT label's F as 9340°F (the 2026-10-16 N1504 ICT sulfur report, nSITE doc
+# 4935451998137733993).
+# Case-sensitive capital F with at most a subscript (d/w/c, OCR y, or one or two
+# OCR commas), so "a few factor" or "Fan factor" is never a label.
+_F_SUB = r"(?<![A-Za-z])F(?:\s?[dwcy]|,{1,2})?"
+# The match's own F starting a label: only the unambiguous "(factor)" / "-factor"
+# forms, so "180°F, factor in" or "180 F (factor 2)" stays a temperature.
+# Any hyphen or dash: OCR often prints "F-factor" with an en dash.
+_DASH = r"[-\u2010-\u2015]"
+_F_FACTOR_LABEL_RE = re.compile(_F_SUB + r"\s*(?:\(\s*(?i:factor)\s*\)|" + _DASH + r"\s*(?i:factor)\b)")
+# The label right before a number ("Fd (factor) 9340", "F-factor = 9,340",
+# "Fd factor = 9340").
+_F_FACTOR_BEFORE_RE = re.compile(
+    _F_SUB + r"(?:\s*\(\s*(?i:factor)\s*\)|\s*" + _DASH + r"\s*(?i:factor)|\s+(?i:factor))\s*[=:]?\s*$")
+# Method 19 F-factors are never below this (Fc runs ~1,000-2,000 scf/MMBtu; Fd and
+# Fw ~8,700-11,400). Below it the guard never applies, so the 50-250°F urgency
+# window reads exactly as a bare _TEMP_RE does: the guard can only remove an
+# implausible value, never hide a wellhead reading.
+_F_FACTOR_MIN = 1000
 
 
-def _max_temperature_f(text: str) -> Optional[int]:
-    """Return the highest plausible Fahrenheit reading found in text, or None."""
+def _is_f_factor(text: str, m: re.Match) -> bool:
+    """True when a _TEMP_RE match is an F-factor value, not a temperature: the
+    value is F-factor sized (>= _F_FACTOR_MIN) and its "F" starts an F-factor
+    label or an F-factor label sits right before the number. The label must
+    touch the match, so a nearby "Method 19" or "factor" alone changes nothing."""
+    if int(m.group(1).replace(",", "")) < _F_FACTOR_MIN:
+        return False
+    if _F_FACTOR_LABEL_RE.match(text, m.end() - 1):
+        return True
+    return bool(_F_FACTOR_BEFORE_RE.search(text, max(0, m.start() - 30), m.start()))
+
+
+def temperature_matches(text: str):
+    """_TEMP_RE matches in text, minus F-factor values (_is_f_factor). Used by
+    _max_temperature_f and review_flags.implausible_text_temps. (kdp_check's
+    _NUM_F_RE is a separate pattern with its own well-context rules.)"""
+    for m in _TEMP_RE.finditer(text):
+        if not _is_f_factor(text, m):
+            yield m
+
+
+def _max_temperature_f(text: str, max_f: int = 250) -> Optional[int]:
+    """Return the highest plausible WELLHEAD Fahrenheit reading found in text,
+    or None. Values above max_f (temperature_thresholds.max_plausible_wellhead_f,
+    ADR 067) are skipped: on this fallback path they are flare/combustion
+    temperatures or a misread non-temperature column (e.g. H2S ppm), never a
+    wellhead reading that should fire an urgent alert. review_flags.parsed_flags()
+    logs the ones outside flare/combustion context for review (ADR 067
+    amendment)."""
     if not text:
         return None
     best = None
-    for m in _TEMP_RE.finditer(text):
-        val = int(m.group(1))
-        if 50 <= val <= 1000:  # ignore stray years / tiny numbers
+    for m in temperature_matches(text):
+        val = int(m.group(1).replace(",", ""))
+        if 50 <= val <= max_f:  # ignore stray years / tiny numbers / non-wellhead values
             best = val if best is None else max(best, val)
     return best
 
@@ -54,16 +109,63 @@ def max_measured_temp_f(parsed) -> Optional[int]:
     return best
 
 
-def is_urgent(parsed, cfg: dict) -> bool:
+def _peak_measured(parsed) -> Optional[dict]:
+    """The highest MEASURED temperature measurement (same filter as
+    max_measured_temp_f, whose rounded value it always matches), with its
+    value in deg F as `value_f`. For naming the well in the urgent body;
+    never used to decide."""
+    best = None
+    for m in getattr(parsed, "measurements", []) or []:
+        if m.get("metric") != "temperature" or m.get("basis") != "measured":
+            continue
+        try:
+            val = float(m.get("value"))
+        except (TypeError, ValueError):
+            continue
+        if (m.get("unit") or "F").lower().startswith("c"):
+            val = val * 9 / 5 + 32
+        if best is None or val > best["value_f"]:
+            best = {**m, "value_f": val}
+    return best
+
+
+def _fmt_f(v: float) -> str:
+    return f"{round(float(v), 1):g}°F"
+
+
+def _urgency_decision(parsed, cfg: dict) -> tuple[bool, list[str]]:
+    """THE urgency decision: (fires, reasons). is_urgent() returns the bool and
+    urgency_reason() joins the reasons, so the two can never drift apart. Every
+    branch that fires is listed (severity AND a measured reading, when both),
+    so an [URGENT] subject over a body saying "Severity (as recorded): routine"
+    always says which path fired (the 2026-10-08 email that didn't)."""
     urgent_cfg = cfg.get("urgent", {})
-    if urgent_cfg.get("severity_is_urgent", True) and parsed.severity == "urgent":
-        return True
     threshold = urgent_cfg.get("measured_temp_urgent_f", 145)
+    mact = (cfg.get("temperature_thresholds") or {}).get("mact_f", 145)
+    label = " (MACT limit)" if threshold == mact else ""
+    reasons: list[str] = []
+    if urgent_cfg.get("severity_is_urgent", True) and parsed.severity == "urgent":
+        # Not "the classifier": parse_document's deterministic floor (a
+        # measured reading >= MACT, an SSO/CO-spike/smoldering tag, an
+        # enforcement title) also sets severity, and ParsedDoc doesn't say which.
+        reasons.append("the document's recorded severity is \"urgent\" (set by the "
+                       "classifier, parse_document's deterministic urgency floor, or a "
+                       "hand-curator)")
 
     # Prefer structured measurements (correctly excludes permitted ceilings).
     measured = max_measured_temp_f(parsed)
     if measured is not None:
-        return measured >= threshold
+        if measured >= threshold:
+            peak = _peak_measured(parsed) or {}
+            val = peak.get("value_f", measured)
+            shown = _fmt_f(val)
+            if float(val) < threshold:  # only the rounding made it cross
+                shown += f" (rounds to {measured}°F)"
+            well = peak.get("well_id")
+            reasons.append(f"measured temperature {shown}"
+                           + (f" at {well}" if well else "")
+                           + f", at or above the {threshold}°F threshold{label}")
+        return bool(reasons), reasons
 
     # If the parser extracted ANY temperature reading at all (even a permitted
     # ceiling or unknown-basis one), trust the structured path and do NOT regex
@@ -74,13 +176,168 @@ def is_urgent(parsed, cfg: dict) -> bool:
         for m in (getattr(parsed, "measurements", []) or [])
     )
     if has_any_temp:
-        return False
+        return bool(reasons), reasons
 
     # Last resort, ONLY when the parser produced no structured temperature at
     # all: scan free text. Less safe (can't tell measured from permitted).
     hay = f"{parsed.key_data_point}\n{parsed.summary}\n{parsed.full_text}"
-    temp = _max_temperature_f(hay)
-    return temp is not None and temp >= threshold
+    max_f = int((cfg.get("temperature_thresholds") or {}).get("max_plausible_wellhead_f", 250))
+    temp = _max_temperature_f(hay, max_f)
+    if temp is not None and temp >= threshold:
+        reasons.append(f"a {temp}°F temperature in the document text, at or above the "
+                       f"{threshold}°F threshold (free-text fallback: no structured "
+                       f"temperature was extracted, so this may not be a measured reading)")
+    return bool(reasons), reasons
+
+
+def is_urgent(parsed, cfg: dict) -> bool:
+    # The severity short-circuit is kept ahead of the shared decision so an
+    # urgent-severity document fires without its measurements being read,
+    # exactly as before (a malformed measurement can't turn it into a raise).
+    urgent_cfg = cfg.get("urgent", {})
+    if urgent_cfg.get("severity_is_urgent", True) and parsed.severity == "urgent":
+        return True
+    return _urgency_decision(parsed, cfg)[0]
+
+
+def urgency_reason(parsed, cfg: dict) -> str:
+    """Why is_urgent() fires, in one line ("" when it doesn't). Presentation
+    only: it never changes whether an alert fires."""
+    return "; and ".join(_urgency_decision(parsed, cfg)[1])
+
+
+_ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}$")
+
+
+def hov_ceiling_for(well_id: str, as_of_date: Optional[str], cfg: dict) -> Optional[float]:
+    """The well's EGLE-approved HOV (Higher Operating Value) ceiling in deg F,
+    from temperature_thresholds.hov_ceilings, or None. Exact well-id match
+    (case and trailing '*' ignored), never by well number: a redrill (R3 vs
+    R4) is a different well with its own ceiling, if any. A reading dated
+    outside an entry's effective_start..effective_end window doesn't match;
+    an undated reading matches any window. CONTEXT ONLY: never a trigger or
+    a suppressor (is_urgent never reads it)."""
+    wid = (well_id or "").strip().rstrip("*").upper()
+    if not wid:
+        return None
+    # Only an ISO date is compared ("8/29/2023" would compare lexically
+    # wrong); anything else is treated as undated.
+    date = (as_of_date or "")[:10]
+    if not _ISO_DATE_RE.match(date):
+        date = ""
+    for e in (cfg.get("temperature_thresholds") or {}).get("hov_ceilings") or []:
+        if str(e.get("well_id") or "").strip().rstrip("*").upper() != wid:
+            continue
+        start, end = str(e.get("effective_start") or ""), str(e.get("effective_end") or "")
+        if date and ((start and date < start) or (end and date > end)):
+            continue
+        try:
+            return float(e["ceiling_f"])
+        except (KeyError, TypeError, ValueError):
+            # A hand-edited roster entry with no/garbled ceiling: label the
+            # well as having none on record rather than break the alert.
+            print(f"[email_alerts] hov_ceilings entry for {wid} has no usable ceiling_f; ignored")
+            continue
+    return None
+
+
+# Cap on HOV context lines in one urgent body (a hot WOI report can carry
+# dozens of wells at/above 145F).
+_HOV_LINES_MAX = 10
+
+
+def hov_context_lines(parsed, cfg: dict) -> list[str]:
+    """One line per well with a MEASURED reading at/above the urgent threshold
+    (its highest such reading), labeled with its approved HOV ceiling or
+    "Approved ceiling for <well> not in this monitor's roster" (accurate
+    whether or not an approval exists; owner wording 2026-10-17). Additive
+    context; pure."""
+    threshold = (cfg.get("urgent") or {}).get("measured_temp_urgent_f", 145)
+    by_well: dict = {}
+    for m in getattr(parsed, "measurements", []) or []:
+        if m.get("metric") != "temperature" or m.get("basis") != "measured":
+            continue
+        try:
+            val = float(m.get("value"))
+        except (TypeError, ValueError):
+            continue
+        if (m.get("unit") or "F").lower().startswith("c"):
+            val = val * 9 / 5 + 32
+        if int(round(val)) < threshold:
+            continue
+        well = m.get("well_id") or ""
+        if well not in by_well or val > by_well[well][0]:
+            by_well[well] = (val, m.get("as_of_date"))
+    lines = []
+    for well, (val, date) in sorted(by_well.items(), key=lambda kv: -kv[1][0]):
+        if not well:
+            lines.append(f"Measured {_fmt_f(val)} with no well named; no ceiling lookup possible.")
+            continue
+        ceiling = hov_ceiling_for(well, date, cfg)
+        if ceiling is None:
+            lines.append(f"Approved ceiling for {well} not in this monitor's roster. "
+                         f"Measured: {_fmt_f(val)}.")
+        else:
+            rel = "below ceiling" if val < ceiling else ("at ceiling" if val == ceiling
+                                                         else "above ceiling")
+            lines.append(f"HOV approved ceiling for {well}: {ceiling:g}°F. "
+                         f"Measured: {_fmt_f(val)} ({rel}).")
+    if len(lines) > _HOV_LINES_MAX:
+        more = len(lines) - _HOV_LINES_MAX
+        lines = lines[:_HOV_LINES_MAX] + [f"(+{more} more well(s) at or above {threshold}°F)"]
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Correspondence & enforcement detection (ADR 065, absorbing the retired
+# schedule-title-overrides.md handoff's section (b)/(c)) — a generic-titled
+# EGLE letter (filed as "Schedule - ...", "nForm Document", etc.) that's
+# actually a substantive approval/extension/corrective-action/enforcement
+# letter, buried under a bland title, gets bumped to its own pinned digest
+# section instead of the ordinary soft "OTHER NEW DOCUMENTS" line. Only ever
+# checked for a doc the caller has already determined has a generic nSITE
+# title (document_titles.title_is_generic) — a document with a real, specific
+# title (e.g. "Violation Notice") doesn't need this rescue.
+# ---------------------------------------------------------------------------
+
+# EGLE's own letter template footer -- distinctive enough NOT to match a
+# letter merely ADDRESSED to the agency (confirmed on a real GFL->EGLE cover
+# letter, which spells out "Department of Environment, Great Lakes, and
+# Energy" in its own address block but never this URL+phone footer line).
+_EGLE_LETTERHEAD_RE = re.compile(r"Michigan\.gov/EGLE", re.IGNORECASE)
+
+# The substantive-correspondence signals from the retired handoff's own
+# research (8-for-8 on the live N2688 Schedule- corpus): an extension
+# request, a corrective-action item, an approval, a Consent Judg(e)ment
+# reference, a perimeter-monitor action-level exceedance, or an HOV /
+# "Higher Operating Value" waiver.
+_CORRESPONDENCE_SIGNAL_RE = re.compile(
+    r"request for extension|corrective action|approv(?:e|es|ed|al)|"
+    r"consent judg(?:e)?ment|action level exceedance|"
+    r"higher operating value|\bHOV\b",
+    re.IGNORECASE,
+)
+
+# Letters run many pages once attachments are included; the letterhead/signal
+# itself is always on the letter's own first page(s), never buried in an
+# attachment -- bounding the scan avoids a false hit from an attachment deep
+# inside an otherwise-unrelated large filing (confirmed: a 949pp GFL quarterly
+# report reprints EGLE's agency name in its own address block on page 1, but
+# never the letterhead URL anywhere in its first pages).
+_CORRESPONDENCE_SCAN_CHARS = 6000
+
+
+def is_correspondence_letter(full_text: str) -> bool:
+    """True if `full_text` reads as an EGLE-originated approval/extension/
+    corrective-action/enforcement letter: EGLE's own letterhead marker AND at
+    least one substantive signal phrase, both within the document's own
+    opening pages. Pure, unit-tested — mirrors is_urgent's style. Fails safe
+    toward False: a miss just leaves the item on today's ordinary soft digest
+    line (no regression from before this feature existed); this is never
+    used to suppress or escalate an email on its own, only to choose which
+    digest section an already-queued item renders under."""
+    text = (full_text or "")[:_CORRESPONDENCE_SCAN_CHARS]
+    return bool(_EGLE_LETTERHEAD_RE.search(text)) and bool(_CORRESPONDENCE_SIGNAL_RE.search(text))
 
 
 # ---------------------------------------------------------------------------
@@ -88,13 +345,33 @@ def is_urgent(parsed, cfg: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def format_urgent_body(parsed, metadata: dict, link: str) -> str:
+def format_urgent_body(parsed, metadata: dict, link: str, cfg: dict | None = None) -> str:
+    """The [URGENT] email body. States WHY it fired (urgency_reason) next to
+    the classifier's own severity, so the hardcoded [URGENT] subject and the
+    body never disagree silently, and labels each alerted reading with its HOV
+    ceiling (context only). `cfg` None = built-in defaults, no HOV roster."""
+    cfg = cfg or {}
+    try:
+        reason = urgency_reason(parsed, cfg) or "(no urgency trigger matched)"
+    except Exception as e:  # noqa: BLE001 — the reason must never cost the alert
+        print(f"[email_alerts] urgency reason unavailable: {type(e).__name__}")
+        reason = "(reason unavailable)"
+    try:
+        hov = hov_context_lines(parsed, cfg)
+    except Exception as e:  # noqa: BLE001 — context must never cost the alert
+        print(f"[email_alerts] HOV context skipped: {type(e).__name__}")
+        hov = []
+    hov_block = ("Approved-ceiling context (does not affect whether this alert fires):\n"
+                 + "".join(f"  {line}\n" for line in hov) + "\n") if hov else ""
     return (
         f"URGENT — Arbor Hills (N2688) document flagged.\n\n"
         f"Document: {metadata.get('document_name', '(unknown)')}\n"
         f"Date filed: {metadata.get('date_filed', '(unknown)')}\n"
-        f"Type: {parsed.doc_type}   Severity: {parsed.severity}\n"
+        f"Type: {parsed.doc_type}\n"
         f"Risks: {', '.join(parsed.risks) or '(none tagged)'}\n\n"
+        f"Urgent because: {reason}.\n"
+        f"Severity (as recorded): {parsed.severity}.\n\n"
+        f"{hov_block}"
         f"Key data point:\n  {parsed.key_data_point}\n\n"
         f"Summary:\n  {parsed.summary}\n\n"
         f"Document: {link}\n"
@@ -102,7 +379,7 @@ def format_urgent_body(parsed, metadata: dict, link: str) -> str:
 
 
 def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None) -> str:
-    """items: [{parsed, metadata, link}]. Procedural action items first.
+    """items: [{parsed, metadata, link}]. Procedural items (deadlines and notices) first.
 
     urgent_recap: same shape, plus each item's metadata carries
     'urgent_sent_at' — a recap of items sent as their own same-day [URGENT]
@@ -111,7 +388,14 @@ def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None
     recipients (e.g. DIGEST_RECIPIENTS_EXTRA — the commissioners) do NOT receive
     the same-day [URGENT] emails, so for them this recap is their FIRST sighting,
     not a repeat; claiming otherwise would be false. The 'Sent <date>' line still
-    records when the urgent email went to the urgent-tier list."""
+    records when the urgent email went to the urgent-tier list.
+
+    ADR 065: an item whose `parsed.is_correspondence` is True (a generic-titled
+    EGLE letter is_correspondence_letter() flagged as substantive — see that
+    function) gets pinned to its OWN "CORRESPONDENCE & ENFORCEMENT" section,
+    right after the urgent recap and before the ordinary procedural/other
+    split — the rescue this feature exists for: such an item no longer
+    renders in "OTHER NEW DOCUMENTS" at all (pulled out, not also-listed)."""
     if not items and not urgent_recap:
         return "No new Arbor Hills (N2688) documents this period."
     lines = []
@@ -124,11 +408,21 @@ def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None
             lines.append(f"      {p.key_data_point}")
             lines.append(f"      {it['link']}")
         lines.append("")
-    procedural = [it for it in items if it["parsed"].doc_type == "procedural"]
-    others = [it for it in items if it["parsed"].doc_type != "procedural"]
+    correspondence = [it for it in items if getattr(it["parsed"], "is_correspondence", False)]
+    remaining = [it for it in items if not getattr(it["parsed"], "is_correspondence", False)]
+    if correspondence:
+        lines.append("CORRESPONDENCE & ENFORCEMENT (EGLE letter under a generic filing title):")
+        for it in correspondence:
+            p, m = it["parsed"], it["metadata"]
+            lines.append(f"  - {m.get('date_filed','')}  {m.get('document_name','')}")
+            lines.append(f"      {p.key_data_point}")
+            lines.append(f"      {it['link']}")
+        lines.append("")
+    procedural = [it for it in remaining if it["parsed"].doc_type == "procedural"]
+    others = [it for it in remaining if it["parsed"].doc_type != "procedural"]
     lines += [f"Arbor Hills (N2688) digest — {len(items)} new document(s).", ""]
     if procedural:
-        lines.append("ACTION ITEMS (deadlines / notices):")
+        lines.append("DEADLINES AND NOTICES:")
         for it in procedural:
             p, m = it["parsed"], it["metadata"]
             lines.append(f"  - {m.get('date_filed','')}  {m.get('document_name','')}")
@@ -294,9 +588,9 @@ def build_list_unsubscribe(mailto: str, recipient: str) -> str:
     right address to UNSUBSCRIBED_EMAILS without guessing from headers."""
     from urllib.parse import quote
     addr = quote(mailto, safe="@")   # SEC-003: encode the address, like subj/body
-    subj = quote("Unsubscribe: Arbor Hills Landfill Monitor")
+    subj = quote("Unsubscribe: Arbor Hills Monitor")
     body = quote(
-        "Unsubscribe this address from all Arbor Hills Landfill Monitor "
+        "Unsubscribe this address from all Arbor Hills Monitor "
         f"emails: {recipient}"
     )
     return f"<mailto:{addr}?subject={subj}&body={body}>"
@@ -309,29 +603,57 @@ def unsubscribe_footer(cfg: dict, mailto: str, postal: str, recipient: str) -> s
     alerts; the postal line is optional and omitted when unset (Trisha's call).
     Uses the standard '-- ' signature separator."""
     u = cfg.get("unsubscribe") or {}
-    sender = (u.get("sender_identity") or "Arbor Hills Landfill Monitor").strip()
+    sender = (u.get("sender_identity") or "Arbor Hills Monitor").strip()
     reason = (u.get("receiving_reason")
               or "You are receiving this because your address was added to the "
-                 "Arbor Hills Landfill Monitor alert list.").strip()
+                 "Arbor Hills Monitor alert list.").strip()
     postal_line = f"{postal}\n" if postal else ""
     return (
         "\n\n-- \n"
         f"{reason}\n"
-        f"To unsubscribe from all Arbor Hills Landfill Monitor emails, reply to "
+        f"To unsubscribe from all Arbor Hills Monitor emails, reply to "
         f"this message or email {mailto} (this address: {recipient}).\n"
         f"{sender}\n"
         f"{postal_line}"
     )
 
 
-def send_email(subject: str, body: str, cfg: dict, recipients: list | None = None) -> bool:
+class EmailSendError(smtplib.SMTPException):
+    """A send_email failure with a REDACTED message: exception type, SMTP code and
+    refused-recipient count only, never an address or server response text. Every
+    stream logs send failures with `{e}` into world-readable Actions logs, and an
+    `SMTPRecipientsRefused` stringifies to a dict keyed by the refused address, so an
+    unredacted error could print a private owner address (GitHub masks only the
+    whole comma-separated MONITOR_OWNER_EMAILS secret, not one address inside it).
+    Subclasses SMTPException (itself an OSError) so existing handlers still catch it.
+    Trade-off: the server's response text (e.g. "Username and Password not
+    accepted", a rate-limit reply) is dropped with the addresses; the type name and
+    SMTP code are what remain for triage, plus how many messages had already gone
+    out. Security review L1, 2026-10-06 (the SEC-001 count-only logging rule)."""
+
+
+def redact_smtp_error(e: BaseException) -> str:
+    """Pure: a log-safe description of an SMTP or network failure."""
+    parts = [type(e).__name__]
+    code = getattr(e, "smtp_code", None)
+    if code is not None:
+        parts.append(f"SMTP {code}")
+    refused = getattr(e, "recipients", None)
+    if isinstance(refused, dict):
+        parts.append(f"{len(refused)} recipient(s) refused")
+    return " / ".join(parts)
+
+
+def send_email(subject: str, body: str, cfg: dict, recipients: list | None = None,
+               log_subject: bool = True) -> bool:
     """Send to all configured recipients via SMTP (TLS). No-op with a warning if
     SMTP env vars are missing (so a dry/local run doesn't crash) — returns False
     in that case, True once at least one message was actually handed to the SMTP
     server, so a caller that needs to distinguish "sent" from "silently skipped"
     can (e.g. _route_urgent_or_digest in watcher.py, which must not record a
     same-day [URGENT] alert as sent — and recap it later — if it never actually
-    went out). A mid-send SMTP failure still raises (unchanged).
+    went out). A mid-send SMTP failure still raises, as an EmailSendError whose
+    message is redacted (no addresses, no server text; see EmailSendError).
 
     `recipients` overrides the audience: when a non-empty list is passed it is used
     VERBATIM (not merged with the shared `alert_recipients` list or the
@@ -363,7 +685,12 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
         list from leaking to the coalition list.
       * The URGENT path always includes an owner (arbor-hills@…), so suppression
         and the fail-safe can never empty it → never a spurious False → never a
-        silently-unsent-and-unrecapped urgent doc."""
+        silently-unsent-and-unrecapped urgent doc.
+
+    `log_subject=False` keeps the subject out of this function's own log lines
+    (the Actions log is public): the owner-only emails (owner_notices.py)
+    carry document titles that their constraint keeps out of the log."""
+    shown = subject if log_subject else "(owner-only email)"
     scoped = bool(recipients)
     recipients = list(recipients) if scoped else resolve_recipients(cfg)
 
@@ -387,7 +714,7 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
         # An emptied SCOPED list lands here (recipients falsy) and returns False —
         # it does NOT fall through to resolve_recipients (that only happens above,
         # and only when `scoped` is False). This is the private-list-leak guard.
-        print(f"[email_alerts] SMTP not configured / no recipients — would send: {subject!r}")
+        print(f"[email_alerts] SMTP not configured / no recipients — would send: {shown!r}")
         return False
 
     mailto, postal = _unsubscribe_settings(cfg)
@@ -395,52 +722,88 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
     # footer line (advocacy alerts don't require a physical address). ADR 040.
     armed = bool(mailto)
 
+    # SEC-003 (classifier-untrusted-input, 2026-10-14): `subject` can carry a
+    # raw, filer-controlled nSITE document title (send_urgent_alert's
+    # f-string). A literal CR/LF inside it makes EmailMessage raise ValueError
+    # the instant the Subject header is set (email.policy.default's header-
+    # folding check) -- collapsed ONCE here, in the shared send path, so
+    # every caller (urgent, digest, GFL-air watch, ...) is covered without
+    # each one having to sanitize its own subject first.
+    subject = " ".join(subject.split())
+
     sender = os.environ.get("SMTP_FROM") or user
     sent = 0
     dropped = []
-    with smtplib.SMTP(host, port, timeout=30) as server:
-        server.starttls()
-        server.login(user, password)
-        for recipient in recipients:
-            is_owner = (_norm_email(recipient) in owners
-                        or _email_domain(recipient) in owner_domains)
-            out_body = body
-            add_unsub_header = False
-            if not is_owner:
-                if armed:
-                    out_body = body + unsubscribe_footer(cfg, mailto, postal, recipient)
-                    add_unsub_header = True
-                elif owners:
-                    # We can positively tell this is a third party AND there is no
-                    # opt-out method configured (unarmed) → do NOT send mail with
-                    # no way to unsubscribe. Self-arms once unsubscribe.mailto is
-                    # set. Owners are never dropped, so a stream that always carries
-                    # an owner (e.g. URGENT) can never be emptied here (trap 4).
-                    dropped.append(recipient)
+    skipped_headers = 0
+    try:
+        with smtplib.SMTP(host, port, timeout=30) as server:
+            server.starttls(context=ssl.create_default_context())  # SEC-004
+            server.login(user, password)
+            for recipient in recipients:
+                is_owner = (_norm_email(recipient) in owners
+                            or _email_domain(recipient) in owner_domains)
+                out_body = body
+                add_unsub_header = False
+                if not is_owner:
+                    if armed:
+                        out_body = body + unsubscribe_footer(cfg, mailto, postal, recipient)
+                        add_unsub_header = True
+                    elif owners:
+                        # We can positively tell this is a third party AND there is no
+                        # opt-out method configured (unarmed) → do NOT send mail with
+                        # no way to unsubscribe. Self-arms once unsubscribe.mailto is
+                        # set. Owners are never dropped, so a stream that always carries
+                        # an owner (e.g. URGENT) can never be emptied here (trap 4).
+                        dropped.append(recipient)
+                        continue
+                    # else: owners empty → can't classify a third party → send as-is
+                    # (never risk silencing Trisha); the WARNING above surfaced it.
+                msg = EmailMessage()
+                try:
+                    # SEC-003: header assignment is pure/local (no network I/O
+                    # yet) -- a ValueError here (a bad header value) is a
+                    # per-message problem, not a connection failure, so it
+                    # must not abort every OTHER recipient's send. Subject is
+                    # already collapsed above; this remains in case any other
+                    # per-recipient header value (e.g. a malformed address
+                    # slipping past config) carries an embedded CR/LF.
+                    msg["Subject"] = subject
+                    msg["From"] = sender
+                    msg["To"] = recipient
+                    if add_unsub_header:
+                        # No List-Unsubscribe-Post header: RFC-8058 one-click needs an
+                        # HTTPS POST endpoint, and this static-Pages project has no
+                        # backend — mailto is the compliant mechanism.
+                        msg["List-Unsubscribe"] = build_list_unsubscribe(mailto, recipient)
+                    msg.set_content(out_body)
+                except ValueError:
+                    skipped_headers += 1
                     continue
-                # else: owners empty → can't classify a third party → send as-is
-                # (never risk silencing Trisha); the WARNING above surfaced it.
-            msg = EmailMessage()
-            msg["Subject"] = subject
-            msg["From"] = sender
-            msg["To"] = recipient
-            if add_unsub_header:
-                # No List-Unsubscribe-Post header: RFC-8058 one-click needs an
-                # HTTPS POST endpoint, and this static-Pages project has no
-                # backend — mailto is the compliant mechanism.
-                msg["List-Unsubscribe"] = build_list_unsubscribe(mailto, recipient)
-            msg.set_content(out_body)
-            server.send_message(msg)
-            sent += 1
+                server.send_message(msg)
+                sent += 1
+    except OSError as e:   # SMTPException, socket, timeout and TLS errors are all OSError
+        # Redact before anything can log it: no addresses, no server text. Build the
+        # message here but raise OUTSIDE the except block, so the original (with its
+        # address-bearing text) is not even kept as __context__.
+        failure = f"send failed after {sent} sent: {redact_smtp_error(e)}"
+    else:
+        failure = None
+    if failure is not None:
+        raise EmailSendError(failure)
     if dropped:
         # SEC-001: log the COUNT only, never the addresses. Held recipients can
         # include intentionally-private third parties, and Actions logs are
         # world-readable (CWE-532/CWE-359). If addresses are ever needed for
         # triage, route them to a private sink, not this log line.
         print(f"[email_alerts] {len(dropped)} non-owner recipient(s) NOT sent "
-              f"{subject!r} — unsubscribe apparatus not armed. Set "
+              f"{shown!r} — unsubscribe apparatus not armed. Set "
               f"unsubscribe.mailto to send them. Held: {len(dropped)} recipient(s)")
-    print(f"[email_alerts] sent {subject!r} to {sent} recipient(s)")
+    if skipped_headers:
+        # SEC-001/SEC-003: count only, never the address or header value.
+        print(f"[email_alerts] {skipped_headers} recipient(s) SKIPPED for "
+              f"{shown!r} — a malformed header value (never logged here); "
+              f"other recipients were still sent.")
+    print(f"[email_alerts] sent {shown!r} to {sent} recipient(s)")
     return sent > 0
 
 
@@ -463,10 +826,92 @@ def send_urgent_alert(parsed, metadata: dict, link: str, cfg: dict) -> bool:
     alert as sent, and recapping it in the Sunday digest, when it never
     actually went out."""
     subject = f"[URGENT] Arbor Hills N2688: {metadata.get('document_name', 'new document')}"
-    return send_email(subject, format_urgent_body(parsed, metadata, link), cfg)
+    return send_email(subject, format_urgent_body(parsed, metadata, link, cfg), cfg)
 
 
-def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = None) -> None:
+def route_hand_curated_urgent_or_digest(
+    *, document_name: str, date_filed: str, doc_type: str, severity: str,
+    risks: list | None, key_data_point: str, link: str, cfg: dict, state: dict,
+    sent_at: str,
+) -> bool:
+    """Route a hand-curated document (dedupe-curate intake — never runs through
+    egle_doc_parser.parse_document(), so it has no `measurements`/`full_text`)
+    into the SAME urgent-vs-digest decision the live nSITE watcher uses, via the
+    is_urgent()/send_urgent_alert() this module already exposes.
+
+    Gap this closes (found 2026-09-20): Hand-Curated Files additions otherwise
+    have NO path into either `pending_digest` or `pending_urgent_recap` at all —
+    two severe YCUA PFOS Notices of Violation sat hand-curated with no same-day
+    alert and had to be manually spliced into `pending_digest` by hand, one of
+    them TWICE incorrectly the first time (see that session's history). Mirrors
+    watcher.py's `_route_urgent_or_digest`, adapted for a record with no
+    structured `measurements` — `is_urgent()`'s temperature-threshold path can
+    never fire for a hand-curated doc, so routing here rests entirely on the
+    caller's own `severity` judgment ("urgent" or not; hand-curation has no
+    classifier to call `is_urgent()`'s other branch instead).
+
+    Mutates `state["pending_digest"]` or `state["pending_urgent_recap"]` in
+    place (creating either key if absent); does NOT persist `state` to the
+    Sheet — same contract as watcher.py's own routing function, so the caller
+    writes it via sheet_writer.write_meta() afterward, in the same
+    Sheet-row-then-state crash-safety order the rest of this codebase uses.
+
+    `sent_at` is caller-supplied (not computed here, e.g. via datetime.now())
+    so this function stays pure and deterministically testable, matching this
+    module's existing style (compare `_urgent_recap_record` in watcher.py,
+    which takes `sent_at` from the caller's own `_now()` call).
+
+    A failed OR skipped urgent send (SMTP unconfigured / no recipients, OR a
+    mid-send SMTP exception — send_email's own docstring: "A mid-send SMTP
+    failure still raises (unchanged)") is dropped from BOTH queues — matches
+    `_route_urgent_or_digest`'s documented behavior: an alert that never went
+    out has nothing to recap. watcher.py's routing function wraps its own
+    send_urgent_alert() call in a try/except for exactly this reason; this
+    function mirrors that (caught missing here 2026-09-20 on a real send: a
+    misconfigured workflow env — SMTP_FROM omitted, so send_email fell back to
+    SMTP_USER as the From address, which the relay rejected with "Bad sender
+    address syntax" — crashed this function uncaught, unlike the watcher's own
+    routing path).
+
+    Returns True iff a real urgent email was actually sent."""
+    from egle_doc_parser import ParsedDoc  # local import: avoids a module-load-time
+
+    # dependency from email_alerts.py (imported by every watcher) onto the
+    # heavier egle_doc_parser.py (which imports fitz/pymupdf) — ParsedDoc is
+    # only needed inside this one function.
+    parsed = ParsedDoc(
+        summary=key_data_point, key_data_point=key_data_point, doc_type=doc_type,
+        risks=list(risks or []), severity=severity, full_text="",
+        ocr_applied=False, page_count=0, measurements=[],
+    )
+    metadata = {"document_name": document_name, "date_filed": date_filed}
+    record = {
+        "date_filed": date_filed, "document_name": document_name,
+        "doc_type": doc_type, "severity": severity, "risks": list(risks or []),
+        "key_data_point": key_data_point, "link": link,
+    }
+    state.setdefault("pending_digest", [])
+    state.setdefault("pending_urgent_recap", [])
+
+    if not is_urgent(parsed, cfg):
+        state["pending_digest"].append(record)
+        return False
+
+    try:
+        sent = send_urgent_alert(parsed, metadata, link, cfg)
+    except Exception as ae:  # noqa: BLE001 — notification is best-effort, same
+        # scope/reasoning as watcher.py's _route_urgent_or_digest: a send
+        # failure must not crash the caller, and there is nothing to recap
+        # for an alert that never went out.
+        print(f"  URGENT ALERT FAILED to send: {document_name[:50]}: {ae}")
+        return False
+    if sent:
+        record["urgent_sent_at"] = sent_at
+        state["pending_urgent_recap"].append(record)
+    return sent
+
+
+def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = None) -> bool:
     """The weekly digest goes to resolve_recipients(cfg) PLUS anyone in
     DIGEST_RECIPIENTS_EXTRA (comma/semicolon-separated env, private — not
     committed to this PUBLIC repo's config.yml). This is a DIGEST-ONLY
@@ -479,10 +924,13 @@ def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = 
     urgent_recap: items already sent as their own same-day [URGENT] email,
     recapped here under their own labeled section. Kept out of the subject
     line on purpose — the header still reads as "N new documents"; the recap
-    section inside the body is what surfaces the urgent items."""
+    section inside the body is what surfaces the urgent items.
+
+    Returns send_email's result (False = nothing handed to SMTP), so the
+    watcher can record a skipped digest for the owner weekly email."""
     subject = f"Arbor Hills N2688 digest — {len(items)} new document(s)"
     recipients = merge_extra_recipients(resolve_recipients(cfg), "DIGEST_RECIPIENTS_EXTRA")
-    send_email(subject, format_digest_body(items, urgent_recap), cfg, recipients=recipients)
+    return send_email(subject, format_digest_body(items, urgent_recap), cfg, recipients=recipients)
 
 
 def send_upcoming(upcoming_block: str, cfg: dict) -> None:

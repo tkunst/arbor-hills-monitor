@@ -171,13 +171,49 @@ class DiscoveryResult:
 # ---------------------------------------------------------------------------
 
 
+_REDIRECT_CODES = (301, 302, 303, 307, 308)
+_MAX_REDIRECTS = 5
+
+
+def _get_same_host(url: str, timeout: int):
+    """requests.get with redirects followed BY HAND, each hop only to the SAME
+    host as `url` (SEC-005, CWE-918): requests' own redirect-following would
+    fetch any Location a response names, including an internal host (e.g. a
+    cloud metadata endpoint), before the caller could check it. Raises
+    GFLInfoSiteFetchError on an off-host redirect, a missing Location, or too
+    many hops; otherwise returns the final response."""
+    current = url
+    jar = requests.cookies.RequestsCookieJar()  # carried across hops, as requests would
+    for _ in range(_MAX_REDIRECTS + 1):
+        r = requests.get(current, headers=_HEADERS, timeout=timeout, allow_redirects=False,
+                         cookies=jar)
+        if r.status_code not in _REDIRECT_CODES:
+            return r
+        if getattr(r, "cookies", None):
+            jar.update(r.cookies)
+        loc = (getattr(r, "headers", None) or {}).get("Location")
+        if not loc:
+            raise GFLInfoSiteFetchError(f"GET {current} returned HTTP {r.status_code} "
+                                        "with no Location", status=r.status_code)
+        nxt = urljoin(current, loc)
+        scheme = urlparse(nxt).scheme
+        if (scheme not in ("http", "https") or not _same_host(nxt, url)
+                or (urlparse(url).scheme == "https" and scheme != "https")):
+            raise GFLInfoSiteFetchError(f"GET {current} redirected off-host; not followed",
+                                        status=r.status_code)
+        current = nxt
+    raise GFLInfoSiteFetchError(f"GET {url}: more than {_MAX_REDIRECTS} redirects")
+
+
 def fetch_page(url: str, timeout: int = 45) -> str:
     """GET `url` and return its body text. Raises GFLInfoSiteGone on HTTP 404/410
     (a confirmed removal), GFLInfoSiteFetchError on any other network/HTTP
     failure or a suspiciously short body — never returns a partial/error body for
     the caller to mistake for changed content."""
     try:
-        r = requests.get(url, headers=_HEADERS, timeout=timeout)
+        r = _get_same_host(url, timeout)
+    except GFLInfoSiteFetchError:
+        raise
     except Exception as e:  # noqa: BLE001 — network / timeout → transient
         raise GFLInfoSiteFetchError(f"GET {url} failed: {e}") from e
     status = r.status_code
@@ -197,7 +233,7 @@ def _fetch_text_or_none(url: str, timeout: int) -> str | None:
     failure instead of raising, because a discovery miss degrades gracefully
     (the seed floor still covers the core pages) and must never abort a run."""
     try:
-        r = requests.get(url, headers=_HEADERS, timeout=timeout)
+        r = _get_same_host(url, timeout)
         if r.status_code != 200 or len(r.text) < 20:
             return None
         return r.text

@@ -2,7 +2,7 @@ graph LR
   %% program -> data store lineage; dotted = read, bold = write
   ds_case_file_sheet[("Case-File Sheet")]
   ds_drive_archive[("Google Drive PDF Archive")]
-  ds_nsite[("EGLE nSITE Portal (Air)")]
+  ds_nsite[("EGLE nSITE / MiEnviro (documents + 7 profiles)")]
   ds_wds[("EGLE WDS Portal (Solid Waste)")]
   ds_mmpc[("Washtenaw County MMPC Site")]
   ds_pfas[("EGLE PFAS Investigation Pages (michigan.gov)")]
@@ -11,12 +11,24 @@ graph LR
   ds_ride[("EGLE RIDE RRDOpenData ArcGIS Service (Part 201 + UST, public)")]
   ds_gfl_info_site[("GFL Info Website (arborhillslandfill.com, Cloudflare)")]
   ds_pws_pfas[("EGLE Public Water Supply PFAS ArcGIS Service (MPART, public)")]
+  ds_rop[("EGLE ROP sources (EPA monthly CSV, N2688 folder, statewide notice PDF)")]
+  ds_mmd[("EGLE MMD Open Data ArcGIS (public)")]
+  ds_mpart[("MPART PFAS ArcGIS layers (public)")]
+  ds_ride_docs[("EGLE RIDE document listing (anonymous Public User session)")]
+  ds_govqa[("EGLE GovQA public FOIA archive")]
+  ds_egle_newsroom[("EGLE newsroom landing page (michigan.gov)")]
+  ds_private_sheet[("Private Sheet (owner only: GovQA, RRD Documents, Upcoming, Owner Notices, Parser Review Flags)")]
+  ds_public_site[("Public site pages (GitHub Pages: public records, comment periods, sitemap)")]
   ds_smtp[("Email Recipients (SMTP)")]
   ds_anthropic[("Anthropic Claude API")]
   ds_config[("config.yml (risk register + settings)")]
+  ds_well_aliases[("data/well_aliases.json (generated well-ID alias map, ADR 068)")]
   sheet_writer["sheet_writer"]
   sheet_writer -. read .-> ds_case_file_sheet
   sheet_writer ==>|write| ds_case_file_sheet
+  dataset_provenance["dataset_provenance"]
+  dataset_provenance -. read .-> ds_case_file_sheet
+  dataset_provenance ==>|write| ds_case_file_sheet
   archive_client["archive_client"]
   archive_client ==>|write| ds_drive_archive
   nsite_client["nsite_client"]
@@ -35,6 +47,8 @@ graph LR
   egle_doc_parser -. read .-> ds_anthropic
   config_loader["config_loader"]
   config_loader -. read .-> ds_config
+  well_aliases["well_aliases"]
+  well_aliases -. read .-> ds_well_aliases
   wds_archiver["wds_archiver"]
   wds_archiver -. read .-> ds_wds
   wds_archiver ==>|write| ds_drive_archive
@@ -50,6 +64,51 @@ graph LR
   gfl_info_site_client -. read .-> ds_gfl_info_site
   pfas_pws_client["pfas_pws_client"]
   pfas_pws_client -. read .-> ds_pws_pfas
+  rop_client["rop_client"]
+  rop_client -. read .-> ds_rop
+  mmd_client["mmd_client"]
+  mmd_client -. read .-> ds_mmd
+  mpart_client["mpart_client"]
+  mpart_client -. read .-> ds_mpart
+  ride_docs_client["ride_docs_client"]
+  ride_docs_client -. read .-> ds_ride_docs
+  govqa_client["govqa_client"]
+  govqa_client -. read .-> ds_govqa
+  egle_newsroom_watcher["egle_newsroom_watcher"]
+  egle_newsroom_watcher -. read .-> ds_egle_newsroom
+  govqa_watcher["govqa_watcher"]
+  govqa_watcher -. read .-> ds_private_sheet
+  govqa_watcher ==>|write| ds_private_sheet
+  ride_docs_watcher["ride_docs_watcher"]
+  ride_docs_watcher -. read .-> ds_private_sheet
+  ride_docs_watcher ==>|write| ds_private_sheet
+  upcoming["upcoming"]
+  upcoming -. read .-> ds_private_sheet
+  owner_notices["owner_notices"]
+  owner_notices ==>|write| ds_private_sheet
+  dataset_provenance ==>|write| ds_case_file_sheet
+  review_flags["review_flags"]
+  review_flags ==>|write| ds_private_sheet
+  civicclerk_archiver["civicclerk_archiver"]
+  civicclerk_archiver ==>|write| ds_drive_archive
+  ridgewood_reverify["ridgewood_reverify"]
+  ridgewood_reverify ==>|write| ds_drive_archive
+  gfl_air_hourly_capture["gfl_air_hourly_capture"]
+  gfl_air_hourly_capture ==>|write| ds_drive_archive
+  gfl_feed_snapshot["gfl_feed_snapshot"]
+  gfl_feed_snapshot ==>|write| ds_drive_archive
+  govqa_watcher ==>|write| ds_drive_archive
+  ride_docs_watcher ==>|write| ds_drive_archive
+  snapshot_exporter["snapshot_exporter"]
+  snapshot_exporter ==>|write| ds_drive_archive
+  gen_findings_feed["gen_findings_feed"]
+  gen_findings_feed ==>|write| ds_public_site
+  gen_public_comment_feed["gen_public_comment_feed"]
+  gen_public_comment_feed ==>|write| ds_public_site
+  gen_sitemap["gen_sitemap"]
+  gen_sitemap ==>|write| ds_public_site
+  check_publish_safety["check_publish_safety"]
+  check_publish_safety -. read .-> ds_public_site
   style ds_case_file_sheet fill:#f59e0b,color:#000,stroke:#b45309
   style ds_drive_archive fill:#f59e0b,color:#000,stroke:#b45309
   style ds_nsite fill:#f59e0b,color:#000,stroke:#b45309
@@ -61,6 +120,15 @@ graph LR
   style ds_ride fill:#f59e0b,color:#000,stroke:#b45309
   style ds_gfl_info_site fill:#f59e0b,color:#000,stroke:#b45309
   style ds_pws_pfas fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_rop fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_mmd fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_mpart fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_ride_docs fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_govqa fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_egle_newsroom fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_private_sheet fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_public_site fill:#f59e0b,color:#000,stroke:#b45309
   style ds_smtp fill:#f59e0b,color:#000,stroke:#b45309
   style ds_anthropic fill:#f59e0b,color:#000,stroke:#b45309
   style ds_config fill:#f59e0b,color:#000,stroke:#b45309
+  style ds_well_aliases fill:#f59e0b,color:#000,stroke:#b45309

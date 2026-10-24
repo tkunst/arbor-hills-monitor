@@ -1,6 +1,10 @@
 """Findings feed render/format logic — pagination boundaries, blank-field
 handling, sort order, link passthrough, archive-link resolution, title
 date-stripping."""
+import json
+
+import pytest
+
 import findings_feed as ff
 import sheet_writer as sw
 
@@ -14,21 +18,38 @@ def test_doc_id_extraction_reuses_sheet_writer_not_a_copy():
 
 def _row(date="2026-08-01", name="Doc", risks="R5", link="https://x/1",
          facility="Arbor Hills Remediation Area", summary="A summary.",
-         kdp="180F at AHW272.", doc_type="evidence", severity="notable"):
+         kdp="180F at AHW272.", doc_type="evidence", severity="notable",
+         document_date="", egle_title=""):
     # Same column order as sheet_writer.FEED_HEADERS.
-    return [date, name, doc_type, risks, severity, summary, kdp, link, facility]
+    return [date, name, doc_type, risks, severity, summary, kdp, link, facility,
+            document_date, egle_title]
 
 
 # --- parse_feed_rows -----------------------------------------------------
 
 def test_parse_feed_rows_pads_short_rows():
-    short = ["2026-08-01", "Doc", "evidence"]  # only 3 of 9 columns
+    short = ["2026-08-01", "Doc", "evidence"]  # only 3 of 11 columns
     rows = ff.parse_feed_rows([short])
     assert rows == [{
         "date_filed": "2026-08-01", "document_name": "Doc", "type": "evidence",
         "risks": "", "severity": "", "summary": "", "key_data_point": "",
-        "link": "", "facility": "",
+        "link": "", "facility": "", "document_date": "", "egle_title": "",
     }]
+
+
+def test_parse_feed_rows_blanks_a_future_document_date():
+    # Owner rule 2026-10-17: a Document Date after the build date is an error
+    # (the 2031-10-13 row on the live page); it falls back to Date Filed.
+    from datetime import date
+    fields = ff.FEED_FIELDS
+    raw = [""] * len(fields)
+    raw[fields.index("date_filed")] = "2026-10-13"
+    raw[fields.index("document_date")] = "2031-10-13"
+    ok = list(raw)
+    ok[fields.index("document_date")] = "2019-10-01"
+    rows = ff.parse_feed_rows([raw, ok], today=date(2026, 10, 17))
+    assert rows[0]["document_date"] == "" and ff.display_date(rows[0]) == "2026-10-13"
+    assert rows[1]["document_date"] == "2019-10-01"
 
 
 def test_parse_feed_rows_skips_blank_rows():
@@ -228,7 +249,149 @@ def test_facility_display_passes_through_unmapped_names():
     assert ff.facility_display("") == ""
 
 
+def test_facility_display_resolves_hand_curated_srn_codes():
+    # Hand-Curated Files stores bare SRNs; they must land on the same public
+    # label as the auto rows, or the facility filter shows duplicates.
+    assert ff.facility_display("N2688") == "Arbor Hills Landfill"
+    assert ff.facility_display("RA") == "Arbor Hills Remediation Area"
+    assert ff.facility_display("N1504") == "Arbor Hills Energy"
+    assert ff.facility_display("WRD") == "Arbor Hills Landfill (Land & Water Interface)"
+    assert ff.facility_display("Arbor Hills Landfill (N2688)") == "Arbor Hills Landfill"
+
+
 # --- render_entry ---------------------------------------------------------
+
+# --- ADR 065: display_date + "EGLE title: ..." accuracy note --------------
+
+def test_display_date_falls_back_to_date_filed_when_no_document_date():
+    row = ff.parse_feed_rows([_row(date="2026-08-26")])[0]
+    assert ff.display_date(row) == "2026-08-26"
+
+
+def test_display_date_plain_document_date_within_gap():
+    # 1-day gap -- close enough not to need the "(filed ...)" annotation.
+    row = ff.parse_feed_rows([_row(date="2026-08-26", document_date="2026-08-27")])[0]
+    assert ff.display_date(row) == "2026-08-27"
+
+
+def test_display_date_annotates_filed_date_when_gap_exceeds_threshold():
+    row = ff.parse_feed_rows(
+        [_row(date="2020-03-23", document_date="2019-12-23")])[0]
+    assert ff.display_date(row) == "2019-12-23 (filed 2020-03-23)"
+
+
+def test_display_date_equal_dates_shows_plain_no_annotation():
+    row = ff.parse_feed_rows([_row(date="2026-08-27", document_date="2026-08-27")])[0]
+    assert ff.display_date(row) == "2026-08-27"
+
+
+def test_display_date_malformed_date_does_not_raise():
+    row = ff.parse_feed_rows([_row(date="not-a-date", document_date="2026-08-27")])[0]
+    assert ff.display_date(row) == "2026-08-27"  # shows document_date plain, no crash
+
+
+def test_render_entry_shows_filed_annotation_in_meta_line():
+    row = ff.parse_feed_rows(
+        [_row(date="2020-03-23", document_date="2019-12-23")])[0]
+    out = ff.render_entry(row)
+    assert "2019-12-23 (filed 2020-03-23)" in out
+
+
+def test_render_entry_shows_egle_title_note_when_title_differs():
+    row = ff.parse_feed_rows(
+        [_row(name="EGLE letter: HOV renewal",
+              egle_title="Schedule - Air General Compliance Report")])[0]
+    out = ff.render_entry(row)
+    assert "EGLE title: Schedule - Air General Compliance Report" in out
+
+
+def test_render_entry_omits_egle_title_note_when_same_as_shown_title():
+    row = ff.parse_feed_rows([_row(name="Violation Notice", egle_title="Violation Notice")])[0]
+    out = ff.render_entry(row)
+    assert "EGLE title:" not in out
+
+
+def test_render_entry_omits_egle_title_note_for_unchanged_dated_title():
+    # Code review finding (ADR 065): document_name == egle_title verbatim
+    # here (never flagged generic, no override) -- pv["title"] strips the
+    # trailing "(MM/DD/YYYY)" suffix, so comparing the unstripped egle_title
+    # against it used to false-positive on every one of the ~195 real
+    # titles that end in this redundant suffix, implying a substitution
+    # that never happened.
+    dated = "On-Site Inspection (06/01/2025)"
+    row = ff.parse_feed_rows([_row(name=dated, egle_title=dated)])[0]
+    out = ff.render_entry(row)
+    assert "EGLE title:" not in out
+
+
+def test_render_entry_omits_egle_title_note_when_blank():
+    row = ff.parse_feed_rows([_row()])[0]  # egle_title="" by default
+    out = ff.render_entry(row)
+    assert "EGLE title:" not in out
+
+
+def test_render_entry_egle_title_note_is_redacted(monkeypatch):
+    # Same redact_names() mechanism title/summary/kdp already go through (see
+    # _public_view) -- REDACT_NAMES-configured env, matching this file's own
+    # established test pattern below (a synthetic name, never a real one).
+    monkeypatch.setenv("REDACT_NAMES", "Zzyzxqplonk Testtoken")
+    monkeypatch.setattr(ff, "_NAME_REDACTOR", ff._build_name_redactor())
+    row = ff.parse_feed_rows(
+        [_row(name="EGLE letter", egle_title="Letter to Zzyzxqplonk Testtoken")])[0]
+    out = ff.render_entry(row)
+    assert "Testtoken" not in out
+    assert "Zzyzxqplonk" not in out
+    assert "an EGLE inspector" in out  # the neutral substitute role label
+
+
+def test_render_entry_suppresses_egle_title_note_on_denylist_hit():
+    # Security review (ADR 065): redact_names() alone only covers the
+    # operator-configured REDACT_NAMES list, which is narrower than
+    # name_check's own denylist (KNOWN_NAMES). The raw nSITE title column is
+    # never sanitized at write time the way display_title is, so if it itself
+    # trips the denylist, the note must be suppressed ENTIRELY -- never shown
+    # even partially stripped (that would misrepresent nSITE's own title).
+    row = ff.parse_feed_rows(
+        [_row(name="EGLE letter", egle_title="Letter to Anthony Testa")])[0]
+    out = ff.render_entry(row)
+    assert "EGLE title:" not in out
+    assert "Testa" not in out
+
+
+def test_render_entry_suppresses_egle_title_note_on_heuristic_hit():
+    # Security review round 2 (ADR 065): nSITE's own filer-entered title is
+    # uncurated free text, same novel-name risk sanitize_display_title's
+    # heuristic gate exists for -- a parenthetical name shape the fixed
+    # KNOWN_NAMES denylist has never seen must also suppress this note.
+    row = ff.parse_feed_rows(
+        [_row(name="EGLE letter",
+              egle_title="Schedule - Air General Compliance Report (J. Newcomer)")])[0]
+    out = ff.render_entry(row)
+    assert "EGLE title:" not in out
+    assert "Newcomer" not in out
+
+
+def test_render_entry_shows_egle_title_note_when_clean():
+    # Confirms the denylist gate doesn't block the ordinary, clean case.
+    row = ff.parse_feed_rows(
+        [_row(name="EGLE letter: HOV renewal",
+              egle_title="Schedule - Air General Compliance Report")])[0]
+    out = ff.render_entry(row)
+    assert "EGLE title: Schedule - Air General Compliance Report" in out
+
+
+def test_search_entry_date_prefers_document_date():
+    row = ff.parse_feed_rows(
+        [_row(date="2020-03-23", document_date="2019-12-23")])[0]
+    idx = json.loads(ff.build_search_index([row]))
+    assert idx[0]["date"] == "2019-12-23"
+
+
+def test_search_entry_date_falls_back_to_date_filed():
+    row = ff.parse_feed_rows([_row(date="2026-08-26")])[0]
+    idx = json.loads(ff.build_search_index([row]))
+    assert idx[0]["date"] == "2026-08-26"
+
 
 def test_render_entry_omits_blank_optional_fields():
     row = ff.parse_feed_rows([_row(summary="", kdp="")])[0]
@@ -243,6 +406,115 @@ def test_render_entry_includes_populated_fields():
     out = ff.render_entry(row)
     assert "A summary." in out
     assert "Key data point:" in out and "180F at AHW272." in out
+
+
+def test_render_entry_exact_output_for_a_populated_row():
+    # A literal, byte-for-byte pin of render_entry's full output (not just the
+    # substring assertions elsewhere in this file) -- the strongest available
+    # guard that the _public_view extraction (and any future change here)
+    # can't silently alter the live, daily-regenerated public HTML.
+    row = ff.parse_feed_rows([_row()])[0]
+    assert ff.render_entry(row) == (
+        '<article class="finding">\n'
+        '<p class="finding-meta">2026-08-01 &middot; Arbor Hills Remediation Area '
+        '&middot; evidence &middot; notable</p>\n'
+        '<h3><a href="https://x/1">Doc</a></h3>\n'
+        '<p class="finding-auto-label">Automated summary of the linked document above. '
+        'This summary and any key data point below are machine-generated and may '
+        'contain errors. Consult the source document before relying on them.</p>\n'
+        '<p>A summary.</p>\n'
+        '<p class="finding-kdp"><strong>Key data point:</strong> 180F at AHW272.</p>\n'
+        '</article>'
+    )
+
+
+def test_render_entry_shows_automated_summary_label_when_summary_present():
+    # The insurance-readiness label (master analysis 5.4): a per-item disclaimer
+    # framing the auto-generated content as a summary-of-a-primary-source. A row
+    # with a valid link references "the linked document above".
+    row = ff.parse_feed_rows([_row(summary="EGLE approved the protocol.")])[0]
+    out = ff.render_entry(row)
+    assert 'class="finding-auto-label"' in out
+    assert "Automated summary of the linked document above." in out
+    assert "may contain errors" in out
+    assert "Consult the source document before relying on them." in out
+
+
+def test_render_entry_label_wording_names_the_key_data_point():
+    # 5.4 also flags the "Key data point" call-out as machine-generated; the
+    # single per-item label must explicitly govern it, not just the summary
+    # paragraph (the KDP is the more assertive of the two auto-fields).
+    row = ff.parse_feed_rows([_row()])[0]
+    out = ff.render_entry(row)
+    assert "This summary and any key data point below are machine-generated" in out
+
+
+def test_render_entry_label_sits_between_title_and_summary():
+    # Placement matters: the disclaimer must appear AFTER the title/link and
+    # BEFORE the summary text (and before the key-data-point call-out below it).
+    row = ff.parse_feed_rows([_row(summary="A summary.", kdp="180F.")])[0]
+    out = ff.render_entry(row)
+    i_title = out.index("<h3>")
+    i_label = out.index('class="finding-auto-label"')
+    i_summary = out.index("<p>A summary.</p>")
+    i_kdp = out.index("finding-kdp")
+    assert i_title < i_label < i_summary < i_kdp
+
+
+def test_render_entry_label_no_link_variant():
+    # A row with no usable link (stub row, or a rejected non-http scheme) still
+    # gets the label, but references "this document" rather than a link above.
+    row = ff.parse_feed_rows([_row(link="", summary="Source could not be processed.")])[0]
+    out = ff.render_entry(row)
+    assert "Automated summary of this document." in out
+    assert "the linked document above" not in out
+
+
+def test_render_entry_label_present_when_only_key_data_point():
+    # Defensive: a row carrying a key data point but a blank summary still has
+    # machine-generated content to disclaim, so the label must show -- but with
+    # wording that does NOT reference a rendered "summary" paragraph, since none
+    # is emitted in this branch (the label names just the key data point).
+    row = ff.parse_feed_rows([_row(summary="", kdp="180F at AHW272.")])[0]
+    out = ff.render_entry(row)
+    assert 'class="finding-auto-label"' in out
+    assert "Automated key data point from the linked document above." in out
+    assert "Consult the source document before relying on it." in out
+    # No <p>...</p> summary paragraph is rendered, so the label must not claim a
+    # "summary" ANYWHERE -- neither the lead nor the detail (the accuracy nit
+    # this branch fixes: "Automated summary" would be self-contradictory here).
+    assert "summary" not in out.lower()
+
+
+def test_render_entry_label_summary_only_does_not_overclaim_a_key_data_point():
+    # The summary-present branch says "...and any key data point below...". When
+    # a summary is present but the key data point is blank, no finding-kdp
+    # paragraph renders -- the "any ... below" hedge must keep that accurate
+    # (a universal over an empty set, not an existence claim). Pins the one
+    # branch whose wording names possibly-absent content.
+    row = ff.parse_feed_rows([_row(summary="EGLE approved the protocol.", kdp="")])[0]
+    out = ff.render_entry(row)
+    assert "Automated summary of the linked document above." in out
+    assert "finding-kdp" not in out  # no key-data-point paragraph rendered
+    assert "any key data point below" in out  # hedge present, accurate vacuously
+
+
+def test_render_entry_no_label_when_no_summary_and_no_kdp():
+    # An auto row with neither field has nothing to disclaim -- no empty label.
+    row = ff.parse_feed_rows([_row(summary="", kdp="")])[0]
+    out = ff.render_entry(row)
+    assert "finding-auto-label" not in out
+    assert "Automated summary" not in out
+
+
+def test_render_entry_no_label_for_handcurated_rows():
+    # Hand-Curated rows carry a human-entered title but a blank summary/KDP
+    # (parse_handcurated_rows) -- they are NOT machine-generated summaries, so
+    # they must never carry the "automated summary" disclaimer.
+    hc = ff.parse_handcurated_rows([_hc_row(title="GFL letter")])[0]
+    out = ff.render_entry(hc)
+    assert "finding-auto-label" not in out
+    assert "Automated summary" not in out
 
 
 def test_render_entry_never_renders_risks():
@@ -307,7 +579,7 @@ def test_build_pages_nav_links_correct_on_each_page():
     assert 'href="page-2.html"' in pages["index.html"]
 
     # Middle page: both directions, pointing at the right neighbors.
-    assert 'href="index.html"' in pages["page-2.html"]
+    assert 'href="./"' in pages["page-2.html"]
     assert 'href="page-3.html"' in pages["page-2.html"]
 
     # Last page: only "Newer", no "Older".
@@ -325,6 +597,41 @@ def test_build_pages_empty_feed_renders_single_page():
     pages = ff.build_pages([], generated_at="2026-08-21 12:00 UTC")
     assert set(pages.keys()) == {"index.html"}
     assert "No documents found." in pages["index.html"]
+
+
+# --- search UI markup (ADR 062 Phase 3) ------------------------------------
+
+def test_render_page_includes_search_ui_hidden_by_default():
+    # The search container ships `hidden` in the markup -- search.js removes
+    # it once it confirms JS is actually running, so a visitor with
+    # JavaScript disabled never sees an inert search box (progressive
+    # enhancement, not a replacement for the base page).
+    rows = ff.parse_feed_rows([_row()])
+    pages = ff.build_pages(rows, generated_at="2026-08-21 12:00 UTC")
+    html = pages["index.html"]
+    assert '<div class="search-ui" id="public-records-search" hidden>' in html
+    assert '<script src="search.js" defer></script>' in html
+
+
+def test_render_page_search_ui_present_on_every_page_including_empty_feed():
+    # The handoff requires the search UI on every page, including an empty
+    # feed's single page -- no special-casing by row count.
+    pages = ff.build_pages([], generated_at="2026-08-21 12:00 UTC")
+    assert 'id="public-records-search"' in pages["index.html"]
+
+
+def test_render_page_chronological_list_and_nav_unchanged_by_search_ui():
+    # The existing chronological view must stay exactly as before -- same
+    # classes (findings-list/findings-nav), now also addressable by id so
+    # search.js can toggle it, but never replaced or restructured.
+    rows = ff.parse_feed_rows([_row(date=f"2026-01-{i:02d}") for i in range(1, 7)])
+    pages = ff.build_pages(rows, generated_at="2026-08-21 12:00 UTC", page_size=5)
+    assert '<div class="findings-list" id="pr-browse-list">' in pages["index.html"]
+    assert '<p class="findings-nav" id="pr-browse-nav">' in pages["index.html"]
+    # The search results container reuses the same findings-list class (so
+    # results look identical to chronological entries) but is a distinct,
+    # separately-hidden element.
+    assert '<div class="findings-list" id="pr-search-results" hidden></div>' in pages["index.html"]
 
 
 # --- Hand-Curated Files -----------------------------------------------------
@@ -351,7 +658,10 @@ def test_parse_handcurated_rows_maps_all_nine_feed_fields():
     # The 9 FEED_FIELDS keys the auto tabs produce, plus `source` -- the one
     # field Hand-Curated carries that the auto tabs have no equivalent for.
     assert set(row.keys()) == set(ff.FEED_FIELDS) | {"source"}
-    assert row["date_filed"] == "2026-08-21"
+    # Owner decision 2026-10-17: the entry date (added_at) is the hand-curated
+    # Date Filed; doc_date is the Document Date.
+    assert row["date_filed"] == "2026-09-02"
+    assert row["document_date"] == "2026-08-21"
     assert row["document_name"] == "GFL 120-day GCCS extension request"
     assert row["type"] == "procedural"
     assert row["risks"] == "R4, R8"
@@ -394,7 +704,7 @@ def test_parse_handcurated_rows_pads_short_rows():
     assert rows == [{
         "date_filed": "", "document_name": "Title", "type": "", "risks": "",
         "severity": "", "summary": "", "key_data_point": "", "link": "",
-        "facility": "", "source": "",
+        "facility": "", "source": "", "document_date": "", "egle_title": "",
     }]
 
 
@@ -466,3 +776,433 @@ def test_render_entry_blank_source_public_shows_not_stated():
     # ...but an AUTO row (no `source` key at all) still shows no Source tag.
     auto = ff.parse_feed_rows([_row(name="Auto Doc")])[0]
     assert "Source:" not in ff.render_entry(auto)
+
+
+# --- build_search_index (ADR 062 Phase 1) -----------------------------------
+
+def test_build_search_index_is_valid_json_with_one_entry_per_row():
+    rows = ff.parse_feed_rows([_row(name="Doc A"), _row(name="Doc B")])
+    entries = json.loads(ff.build_search_index(rows))
+    assert len(entries) == len(rows) == 2
+
+
+def test_build_search_index_empty_rows_is_empty_array():
+    assert ff.build_search_index([]) == "[]"
+
+
+def test_build_search_index_schema_fields_for_a_populated_row():
+    row = ff.parse_feed_rows([_row(
+        date="2026-08-01", name="On-Site Inspection (06/01/2025)", doc_type="evidence",
+        severity="notable", summary="A summary.", kdp="180F at AHW272.",
+        link="https://mienviro.michigan.gov/ncore/downloadpdf/123",
+        facility="GFL-Arbor Hills Landfill-Washtenaw Co",
+    )])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["date"] == "2026-08-01"
+    assert entry["title"] == "On-Site Inspection"  # embedded date stripped, same as render_entry
+    assert entry["facility"] == "Arbor Hills Landfill (Land & Water Interface)"  # facility_display aliasing
+    assert entry["type"] == "evidence"
+    assert entry["severity"] == "notable"
+    assert entry["excerpt"] == "A summary."
+    assert entry["link"] == "https://mienviro.michigan.gov/ncore/downloadpdf/123"
+    assert "source" not in entry  # auto row, no source key at all
+    assert "risks" not in entry
+
+
+def test_build_search_index_omits_blank_facility_type_severity_date_and_link():
+    row = ff.parse_feed_rows([_row(
+        date="", facility="", doc_type="", severity="", summary="", kdp="", link="",
+    )])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    # title is never blank (the "(untitled document)" fallback), so it's the
+    # only key a row with every other field blank still carries.
+    assert set(entry.keys()) == {"title"}
+
+
+# --- build_search_index: hand-curated source key-presence signal -----------
+
+def test_build_search_index_handcurated_row_carries_source_key_even_when_blank():
+    # "source" in row iff the row is hand-curated-origin at all, even with a
+    # blank source_public -- this key-PRESENCE signal (not a sentinel value)
+    # is what Phase 2's check_publish_safety.py extension will use to tell
+    # hand-curated entries from auto entries.
+    hc = ff.parse_handcurated_rows([_hc_row(source_public="")])[0]
+    entry = json.loads(ff.build_search_index([hc]))[0]
+    assert "source" in entry
+    assert entry["source"] == ""
+
+
+def test_build_search_index_handcurated_row_source_present():
+    hc = ff.parse_handcurated_rows([_hc_row(source="Charter Township of Salem")])[0]
+    entry = json.loads(ff.build_search_index([hc]))[0]
+    assert entry["source"] == "Charter Township of Salem"
+
+
+def test_build_search_index_auto_row_has_no_source_key():
+    row = ff.parse_feed_rows([_row()])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "source" not in entry
+
+
+def test_build_search_index_never_publishes_internal_handcurated_source_or_note():
+    # Same safety property test_handcurated_never_publishes_internal_source_or_note
+    # pins for the HTML -- must hold for the JSON index too.
+    hc = ff.parse_handcurated_rows([_hc_row(
+        source="EGLE AQD (Diane Kavanaugh Vetort)",
+        source_public="EGLE AQD",
+        note="Hand-curated 2026-07-24, Trisha-directed; found in full-circle folder",
+    )])[0]
+    out = ff.build_search_index([hc])
+    assert "EGLE AQD" in out
+    assert "Vetort" not in out
+    assert "Trisha" not in out
+    assert "full-circle" not in out
+
+
+# --- build_search_index: link scheme safety ---------------------------------
+
+def test_build_search_index_rejects_non_http_link_scheme():
+    row = ff.parse_feed_rows([_row(link="javascript:alert(1)")])[0]
+    out = ff.build_search_index([row])
+    assert "javascript:" not in out
+    entry = json.loads(out)[0]
+    assert "link" not in entry  # omitted -- never the raw unsafe value
+
+
+def test_build_search_index_blank_link_omits_the_key():
+    row = ff.parse_feed_rows([_row(link="")])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "link" not in entry
+
+
+def test_build_search_index_keeps_a_valid_https_link_raw_and_unescaped():
+    link = "https://mienviro.michigan.gov/ncore/downloadpdf/1?a=1&b=2"
+    row = ff.parse_feed_rows([_row(link=link)])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["link"] == link  # verbatim, including the query-string "&"
+
+
+# --- build_search_index: excerpt (summary / key_data_point fallback) -------
+
+def test_build_search_index_excerpt_falls_back_to_key_data_point_when_summary_blank():
+    row = ff.parse_feed_rows([_row(summary="", kdp="180F at AHW272.")])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["excerpt"] == "180F at AHW272."
+
+
+def test_build_search_index_omits_excerpt_when_both_summary_and_kdp_blank():
+    row = ff.parse_feed_rows([_row(summary="", kdp="")])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "excerpt" not in entry
+
+
+def test_build_search_index_leaves_a_short_excerpt_unchanged():
+    row = ff.parse_feed_rows([_row(summary="A short summary.")])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["excerpt"] == "A short summary."
+    assert not entry["excerpt"].endswith("...")
+
+
+def test_build_search_index_truncates_excerpt_on_a_word_boundary():
+    # "words " (6 chars) deliberately does NOT divide EXCERPT_MAX_CHARS (200),
+    # so the cutoff can never coincidentally land exactly between two tokens --
+    # unlike a 5-char "word " token, which would make this test pass even with
+    # no word-boundary logic at all (a plain text[:200] would also end cleanly
+    # on a token boundary). The exact expected value pins the real cut point.
+    long_summary = ("words " * 40).strip()  # 239 chars -- well over the limit
+    row = ff.parse_feed_rows([_row(summary=long_summary)])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["excerpt"] == ("words " * 33).strip() + "..."
+
+
+def test_build_search_index_hard_cuts_a_single_run_with_no_space():
+    # No space before the limit at all -- must still truncate (not emit an
+    # untruncated string), even though there's no word boundary to cut on.
+    long_summary = "a" * 300
+    row = ff.parse_feed_rows([_row(summary=long_summary)])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["excerpt"] == ("a" * ff.EXCERPT_MAX_CHARS) + "..."
+
+
+def test_build_search_index_hard_cuts_when_the_only_early_space_would_collapse_the_excerpt():
+    # Regression: a naive "cut at the LAST space anywhere in the window" has no
+    # lower bound on how far back that space is. A short first word followed
+    # by one long unbroken run (a URL, a well ID, a concatenated identifier --
+    # all plausible in this domain) has its only space at position 1, which a
+    # bound-less implementation would honor, collapsing a 300+ char summary
+    # down to "a..." -- a 4-character excerpt. Must hard-cut near the limit
+    # instead whenever the nearest word boundary is too far back to be useful.
+    # Exact expected value pinned (not just a length bound) so a future change
+    # to the floor (e.g. an accidental limit // 3) would be caught.
+    long_summary = "a " + "b" * 300
+    row = ff.parse_feed_rows([_row(summary=long_summary)])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["excerpt"] == "a " + ("b" * (ff.EXCERPT_MAX_CHARS - 2)) + "..."
+
+
+# --- _truncate_excerpt (internal helper, tested directly for precision) ----
+# A small `limit` makes the boundary arithmetic legible; the build_search_index
+# -level tests above pin the same logic at the real EXCERPT_MAX_CHARS=200.
+
+def test_truncate_excerpt_credits_a_word_ending_exactly_at_the_limit():
+    # The word-boundary search must look ONE char past `limit` -- otherwise a
+    # word that ends exactly at the boundary (its own delimiting space sitting
+    # at index `limit`, just outside a naive text[:limit] window) is dropped
+    # even though it fit perfectly. text[:14] here is "aa bb cc dd ee" --
+    # already a complete run of words -- with the next space at index 14.
+    text = "aa bb cc dd ee ff gg hh ii jj"
+    assert text[14] == " "  # the space right after "ee" -- outside a naive text[:14] window
+    assert ff._truncate_excerpt(text, limit=14) == "aa bb cc dd ee..."
+
+
+def test_truncate_excerpt_still_drops_a_word_that_does_not_fit():
+    # Contrast with the case above: here the word after the cutoff-adjacent
+    # space genuinely doesn't fit within limit+1, so it's correctly dropped.
+    text = "aa bb cc dd eeee ff"
+    assert ff._truncate_excerpt(text, limit=14) == "aa bb cc dd..."
+
+
+# --- build_search_index: never publishes risks -------------------------------
+
+def test_build_search_index_never_includes_risks():
+    row = ff.parse_feed_rows([_row(risks="R1, R2, R5")])[0]
+    out = ff.build_search_index([row])
+    entry = json.loads(out)[0]
+    assert "risks" not in entry
+    assert "R1" not in out
+
+
+# --- build_search_index: untitled fallback -----------------------------------
+
+def test_build_search_index_untitled_document_fallback():
+    row = ff.parse_feed_rows([_row(name="")])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["title"] == "(untitled document)"
+
+
+# --- build_search_index: escaping (must NOT be HTML-escaped) ---------------
+
+def test_build_search_index_output_is_not_html_escaped():
+    # _public_view (the helper build_search_index shares with render_entry)
+    # returns RAW text -- render_entry HTML-escapes it for display, but the
+    # JSON index must NOT, or a title/excerpt would show a literal "&amp;"/
+    # "&lt;" to a reader (Phase 3 renders via textContent, not innerHTML) and
+    # an "&" in a link's query string would be corrupted into "&amp;".
+    row = ff.parse_feed_rows([_row(
+        name="Smith & Sons <Report>", summary="A & B",
+        link="https://mienviro.michigan.gov/ncore/downloadpdf/1?a=1&b=2",
+    )])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert entry["title"] == "Smith & Sons <Report>"
+    assert "&amp;" not in entry["title"]
+    assert "&lt;" not in entry["title"]
+    assert entry["excerpt"] == "A & B"
+    assert entry["link"] == "https://mienviro.michigan.gov/ncore/downloadpdf/1?a=1&b=2"
+
+
+# --- build_search_index: name redaction (shared with render_entry) ---------
+# No existing test in this repo exercises REDACT_NAMES (checked before writing
+# these -- _NAME_REDACTOR is built once at import time from the env var, so
+# setting the env var alone in a test is a no-op; the module-level redactor
+# must be rebuilt too). The synthetic name below is never a real person's --
+# this is a public repo and the whole point of the env-var design is keeping
+# a real name out of it.
+
+def test_build_search_index_redacts_names_matching_redact_names_env_var(monkeypatch):
+    monkeypatch.setenv("REDACT_NAMES", "Zzyzxqplonk Testtoken")
+    monkeypatch.setattr(ff, "_NAME_REDACTOR", ff._build_name_redactor())
+    row = ff.parse_feed_rows([_row(
+        name="Inspection by Zzyzxqplonk Testtoken",
+        summary="Zzyzxqplonk Testtoken reviewed the file.",
+        kdp="Per Zzyzxqplonk Testtoken, 180F.",
+    )])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "Zzyzxqplonk" not in entry["title"]
+    assert "Zzyzxqplonk" not in entry["excerpt"]
+    assert "EGLE inspector" in entry["title"]
+
+
+def test_build_search_index_redaction_control_name_appears_when_redactor_unset(monkeypatch):
+    # Control for the test above, proving it can actually fail: with no
+    # REDACT_NAMES configured, the same name is NOT redacted. Explicitly
+    # clears the env var and rebuilds the redactor (rather than relying on
+    # "the default test environment has none set") so this test is hermetic
+    # even in a shell where a developer has REDACT_NAMES exported locally
+    # (the module's own comment tells them to, to preview redaction) --
+    # without this, the test would spuriously fail outside CI.
+    monkeypatch.delenv("REDACT_NAMES", raising=False)
+    monkeypatch.setattr(ff, "_NAME_REDACTOR", ff._build_name_redactor())
+    assert ff._NAME_REDACTOR is None
+    row = ff.parse_feed_rows([_row(name="Inspection by Zzyzxqplonk Testtoken")])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "Zzyzxqplonk Testtoken" in entry["title"]
+
+
+def test_build_search_index_redacts_a_name_straddling_the_truncation_boundary(monkeypatch):
+    # Order matters: _public_view redacts the FULL text, and only the already-
+    # redacted result is truncated. If a row were truncated first and redacted
+    # second, a name landing at/near char EXCERPT_MAX_CHARS could be cut into a
+    # fragment the redaction regex no longer matches -- leaking a name
+    # fragment into a new public file.
+    #
+    # Construction matters here, verified by hand-tracing both orders: with
+    # prefix="x"*195, the word-boundary snap-back in _truncate_excerpt ALONE
+    # (independent of redaction) happens to cut the text right at the space
+    # immediately before "Zzyzxqplonk" -- so that construction passes under
+    # BOTH the correct order and a simulated buggy reversed order, making it
+    # a non-discriminating test (verified empirically before fixing this).
+    # With prefix="x"*183, "Zzyzxqplonk" (a name-redactor variant ONLY when
+    # immediately followed by "Testtoken" -- see _build_name_redactor's
+    # trailing-subsequence variants, which never include "Zzyzxqplonk" alone)
+    # lands FULLY inside the 200-char window while "Testtoken" straddles the
+    # cutoff. Under a buggy truncate-then-redact order, truncation leaves the
+    # raw, unredactable fragment "...Zzyzxqplonk" in the excerpt (confirmed by
+    # hand-simulating that order against this exact input); under the correct
+    # (shipped) redact-then-truncate order, the whole name is substituted
+    # before truncation ever runs, so nothing survives.
+    monkeypatch.setenv("REDACT_NAMES", "Zzyzxqplonk Testtoken")
+    monkeypatch.setattr(ff, "_NAME_REDACTOR", ff._build_name_redactor())
+    prefix = "x" * 183
+    summary = prefix + " Zzyzxqplonk Testtoken discovered a violation during the site visit today."
+    row = ff.parse_feed_rows([_row(summary=summary)])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "Zzyzx" not in entry["excerpt"]  # no fragment of the name survives
+    assert "Testtoken" not in entry["excerpt"]
+
+
+def test_build_search_index_redacts_a_name_straddling_the_boundary_via_the_kdp_fallback_path(monkeypatch):
+    # Same property and construction as the test above (see its comment for
+    # why prefix="x"*183 is the discriminating choice), exercised on the
+    # key_data_point -> excerpt fallback path (a blank summary) rather than
+    # summary directly -- same code path in _search_entry, but a separate
+    # branch worth covering.
+    monkeypatch.setenv("REDACT_NAMES", "Zzyzxqplonk Testtoken")
+    monkeypatch.setattr(ff, "_NAME_REDACTOR", ff._build_name_redactor())
+    prefix = "x" * 183
+    kdp = prefix + " Zzyzxqplonk Testtoken discovered a violation during the site visit today."
+    row = ff.parse_feed_rows([_row(summary="", kdp=kdp)])[0]
+    entry = json.loads(ff.build_search_index([row]))[0]
+    assert "Zzyzx" not in entry["excerpt"]
+    assert "Testtoken" not in entry["excerpt"]
+
+
+# --- _public_view (shared helper) -------------------------------------------
+
+def test_public_view_none_and_blank_summary_are_both_normalized_to_blank():
+    # _public_view normalizes redact_names(row.get("summary")) with `or ""`,
+    # so a row where "summary"/"key_data_point" is literally None (not just a
+    # blank string -- parse_feed_rows/parse_handcurated_rows never produce
+    # None themselves, but _public_view/render_entry take a bare dict and
+    # shouldn't assume a particular caller) must be treated the same as "".
+    # Tested directly against _public_view's own return value (NOT routed
+    # through render_entry's _esc(), which would paper over this regardless
+    # of whether _public_view's own `or ""` normalization existed at all --
+    # build_search_index has no such safety net, since it never calls _esc).
+    row_with_none = {"document_name": "Doc", "summary": None, "key_data_point": None, "link": ""}
+    row_with_blank = {"document_name": "Doc", "summary": "", "key_data_point": "", "link": ""}
+    assert ff._public_view(row_with_none) == ff._public_view(row_with_blank)
+    assert ff._public_view(row_with_none)["summary"] == ""
+    assert ff._public_view(row_with_none)["key_data_point"] == ""
+
+
+def test_public_view_carries_source_key_presence_from_row():
+    # source folded into _public_view (not re-derived independently by each
+    # caller) -- key-PRESENCE on the input row, not a value check, carried
+    # through as key-presence on the returned dict.
+    assert "source" not in ff._public_view({"document_name": "Doc"})
+    assert ff._public_view({"document_name": "Doc", "source": ""})["source"] == ""
+    assert ff._public_view({"document_name": "Doc", "source": "GFL"})["source"] == "GFL"
+
+
+def test_public_view_shared_by_render_entry_and_build_search_index(monkeypatch):
+    # Pins that render_entry and build_search_index really do share ONE
+    # _public_view implementation (see the handoff's "one thing that must be
+    # exactly right") rather than two independent reimplementations that could
+    # silently drift apart: patching it changes both call sites' output
+    # identically.
+    def fake_public_view(row):
+        return {"title": "PATCHED TITLE", "summary": "", "key_data_point": "", "link": ""}
+
+    monkeypatch.setattr(ff, "_public_view", fake_public_view)
+    row = ff.parse_feed_rows([_row()])[0]
+    assert "PATCHED TITLE" in ff.render_entry(row)
+    assert json.loads(ff.build_search_index([row]))[0]["title"] == "PATCHED TITLE"
+
+
+# --- ordering by Document Date (owner ruling 2026-10-17) ----------------------
+
+def test_browse_order_is_document_date_falling_back_to_date_filed():
+    # Filed the same day, very different document dates: they spread out by
+    # their own dates instead of clumping on the filing day.
+    rows = ff.merge_and_sort(
+        [_row(date="2026-10-13", name="old report", document_date="2019-10-01"),
+         _row(date="2026-10-13", name="recent letter", document_date="2026-07-20"),
+         _row(date="2026-09-01", name="no document date")],
+        [_row(date="2020-05-05", name="historical", document_date="2020-05-01")])
+    assert [r["document_name"] for r in rows] == [
+        "no document date", "recent letter", "historical", "old report"]
+
+
+def test_hand_curated_rows_interleave_by_their_date_and_dateless_sort_last():
+    hc_dated = ["f1.pdf", "curated 2021", "", "2021-06-01", "N2688", "evidence"]
+    hc_blank = ["f2.pdf", "curated undated", "", "", "N2688", "evidence"]
+    rows = ff.merge_handcurated(
+        ff.merge_and_sort([_row(date="2026-10-13", name="auto", document_date="2019-10-01")], []),
+        [hc_blank, hc_dated])
+    assert [r["document_name"] for r in rows] == ["curated 2021", "auto", "curated undated"]
+
+
+def test_handcurated_entry_date_is_its_filed_date_for_every_rule():
+    from datetime import date
+    today = date(2026, 10, 17)
+    undated = _hc_row(doc_date="", title="Undated", added_at="2026-09-10T08:00:00")
+    future = _hc_row(doc_date="2031-01-01", title="Future", added_at="2026-09-05T08:00:00")
+    rows = ff.parse_handcurated_rows([undated, future], today=today)
+    # No doc_date: the row orders and displays by its entry date, not last.
+    assert rows[0]["document_date"] == "" and ff.display_date(rows[0]) == "2026-09-10"
+    # A future doc_date is blanked like any other Document Date.
+    assert rows[1]["document_date"] == "" and ff.display_date(rows[1]) == "2026-09-05"
+    # The entry date is annotated too, labeled "added" (not an EGLE filing).
+    old = ff.parse_handcurated_rows([_hc_row(doc_date="2019-04-02")], today=today)[0]
+    assert ff.display_date(old) == "2019-04-02 (added 2026-09-02)"
+    combined = ff.merge_handcurated(
+        ff.merge_and_sort([_row(date="2026-09-07", name="Auto")], []), [undated])
+    assert [r["document_name"] for r in combined] == ["Undated", "Auto"]
+
+
+@pytest.mark.parametrize("value,future", [
+    ("2031", True), ("2031-10", True), ("2026-11", True), ("2026-10", False),
+    ("2026", False), ("2022-03", False), ("2026-10-18", True), ("2026-10-17", False),
+    ("garbled", False), ("", False)])
+def test_partial_future_handcurated_date_is_blanked(value, future):
+    # A partial hand-curated doc_date in the future (a data-entry slip) must not
+    # stick to the top of page 1 (security review low, 2026-10-17).
+    from datetime import date
+    today = date(2026, 10, 17)
+    assert ff._future_date(value, today) is future
+    row = ff.parse_handcurated_rows([_hc_row(doc_date=value)], today=today)[0]
+    assert row["document_date"] == ("" if future else value)
+
+
+def test_handcurated_partial_date_gets_the_added_note():
+    from datetime import date
+    today = date(2026, 10, 17)
+    row = ff.parse_handcurated_rows([_hc_row(doc_date="2022-03")], today=today)[0]
+    assert ff.display_date(row) == "2022-03 (added 2026-09-02)"
+    same_month = ff.parse_handcurated_rows([_hc_row(doc_date="2026-09")], today=today)[0]
+    assert ff.display_date(same_month) == "2026-09"
+
+
+def test_auto_rows_keep_the_filed_label():
+    row = {"document_date": "2019-12-23", "date_filed": "2020-03-23"}
+    assert ff.display_date(row) == "2019-12-23 (filed 2020-03-23)"
+
+
+@pytest.mark.parametrize("added_at", ["9/2/2026 0:51", "garbled", ""])
+def test_malformed_added_at_is_blanked_not_sorted_to_the_top(added_at):
+    rows = ff.parse_handcurated_rows([_hc_row(doc_date="", added_at=added_at, title="Bad")])
+    assert rows[0]["date_filed"] == ""
+    combined = ff.merge_handcurated(
+        ff.merge_and_sort([_row(date="2026-09-07", name="Auto")], []),
+        [_hc_row(doc_date="", added_at=added_at, title="Bad")])
+    assert [r["document_name"] for r in combined] == ["Auto", "Bad"]

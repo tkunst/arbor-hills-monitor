@@ -259,3 +259,103 @@ block, PR #68). The block now makes only the robust **measurement-basis** distin
 per-station distance** (the exact-vs-context data disagree; a defensible number awaits an
 authoritative full-landfill / active-cell boundary layer). Additive email text only — no
 logic change; the episode engine and the EXCEEDANCE tier are untouched.
+
+## Addendum 2026-10-06: silent stations stay in the monitor table
+
+**Problem.** The SCREENING email's "ALL PERIMETER MONITORS" table was built only from
+stations with at least one reading in this run's batch (`latest_per_station(readings)`).
+A station that stopped sending data simply vanished from the table, with no row and
+no note. The only trace was the "stations reporting N/6" count. MS-1 has sent nothing
+since 2026-09-17 12:00 PM ET and dropped out of the emails this way; MS-6 would have
+too while it was silent 2026-09-29 to 2026-10-05.
+
+**Decision.** The station layer (layer 0) that `fetch_station_coords` already queries
+for coordinates is now also the station registry. It returns every perimeter station
+(even one with no geometry) plus `last_read_iso`, from that layer's `Current_ReadDate`.
+`_monitor_rows(..., registry=coords)` gives every registry station with no reading this
+run a `silent` row, rendered as `MS-1  no data since <ET label>`. That wording is
+used only when the layer's date is earlier than every reading in this run's batch;
+otherwise (no date, a historical backfill, or a reading that arrived between the two
+fetches) the row says `no reading in this run's batch`. The wording states the fact
+only, not "offline" or "sensor down". A silent row has an empty `as_of`, so its stale
+date never widens the email's reporting period, and it is not counted in "stations
+reporting N/6". If the layer-0 fetch fails (it is best-effort), the table falls back
+to reporting stations only and adds one line saying how many stations are not listed
+and why (fetch failed, or not in the source's station list), so a station is never
+dropped without a mention. If the source drops the `Current_ReadDate` field, the fetch
+retries with `Name` only so coordinates survive. `Current_ReadDate` is used, not the
+layer's `Date_Text`, which reads an hour behind during daylight time.
+
+**Scope.** Email display only. The episode engine, the EXCEEDANCE tier,
+`station_snapshot`, and the `GFL Air` tab (the cursor store) are untouched. Detecting
+a station that reports but is stuck on one value (MS-6's flat 0.0) is a separate item.
+
+**Real-specimen check (live path).** Rendered against live data captured 2026-10-06:
+layer 0 through the new `fetch_station_coords` (MS-1 `last_read_iso` =
+`2026-09-17T16:00Z`) and the 2026-10-05 layer-4 readings. The table listed all six
+stations, MS-1 as `no data since 2026-09-17 12:00 PM ET (16:00 UTC)`, and the header
+read `stations reporting 5/6`.
+
+## Addendum 2026-10-23: the expected-station count comes from a configured roster
+
+**Problem.** The 2026-10-06 addendum's "stations reporting N/6" and "N station(s) not
+listed" wording compared the monitor-table row count to a hard-coded
+`n_stations_expected: int = 6` in `format_screening_email()`'s signature, and no call
+site passed anything else. PR #107's own follow-up note named the risk: an extra `MS-`
+feature in layer 0 (a new MS-7, or a naming variant such as "MS-01" beside "MS-1")
+makes the row count reach 6 again, so a genuinely missing expected station is hidden,
+or one physical station shows twice (silent under one name, reporting under the other).
+
+**Decision.** Two station lists, held apart on purpose:
+
+- the **roster** — `gfl_air.expected_stations` in `config.yml`, human-maintained, the
+  single source of truth for how many stations are supposed to exist. Adding or
+  removing a monitor is a one-line edit there, never a code change. Read by
+  `gfl_air_episodes.station_roster()` (de-duplicated, config order; an entry that is
+  blank, not a string, or lacks `station_prefix` is dropped with a CONFIG WARNING —
+  nothing can ever match it, and keeping it would have the email state a config typo
+  as a fact about the source);
+- the **registry** — layer 0 through `fetch_station_coords()`, what the source lists
+  right now, fetched fresh every run and still best-effort (`registry_available`
+  keeps its fallback path).
+
+`gfl_air_episodes.roster_mismatch(roster, seen)` reconciles the roster against what was
+seen, at two points. On EVERY poll, against the batch's readings (no extra fetch): a
+reading from a station not on the roster, or a roster station with no reading this
+poll, is logged — so a new monitor quietly coming online is in the run log even on a
+perimeter where no screening email fires for months. And on every run that fetches the
+layer-0 registry (an episode opened or closed), against the monitor-table rows (readings
+∪ registry entries), logged either way and named in the screening email when one fires;
+a run with no episode activity does not fetch the registry, so the registry side is
+reconciled only on those runs. The SCREENING email's denominator is `len(roster)`; "reporting" counts
+only non-silent rows whose station is ON the roster, derived from the rows alone (the
+caller-supplied `stations_reporting` count was removed — it could have bypassed that
+filter). A station seen but not on the roster is
+listed in the table as before, but is also named in a note ("not in this monitor's
+configured roster — MS-7: listed above but NOT counted toward the 6 expected; if this is
+a real new or renamed monitor, update gfl_air.expected_stations") and logged as
+`ROSTER MISMATCH`. A roster station with neither a reading nor a registry entry — a
+different case from "silent" (registry entry, no reading), e.g. the station was removed
+from the service — gets no invented table row; the "not listed" note now NAMES it
+("1 station(s) not listed — MS-1: not in the source's station list" / "...the station
+list could not be retrieved this run") and the run log carries the same names. Chosen
+over inventing a row because the table's rows are things the source said this run; the
+note is the monitor's own reconciliation, labeled as such.
+
+The magic 6 survives only as `FALLBACK_N_STATIONS_EXPECTED`, used when the config key
+is missing or empty: `run()` prints a `CONFIG WARNING` on every run that happens (quiet
+runs included, so a typo'd roster is visible without waiting for an episode), and the
+email's data-quality line reads "stations reporting N/6 (expected count is the legacy
+default — gfl_air.expected_stations not configured)". The pre-roster count-only note is
+kept for that path, since the names are unknown without a roster.
+
+**Scope.** Email display + run-log only. The episode engine, the EXCEEDANCE tier,
+`station_snapshot`, and the `GFL Air` tab/cursor are untouched. The roster shipped with
+the six names PR #107's 2026-10-06 live specimen showed (MS-1..MS-6); this build ran
+in a cloud session with no access to the live service, so the real roster value needs
+a human check against layer 0 before merge.
+
+**Real-specimen check (live path).** Pending — Trisha, locally, before merge: render
+the screening email against a live `fetch_station_coords()` result and confirm the
+registry names match the roster exactly (no `ROSTER MISMATCH` line in the log, no
+"not in this monitor's configured roster" note in the email).

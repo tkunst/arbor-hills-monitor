@@ -1,0 +1,57 @@
+name: kdp-recheck
+
+# ADR 067: re-run the corrected classifier on case-file rows whose Summary /
+# Key Data Point fail kdp_check. READ-ONLY on the Sheet: it writes the
+# proposals to a run artifact for human review. Applying the reviewed
+# proposals is a separate, local step
+# (scripts/recheck_key_data_points.py --apply <json>), never automatic.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kdp-recheck
+  cancel-in-progress: false
+
+jobs:
+  recheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install system OCR tooling
+        # continue-on-error (found by the advisor, 2026-10-13): a flaky apt
+        # mirror must never fail this whole job -- ensure_searchable()/
+        # ocr_in_place() already fail open when ocrmypdf is missing, and
+        # ridgewood.yml's H2S safety-alert logic specifically must not
+        # depend on this step succeeding (ADR 016).
+        continue-on-error: true
+        run: sudo apt-get update && sudo apt-get install -y ocrmypdf
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Scan + propose (no Sheet writes)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          # public repo: the log carries counts/rows/links only, and every free-text
+          # field in the artifact is name-redacted (same secret as findings-feed.yml)
+          REDACT_NAMES: ${{ secrets.REDACT_NAMES }}
+        run: python scripts/recheck_key_data_points.py --run-llm --counts-only --out-dir "$RUNNER_TEMP/kdp-recheck"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kdp-recheck-proposals
+          path: ${{ runner.temp }}/kdp-recheck/kdp-recheck-proposals.json
+          retention-days: 3

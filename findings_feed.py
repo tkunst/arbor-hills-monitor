@@ -9,8 +9,15 @@ its row-building functions and its API calls.
 """
 from __future__ import annotations
 
+import functools
 import html
+import json
+import os
 import re
+from datetime import date as _date
+
+import name_check
+from config_loader import load_config
 
 # Only this one pure helper is reused from sheet_writer -- a plain string
 # parse with zero I/O of its own (see its docstring), so importing it doesn't
@@ -18,10 +25,14 @@ import re
 from sheet_writer import _link_doc_id
 
 # Same column order as sheet_writer.FEED_HEADERS — New Documents and Historical
-# Documents share this schema (sheet_writer.feed_row()).
+# Documents share this schema (sheet_writer.feed_row()). "document_date" (ADR
+# 065) is the date printed on the document itself, may be blank; "egle_title"
+# is the untouched raw nSITE title (document_name here already carries the
+# RESOLVED display name).
 FEED_FIELDS = [
     "date_filed", "document_name", "type", "risks", "severity",
     "summary", "key_data_point", "link", "facility",
+    "document_date", "egle_title",
 ]
 
 # 1,720 rows across both tabs as of 2026-08-21 (64 New + 1,656 Historical) —
@@ -37,14 +48,27 @@ PAGE_SIZE = 50
 # Water Interface program) from N2688's own Documents profile, even though
 # both track facilities at the same physical landfill (see config.yml's
 # `facilities:` comment). Every other facility's raw name already reads fine
-# as a public label, so this is a single, deliberate alias, not a general
-# renaming layer.
+# as a public label, so this stays a short list of deliberate aliases, not a
+# general renaming layer. (SRN codes resolve to config names first, below.)
 FACILITY_DISPLAY = {
     "GFL-Arbor Hills Landfill-Washtenaw Co": "Arbor Hills Landfill (Land & Water Interface)",
+    # Hand-entered variant of N2688 seen in Hand-Curated Files.
+    "Arbor Hills Landfill (N2688)": "Arbor Hills Landfill",
 }
 
 
+@functools.lru_cache(maxsize=1)
+def _srn_names() -> dict:
+    """config.yml `facilities:` SRN code -> name. Hand-Curated Files' facility
+    column takes the bare SRN by design (docs/hand-curated-intake-design.md:
+    "N2688 | RA | N1504 | P1488"), while auto rows carry the full name; without
+    this the public facility filter lists "N2688" and "Arbor Hills Landfill" as
+    two different facilities. Read lazily so importing this module stays I/O-free."""
+    return {f["srn"]: f["name"] for f in load_config().get("facilities", [])}
+
+
 def facility_display(name: str) -> str:
+    name = _srn_names().get(name, name)
     return FACILITY_DISPLAY.get(name, name)
 
 
@@ -163,37 +187,85 @@ def is_suspicious_shrink(previous_total: int | None, new_total: int) -> bool:
     return previous_total is not None and previous_total > 0 and new_total < previous_total * SHRINK_GUARD_RATIO
 
 
-def parse_feed_rows(raw_rows: list[list]) -> list[dict]:
+_PARTIAL_ISO_RE = re.compile(r"^(\d{4})(?:-(\d{2}))?$")
+_ISO_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
+def _iso_day(value: str) -> str:
+    """The YYYY-MM-DD prefix of an ISO date or timestamp, else ""."""
+    m = _ISO_DAY_RE.match(value or "")
+    return m.group(0) if m else ""
+
+
+def _future_date(value: str, today: _date) -> bool:
+    """True iff `value` starts with an ISO date later than `today`, or is a
+    partial ISO date (YYYY or YYYY-MM, as hand-curated rows allow) whose year
+    or month is later than today's. A malformed value is not judged here
+    (False)."""
+    v = (value or "").strip()
+    m = _PARTIAL_ISO_RE.match(v)
+    if m:
+        year, month = int(m.group(1)), int(m.group(2) or 0)
+        return (year, month) > (today.year, today.month) if month else year > today.year
+    try:
+        return _date.fromisoformat(v[:10]) > today
+    except ValueError:
+        return False
+
+
+def parse_feed_rows(raw_rows: list[list], today: _date | None = None) -> list[dict]:
     """Zip FEED_HEADERS-shaped Sheet rows into dicts. Pads a short row (a
     trailing blank cell is sometimes not written at all) and ignores any
-    extra columns, so a header drift on either side doesn't crash this."""
+    extra columns, so a header drift on either side doesn't crash this.
+
+    A Document Date later than `today` (the build date) is an error, not a
+    date (owner rule 2026-10-17; e.g. a permit expiration read as 2031-10-13),
+    so it is blanked here and the row falls back to Date Filed everywhere the
+    page shows a date. This repairs rows already in the Sheet without
+    rewriting them; egle_doc_parser applies the same rule to new rows."""
+    today = today or _date.today()
     out = []
     for r in raw_rows:
         if not r:
             continue
         padded = list(r) + [""] * (len(FEED_FIELDS) - len(r))
-        out.append(dict(zip(FEED_FIELDS, padded)))
+        row = dict(zip(FEED_FIELDS, padded))
+        if _future_date(row.get("document_date", ""), today):
+            row["document_date"] = ""
+        out.append(row)
     return out
 
 
+def _sort_key(row: dict) -> str:
+    """The date a row is ordered by: its Document Date (the date printed on
+    the document, ADR 065), falling back to Date Filed when that's blank.
+    Hand-Curated rows carry their one human-entered date as date_filed, so
+    they order by it the same way. A row with neither sorts last."""
+    return row.get("document_date") or row.get("date_filed") or ""
+
+
 def _sort_newest_first(rows: list[dict]) -> list[dict]:
-    """Newest Date Filed first. Date Filed is normally ISO (YYYY-MM-DD); a
-    handful of Hand-Curated Files rows only know a partial ISO-prefixed date
-    (e.g. "2022-03") -- a plain string sort still orders those correctly
-    relative to full dates (a shorter string that's a prefix of a longer one
-    sorts before it in Python), and never raises regardless of format. A
-    NON-ISO date_filed (e.g. "3/15/2021"), were one ever entered, would sort
-    by lexicographic accident rather than raise -- silently misplaced, not
+    """Newest Document Date first, falling back to Date Filed (_sort_key;
+    owner ruling 2026-10-17 -- this used to be Date Filed only, so an old
+    report EGLE filed today sat on page 1 and a hand-curated letter sat in
+    its own year). Dates are normally ISO (YYYY-MM-DD); a handful of
+    Hand-Curated Files rows only know a partial ISO-prefixed date (e.g.
+    "2022-03") -- a plain string sort still orders those correctly relative
+    to full dates (a shorter string that's a prefix of a longer one sorts
+    before it in Python), and never raises regardless of format. A NON-ISO
+    date (e.g. "3/15/2021"), were one ever entered, would sort by
+    lexicographic accident rather than raise -- silently misplaced, not
     crashed. Hand-Curated Files has no format validation on doc_date today
     (a manually-populated column, unlike the auto tabs' pipeline-guaranteed
-    ISO dates); all real rows as of this writing are ISO-prefixed. Python's
-    sort is stable, so rows sharing an identical date_filed keep their
-    relative input order."""
-    return sorted(rows, key=lambda r: r["date_filed"], reverse=True)
+    ISO dates); all real rows as of this writing are ISO-prefixed. A future
+    Document Date never reaches here (parse_feed_rows blanks it). Python's
+    sort is stable, so rows sharing an identical date keep their relative
+    input order."""
+    return sorted(rows, key=_sort_key, reverse=True)
 
 
 def merge_and_sort(new_rows: list[list], historical_rows: list[list]) -> list[dict]:
-    """New Documents + Historical Documents, newest Date Filed first."""
+    """New Documents + Historical Documents, newest Document Date first."""
     return _sort_newest_first(parse_feed_rows(new_rows) + parse_feed_rows(historical_rows))
 
 
@@ -208,10 +280,14 @@ HANDCURATED_FIELDS = [
 ]
 
 
-def parse_handcurated_rows(raw_rows: list[list]) -> list[dict]:
+def parse_handcurated_rows(raw_rows: list[list], today: _date | None = None) -> list[dict]:
     """Hand-Curated Files rows -> the same FEED_FIELDS-shaped dicts
     parse_feed_rows() produces for the auto tabs, so both merge into one
-    sortable/renderable list. Mapping: doc_date -> date_filed, title ->
+    sortable/renderable list. Mapping: added_at (the day the row was entered)
+    -> date_filed, doc_date -> document_date (owner decision 2026-10-17: the
+    entry date is the hand-curated equivalent of EGLE's Date Filed for every
+    rule -- ordering fallback, the "(filed ...)" annotation -- and doc_date is
+    the Document Date, blanked like any other if it is in the future), title ->
     document_name, doc_type -> type, risks -> risks, drive_link -> link,
     facility -> facility, source_public -> source. severity, key_data_point and
     summary have no published Hand-Curated equivalent -- left blank (the title
@@ -228,14 +304,21 @@ def parse_handcurated_rows(raw_rows: list[list]) -> list[dict]:
     surfaces `source` (i.e. source_public) as a "Source: ..." tag, or
     "Source: not stated" when source_public is blank; auto/EGLE rows carry no
     `source` key at all, so nothing changes for them."""
+    today = today or _date.today()
     out = []
     for r in raw_rows:
         if not r:
             continue
         padded = list(r) + [""] * (len(HANDCURATED_FIELDS) - len(r))
         hc = dict(zip(HANDCURATED_FIELDS, padded))
+        doc_date = (hc["doc_date"] or "").strip()
+        if _future_date(doc_date, today):
+            doc_date = ""
         out.append({
-            "date_filed": hc["doc_date"],
+            # added_at is an ISO timestamp; its date part is the entry date.
+            # A malformed added_at (e.g. "9/2/2026 0:51") is blanked rather
+            # than sorted lexically to the top of the list.
+            "date_filed": _iso_day((hc["added_at"] or "").strip()),
             "document_name": hc["title"],
             "type": hc["doc_type"],
             "risks": hc["risks"],
@@ -245,6 +328,11 @@ def parse_handcurated_rows(raw_rows: list[list]) -> list[dict]:
             "link": hc["drive_link"],
             "facility": hc["facility"],
             "source": hc["source_public"],
+            # The human-entered date of the document itself (may be partial,
+            # e.g. "2022-03", or blank). No raw filing-system title exists for
+            # a hand-curated row -- egle_title stays blank, never a guess.
+            "document_date": doc_date,
+            "egle_title": "",
         })
     return out
 
@@ -275,6 +363,138 @@ def _esc(v) -> str:
     return html.escape(str(v or ""), quote=True)
 
 
+# --- Source-privacy redaction (added 2026-09-15) -------------------------------
+# As a courtesy (not at anyone's request), the site keeps the names of certain EGLE
+# staff off its public pages, e.g. a source who volunteered public-information media. The name(s) to redact come
+# from the REDACT_NAMES env var (comma-separated surnames) -- deliberately NOT
+# hardcoded here, so the name never lands in this public repo's source. In CI the
+# value is the REDACT_NAMES secret (wired in findings-feed.yml); locally, export
+# it to regenerate. Empty/unset -> no-op. Runs at render time on the title,
+# summary, and key data point, so it persists across the nightly regen.
+_REDACT_ROLE = "EGLE inspector"
+
+
+def _build_name_redactor():
+    # REDACT_NAMES is comma-separated FULL names (e.g. "First Last,First M Last").
+    # For each, match the full name down to the bare surname (trailing
+    # subsequences), longest-first, so the full form is preferred over a lone
+    # surname. An optional preceding "EGLE <role words> inspector" phrase is
+    # swallowed into the match so the substitute doesn't double it (e.g.
+    # "EGLE air-quality inspector an EGLE inspector").
+    variants = set()
+    for name in os.environ.get("REDACT_NAMES", "").split(","):
+        toks = name.strip().split()
+        for i in range(len(toks)):
+            variants.add(" ".join(toks[i:]))
+    if not variants:
+        return None
+    alt = "|".join(re.escape(v) for v in sorted(variants, key=len, reverse=True))
+    return re.compile(
+        rf"(?:EGLE\s+(?:[\w.-]+\s+){{0,3}}?[Ii]nspector\s+)?(?i:{alt})"
+    )
+
+
+_NAME_REDACTOR = _build_name_redactor()
+
+
+def redact_names(text):
+    """Replace any REDACT_NAMES person with a neutral role label; no-op when the
+    env var is empty. Capitalizes the article at a sentence start. Passes None
+    through unchanged (callers -esc the result, which already handles None)."""
+    if not text or _NAME_REDACTOR is None:
+        return text
+
+    def _sub(m):
+        prev = text[: m.start()].rstrip()
+        at_start = (prev == "") or prev.endswith((".", "!", "?", ":"))
+        return f"{'An' if at_start else 'an'} {_REDACT_ROLE}"
+
+    return _NAME_REDACTOR.sub(_sub, text)
+
+
+# --- Shared public-safety view (added for build_search_index) -----------------
+# render_entry and build_search_index both need the SAME redacted title/summary/
+# key-data-point and the SAME link scheme check -- the one thing that must be
+# exactly right (see docs/overnight-coder-handoffs/public-records-search-index.md).
+# Computed once here so there is exactly one place this logic lives, not two
+# that can silently drift apart. Returns RAW, unescaped text: render_entry HTML-
+# escapes it with _esc() same as before; build_search_index needs no escaping of
+# its own (json.dumps handles that) -- escaping here would double-escape the
+# JSON (literal "&amp;" shown to a reader) and would corrupt a link containing
+# "&" in its query string.
+def _public_view(row: dict) -> dict:
+    """title/summary/key_data_point: redact_names() applied (title also has
+    strip_embedded_date() applied first, and falls back to "(untitled
+    document)" when empty after that -- baked in here so every caller gets the
+    same non-empty title). link: the same http(s)-only scheme check render_entry
+    has always applied -- "" for anything else (javascript:, data:, malformed
+    text, or a blank cell). Every auto-tab producer of `link` builds it from a
+    fixed nSITE base URL + a numeric doc_id (see nsite_client.native_download_url)
+    -- never classifier or free-text output. Hand-Curated Files' `drive_link` is
+    different: it's typed by a human directly into a Sheet cell (see
+    parse_handcurated_rows), so `link` IS genuinely untrusted free-text on that
+    path, and this scheme check is its actual defense, not just defense in
+    depth for a path that doesn't exist. By the time a row reaches here `link`
+    may already be a Drive archive-mirror URL, not the original nSITE one --
+    see resolve_display_link; both are https.
+
+    source: the `"source" in row` key-PRESENCE check (auto rows have no
+    `source` key at all; Hand-Curated rows always do, even blank) -- carried
+    into the returned dict the same way, as `"source" in pv`, so BOTH callers
+    read this one check instead of each re-deriving it from `row` directly
+    (the drift this whole helper exists to prevent). No redaction/escaping
+    applied -- `source` is already the public-safe `source_public` column by
+    the time it reaches a row (see parse_handcurated_rows), never a raw
+    internal value."""
+    title = redact_names(strip_embedded_date(row.get("document_name") or "")) or "(untitled document)"
+    summary = redact_names(row.get("summary")) or ""
+    key_data_point = redact_names(row.get("key_data_point")) or ""
+    raw_link = row.get("link") or ""
+    link = raw_link if raw_link.startswith(("http://", "https://")) else ""
+    pv = {"title": title, "summary": summary, "key_data_point": key_data_point, "link": link}
+    if "source" in row:
+        pv["source"] = row.get("source") or ""
+    return pv
+
+
+_FILED_GAP_DAYS = 7
+
+
+def display_date(row: dict) -> str:
+    """ADR 065: the date shown in a finding's meta line. The document's own
+    `document_date` when known, falling back to `date_filed` when it isn't
+    (a Hand-Curated row, or any doc the deterministic/LLM pass found nothing
+    in) -- a bare, un-annotated date either way. When BOTH are known and
+    differ by more than _FILED_GAP_DAYS, appends "(filed <date_filed>)" so
+    the EGLE-filing lag is visible without making it the headline date; a gap
+    of 7 days or less is close enough that the plain document_date alone is
+    sufficient. A partial document_date (YYYY or YYYY-MM, hand-curated rows)
+    gets the note whenever date_filed falls outside that year or month. A
+    hand-curated row's date_filed is the day the row was entered, not an EGLE
+    filing, so it reads "(added ...)" instead (owner ruling 2026-10-17); a
+    hand-curated row is recognized by its "source" key, the same signal
+    render_entry uses. The browse list is ordered by the same date
+    (_sort_newest_first, owner ruling 2026-10-17)."""
+    date_filed = row.get("date_filed") or ""
+    document_date = row.get("document_date") or ""
+    if not document_date:
+        return date_filed
+    if not date_filed or document_date == date_filed:
+        return document_date
+    label = "added" if "source" in row else "filed"
+    if _PARTIAL_ISO_RE.match(document_date):
+        if date_filed.startswith(document_date):
+            return document_date
+        return f"{document_date} ({label} {date_filed})"
+    try:
+        gap = abs((_date.fromisoformat(document_date[:10]) - _date.fromisoformat(date_filed[:10])).days)
+    except ValueError:
+        return document_date  # a malformed date on either side -- show document_date plain, don't crash
+    if gap > _FILED_GAP_DAYS:
+        return f"{document_date} ({label} {date_filed})"
+    return document_date
+
+
 def render_entry(row: dict) -> str:
     """One finding as an HTML <article>. A blank optional field (summary, key
     data point) is left out of the markup entirely — never rendered as the
@@ -284,28 +504,20 @@ def render_entry(row: dict) -> str:
     cleanly, not crash the whole page. Risks (R1-R8) are deliberately never
     rendered here -- they're this project's own internal case-file taxonomy,
     meaningless to a public reader with no legend to decode them against."""
-    date = _esc(row.get("date_filed"))
-    name = _esc(strip_embedded_date(row.get("document_name") or "")) or "(untitled document)"
+    pv = _public_view(row)
+    date = _esc(display_date(row))
+    name = _esc(pv["title"])
     doc_type = _esc(row.get("type"))
     severity = _esc(row.get("severity"))
     facility = _esc(facility_display(row.get("facility") or ""))
-    # Every auto-tab producer of `link` builds it from a fixed nSITE base URL
-    # + a numeric doc_id (see nsite_client.native_download_url) -- never
-    # classifier or free-text output. Hand-Curated Files' `drive_link` is
-    # different: it's typed by a human directly into a Sheet cell (see
-    # parse_handcurated_rows), so `link` IS genuinely untrusted free-text on
-    # that path. The scheme check below is this row's actual defense against
-    # that input, not just defense in depth for a path that doesn't exist: an
-    # http(s) link renders as a clickable href (still HTML-escaped by _esc,
-    # so an attribute-breakout attempt fails closed too), anything else
-    # (javascript:, data:, malformed text) renders as plain text instead of
-    # ever reaching an <a href="..."> attribute. By the time a row reaches
-    # here `link` may already be a Drive archive-mirror URL, not the
-    # original nSITE one -- see resolve_display_link; both are https.
-    raw_link = row.get("link") or ""
-    link = _esc(raw_link) if raw_link.startswith(("http://", "https://")) else ""
-    summary = _esc(row.get("summary"))
-    kdp = _esc(row.get("key_data_point"))
+    # link/summary/kdp: redacted + scheme-checked by _public_view above (the
+    # shared helper); _esc() here is the same HTML-escape render_entry always
+    # applied -- an http(s) link renders as a clickable href (still escaped,
+    # so an attribute-breakout attempt fails closed too), anything else was
+    # already reduced to "" by the shared helper and renders as plain text.
+    link = _esc(pv["link"])
+    summary = _esc(pv["summary"])
+    kdp = _esc(pv["key_data_point"])
     # `source` (issuing/holding body) is present only on Hand-Curated rows
     # (see parse_handcurated_rows) -- auto/EGLE rows have no `source` key at
     # all, so they never show a Source tag. Surfacing it keeps the public
@@ -314,13 +526,52 @@ def render_entry(row: dict) -> str:
     # with a BLANK source renders "Source: not stated" rather than silently
     # dropping the tag -- a missing source stays visible on the page (and is
     # reported by scripts/check_handcurated_sources.py), never quietly hidden.
-    if "source" in row:
-        src = _esc(row.get("source"))
+    if "source" in pv:
+        src = _esc(pv["source"])
         source_bit = f"Source: {src}" if src else "Source: not stated"
     else:
         source_bit = ""
 
-    meta = " &middot; ".join(b for b in (date, facility, doc_type, severity, source_bit) if b)
+    # ADR 065 accuracy note: the displayed title above may be a config
+    # override (Trisha-curated) or the classifier's display_title (machine-
+    # generated, see egle_doc_parser/document_titles) for a doc nSITE itself
+    # filed under a generic placeholder. Either way, show nSITE's own raw
+    # title whenever it differs from what's displayed, so a reader can always
+    # see the unaltered source label. strip_embedded_date IS applied here
+    # (code review finding, ADR 065) -- pv["title"] already has it applied,
+    # so comparing against an un-stripped raw_egle_title false-positived on
+    # ~195/1,720 real titles that end in a redundant "(MM/DD/YYYY)" suffix:
+    # an UNCHANGED title (never flagged generic, no override) would still
+    # show a spurious "EGLE title: ..." note implying a substitution that
+    # never happened, just because one side had the suffix stripped and the
+    # other didn't.
+    #
+    # name_check gate (security review, ADR 065, round 2): this note is a
+    # SECOND, more prominent rendering of the raw nSITE title, which
+    # `redact_names()` alone only protects against the operator-configured
+    # REDACT_NAMES list -- a narrower list than name_check's own denylist
+    # (KNOWN_NAMES + internal markers). The nSITE title column is this
+    # project's own free text (filer-entered, never curated/redacted the way
+    # display_title is), so it carries the SAME novel-name risk
+    # sanitize_display_title's own heuristic gate exists for (round-1 fix) --
+    # a real person's name in a parenthetical/"attn:"/possessive shape that
+    # the fixed KNOWN_NAMES denylist has never seen. Both
+    # is_clean_for_publish (denylist) AND find_heuristic_hits (structural
+    # name-shape patterns) gate this note; either one suppresses it
+    # ENTIRELY rather than try to edit nSITE's own title text -- a
+    # partially-stripped "raw title" would misrepresent what nSITE filed.
+    raw_title_unredacted = strip_embedded_date(row.get("egle_title") or "")
+    raw_egle_title = redact_names(raw_title_unredacted)
+    show_egle_title = (
+        bool(raw_egle_title)
+        and raw_egle_title != pv["title"]
+        and name_check.is_clean_for_publish(raw_title_unredacted)
+        and not name_check.find_heuristic_hits(raw_title_unredacted)
+    )
+    egle_title_bit = f"EGLE title: {_esc(raw_egle_title)}" if show_egle_title else ""
+
+    meta = " &middot; ".join(
+        b for b in (date, facility, doc_type, severity, source_bit, egle_title_bit) if b)
 
     parts = ['<article class="finding">']
     if meta:
@@ -329,6 +580,45 @@ def render_entry(row: dict) -> str:
         parts.append(f'<h3><a href="{link}">{name}</a></h3>')
     else:
         parts.append(f'<h3>{name}</h3>')
+    # Per-item "this is an automated summary" label (insurance-readiness /
+    # negligent-publication reduction; master analysis 5.4). Both `summary`
+    # (2-3 sentence recap) and `key_data_point` (the single most citable claim)
+    # are Claude-generated in egle_doc_parser._classify_with_claude -- machine
+    # output, not the monitor asserting a fact of its own. Labeling reframes
+    # each entry as a summary-OF-a-primary-source, which is the accurate
+    # characterization. ONE per-item label, placed above BOTH the summary and
+    # the key data point, deliberately governs both (5.4 blesses a per-item
+    # label, and the wording names the key data point explicitly so the more
+    # assertive of the two auto-fields isn't left arguably unlabeled). Shown
+    # only when there is machine-generated content to disclaim: Hand-Curated
+    # rows carry a human-entered title but a blank summary/key_data_point (see
+    # parse_handcurated_rows), so they get no label; a write_stub_row entry
+    # carries a system-generated `summary` and is correctly labeled (its whole
+    # message is "consult the source"). The label text is a fixed literal
+    # (no row data interpolated), so nothing here needs escaping. `link` above
+    # is the resolved display link (nSITE or its Drive mirror) -- either way it
+    # is "the linked document above"; a linkless row says "this document".
+    # The whole label branches so it never names content that isn't rendered:
+    # an entry with only a key data point (blank summary) renders no summary
+    # paragraph below, so BOTH its lead and its detail name the key data point,
+    # never a "summary". The common case (summary present) keeps the
+    # "Automated summary of ..." lead and uses "any key data point below",
+    # which stays accurate whether or not a key data point actually follows.
+    if summary or kdp:
+        source_ref = "the linked document above" if link else "this document"
+        if summary:
+            label = (
+                f"Automated summary of {source_ref}. This summary and any key "
+                "data point below are machine-generated and may contain errors. "
+                "Consult the source document before relying on them."
+            )
+        else:  # key data point only -- no summary paragraph is rendered below
+            label = (
+                f"Automated key data point from {source_ref}. It is "
+                "machine-generated and may contain errors. Consult the source "
+                "document before relying on it."
+            )
+        parts.append(f'<p class="finding-auto-label">{label}</p>')
     if summary:
         parts.append(f'<p>{summary}</p>')
     if kdp:
@@ -344,15 +634,22 @@ def page_filename(page_num: int) -> str:
     return "index.html" if page_num == 1 else f"page-{page_num}.html"
 
 
+def page_href(page_num: int) -> str:
+    """Relative link to a page, in the same URL form as its canonical: page 1 is
+    the directory (`./` -> /public-records/), never `index.html`, so links,
+    canonical tags and sitemap.xml all name one URL per page."""
+    return "./" if page_num == 1 else page_filename(page_num)
+
+
 def render_page(page_rows: list[dict], page_num: int, total_pages: int,
                  total_count: int, generated_at: str) -> str:
     entries = "\n".join(render_entry(r) for r in page_rows) or "<p>No documents found.</p>"
 
     nav_bits = []
     if page_num > 1:
-        nav_bits.append(f'<a href="{page_filename(page_num - 1)}">&larr; Newer</a>')
+        nav_bits.append(f'<a href="{page_href(page_num - 1)}">&larr; Newer</a>')
     if page_num < total_pages:
-        nav_bits.append(f'<a href="{page_filename(page_num + 1)}">Older &rarr;</a>')
+        nav_bits.append(f'<a href="{page_href(page_num + 1)}">Older &rarr;</a>')
     nav = " &middot; ".join(nav_bits)
 
     if page_num == 1:
@@ -400,23 +697,44 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
 <link rel="stylesheet" href="../style.css">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
+<script src="search.js" defer></script>
 </head>
 <body>
 <div class="wrap">
 
-<p><a href="../index.html">&larr; Arbor Hills Monitor</a></p>
+<p><a href="../">&larr; Arbor Hills Monitor</a></p>
 
 <h1>Public Records on Arbor Hills</h1>
 {intro}<p class="findings-count">{total_count:,} documents &middot; page {page_num} of {total_pages}</p>
 
-<div class="findings-list">
+<div class="search-ui" id="public-records-search" hidden>
+<div class="search-ui-bar">
+<label for="pr-search-q" class="sr-only">Search all records</label>
+<input type="search" id="pr-search-q" class="search-ui-input" placeholder="Search all records" aria-label="Search all records" autocomplete="off">
+<button type="button" id="pr-search-clear" class="search-ui-clear" hidden>Clear search</button>
+</div>
+<details class="search-ui-filters">
+<summary>Filters</summary>
+<div class="search-ui-facets">
+<label>Facility <select id="pr-filter-facility"><option value="">All facilities</option></select></label>
+<label>Type <select id="pr-filter-type"><option value="">All types</option></select></label>
+<label>Severity <select id="pr-filter-severity"><option value="">All severities</option></select></label>
+<label>From <input type="date" id="pr-filter-date-min" autocomplete="off"></label>
+<label>To <input type="date" id="pr-filter-date-max" autocomplete="off"></label>
+</div>
+</details>
+<p class="search-ui-status" id="pr-search-status" aria-live="polite" hidden></p>
+<div class="findings-list" id="pr-search-results" hidden></div>
+</div>
+
+<div class="findings-list" id="pr-browse-list">
 {entries}
 </div>
 
-<p class="findings-nav">{nav}</p>
+<p class="findings-nav" id="pr-browse-nav">{nav}</p>
 
 <footer class="site-footer">
-<p>Generated {_esc(generated_at)} from the monitor's case file. An independent project. All source data is public regulatory records from Michigan EGLE and other public sources.</p>
+<p>Generated {_esc(generated_at)} from the monitor's case file. An independent project of Landfill Records Project LLC. All source data is public regulatory records from Michigan EGLE and other public sources.</p>
 </footer>
 
 </div>
@@ -435,3 +753,100 @@ def build_pages(rows: list[dict], generated_at: str, page_size: int = PAGE_SIZE)
         page_filename(i): render_page(page_rows, i, total_pages, total_count, generated_at)
         for i, page_rows in enumerate(pages, start=1)
     }
+
+
+# --- Client-side search index (ADR 062 Phase 1) --------------------------------
+# A compact JSON array mirroring build_pages()'s rows for client-side search over
+# site/public-records/ -- NOT wired to anything live yet (Phase 2 adds the caller
+# in gen_findings_feed.py plus the check_publish_safety.py gate extension; see the
+# handoff). Uses the exact same redaction/link-safety rules as render_entry, via
+# the shared _public_view() helper above, so nothing published in HTML can leak
+# un-redacted into this new file.
+EXCERPT_MAX_CHARS = 200
+
+
+def _truncate_excerpt(text: str, limit: int = EXCERPT_MAX_CHARS) -> str:
+    """Cut text to ~limit chars, preferring a word boundary -- but only when
+    that boundary is close enough to the limit to still leave a useful
+    excerpt (past the halfway point of the window). A run with no space at
+    all before the limit, OR a space so early that honoring it would
+    collapse the excerpt to a sliver (e.g. a short first word followed by
+    one long unbroken run -- a URL, a well ID, a concatenated identifier,
+    all plausible in this domain), hard-cuts at limit instead -- this can
+    cut mid-word, a deliberate tradeoff against the alternative (a
+    near-empty excerpt). Looks one character past limit so a word ending
+    EXACTLY at the boundary isn't needlessly dropped. Text already at or
+    under the limit is returned unchanged (no ellipsis appended)."""
+    if len(text) <= limit:
+        return text
+    last_space = text[:limit + 1].rfind(" ")
+    cut = text[:last_space] if last_space > limit // 2 else text[:limit]
+    return cut.rstrip() + "..."
+
+
+def _search_entry(row: dict) -> dict:
+    """One row -> one search-index object. Every field computed from the SAME
+    redacted/scheme-checked values render_entry uses (via _public_view) --
+    never row["document_name"]/row["summary"]/row["key_data_point"]/row["link"]
+    directly, which would be the raw, un-redacted/unsafe values (see
+    _public_view's docstring and the handoff's "one thing that must be exactly
+    right"). risks is deliberately never included here, same reason
+    render_entry never shows it (R1-R8 is this project's own internal
+    case-file taxonomy, meaningless to a public reader).
+
+    A blank field is OMITTED from the object entirely (not written as null or
+    ""), keeping the file smaller and mirroring render_entry's own "never
+    render an empty <p>" rule -- EXCEPT `source`, which is present (even as
+    "") whenever the row is hand-curated-origin at all ("source" in pv, via
+    _public_view's own "source" in row check), absent entirely for an
+    auto/EGLE row. That key-presence split mirrors render_entry's identical
+    check on the same pv, and is the signal Phase 2's check_publish_safety.py
+    extension uses to tell hand-curated entries from auto entries -- a
+    sentinel value would not serve the same purpose."""
+    pv = _public_view(row)
+    entry = {}
+
+    # ADR 065: the document's own date, falling back to Date Filed -- same
+    # precedence as display_date()'s PLAIN value (without the "(filed ...)"
+    # annotation, which belongs to the rendered article, not a machine-
+    # sortable search field).
+    date = row.get("document_date") or row.get("date_filed") or ""
+    if date:
+        entry["date"] = date
+
+    entry["title"] = pv["title"]  # never blank -- _public_view bakes in the fallback
+
+    facility = facility_display(row.get("facility") or "")
+    if facility:
+        entry["facility"] = facility
+
+    doc_type = row.get("type") or ""
+    if doc_type:
+        entry["type"] = doc_type
+
+    severity = row.get("severity") or ""
+    if severity:
+        entry["severity"] = severity
+
+    if "source" in pv:
+        entry["source"] = pv["source"]
+
+    excerpt = pv["summary"] or pv["key_data_point"]
+    if excerpt:
+        entry["excerpt"] = _truncate_excerpt(excerpt)
+
+    if pv["link"]:
+        entry["link"] = pv["link"]
+
+    return entry
+
+
+def build_search_index(rows: list[dict]) -> str:
+    """rows: already merged+sorted (merge_and_sort()), same input build_pages()
+    takes. Returns a JSON array string, one object per row -- see _search_entry
+    for the per-field rules. No generation timestamp is embedded (unlike
+    build_pages()'s footer) so a byte-identical dataset produces a byte-
+    identical file -- required for findings-feed.yml's diff-quiet guard to stay
+    a no-op on an unchanged day (see render_page's footer comment and the
+    handoff). Fixed separators keep the output deterministic across runs."""
+    return json.dumps([_search_entry(r) for r in rows], separators=(",", ":"))

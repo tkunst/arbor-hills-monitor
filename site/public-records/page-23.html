@@ -17,322 +17,369 @@
 <link rel="stylesheet" href="../style.css">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
+<script src="search.js" defer></script>
 </head>
 <body>
 <div class="wrap">
 
-<p><a href="../index.html">&larr; Arbor Hills Monitor</a></p>
+<p><a href="../">&larr; Arbor Hills Monitor</a></p>
 
 <h1>Public Records on Arbor Hills</h1>
-<p class="findings-count">1,819 documents &middot; page 23 of 37</p>
+<p class="findings-count">2,088 documents &middot; page 23 of 42</p>
 
-<div class="findings-list">
+<div class="search-ui" id="public-records-search" hidden>
+<div class="search-ui-bar">
+<label for="pr-search-q" class="sr-only">Search all records</label>
+<input type="search" id="pr-search-q" class="search-ui-input" placeholder="Search all records" aria-label="Search all records" autocomplete="off">
+<button type="button" id="pr-search-clear" class="search-ui-clear" hidden>Clear search</button>
+</div>
+<details class="search-ui-filters">
+<summary>Filters</summary>
+<div class="search-ui-facets">
+<label>Facility <select id="pr-filter-facility"><option value="">All facilities</option></select></label>
+<label>Type <select id="pr-filter-type"><option value="">All types</option></select></label>
+<label>Severity <select id="pr-filter-severity"><option value="">All severities</option></select></label>
+<label>From <input type="date" id="pr-filter-date-min" autocomplete="off"></label>
+<label>To <input type="date" id="pr-filter-date-max" autocomplete="off"></label>
+</div>
+</details>
+<p class="search-ui-status" id="pr-search-status" aria-live="polite" hidden></p>
+<div class="findings-list" id="pr-search-results" hidden></div>
+</div>
+
+<div class="findings-list" id="pr-browse-list">
 <article class="finding">
-<p class="finding-meta">2020-02-05 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1xvSQGP1kVBJcNdfTTSamqD2kKTvBFsLx/view?usp=drivesdk">Site</a></h3>
-<p>EGLE staff completed the merging of multiple Arbor Hills Landfill site records in the MiWaters database on February 5, 2020. Three separate site entries were consolidated into the Arbor Hills Remediation Area record to reduce administrative confusion and improve tracking of the storm water permit, groundwater compliance and enforcement action, and NPDES permit.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or measured violations stated; this is an internal administrative database consolidation notice.</p>
+<p class="finding-meta">2021-04-13 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1jeAAP0bKSAIHJG_ak7Es1FdpeA3PJ0qk/view?usp=drivesdk">Schedule - DMR</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a March 2021 Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area (permit MI0045713 v5.0), filed April 13, 2021. The report documents daily and periodic measurements of water quality parameters including flow, suspended solids, biochemical oxygen demand, ammonia, phosphorus, metals (arsenic, mercury, selenium), thermal discharge, temperature, pH, and dissolved oxygen at the final effluent and outfall. All reported measurements appear to comply with permit limits.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual violation is evident in the data presented; all measured parameters remain within permit limits (e.g., temperature maximum of 59.0°F in March, suspended solids maximum 13.7 mg/L vs. 45 mg/L limit, ammonia maximum 6.1 mg/L vs. permit allowance).</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-02-04 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1XYebhsrzgYqKCKNwryCgR5pL5CAeag8H/view?usp=drivesdk">Site</a></h3>
-<p>This document appears to be a fragmentary or corrupted image file showing only a header identifying &#x27;Arbor Hills Landfill&#x27; and a Google Earth map snippet dated 2020-02-04, with no legible text or data content.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual claim or measurement is legible in this document.</p>
+<p class="finding-meta">2021-04-08 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1eU-WsclYCxBh5XL2uER-vnLHaPwafkgC/view?usp=drivesdk">EGLE response re: timing of proposal for PFAS-contaminated storm water ponds</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>EGLE and GFL Environmental exchanged emails from February to April 2021 regarding PFAS-contaminated storm water ponds at Arbor Hills Landfill. EGLE requested sampling data, remediation alternatives, and a formal proposal to address elevated PFAS levels; GFL committed to additional liquid sampling in May 2021 and a proposal by June or July 2021.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative PFAS readings provided in this exchange; document confirms contamination exists but defers technical details to March 15, 2021 response letter (not included here).</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-02-04 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/10uGG8INkaDjlZkccMik9qvafJCPI7Rr1/view?usp=drivesdk">Internal Discussion on compost leachate proposed discharge.</a></h3>
-<p>EGLE staff discusses a major modification request from Arbor Hills Landfill for approximately 10,000 gallons per day discharge from a compost leachate pond (containing only yard waste) lined with HDPE. The request was inadvertently submitted to the Industrial Stormwater page rather than the NPDES individual permit page, and staff coordinate on whether the submission can be transferred to the correct application portal.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Arbor Hills proposed ~10,000 gallon/day discharge from HDPE-lined compost leachate pond, February 2020; submission routing error between Industrial Stormwater and NPDES individual permit systems.</p>
+<p class="finding-meta">2021-04-07 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1_bMwCyVcUVkZrxp_52p7qyG8jCiP5v3y/view?usp=drivesdk">Email from AHLF confirming units for sediment samples and expected timeframe for submittal of proposal for PFAS contaminated storm water ponds</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>GFL Environmental (operator of Arbor Hills Landfill) confirms sediment sample units (ng/L) for PFAS-contaminated storm water ponds and commits to submitting a detailed remediation proposal by June or July 2021, following completion of May liquid sampling. EGLE regulator Tiffany Myers had requested updates on sampling progress, pond design, and remediation alternatives.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative PFAS readings provided in this email; document confirms units are ng/L but does not disclose the actual measured values from March 2021 sediment sampling.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-02-04 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1SQYi4HRmjGUR0Xyvix5mUpXLcu4Cula4/view?usp=drivesdk">Site</a></h3>
-<p>An internal EGLE email from February 2020 forwarding photos and scheduling a discussion among Water Resources Division staff about Arbor Hills Landfill&#x27;s compost and stormwater discharge operations.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or claims are present; this is a scheduling and coordination notice.</p>
+<p class="finding-meta">2021-04-05 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1kmut_cohBGo7rhhyCezI7sxFSb2HFsXB/view?usp=drivesdk">EGLE response to 3/15/21 letter regarding PFAS contaminated storm water ponds</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>EGLE responded to GFL&#x27;s March 2021 update on PFAS-contaminated storm water ponds at Arbor Hills Landfill, requesting clarification on sediment sampling units (ng/l) and a timeline for a formal remediation proposal. The regulator emphasized the need for prompt submission so review could proceed in parallel with the landfill&#x27;s planned work during the driest season.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative PFAS measurements or readings are provided in this exchange; the document is procedural correspondence requesting updated information and timelines from the operator.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-28 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1jDVRCfEHGg2GSjFe76SfWB2h4Hzr12qI/view?usp=drivesdk">Site</a></h3>
-<p>GFL&#x27;s consultant Mala Hettiarachchi initiated contact with EGLE in October 2019 to explore NPDES permit modifications for treating and discharging leachate from Arbor Hills East (a closed landfill section). Testing showed ammonia and PFAS were not detected in compost pond water; the operator proposed using GAC and ion exchange resins to remove PFAS from AHE leachate below water quality standards, and later sought to discharge accumulated stormwater from an on-site pond via a wetland polishing system.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> PFAS were not detected in compost pond samples; leachate treatment via GAC and ion exchange resins targeting PFAS removal with proposed discharge limits of 12 ng/l for PFOS and 40 ng/l for PFOA.</p>
+<p class="finding-meta">2021-04-01 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/12WfWeEAo3Xvp8YhoJc4mwXN-pUUsFVgO/view?usp=drivesdk">Submission PDF</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>Arbor Hills Landfill Incorporated submitted a reissuance application for its NPDES industrial discharge permit (MI0045713) on April 1, 2021, describing groundwater remediation operations including gradient control wells, an aeration ditch, and treatment ponds discharging to an unnamed tributary of the Johnson Drain. The application includes analytical data for conventional and toxic pollutants, PFAS results, and documentation of water treatment additives in use.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Groundwater cleanup discharge: 5.8 MGY (million gallons per year) treated through aeration ditch and ponds, with PFOA detected at 50 ng/L (below 12,000 ng/L GSI) and PFOS non-detect at 10 ng/L (below 12 ng/L GSI), as of April 2021.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-27 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1Z5mL-6qoM7lmEBEsS_J0-7PcrasP_cXK/view?usp=drivesdk">Site</a></h3>
-<p>The document text is severely corrupted or unreadable, containing only fragmentary characters and partial words with no coherent content.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual data or claim can be extracted from this corrupted document.</p>
+<p class="finding-meta">2021-04-01 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1FsNRXTWtOvE4o96Yn6ydcMpbuLV7SV9Y/view?usp=drivesdk">nForm Document</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This document describes Arbor Hills&#x27; groundwater remediation system, which includes gradient control wells, a treatment system (currently offline), aeration ditches, and holding ponds designed to manage and treat water before discharge through Outfall 001 between December and April. The system was originally designed to pump and treat groundwater, though active remediation pumping terminated in 2011.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative readings or violations present; document is a technical description of system design and operation.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-27 &middot; Arbor Hills Remediation Area &middot; procedural &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1FjccdztAcRMDQFvuZkn6OzxukT_y_yfW/view?usp=drivesdk">Site</a></h3>
-<p>EGLE staff discuss Arbor Hills Landfill&#x27;s request to discharge treated leachate and stormwater under an NPDES permit modification. An open violation for suspected groundwater discharge is noted, and staff debate whether compost leachate qualifies as wastewater requiring restrictive site-specific limits for CBOD5, TSS, ammonia, DO, and phosphorus. The operator reports initial sampling showing no ammonia or PFAS detection but awaits full analytical results.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Open violation for suspected groundwater discharge; operator reports ammonia not detected and PFAS not detected in initial compost pond samples (Jan 2020).</p>
+<p class="finding-meta">2021-04-01 &middot; Arbor Hills Remediation Area &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/1J0gwLUad5DWE2FigO2eyS83Pnnp2bwLX/view?usp=drivesdk">nForm Document</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is an analytical laboratory report from Merit Laboratories dated March 14, 2019, analyzing water samples collected on March 7, 2019 for per- and polyfluoroalkyl substances (PFAs) using EPA method ASTM D7979-17M. The primary discharge sample (S99711.01) detected several PFAs including PFBA (190 ng/L), PFPeA (80 ng/L), PFHxA (120 ng/L), PFBS (30 ng/L), PFHpA (30 ng/L), PFOA (50 ng/L), and PFHxS (10 ng/L), while a field blank showed no detections.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Discharge 001A sample collected 03/07/2019 detected PFBA at 190 ng/L, PFHxA at 120 ng/L, PFOA at 50 ng/L, and six other PFA compounds; field blank non-detect.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-27 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1aIvr626iceFrnhBPOL_jVt75H8tK4W94/view?usp=drivesdk">Site</a></h3>
-<p>Email thread documenting Arbor Hills Landfill&#x27;s requests to EGLE (Michigan Department of Environment, Great Lakes, and Energy) regarding NPDES permit modifications for discharge of stormwater from a compost pond and treated leachate from the closed Arbor Hills East facility. The facility is actively treating leachate to remove PFAS contamination using GAC and ion-exchange resins, with measured water quality showing non-detection of ammonia and PFAS in compost pond samples.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> PFAS not detected in compost pond samples; facility removing PFAS from AHE leachate below water quality standards using GAC and ion exchange resins (October 2019 – January 2020).</p>
+<p class="finding-meta">2021-04-01 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1CipTa3zw9AFkfU9IwzCryZt58ZHnyIzd/view?usp=drivesdk">nForm Document</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a laboratory analysis report from Pace Analytical Services and ALS Environmental for a wastewater sample (Discharge 001A) collected on March 16, 2021 from Arbor Hills Landfill&#x27;s NPDES-regulated discharge point. The sample was analyzed for total phenolics using EPA method E420.4, with results and quality control documentation.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Total phenolics result: non-detected (ND) at reporting limit 0.010 mg/L, sample collected 2021-03-16 from Discharge 001A.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-27 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1QWXEMkTY9aqa_mHG6mYsCLqYRLu6AJ2P/view?usp=drivesdk">Site</a></h3>
-<p>This document is not readable—it appears to be a scanned or corrupted PDF with garbled text, OCR errors, and no legible content. No environmental data, measurements, regulatory status, or meaningful information can be extracted.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Document is unreadable and contains no extractable factual claims.</p>
+<p class="finding-meta">2021-04-01 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/14wqNOxWFJVTyZ25QLWqEA-sEpeFr_iaY/view?usp=drivesdk">nForm Document</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a laboratory analytical report from Pace Analytical Services dated March 31, 2021, documenting wastewater discharge testing for Arbor Hills Landfill. The report presents chemical analysis of a discharge sample collected on December 10, 2020, testing for a comprehensive suite of organic and inorganic contaminants including volatiles, semivolatiles, metals, and other parameters.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific contamination detected above reporting limits. All volatile organic compounds (benzene, toluene, xylenes, etc.) reported as less-than values at 1–5 µg/L; metals including lead, cadmium, and chromium all below or near detection limits.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-27 &middot; Arbor Hills Remediation Area &middot; procedural &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1Y6dhZOJ8jdyVQLVPReNJXkN2--nkV0AE/view?usp=drivesdk">Site</a></h3>
-<p>Internal EGLE email chain (January–October 2019) discussing Arbor Hills Landfill&#x27;s request to discharge treated leachate and compost-pad stormwater under an NPDES permit. EGLE staff indicated that compost leachate is a wastewater requiring site-specific limits for CBOD5, TSS, ammonia, DO, and phosphorus, and flagged that discharge of PFAS-containing leachate would require GAC treatment to meet 12 ng/L PFOS and 40 ng/L PFOA limits. The operator claimed initial sampling showed ammonia and PFAS not detected, but results from additional samples were pending.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> EGLE identified compost leachate discharge as potentially unpermitted; compost pond receives rainwater and stormwater. Proposed NPDES permit limits: 12 ng/L PFOS and 40 ng/L PFOA for treated leachate.</p>
+<p class="finding-meta">2021-04-01 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1n7fGPTTopApfagycNvMg4PBRbypAjP-I/view?usp=drivesdk">nForm Document</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This document is a technical engineering plan showing groundwater treatment system infrastructure, including valve pits, ponds, wells, and piping details for the landfill site. The plan contains schematic diagrams and coordinate information but no environmental monitoring data or regulatory findings.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual or measurement data provided in this document—it is a procedural infrastructure schematic only.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-24 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/11hzIeYRhjxNreBXphx9C7EqCJVEE94wM/view?usp=drivesdk">Site</a></h3>
-<p>Email chain from October 2019 to January 2020 documenting Arbor Hills Landfill&#x27;s engagement with EGLE regarding NPDES permit modification for potential discharge of treated leachate and stormwater. The operator reports PFAS removal from leachate below water quality standards using GAC and ion exchange; EGLE provides technical guidance on effluent limits and treatment system requirements.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> PFAS detected in AHE leachate; operator removing via GAC and ion exchange to achieve proposed limits of 12 ng/L for PFOS and 40 ng/L for PFOA.</p>
+<p class="finding-meta">2021-04-01 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1Zi6KfPBVnj3TG3FJ8HxDOB8mlxRQGBrZ/view?usp=drivesdk">nForm Document</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a facility map and permit application document for Arbor Hills Landfill dated March 2021, showing the site layout including gradient control systems, ponds, slurry walls, and monitoring infrastructure. The document presents the physical configuration of the landfill and associated water management features as part of a permit application process.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or violations stated; document is a facility schematic and permit application map with no quantitative environmental data.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-10 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1aEeIrNL1_NDPw2jrM0VJdXJOJ3OkNNRU/view?usp=drivesdk">Site</a></h3>
-<p>This is an email chain from October 2019 to May 2020 between Arbor Hills Landfill&#x27;s consultant (Environmental Resources Group) and EGLE regarding a proposed NPDES permit modification to discharge treated leachate. The consultant is evaluating whether treated leachate from the closed Arbor Hills East section can be discharged to state waters under NPDES authorization, with proactive PFAS removal.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> EGLE indicated the permit would include daily maximum limits of 12 ng/l for PFOS and 40 ng/l for PFOA with weekly monitoring, and that a multi-stage GAC treatment system is capable of meeting PFAS standards.</p>
+<p class="finding-meta">2021-04-01 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1H0WaAMaMWxllWvINJ88-TkSkrleLk7gF/view?usp=drivesdk">nForm Document</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a laboratory analysis report for a wastewater discharge sample (Discharge 001A) collected from Arbor Hills Landfill on December 10, 2020. The report includes comprehensive testing for metals, volatile organic compounds, semivolatile organic compounds, and other contaminants. Most measured parameters were either non-detectable or below reporting limits.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual violations or exceedances reported; all analytes either non-detect or below reporting limits.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-09 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1vO-kNrz3QL71INbHgXcTtqVTaNgcVZ4Z/view?usp=drivesdk">DMR Summary Data for period 12/01/2019 - 12/31/2019_V1</a></h3>
-<p>This is a December 2019 Discharge Monitoring Report for Arbor Hills Remediation Area (Permit MI0045713 v5.0), filed by Green for Life in January 2020. The report documents treated effluent parameters including flow, suspended solids, biochemical oxygen demand, ammonia, phosphorus, arsenic, mercury, and selenium, all within permitted limits. Temperature, pH, dissolved oxygen, and visual/equipment inspections are also reported.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Maximum monthly average effluent temperature of 43.7°F (measured December 2019). No exceedances of permit limits reported for the monitoring period.</p>
+<p class="finding-meta">2021-04-01 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1NFb_1hEmaOWLszFijAJo_LIxP74fdUWa/view?usp=drivesdk">nForm Document</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>Arbor Hills Remediation System filed a wastewater discharge permit application (NPDES MI0045713) for its groundwater treatment system, which includes lined aeration ditches and treatment ponds. The application documents the facility&#x27;s treatment infrastructure and sampling protocols. This is a standard permitting document related to the site&#x27;s remediation operations.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual measurement or violation cited; document is a permit application schematic filing.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-09 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1SySYdJQYeXrzAYLssIWRi1LaVsXwtmSi/view?usp=drivesdk">DMR Daily Data for period 12/01/2019 - 12/31/2019_V1</a></h3>
-<p>This is a Discharge Monitoring Report (DMR) filed by Green for Life (GFL) for the Arbor Hills Remediation Area covering December 2019, reporting daily measurements of effluent quality parameters including suspended solids, nutrients, metals, and temperature at Final Effluent (1). Most measurements remained within permit limits, with numerous days marked as *E (equipment malfunction) or *F (facility down).</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Temperature readings from 12/3-12/20/2019 ranged from 15.0°F to 43.7°F (measured), with discharge oxygen levels recorded at 7.4-14.8 mg/L and pH at 7.04-8.41 SU, all within permit limits.</p>
+<p class="finding-meta">2021-04-01 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1FeDkvKDdj9InBfI4zQ-RBJLggZozjPhh/view?usp=drivesdk">nForm Document</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>Advanced Disposal (operator of Arbor Hills) submitted a water treatment additive request form to discharge two bacterial augmentation products—Nitrafix and Vitastim 6000—via NPDES outfall 001. The request was approved in May 2017 and includes safety data sheets for both additives.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual environmental or operational reading is present; this is a chemical discharge authorization form with product safety information only.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-06 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/19CDTq2BNncIc9Z3iTqRLCUviFueeJOfW/view?usp=drivesdk">Violation Notice</a></h3>
-<p>Arbor Hills Energy LLC responded to an EGLE violation notice dated December 9, 2019 by referencing prior responses and a pending Permit-to-Install application, while disputing many of the alleged violations and requesting that EGLE follow proper inspection procedures under Michigan law.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Document contains no specific factual readings or measurements; it is a procedural legal response referencing unspecified prior violations and a pending PTI application (Tracking Number 2019-22).</p>
+<p class="finding-meta">2021-03-30 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/14JCBHAmPyr6rpQJinNDyrkJVlkF7SAyX/view?usp=drivesdk">Response to EGLE&#x27;s February 5, 2021 request for additional information re: the PFAS-contaminated storm water ponds</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>GFL Environmental responded to EGLE&#x27;s February 5, 2021 request for information about PFAS-contaminated storm water ponds at Arbor Hills Landfill. The response addresses sampling status, discussions with local utilities about additional flows, reuse options being explored, and options ruled out. This is a regulatory compliance submission providing updates on PFAS remediation alternatives.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Document is a procedural response to EGLE&#x27;s information request; the actual attachment containing specific data is referenced but not fully reproduced in the email chain.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-03 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/17O83usCIX-5eDhvwvhm2_5TtQY7OOZeS/view?usp=drivesdk">Submission PDF</a></h3>
-<p>Arbor Hills Landfill submitted its annual Storm Water Pollution Prevention Plan (SWPPP) review report on January 3, 2020, affirming compliance with all nine permit conditions. The facility reported that current facility information, site maps, controls, training, inspections, and documentation requirements were all met.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative data or violations reported; this is a compliance checklist affirmation with all nine SWPPP conditions answered &#x27;Yes&#x27; as of 1/3/2020.</p>
+<p class="finding-meta">2021-03-29 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1MBRap08epzuOkf3zhKAO2zw3lp4OGK7t/view?usp=drivesdk">SEM Survey Results Map</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This document is a SEM (Scanning Electron Microscopy) survey results map filed with EGLE on March 29, 2021. The name and filing suggest it contains spatial survey data, but the provided text is insufficient to extract substantive findings.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or measurements are present in the excerpt provided.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1BAyJloEBkMO7KLL_8hvZQ_kLuMLPvuTC/view?usp=drivesdk">control room screen Solar 4 just after test run #3</a></h3>
-<p>A control room screen photograph from nSITE Solar 4 taken immediately after test run #3 on January 2, 2020. The document provides visual data from Arbor Hills&#x27; monitoring infrastructure but contains no legible numerical readings or substantive text in the filed description.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or claims are legible or stated in this document excerpt.</p>
+<p class="finding-meta">2021-03-25 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/1DQ1G_QlOqOuvrAPb_CL997lyNfGqdRL9/view?usp=drivesdk">On-Site Inspection</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>On March 25, 2021, Michigan EGLE conducted a Surface Emission Monitoring (SEM) survey of Arbor Hills Landfill&#x27;s north side and detected 8 locations with methane concentrations exceeding 500 ppm, the federal regulatory threshold under 40 CFR 60.753(d). The facility was found in overall compliance; however, corrective actions including cover maintenance and re-monitoring within 10 days were required at the exceedance locations. An elevated hydrogen sulfide area was also identified in the northwest corner of the landfill.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> 8 surface methane exceedances detected above 500 ppm threshold (ranging 639–7658 ppm), with highest reading of 7658 ppm at East side of Cell 4E, March 25, 2021; H2S elevated above 20 ppb in NW corner.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1UBHQUeFo0wsSLUBb599DlusdK1Klr0_R/view?usp=drivesdk">Condensate Tank and hauler truck arrival</a></h3>
-<p>This document appears to be a routine operational log entry or notification regarding condensate tank activity and a hauler truck arrival at the Arbor Hills Landfill on January 2, 2020. No substantive findings, measurements, or procedural actions are documented in the provided text.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Document contains no specific factual readings, measurements, or citable claims.</p>
+<p class="finding-meta">2021-03-25 (added 2026-10-09) &middot; Arbor Hills Landfill &middot; evidence &middot; Source: EGLE Air Quality Division, N2688 Source Information page</p>
+<h3><a href="https://drive.google.com/file/d/1ZyxnU1E876JXG2vYwv9OP2GRfI5YNxWq/view">EGLE AQD Staff Activity Report, On-Site Inspection of Arbor Hills Landfill (N2688), 2021-03-25, full report with SEM survey results map (5 pages)</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1Ywiy4OXUuG68pNEKilsLB3BUudM52wnr/view?usp=drivesdk">control room screen Solar 4 just after test run #3</a></h3>
-<p>Control room screen capture from Solar 4 test run #3 dated January 2, 2020. Document consists only of a filename and EGLE header with no substantive data, measurements, or narrative content provided.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual data or readings present in document.</p>
+<p class="finding-meta">2021-03-22 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/19SYiuN_KLbxVV7XjpCkzOCexMxWNfIrk/view?usp=drivesdk">Follow-up email from facility confirming landfill liner location.</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>GFL Environmental&#x27;s site engineer confirms to EGLE that a map of compost water dust control application areas has been provided, and affirms in response to EGLE&#x27;s clarification question that all outlined cell areas have liner beneath them.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual measurement or violation. The document is an administrative confirmation of liner presence beneath outlined cells, without quantitative detail.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1gJ7wOJPFaEK1MXXAg8BwYl0d7XTONHDg/view?usp=drivesdk">control room screen Solar 4 test run #2</a></h3>
-<p>This is a control room screen image from a Solar 4 test run dated January 2, 2020. The document provides no substantive text, data, or regulatory content for analysis.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or claims are present in this document.</p>
+<p class="finding-meta">2021-03-22 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1C2b4-CgGlP1U3yini4kMeupgeAQi_wYM/view?usp=drivesdk">Email from facility with map of compost leachate application area.</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>GFL Environmental submitted a map to EGLE showing the compost water dust-control application areas across Arbor Hills Landfill&#x27;s active and future cells, including Cells 1–6 and variants (4A–4F). The map is a facility-provided operational document with no quantitative measurements or violation findings.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual reading or measured value is stated; the document is a map showing operational zones for compost water application.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1JH3tQaBF1Hsis_Ud9m4MP8GNg1ODHj3M/view?usp=drivesdk">control room screen Solar 4 test run #2</a></h3>
-<p>This is a control room screen display from a Solar 4 test run (#2) dated January 2, 2020. The document appears to be a screenshot or printout of monitoring equipment output, but no substantive data, measurements, or findings are provided in the text submitted.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual claim or measurement data is present in the document text.</p>
+<p class="finding-meta">2021-03-18 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1b9jtT2KBdXpHbOqFPM62IPvS7WzdfHKh/view?usp=drivesdk">nForm Document</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>Golder Associates filed the 2020 Annual Mercury Pollutant Minimization Plan (PMP) Status Report for Arbor Hills Landfill on March 15, 2021, documenting compliance with NPDES permit requirements and the approved mercury monitoring plan. The report confirms that annual aerial and vehicular reviews identified no notable changes in surrounding properties and no new mercury discharge sources, so semi-annual monitoring was not triggered.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No new mercury discharge sources identified in 2020 annual review; no semi-annual monitoring required.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1BY5JdFlfgIcrb2vTLNy1OBsNJ1ZlkgyT/view?usp=drivesdk">control room screen Solar 4 just after test run #3</a></h3>
-<p>Control room screen capture from Solar 4 facility showing data immediately following test run #3 on January 2, 2020. The document appears to be a system monitoring screenshot rather than a formal report or analysis.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or measurements are provided in the document description; this appears to be a reference to a screenshot file rather than extractable data.</p>
+<p class="finding-meta">2021-03-18 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/17LSiV7srl-vFxGQrFhhrJoCptOocuHuS/view?usp=drivesdk">Submission PDF</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Pollutant Minimization Program (PMP) Annual Status Report filed by Arbor Hills Landfill on March 18, 2021, addressing mercury monitoring. The facility reports quarterly influent sampling and monthly effluent sampling for low-level mercury, with results stated as not above established criteria. The planned action for the current year is to continue monitoring low levels of mercury per the PMP.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative mercury readings are provided; document states sampling was performed and results were &#x27;not applicable&#x27; (not above criteria), but actual analytical values are referenced only as &#x27;attached file&#x27; without disclosure in this submission.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1Z3cczM5hI7S524t5PDoyHj0QGKqdvWl9/view?usp=drivesdk">ADS Enclosed Flare control room panel 2</a></h3>
-<p>This document is a control room panel image for the ADS Enclosed Flare system at Arbor Hills. It appears to be documentation or inspection photography related to the landfill&#x27;s gas extraction and combustion control infrastructure.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or claims are stated in this document; it is a photograph or equipment designation only.</p>
+<p class="finding-meta">2021-03-18 (added 2026-09-26) &middot; Sauk Trail Hills Landfill (Canton, peer landfill) &middot; procedural &middot; Source: EGLE Warren District Office</p>
+<h3><a href="https://drive.google.com/file/d/1g8AJi9ZxG4owWX--6ARsyyD0OJay74b8/view">EGLE letter to Sauk Trail Hills Landfill (Canton, peer landfill) requiring leachate and groundwater PFAS and 1,4-dioxane sampling, March 18, 2021</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1L-kOxCAzVX7LAcGMrWDJm1-B6uESEe68/view?usp=drivesdk">ADS Enclosed Flare testing control room panel 1</a></h3>
-<p>This document appears to be a reference to EGLE equipment testing documentation for an enclosed flare system control room panel at Arbor Hills Landfill. No substantive data, measurements, or regulatory findings are provided in the excerpt.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual reading or measurement provided; document title only.</p>
+<p class="finding-meta">2021-03-18 (added 2026-09-26) &middot; Woodland Meadows-Van Buren Landfill (peer landfill) &middot; procedural &middot; Source: EGLE Warren District Office</p>
+<h3><a href="https://drive.google.com/file/d/1D0XGjzdwoflCaPjClmlSsTs7RLOnsqbK/view">EGLE letter to Woodland Meadows-Van Buren Landfill (peer landfill) requiring leachate and groundwater PFAS and 1,4-dioxane sampling, March 18, 2021</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1UsEbsnCcSPlyiMpW9rzGfUVi6CDHAXLe/view?usp=drivesdk">ADS Enclosed Flare testing control room photo 5</a></h3>
-<p>This document is a photograph of a control room for an ADS Enclosed Flare system testing, filed with EGLE on January 2, 2020. It appears to be a control room image with no accompanying narrative or data.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual reading or claim is present; this is a photograph without measurement data or written findings.</p>
+<p class="finding-meta">2021-03-15 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1c17emVKd08VJrPsqatbURMR484GscFgN/view?usp=drivesdk">Schedule - DMR</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering February 1–28, 2021. The report documents compliance with water-quality parameters including suspended solids, biochemical oxygen demand, ammonia, phosphorus, arsenic, mercury, selenium, temperature, pH, and dissolved oxygen under NPDES permit MI0045713 v5.0. The document shows the permit limits and reporting requirements but contains no actual measured values in the body text provided.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific measured readings are disclosed in the document text; it is a template showing permit limits (e.g., 45 mg/L TSS maximum daily, 6.5–9.0 SU pH range, 5.0 ng/L mercury 12-month rolling average) but the actual data rows are blank or marked with asterisks.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/17qiFqDZlABfpo9cplt_J-eSb_Do4zvks/view?usp=drivesdk">ADS Enclosed Flare testing control room photo 6</a></h3>
-<p>This is a photograph of the ADS Enclosed Flare testing control room dated January 2, 2020. The document contains only an image with no accompanying text, data, or narrative content.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual reading or claim present in the document.</p>
+<p class="finding-meta">2021-03-09 (added 2026-10-09) &middot; Arbor Hills Landfill &middot; evidence &middot; Source: Ypsilanti Community Utilities Authority (YCUA), public notice in Detroit Legal News</p>
+<h3><a href="https://drive.google.com/file/d/1B_qzZEV3YwqGY_Vt9J-facf2dLUopi0r/view">YCUA public notice, published March 9, 2021: Arbor Hills Landfill listed in significant noncompliance with federal pretreatment standards for 2020 (40 CFR 403), with affidavit of publication</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1TPWGJseIL90fXKaRQ4zRQa1odIWacWHN/view?usp=drivesdk">ADS Enclosed Flare testing control room photo 3</a></h3>
-<p>This document is a photograph of an ADS Enclosed Flare testing control room, filed by EGLE on January 2, 2020. It appears to be a visual record of flare system infrastructure at Arbor Hills Landfill without accompanying narrative or data.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual reading or claim present; document is a photograph only.</p>
+<p class="finding-meta">2021-02-19 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1j7UEkFUbFCNWhTro-FbRS-199U-uTq8f/view?usp=drivesdk">Schedule - NPDES Unscheduled Permit Required Reports</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>Golder Associates follows up with EGLE on a January 18, 2021 notice of noncompliance involving ammonia (NH3) discharge exceedances in December 2020 and January 2021. The facility ceased discharge on January 8, 2021, with no further discharge through January 31, 2021.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> NH3 noncompliance documented in discharge monitoring reports for December 2020 and January 2021; discharge ceased January 8, 2021.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1IMMBLqrO8y_A_qGoZ6bs9mg9eeTgJ7dm/view?usp=drivesdk">ADS Enclosed Flare testing control room photo 4</a></h3>
-<p>This document is a photograph of an enclosed flare testing control room dated January 2, 2020. No text content, measurements, or regulatory findings are present—only an image file identifier.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or claims present; document is an image only.</p>
+<p class="finding-meta">2021-02-17 &middot; Arbor Hills Remediation Area &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/1yIWUFtZtKbjOmGpYXMRXbMzt6NTOCSkS/view?usp=drivesdk">Schedule - DMR</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a January 2021 Discharge Monitoring Report (DMR) for Arbor Hills Remediation Area&#x27;s final effluent under permit MI0045713 v5.0. The report documents daily monitoring of flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, arsenic, mercury, selenium, temperature, pH, and dissolved oxygen. The document flagged exceedances in ammonia nitrogen that were anticipated and led to discontinuation of discharge on 1/8/21.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Ammonia Nitrogen measured at 6.8 mg/L (exceeding 5.4 mg/L monthly average limit) and 9.8 mg/L (exceeding 6.4 mg/L limit); discharge discontinued 1/8/21 due to anticipated exceedances; reported in Non-Compliance letter to EGLE 1/18/21.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/13xLHwnCIlAFi4IGyx66_S5Zbg5N7Kgpl/view?usp=drivesdk">Enclosed flare testing louver photo 2</a></h3>
-<p>This document appears to be a photograph of enclosed flare testing louver equipment at the Arbor Hills Landfill, filed with EGLE on January 2, 2020. The image itself contains no narrative, measurements, or regulatory text—it is a visual record of facility infrastructure related to gas management.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual reading or claim is stated; this is a photographic record only.</p>
+<p class="finding-meta">2021-02-11 &middot; Arbor Hills Remediation Area &middot; procedural &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/1t_nt8FnRbCgsm10-ruWCibWsXZkWphSX/view?usp=drivesdk">Updates requested by 3/15/2021</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>EGLE requests that GFL Environmental provide updated information by March 15, 2021, on PFAS sampling results from two storm water ponds at Arbor Hills Landfill with elevated PFAS levels, ongoing discussions with local utilities about accepting additional flows, and feasibility assessments of reuse or alternative management options. The agency also reminds GFL to modify the facility&#x27;s NPDES permits to reflect new ownership.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Two storm water ponds at Arbor Hills Landfill have elevated levels of PFAS substances; EGLE requests sampling results and management alternatives by 3/15/2021.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1aK9pJo1DM6g1uH0tdxISz_BPg4UrOfnL/view?usp=drivesdk">Condensate Hauler photo 1</a></h3>
-<p>A photograph of a condensate hauler at Arbor Hills Landfill filed with EGLE on January 2, 2020. The image itself provides no textual data or readings.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual reading or claim is discernible from a photograph alone.</p>
+<p class="finding-meta">2021-02-11 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1-Cj6botsxx04YnDSxUGZup4x8iBJQjek/view?usp=drivesdk">Additional information request omitted from previous email (due by 3/15/2021)</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>EGLE requests additional information from GFL regarding PFAS contamination in two storm water ponds at Arbor Hills Landfill, including a summary of remediation actions to date, pond design details, ongoing sampling results, discussions with municipalities about alternative discharge, and feasibility of reuse options. The agency also reminds GFL to modify NPDES permits to reflect new ownership under Green for Life Environmental.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Two storm water ponds at Arbor Hills Landfill have elevated levels of PFAS substances requiring investigation and remediation alternatives; EGLE requests status update including sampling results by 3/15/2021.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/13Pj12vn4-k2g1a6jxGQgrTlRlNSa_7dF/view?usp=drivesdk">Enclosed Flare testing louver photo 1</a></h3>
-<p>A photograph from EGLE documenting the enclosed flare testing louver at Arbor Hills Landfill as of early January 2020. The image appears to be part of routine equipment inspection or permitting documentation.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or measurements stated in a photograph-only submission.</p>
+<p class="finding-meta">2021-02-11 (added 2026-08-10) &middot; Arbor Hills Landfill &middot; evidence &middot; Source: Michigan EGLE, Materials Management Division (Solid Waste Section)</p>
+<h3><a href="https://drive.google.com/file/d/15gU2SFwCtoTK-mcchUIchRvWP1kvv_Vi/view">EGLE Report of Solid Waste Landfilled in Michigan - Fiscal Year 2020 (Part 115 Sec. 11512(24) annual report to the Michigan Legislature)</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2020-01-02 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1w0lq6tUkgkmpRQn6drMm3fnA2GnCL_po/view?usp=drivesdk">control room screen Solar 4 test run #2</a></h3>
-<p>This document appears to be a reference to a control room screen display from a Solar 4 test run dated January 2, 2020, filed with EGLE. No substantive data, measurements, or findings are provided in the text.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific data point available; document is only a reference label or index entry.</p>
+<p class="finding-meta">2021-01-20 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1EP4ixJTOgOk7EeS8EcOpH9l901cZdrfQ/view?usp=drivesdk">DMR Daily Data for period 12/01/2020 - 12/31/2020_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a December 2020 Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area wastewater permit (MI0045713 v5.0), submitted by Green for Life (GFL) in January 2021. The report documents daily measurements of flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, arsenic, mercury, selenium, temperature, pH, and dissolved oxygen at the final effluent outfall. Most parameters show compliance with permit limits where data was collected; many days show missing or excluded data marked with *F or *E flags.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific violation or exceedance evident. Effluent temperatures ranged 40.6–48.4°F throughout December 2020; reported limit compliance on parameters where full data were available.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-12-30 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1CpSITuSzaqtXhHvvYzsS_4lxKjmXbBXi/view?usp=drivesdk">Submission PDF</a></h3>
-<p>Arbor Hills submitted additional monitoring parameters data to the Michigan Department of Environment, Great Lakes, and Energy (EGLE) under NPDES permit MI0045713 on December 30, 2019. The submission includes three laboratory reports attached as analytical data for required monitoring.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings provided in the cover document; analytical data is referenced but contained only in the attached lab reports, which are not included in this submission record.</p>
+<p class="finding-meta">2021-01-20 &middot; Arbor Hills Remediation Area &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/1cuX-BUqsmpIRu3Lg_EAYftiSFFBSEj_E/view?usp=drivesdk">DMR Summary Data for period 12/01/2020 - 12/31/2020_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering December 2020, filed by Green for Life under permit MI0045713. The report documents water-quality parameters including flow, suspended solids, CBOD5, ammonia nitrogen, phosphorus, arsenic, mercury, selenium, temperature, pH, and dissolved oxygen from the facility&#x27;s final effluent.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Ammonia Nitrogen (as N) concentration averaged 7.4 mg/L in December 2020, exceeding the permitted maximum monthly average limit of 6.4 mg/L, though GFL stated loading remained below limits due to low flow.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-12-30 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1mJrmgteGXvduu9x_z7duIKTcYdq4ODxL/view?usp=drivesdk">nForm Document</a></h3>
-<p>Pace Analytical Services laboratory report dated December 16, 2019, transmitting analytical results for samples received on December 4, 2019 from Advanced Disposal&#x27;s Arbor Hills Landfill. The report covers discharge sampling (DISCHARGE 001A LLHG) and conforms to TNI/NELAC standards.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative readings provided on cover page; full analytical results are in the 36-page document not shown in the excerpt.</p>
+<p class="finding-meta">2021-01-18 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1em6p3Bis-KEkvEBtiOynkrn-BL2yn9eR/view?usp=drivesdk">Submission PDF</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>GFL submitted a required 5-day written notification to EGLE on January 18, 2021, following a 24-hour verbal notification of an ammonia (NH3) permit exceedance at the Arbor Hills Remediation Area under NPDES permit MI0045713.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative reading provided in the cover form; the exceedance details are in the attached PDF (EGLE 5 day response NH3 permit exceedance NPDES MI0045713.pdf), which is not included in this submission record.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-12-30 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1FMih-oRii29CtsHquFw0kV7Ql--KsLwd/view?usp=drivesdk">nForm Document</a></h3>
-<p>Pace Analytical Services laboratory report dated December 16, 2019, providing analytical results for samples from Advanced Disposal&#x27;s Arbor Hills Landfill (Discharge 001A LLHG) received on December 4, 2019. The document is a standard laboratory cover letter for sample analysis results conforming to TNI/NELAC standards.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or measurements visible on the cover page; full analytical results are in the enclosed report pages not shown.</p>
+<p class="finding-meta">2021-01-18 &middot; Arbor Hills Remediation Area &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/134OFlHaun0hxvvKIfcWSosjJP69AGha1/view?usp=drivesdk">Submital Attachments</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>Golder Associates filed a Notice of Non-Compliance for the Arbor Hills Remediation Area&#x27;s NPDES permit on January 18, 2021, reporting that ammonia-nitrogen concentrations in discharge exceeded the monthly average permit limit of 6.4 mg/L, reaching 7.4 mg/L in December 2020. Although the daily loading remained below the permit ceiling, the operator ceased all discharge and is implementing corrective measures including aerator operation and chemical additives to reduce ammonia through enhanced nitrification.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Ammonia-nitrogen monthly average concentration 7.4 mg/L, exceeding permit limit of 6.4 mg/L, December 2020; discharge ceased January 8, 2021.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-12-20 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1f5CjK9sW9xJ7G5k8Bfkac18cJ9e_kpw_/view?usp=drivesdk">Site</a></h3>
-<p>This is an air emission compliance test report for a Solar Taurus landfill-gas-fired turbine (EUTURBINE4-S3) at Arbor Hills Energy, dated December 20, 2019. The testing verified NOx and SO2 emission rates per RO Permit No. MI-ROP-N2688-2011. The report documents measured emissions, QA/QC procedures, and fuel sulfur analysis.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Measured SO2 emission rate of 2.16 lb/MWhr exceeds permit limit of 0.9 lb/MWhr on December 20, 2019; fuel H2S measured at 420–460 ppmv by Draeger tubes.</p>
+<p class="finding-meta">2021-01-14 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/17XxmCd3WIDN2xeDeXFj9b98MSrTDA328/view?usp=drivesdk">Submital Attachments</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a December 2020 laboratory analysis report from Pace Analytical Services testing water discharge samples for low-level mercury using EPA Method 1631E. The report documents mercury concentrations detected in a discharge sample collected on December 10, 2020, along with quality control data and field blanks.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Mercury detected at 1.21 ng/L in discharge sample (DISCHARGE 001A), collected 12/10/20, with duplicate at 1.01 ng/L; field blank non-detect.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-12-20 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1Vt7A7GTCQmER9KOqQl8BDMNZ-ATCMNFZ/view?usp=drivesdk">Test Observation</a></h3>
-<p>EGLE Air Quality Division staff observed a performance stack test of the Solar Flare Turbine 4 at the Fortistar Landfill Gas to Energy Plant (located at Arbor Hills Landfill) on December 20, 2019. The test measured emissions of nitrogen oxides (NOx), sulfur dioxide (SO2), carbon dioxide (CO2), and oxygen as required by the facility&#x27;s air permit and federal regulations. Fortistar is currently in non-compliance with SO2 emission limits and has submitted a fifth permit application to increase those limits, with the case escalated to EPA.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> NOx 23.5–23.8 ppm, SO2 25.3–26.0 ppm across three test runs on December 20, 2019; Fortistar in non-compliance with SO2 limits; fifth permit application pending with EPA escalation.</p>
+<p class="finding-meta">2021-01-14 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1efgEyZWxqnOx171NowYJJ15LoPTmtx77/view?usp=drivesdk">Submission PDF</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>GFL submitted annual monitoring parameters for the Arbor Hills Remediation Area under NPDES permit MI0045713 on January 14, 2021. The submission includes discharge data and mercury limit compliance documentation for December monitoring at the site&#x27;s Discharge 001A outfall.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings (temperature, concentration values, or violation findings) are stated in this procedural document; it is a cover sheet for attachments.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-12-19 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1K9mum5FrT6tDZpMfHW-ubODEE8-7ZIOr/view?usp=drivesdk">Site</a></h3>
-<p>This is a December 2019 flare performance test report for two enclosed landfill gas flares (Flare 391 and Flare 392) at Arbor Hills Landfill. Testing was conducted to demonstrate compliance with the Michigan Permit to Install (PTI 79-17) and EPA Subpart WWW standards, with measurements of NOx, CO, oxygen, and non-methane organic compounds collected during three test runs on December 19, 2019.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Flare 391 (McGill) flare temperature averaged 1,520°F across three runs; Flare 392 (Zink) averaged 1,396°F at standard load and 1,479°F at maximum load; all emission parameters met permit limits including NOx 0.04 lb/mmBtu (limit 0.060) and CO 0.02–0.06 lb/mmBtu (limit 0.20).</p>
+<p class="finding-meta">2021-01-14 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1NnEc79BgVakoAX-W6Eeo-gUHvO0JbiOM/view?usp=drivesdk">Submital Attachments</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>Laboratory analytical results for wastewater discharge sample 001A collected December 10, 2020 from Arbor Hills Landfill. The report includes comprehensive testing for metals, volatiles, semivolatiles, and other contaminants by Pace Analytical Services and Paragon Laboratories. Most parameters tested were below detection limits or below relevant regulatory thresholds.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual reading exceeds a reportable threshold; all volatile organic compounds and most metals were non-detect or well below regulatory limits. Hardness total measured at 260 mg/L as CaCO3.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-12-19 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1ksRmLLp4pc3fQ4fu0OwuUs3byvCyu0SN/view?usp=drivesdk">Test Observation</a></h3>
-<p>EGLE staff observed a stack test of two enclosed flares (391 and 392) at Arbor Hills Landfill on December 19, 2019, to verify compliance with NSPS Subpart WWW at increased operating capacities. The test proceeded with three runs after initial startup delays, and investigators documented operating temperatures, flow rates, and landfill gas odors throughout the facility, along with concerns about inconsistent semi-annual gas sampling results requiring resampling.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Flare 391 measured at 1500F and 1490F during test runs; Flare 392 measured at 1352F and 1417F; both well above typical flare operating temperatures.</p>
+<p class="finding-meta">2021-01-08 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1d746Eq-4Mu3O5t0RqNRzp5tQMQQGnA7P/view?usp=drivesdk">Submission PDF</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>Arbor Hills Remediation Area submitted its annual Storm Water Pollution Prevention Plan (SWPPP) review report on January 8, 2021, indicating compliance with permit requirements across all inspection, training, maintenance, and documentation categories. The facility reported that a revised SWPPP was drafted in 2021 to address current conditions.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Facility reported compliance with all SWPPP permit conditions as of January 8, 2021; no specific violations or noncompliance events detailed in submission.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-12-09 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1wYpsOdk4HTVV1Dyyu4ffO5p8MgIozlrT/view?usp=drivesdk">DMR Summary Data for period 11/01/2019 - 11/30/2019_V1</a></h3>
-<p>This is a Discharge Monitoring Report (DMR) for Arbor Hills Remediation Area covering November 2019, filed by Green for Life (GFL) on December 9, 2019. The report shows permit requirements and monitoring parameters for the facility&#x27;s final effluent, including suspended solids, biochemical oxygen demand, nutrients, heavy metals, temperature, pH, and dissolved oxygen. All data fields are redacted with asterisks, so no actual measured values are disclosed in the submitted document.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings are disclosed; all measurement fields are redacted.</p>
+<p class="finding-meta">2021-01-04 (added 2026-10-08) &middot; Arbor Hills Landfill &middot; evidence &middot; Source: Charter Township of Northville, Department of Public Services, by email, October 8, 2026</p>
+<h3><a href="https://drive.google.com/file/d/12i5CH6isk7QvslzRgmzEl-Y5E84pyUaM/view">GFL (Arbor Hills Landfill) monthly H2S compliance report to Northville Township under the 2020 Administrative Consent Order, Manhole P9, December 2020 (dated January 4, 2021)</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-12-09 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/19KxsSEPiTOhKi5hDulODNUXV_3ok383e/view?usp=drivesdk">DMR Daily Data for period 11/01/2019 - 11/30/2019_V1</a></h3>
-<p>This is a November 2019 Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering daily monitoring of effluent parameters under permit MI0045713 v5.0. The report indicates &quot;No Discharge&quot; for all monitoring sets and documents parameters including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, arsenic, mercury, selenium, temperature, pH, and dissolved oxygen. The document was certified by Anthony Testa (Green for Life/GFL) on December 9, 2019.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative discharge readings are provided in this DMR template; all monitoring sets show &quot;No Discharge: Y&quot;, meaning no effluent was discharged during the November 2019 monitoring period.</p>
+<p class="finding-meta">2021-01 (added 2026-07-24) &middot; Arbor Hills Landfill &middot; reference &middot; Source: EGLE / Michigan PFAS Action Response Team (MPART)</p>
+<h3><a href="https://drive.google.com/file/d/1mgybVu0Nn0UMQwr46UhU_T6Y3m9fDL8q/view?usp=drivesdk">EGLE/MPART PFAS Response page for Arbor Hills Landfill (site investigation summary, posted Jan 2021)</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-12-09 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1T0wPvStbccg-XCjdCtcCybWUKgYKYT0u/view?usp=drivesdk">Violation Notice</a></h3>
-<p>EGLE issued a violation notice to Arbor Hills Energy LLC for multiple air quality permit violations discovered during a November 2019 inspection, including SO2 emissions exceeding permit limits from turbines and duct burners, unpermitted use of diesel fuel as an alternate startup fuel, and uncontrolled vents on the gas collection control system. Multiple violations cited in earlier 2019 notices remain unresolved as of this December 9, 2019 notice.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> SO2 emissions from October 2018 stack testing exceeded permit limits on turbines (2.9 lbs/hr limit exceeded), duct burners (0.3 lbs/hr limit exceeded), and resulted in significant net emissions increase of SO2 greater than 40 tons per year; diesel fuel use as alternate startup fuel unpermitted; prior VNs issued 2/1/19, 3/14/19, 10/22/19 remain unresolved.</p>
+<p class="finding-meta">2020-12-14 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1gWt7k0uvnqugD3C7-iHp0aujmGJFhjAt/view?usp=drivesdk">DMR Summary Data for period 11/01/2020 - 11/30/2020_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering November 2020, filed by Green for Life (GFL) on 14 December 2020. The facility reported &#x27;No Discharge&#x27; during the period, meaning no effluent was being released. The report documents permit compliance monitoring parameters including flow, suspended solids, biochemical oxygen demand, nutrients, metals, and pH—all marked with asterisks indicating no actual sample measurements were recorded.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No Discharge reported for November 2020; no quantitative measurements recorded.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-12-06 &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1hffA5k1tyOwSrQ9DPkqp9s6AF6jLp-3l/view?usp=drivesdk">Violation Notice</a></h3>
-<p>Advanced Disposal responded to two Notices of Violation issued in November 2019 for Rule 901(b) and 433(1)(c) violations—detected landfill gas odors in nearby residential neighborhoods (Steeplechase and Northville Ridge subdivisions). The company acknowledged low-level odors, identified a potential source on the north side of the landfill, and proposed immediate and ongoing corrective actions including gas infrastructure upgrades, well optimization, and third-party odor monitoring.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> AQD detected &#x27;distinct and definite objectionable landfill gas odor&#x27; on November 3 and November 19, 2019, in residential areas downwind of the facility (Briar Ridge Lane, Carriage Way, S. Glacier Road, etc.), violating Rule 901(b) and Rule 433(1)(c); third-party odor surveillance recorded less than 2 scent-a-meter readings.</p>
+<p class="finding-meta">2020-12-14 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1P54jC0ajpoW18QyVrCMlt55bUkdZWSMF/view?usp=drivesdk">DMR Daily Data for period 11/01/2020 - 11/30/2020_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) filed by Green for Life for the Arbor Hills Remediation Area covering November 1–30, 2020. The report documents daily monitoring of final effluent parameters including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, metals (arsenic, mercury, selenium), pH, dissolved oxygen, and temperature. The facility reports &#x27;No Discharge&#x27; for the monitoring period.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative readings are disclosed in the document; all data fields are marked as reporting parameters without recorded values. The document indicates &#x27;No Discharge&#x27; for all sets during November 2020.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-11-26 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1bWkP5wk-mhjI13ndQ0TUK8APj9EpCSp7/view?usp=drivesdk">Violation Notice</a></h3>
-<p>EGLE&#x27;s Air Quality Division issued a violation notice to Advanced Disposal Services for nuisance odor at Arbor Hills Landfill on November 26, 2019, following an investigation on November 19, 2019. AQD staff detected distinct, objectionable landfill gas odor along Napier Road and in nearby residential areas (S. Glacier Road, Westminster Road, Mulberry Way/Court), violating Michigan air quality rules R 336.1901(b) and R 299.4433(1)(c). The facility was ordered to submit a corrective action plan by December 19, 2019.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Distinct, definite objectionable landfill gas odor detected along Napier Road halfway between railroad tracks and facility entrance, and in Northville Ridge subdivision residential area (S. Glacier Road/Westminster Road/Mulberry Way/Mulberry Court) downwind of facility on November 19, 2019.</p>
+<p class="finding-meta">2020-12-02 &middot; Arbor Hills Landfill &middot; procedural &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/1LPJPrWh8dUMhl6k93d6iUcsyG-1XAvps/view?usp=drivesdk">Violation Notice</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>Arbor Hills Energy LLC received a Violation Notice from EGLE&#x27;s Air Quality Division on December 2, 2020, regarding emissions issues at its ROP-permitted facility (MI-ROP-N2688-2011). The company responded on December 31, 2020, stating it is working with EGLE to submit a revised Permit to Install application and scheduled a meeting for January 2021 to address the violations.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Violation Notice issued December 2, 2020; emissions issues at facility MI-ROP-N2688-2011; no specific quantitative readings or violation details stated in this response letter.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-11-18 &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1S-aBXf_cJ-EjxXIaWClRjSx1jN84TbHK/view?usp=drivesdk">Lower center of photo; One of the 4 compressor vent stacks.</a></h3>
-<p>This is a photograph or image documentation of one of four compressor vent stacks at the Arbor Hills Landfill, filed with EGLE on November 18, 2019. The image serves as visual evidence of the landfill&#x27;s gas-extraction infrastructure.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative readings provided; document is a photograph only.</p>
+<p class="finding-meta">2020-12-02 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/1QDfkmGPE-YcSNGlbNorj-3ckFLioGEjL/view?usp=drivesdk">Violation Notice</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>EGLE issued a violation notice on December 2, 2020 to Arbor Hills Energy for EU-TURBINE4-S3 exceeding SO2 permit limits in a September 25, 2020 stack test. The turbine emitted 2.02 lb/MW-hr of SO2, more than double the permitted limit of 0.9 lb/MW-hr. The operator was required to submit a corrective action plan by December 31, 2020.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> SO2 emissions 2.02 lb/MW-hr vs. permit limit 0.9 lb/MW-hr, EU-TURBINE4-S3, September 25, 2020 stack test</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-11-18 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1OSMEAxyXdLWhG_i6avBvB-kC2q69qnIq/view?usp=drivesdk">Turbine 3 Faceplate.  4.55 MWe.</a></h3>
-<p>Document filed with EGLE regarding Turbine 3 specifications rated at 4.55 megawatts electric capacity. No substantive environmental data, violations, or monitoring information is provided in the available text.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or claims are stated in the excerpt provided.</p>
+<p class="finding-meta">2020-11-30 (added 2026-10-09) &middot; Arbor Hills Landfill &middot; context &middot; Source: The Conservancy Initiative (public website)</p>
+<h3><a href="https://drive.google.com/file/d/1zGxEAGW_q7g4RDUtCvGxEx21gegbCyvc/view">The Conservancy Initiative letter to EGLE Water Resources Division: PFAS-impacted stormwater ponds at Arbor Hills Landfill, questions and recommendations (2020-11-30)</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-11-18 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1i9GX2bXIjeWWOMsz8cyTjaU1S48BvPy9/view?usp=drivesdk">Turbine 2 Faceplate.  No capacity given.</a></h3>
-<p>This document appears to be a minimal filing or metadata record related to Turbine 2 faceplate equipment at the Arbor Hills Landfill, dated November 2019. No substantive content, measurements, or regulatory claims are present in the provided text.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual reading or claim is stated in this document.</p>
+<p class="finding-meta">2020-11-29 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1GBdxQ9eXBZ81ch3POO4434FPlgo1msmc/view?usp=drivesdk">Graphic showing SEM path taken and methane results.</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This document is a graphic from EGLE showing the path taken during a Surface Emission Monitoring (SEM) survey and associated methane results from Arbor Hills Landfill. The document provides visual and quantitative data on methane concentrations detected during the monitoring event. No additional context or interpretation is provided in the excerpt.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Document consists of graphic/visual elements with methane readings from SEM survey path, but specific numerical values and well locations are not transcribed in the text provided.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-11-18 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1Tqcif6CfxHWEBGblzZGY0VzmEFkFMBaO/view?usp=drivesdk">3 flares</a></h3>
-<p>EGLE document referencing three flares at the Arbor Hills Landfill site as of November 2019. The document appears to be a regulatory communication, but the core content is not legible in the provided text.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual reading or measurement provided in legible text.</p>
+<p class="finding-meta">2020-11-29 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1abEJtLzbDjHqdAO0S0iSlScylgS7V8fQ/view?usp=drivesdk">Off-Site Inspection</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>EGLE conducted an unannounced off-site methane surface emission monitoring (SEM) survey along 6-Mile Road adjacent to Arbor Hills Landfill on 11/29/2020. The survey detected elevated methane readings downwind of the active face (up to 30 ppm), notably higher than previous October readings (14 ppm), though H2S levels remained low (all valves under 20 ppb). The facility was found in compliance with federal Clean Air Act and ROP requirements.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Methane reading of 30 ppm downwind of active face on 11/29/2020, compared to 14 ppm in October; H2S all valves under 20 ppb.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-11-18 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/195VNwJ1LQ2AUxOj0IWoijLFkTBamPd_u/view?usp=drivesdk">One of four compressor vent stacks.</a></h3>
-<p>This document references one of four compressor vent stacks at Arbor Hills Landfill, filed with EGLE on November 18, 2019. No substantive data, measurements, or regulatory findings are provided in the excerpt.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual reading or claim is present in this excerpt.</p>
+<p class="finding-meta">2020-11-18 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1sIz8dIJZ_gYKt-m5fk9_fKdtFTLWwTz1/view?usp=drivesdk">AHLF Response to 9-10-20 EGLE Letter</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>GFL Environmental submitted a response to an EGLE letter dated September 10, 2020, regarding issues at Arbor Hills Landfill&#x27;s storm ponds. The response was filed on November 10, 2020, and copies were sent to multiple EGLE and DHHS officials. The actual content of the response is not provided in this document excerpt.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual data or measurements are provided in this cover email; the substantive response is contained in an attachment not included in the text.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2019-11-18 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1mztQOyZfjUr-V44d3JsOftGLDfcXHKeb/view?usp=drivesdk">One of 2 relief valves associated with the 2 smaller compressors.</a></h3>
-<p>This document appears to be a filing notation or system entry regarding a relief valve component associated with smaller compressors at the Arbor Hills Landfill, dated November 2019. The entry provides minimal substantive content beyond identifying the equipment type.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual reading or measurement provided; document is an equipment identification entry only.</p>
+<p class="finding-meta">2020-11-12 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1V7NUrsHyokRiNibEcyG7YPkSVUqcweV_/view?usp=drivesdk">Submital Attachments</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>Pace Analytical Services laboratory report dated August 24, 2020 presents water quality analysis results for a sample collected from the West Pond at Advanced Disposal Arbor Hills Landfill on August 13, 2020. The report documents Total Suspended Solids (35.9 mg/L), Carbonaceous BOD (7.8 mg/L), and Nitrogen Ammonia (8.1 mg/L) with quality control data and certifications.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> West Pond water sample: 35.9 mg/L Total Suspended Solids, 7.8 mg/L cBOD5, 8.1 mg/L Ammonia, collected 08/13/2020.</p>
 </article>
 </div>
 
-<p class="findings-nav"><a href="page-22.html">&larr; Newer</a> &middot; <a href="page-24.html">Older &rarr;</a></p>
+<p class="findings-nav" id="pr-browse-nav"><a href="page-22.html">&larr; Newer</a> &middot; <a href="page-24.html">Older &rarr;</a></p>
 
 <footer class="site-footer">
-<p>Generated 2026-09-13 14:59 UTC from the monitor's case file. An independent project. All source data is public regulatory records from Michigan EGLE and other public sources.</p>
+<p>Generated 2026-10-23 13:26 UTC from the monitor's case file. An independent project of Landfill Records Project LLC. All source data is public regulatory records from Michigan EGLE and other public sources.</p>
 </footer>
 
 </div>

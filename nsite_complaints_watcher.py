@@ -161,26 +161,43 @@ deliverable is the ALERT + the durable Sheet row.
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
-import os
 import sys
-from datetime import date, datetime
 
-try:
-    from zoneinfo import ZoneInfo
-    _ET = ZoneInfo("America/Detroit")
-except Exception:  # pragma: no cover
-    _ET = None
-
+# dc/ea/nc/sw stay imported here even though run() itself now calls into
+# nsite_watch_common for the Sheets/email/fetch plumbing: both this module
+# and nsite_watch_common.py import the SAME singleton modules, so a test's
+# monkeypatch.setattr(cw.dc, "sheets_service", ...) (etc.) still reaches the
+# real call inside nsite_watch_common.run_profile_watch unchanged — see
+# tests/test_nsite_complaints.py's _wire(). ea is also still used directly
+# by this module's own _diff_and_record (ea.send_email).
 import drive_client as dc
+import email_alerts as ea
 import sheet_writer as sw
 import nsite_client as nc
-import email_alerts as ea
 from config_loader import load_config
-# Imported in place, NOT copied or moved: _is_due is already a pure function of
-# (cadence, srn, today) with nothing profile-specific in it, and MOVING it
-# would edit a live `enabled: true` stream's file for a new stream's benefit.
+import nsite_watch_common as nwc
+# _now/_today_date/_load_json/alerting_is_configured are now shared -- SIX
+# of the 16/8/12/6 copies of these helpers that existed repo-wide (ROP/MMD/
+# PFAS-PWS/RIDE/Submissions/the other watchers keep their own; this
+# consolidation is scoped to the six nSITE profile watchers only; this
+# profile never had its own `_row_digest`, unlike 5 of its siblings);
+# re-exported here so this module keeps its own names unchanged
+# (cw._now()/cw._load_json(...)/cw.alerting_is_configured(...) all still
+# work exactly as before — see the
+# existing per-watcher identity tests).
+from nsite_watch_common import (  # noqa: F401 -- re-exported, not just used
+    _now, _today_date, _load_json, alerting_is_configured,
+)
+# Imported in place, NOT copied or moved (same as before this refactor): a
+# pure function of (cadence, srn, today) with nothing profile-specific in
+# it, kept as a module-global HERE (not forwarded through
+# nsite_watch_common) so cw._is_due stays the identical object
+# nsite_submissions_watcher._is_due IS (see its own identity test) and a
+# monkeypatch.setattr(cw, "_is_due", ...) in a test still reaches run()'s
+# behavior via the fresh look-up run() passes to run_profile_watch().
 from nsite_submissions_watcher import _is_due
 
 # A Google Sheets cell holds at most 50,000 characters — a hard API limit, not
@@ -201,57 +218,12 @@ DEFAULT_SNAPSHOT_CHAR_BUDGET = 45000
 DEFAULT_LATEST_WINDOW = 50
 
 
-def _now() -> str:
-    return datetime.now().isoformat(timespec="seconds")
-
-
-def _today_date() -> date:
-    return (datetime.now(_ET) if _ET else datetime.now()).date()
-
-
-def _load_json(raw: str, fallback):
-    """Parse a stored snapshot cell, falling back for anything that isn't a
-    JSON OBJECT — not merely for anything unparseable. A bare scalar (`0`,
-    `null`, `true`) parses fine but is not a mapping, and every downstream
-    reader does `"hash" not in old` / `old.get(...)`, which raises TypeError
-    on an int. That would wedge the site permanently — no row, no alert, the
-    same failure every run — which is exactly what the unreadable-snapshot
-    branch exists to prevent."""
-    try:
-        parsed = json.loads(raw)
-    except Exception:  # noqa: BLE001
-        return fallback
-    return parsed if isinstance(parsed, dict) else fallback
-
-
-def alerting_is_configured(cfg: dict, recipients: list | None) -> tuple[bool, str]:
-    """Whether a change alert could actually be delivered right now. Pure apart
-    from reading os.environ, so it is directly unit-testable.
-
-    email_alerts.send_email deliberately NO-OPS (prints and returns, no
-    exception) when SMTP env vars are missing or the recipient list resolves
-    empty, so a dry/local run doesn't crash. That is right for it and wrong for
-    us: catching only exceptions would let the single most likely cause of
-    non-delivery — a missing, renamed, or rotated GitHub secret — record a
-    change, advance the stored hash so the next run says "unchanged", and exit
-    0. Checking the same condition up front is what makes that case loud."""
-    missing = [k for k in ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD")
-               if not os.environ.get(k)]
-    if missing:
-        return False, f"SMTP not configured (missing {', '.join(missing)})"
-    if not (list(recipients) if recipients else ea.resolve_recipients(cfg)):
-        return False, "no alert recipients resolved"
-    return True, ""
-
-
 def _should_run(cfg: dict) -> tuple[bool, str]:
     """Pure gate — testable without any Sheets/network mocking, so the exact
     bug this guards (the watch doing real work / emailing before
-    nsite_complaints.enabled is set) has a direct unit test. Mirrors
-    nsite_compliance_actions_watcher._should_run."""
-    if not (cfg.get("nsite_complaints") or {}).get("enabled"):
-        return False, "nsite_complaints.enabled is false — skipping (no-op)."
-    return True, ""
+    nsite_complaints.enabled is set) has a direct unit test. Thin wrapper
+    over nsite_watch_common.should_run(); see its docstring."""
+    return nwc.should_run(cfg, "nsite_complaints")
 
 
 # ---------------------------------------------------------------------------
@@ -566,17 +538,18 @@ def _diff_and_record(sheets, sheet_id, today, key, label, snap, cfg, recipients,
 
 def run() -> int:
     cfg = load_config()
-    should_run, reason = _should_run(cfg)
-    if not should_run:
+    # Gate BEFORE parsing any config value below: `_should_run` must be the
+    # very first thing checked, exactly like every sibling watcher, because
+    # `int(...)` on a malformed `snapshot_char_budget`/`latest_window` (a
+    # config edit made while the watch is disabled -- Complaints IS the one
+    # profile that currently ships disabled) would otherwise raise before
+    # run_profile_watch ever gets a chance to no-op on the disabled gate.
+    should, reason = _should_run(cfg)
+    if not should:
         print(f"[nsite-complaints-watch] {reason}")
         return 0
 
     ccfg = cfg.get("nsite_complaints") or {}
-    recipients = ccfg.get("recipients") or None  # None -> full alert_recipients list
-    # Clamped, because `snapshot_char_budget` sits in config.yml directly under
-    # a comment naming the 50,000 cap — so "raise it a bit" is a plausible edit,
-    # and any value at or above the cap would disable the truncation guard
-    # entirely and hand the site a permanently rejected write.
     budget = min(int(ccfg.get("snapshot_char_budget") or DEFAULT_SNAPSHOT_CHAR_BUDGET),
                  HARD_SHEETS_CELL_LIMIT - 1000)
     # Clamped to at least 1 for a NEGATIVE config value (a typo like -5) —
@@ -587,145 +560,21 @@ def run() -> int:
     # count+context note never depends on the window covering the full
     # delta — see summarize_complaints_change.
     latest_window = max(1, int(ccfg.get("latest_window") or DEFAULT_LATEST_WINDOW))
-    # Resolve the working site list by joining the shared identity registry
-    # (nsite_sites, ADR 022) with THIS profile's own cadence map. A `tiers` srn
-    # absent from the registry is a config error — KeyError raises naturally,
-    # on purpose (ADR 022): a loud failure on a config typo is correct, a
-    # silently-unwatched site is not.
-    registry = {s["srn"]: s for s in cfg.get("nsite_sites") or []}
-    sites = [
-        {**registry[srn], "poll": poll}
-        for srn, poll in (ccfg.get("tiers") or {}).items()
-    ]
-
-    # If alerting is ALREADY known to be impossible, stop before touching
-    # anything. Writing a row here would advance the stored hash, so tomorrow's
-    # run would compare equal, report "unchanged", and never retry — the
-    # notification gone permanently even after the secret was fixed. Nothing is
-    # lost by stopping: the complaints are still in nSITE, so the next healthy
-    # run records AND alerts on them.
-    alerting_ok, alerting_error = alerting_is_configured(cfg, recipients)
-    if not alerting_ok:
-        print(f"[nsite-complaints-watch] {alerting_error} — aborting BEFORE "
-              f"any fetch or write. A change found now could not be emailed, "
-              f"and recording it would advance the stored hash so the next "
-              f"run would report 'unchanged' and never retry. Nothing is "
-              f"lost: fix the configuration and the next run records and "
-              f"alerts normally.")
-        return 1
-
-    sheet_id = os.environ["GSHEET_ID"]
-    sheets = dc.sheets_service()
-    sw.ensure_complaints_tabs(sheets, sheet_id)
-
-    session = nc.make_session()
-    today_date = _today_date()
-    today = today_date.isoformat()
-    counts = {"baseline": 0, "changed": 0, "unchanged": 0, "skipped": 0,
-              "fetch_failed": 0, "failed": 0, "alert_failed": 0}
-    exit_code = 0
-
-    # Cadence gate first, so the batched read below asks only about sites this
-    # run will actually touch. An UNRECOGNIZED cadence is treated as due rather
-    # than raising: unlike a `tiers` srn missing from the registry (we don't
-    # know WHAT to poll, so ADR 022 fails loudly), an unknown cadence only means
-    # we don't know HOW OFTEN — and polling every run is the complete, fail-safe
-    # answer. A typo must never blind a site.
-    due_sites = []
-    for site in sites:
-        cadence = site.get("poll", "daily")
-        srn = site["srn"]
-        try:
-            due = _is_due(cadence, srn, today_date)
-        except Exception as e:  # noqa: BLE001 — unknown cadence -> poll, don't skip
-            print(f"[nsite-complaints-watch] {srn}: unrecognized poll cadence "
-                  f"{cadence!r} ({e}) — treating as due (fail-safe).")
-            due = True
-        if due:
-            due_sites.append(site)
-        else:
-            print(f"[nsite-complaints-watch] {srn}: not due today "
-                  f"({cadence} cadence) — skipping.")
-            counts["skipped"] += 1
-
-    # ONE tab read for every due site, not one per site. Two reasons, both
-    # load-bearing: it cuts the read count (less throttling exposure), and
-    # last_complaints_snapshots RAISES on a read failure instead of returning
-    # a per-key None. A swallowed read error here would make every site look
-    # never-seen, write fresh "baseline" rows, and — because the tab is
-    # append-only with last-write-wins — PERMANENTLY erase an un-alerted
-    # change rather than deferring it. So a read failure aborts before any
-    # write, leaving last run's state intact and correct.
-    try:
-        last_by_key = sw.last_complaints_snapshots(
-            sheets, sheet_id, [f"cmplt:{s['srn']}" for s in due_sites])
-    except Exception as e:  # noqa: BLE001
-        print(f"[nsite-complaints-watch] could not read the Complaints Watch "
-              f"tab ({type(e).__name__}: {e}) — aborting before any DATA row "
-              f"is written, so no site can be spuriously re-baselined.")
-        return 1
-
-    for site in due_sites:
-        # One try per site, so NOTHING (a fetch failure, an oversized or
-        # rejected Sheets write, a malformed stored snapshot, a malformed
-        # registry entry) can abort the run and silently drop every site
-        # queued after this one.
-        try:
-            srn, name, nsite_id = site["srn"], site["name"], site["id"]
-            key = f"cmplt:{srn}"
-            label = f"nSITE Complaints — {name} ({srn})"
-            last = last_by_key.get(key)
-
-            try:
-                complaints = nc.fetch_site_complaints(session, nsite_id)
-                print(f"[nsite-complaints-watch] {label}: fetched "
-                      f"{len(complaints)} complaint(s).")
-            except nc.NsiteStructuralError as e:
-                # NOT transient, so it must NOT take the skip-and-warn path
-                # below: nSITE having changed the response shape (e.g. started
-                # paging — the most likely profile to trip this given its
-                # record count) would otherwise fail identically every single
-                # day behind a green build. Checked before the base class.
-                counts["fetch_failed"] += 1
-                exit_code = 1
-                print(f"[nsite-complaints-watch] {label}: STRUCTURAL break in "
-                      f"nSITE's response — this will NOT fix itself and needs "
-                      f"code changes; failing loudly rather than going quiet: {e}")
-                continue
-            except nc.NsiteFetchError as e:
-                counts["fetch_failed"] += 1
-                if last is not None:
-                    print(f"[nsite-complaints-watch] {label}: fetch failed, "
-                          f"skipping this run (baseline preserved, not "
-                          f"diffed): {e}")
-                else:
-                    print(f"[nsite-complaints-watch] {label}: NO BASELINE and "
-                          f"fetch failed (failing loudly so activation "
-                          f"surfaces it): {e}")
-                    exit_code = 1
-                continue
-
-            snap = complaints_snapshot(complaints, latest_window)
-            result, alert_error = _diff_and_record(
-                sheets, sheet_id, today, key, label, snap, cfg, recipients, last, budget)
-            counts[result] += 1
-            if alert_error:
-                counts["alert_failed"] += 1
-                exit_code = 1
-        except Exception as e:  # noqa: BLE001 — isolate this site, keep the run going
-            print(f"[nsite-complaints-watch] {site.get('srn', '?')}: UNEXPECTED "
-                  f"failure, continuing with the remaining sites: "
-                  f"{type(e).__name__}: {e}")
-            counts["failed"] += 1
-            exit_code = 1
-
-    print(f"[nsite-complaints-watch] done — {counts['changed']} changed, "
-          f"{counts['baseline']} baselined, {counts['unchanged']} unchanged, "
-          f"{counts['skipped']} not-due-today, {counts['fetch_failed']} fetch-failed, "
-          f"{counts['failed']} errored, {counts['alert_failed']} change(s) recorded "
-          f"but NOT emailed (across {len(sites)} site"
-          f"{'' if len(sites) == 1 else 's'}).")
-    return exit_code
+    return nwc.run_profile_watch(
+        cfg=cfg,
+        log_prefix="[nsite-complaints-watch]",
+        config_key="nsite_complaints",
+        key_prefix="cmplt",
+        label_prefix="nSITE Complaints",
+        unit_noun="complaint(s)",
+        tab_name=sw.TAB_COMPLAINTS,
+        ensure_tabs_fn=sw.ensure_complaints_tabs,
+        last_snapshots_fn=sw.last_complaints_snapshots,
+        is_due_fn=_is_due,
+        fetch_fn=nc.fetch_site_complaints,
+        build_snapshot_fn=lambda rows: complaints_snapshot(rows, latest_window),
+        diff_and_record_fn=functools.partial(_diff_and_record, budget=budget),
+    )
 
 
 if __name__ == "__main__":

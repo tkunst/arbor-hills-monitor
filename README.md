@@ -136,20 +136,22 @@ encouragement to comment lives on the advocacy site, not here.
     into the `MMD Watch` tab; alerts (Trisha-only to start) on any change; first
     sighting baselines silently — an empty record set is a valid baseline. See
     `docs/decisions/018-mmd-open-data-watch.md`.
-12. **EGLE RIDE / Part 201 + UST status watch (Stream J)** (daily, optional —
-    `ride.enabled: false`): RIDE's own web app is auth-walled with no anonymous
-    document API, but EGLE separately publishes the underlying per-site status on
+12. **EGLE RIDE / Part 201 + UST status watch (Stream J)** (daily, live —
+    `ride.enabled: true`): this watch does not use RIDE's web app (its public
+    inventory page was found on 2026-09-28 to list FILES anonymously — see the
+    ADR 019 addendum); EGLE separately publishes the underlying per-site status on
     a keyless public ArcGIS service (RRDOpenData — same host/idiom as Stream I,
     two layers). Watches Layer 0 (Part 201 remediation status) for the 5 Arbor
     Hills-area sites — Salem Landfill, Arbor Hills - East, 7667 Chubb Rd, 7941
-    Salem Rd, MITC Corridor — and Layer 1 (Part 211 UST) for the GFL facility.
+    Salem Rd, MITC Corridor — and Layer 1 (underground storage tanks) for two facilities: GFL
+    Environmental USA (00040223) and Arbor Hills Landfill Inc (00038889).
     A `RiskCondition` flip, a `Contaminants` change, or a new `Open_Release` is
     early, citable **R5** (water quality) signal. Snapshot-diff into the `RIDE
     Watch` tab; alerts (Trisha-only to start) on any change; first sighting
     baselines silently. Rides EGLE's RRDOpenData ArcGIS service; if EGLE
-    reorganizes it, the fetch fails loudly rather than silently going quiet. New
-    source, ships disabled — see `docs/decisions/019-ride-part201-watch.md` for
-    activation.
+    reorganizes it, the fetch fails loudly rather than silently going quiet.
+    Built disabled and activated 2026-08-07 — see
+    `docs/decisions/019-ride-part201-watch.md`.
 13. **nSITE Submissions watch (Stream K)** (`nsite_submissions.enabled:
     true`): watches a DIFFERENT, wider list than `facilities:` — all 19 of
     Trisha's MiEnviro email subscriptions, resolved to their real nSITE site
@@ -596,6 +598,14 @@ docs/day) is essentially free. Model is configurable in `config.yml`.
 
 ## License / reuse
 
+**Published datasets** (the `site/data/` pages and their release downloads) are
+licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/): reuse
+freely, crediting "Arbor Hills Monitor" with a link to the dataset page. The
+underlying readings are public regulatory records; the license covers this
+project's compilation, parsing, and documentation of them. The full license
+text is in [`LICENSE`](LICENSE); despite GitHub's repo-wide license badge, it
+is applied to the datasets, not to the code in this repository.
+
 Public regulatory-data tooling — useful to other Great Lakes advocacy groups.
 The parser (`egle_doc_parser.py`) is intentionally domain-agnostic.
 
@@ -643,6 +653,23 @@ mkdir -p ~/.config/privacy-gate
 ```
 
 Then push again.
+
+### Blocked paths (private files kept in the repo folder)
+
+Some working files live in this folder but must never be published (for example an
+internal handoff note). List them, one per line, in a second file that is also kept
+**outside** the repo:
+
+```text
+~/.config/privacy-gate/blocked-paths.txt
+```
+
+Each line is a repo-relative path or a bash glob (`docs/private/*`); blank lines and
+`#` comments are ignored. The hook then **blocks any push** containing a commit whose
+tree includes a listed path, including a file added and removed within the same push.
+This list is optional: if the file does not exist, the path check is skipped (the term
+list stays fail-closed). Also add each path to `.git/info/exclude` (local-only, never
+committed) so `git add -A` never stages it.
 
 ### Other behavior and troubleshooting
 

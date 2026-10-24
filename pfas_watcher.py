@@ -26,10 +26,19 @@ first run surfaces that immediately instead of silently no-oping forever while
 looking healthy. A transient failure AFTER a baseline exists is just skipped-and-
 warned — a blip must never be diffed into a false "page changed" alert.
 
-NO DRIVE / OAUTH (deliberate scope call, see ADR 012): the deliverable is the
-ALERT. The tab row carries the full normalized text, which is both the diff basis
-and a durable dated snapshot — so SMTP + Sheets (both already live) are all this
-needs. Raw-HTML-to-Drive mirroring, wds_archiver-style, is a possible fast-follow.
+PER-ITEM ISOLATION: each configured page is read/diffed/recorded/alerted in its
+own try/except — a Sheets read raise (state-reads-raise, ADR 012/023) or any
+other failure on ONE page is logged (class-only, never the raw exception
+string) and the run continues to the next page, returning exit 1 at the end.
+
+DRIVE / OAUTH ONLY VIA THE OPTIONAL EXPORTER (ADR 012 scope call, amended by
+ADR 072): the deliverable is the ALERT. The tab row carries the full normalized
+text, which is both the diff basis and a durable dated snapshot — so SMTP +
+Sheets (both already live) are all this needs. ADR 072 adds a best-effort
+Tier-1 copy of that same normalized text to Drive (snapshot_exporter.py),
+called right BEFORE each snapshot row and gated on
+data_lifecycle.snapshot_export.enabled (default off) — a no-op until Trisha
+activates it, never a blocker when she does.
 
 Runs daily (see .github/workflows/pfas-watch.yml).
 """
@@ -50,6 +59,7 @@ import drive_client as dc
 import sheet_writer as sw
 import pfas_client as pc
 import email_alerts as ea
+import snapshot_exporter as se
 from config_loader import load_config
 
 _MAX_DIFF_LINES = 60  # cap the diff in the email; the page link has the full context
@@ -140,58 +150,71 @@ def run() -> int:
             print("[pfas-watch] page entry with no url — skipping")
             continue
 
-        last = sw.last_pfas_snapshot(sheets, sheet_id, url)
-
+        # Isolate THIS page's whole body — a strict-reader raise (state-reads-
+        # raise, ADR 012/023) from last_pfas_snapshot, or any other failure on
+        # ONE page, must not abort the other watched pages.
         try:
-            html = pc.fetch_page(url)
-            content = pc.extract_content(html, min_chars=min_chars)
-        except (pc.PFASFetchError, pc.PFASContentError) as e:
+            last = sw.last_pfas_snapshot(sheets, sheet_id, url)
+
+            try:
+                html = pc.fetch_page(url)
+                content = pc.extract_content(html, min_chars=min_chars)
+            except (pc.PFASFetchError, pc.PFASContentError) as e:
+                if last is None:
+                    # No baseline yet AND unreadable: surface a CI-only block on the
+                    # activation run instead of a silent forever-no-op. See module doc.
+                    print(f"[pfas-watch] {label}: NO BASELINE and fetch/parse failed "
+                          f"(failing loudly so activation surfaces it): {e}")
+                    exit_code = 1
+                else:
+                    print(f"[pfas-watch] {label}: fetch/parse failed, skipping this run "
+                          f"(baseline preserved, not diffed): {e}")
+                continue
+
+            new_hash = pc.hash_text(content)
+            chars = len(pc.visible_text(content))
+
             if last is None:
-                # No baseline yet AND unreadable: surface a CI-only block on the
-                # activation run instead of a silent forever-no-op. See module doc.
-                print(f"[pfas-watch] {label}: NO BASELINE and fetch/parse failed "
-                      f"(failing loudly so activation surfaces it): {e}")
-                exit_code = 1
-            else:
-                print(f"[pfas-watch] {label}: fetch/parse failed, skipping this run "
-                      f"(baseline preserved, not diffed): {e}")
-            continue
+                # Tier-1 Drive copy of the normalized text BEFORE the Tier-2 row
+                # (ADR 072 write order; a best-effort no-op unless
+                # data_lifecycle.snapshot_export is enabled).
+                se.export_snapshot(content, se.snapshot_name("pfas", label, today, new_hash, "txt"), cfg)
+                sw.append_pfas_snapshot_row(
+                    sheets, sheet_id, today, label, url, "baseline",
+                    new_hash, chars, "initial snapshot (no alert)", _now(), content)
+                baselined += 1
+                print(f"[pfas-watch] {label}: baseline recorded ({new_hash}).")
+                continue
 
-        new_hash = pc.hash_text(content)
-        chars = len(pc.visible_text(content))
+            last_hash, last_text = last
+            if new_hash == last_hash:
+                unchanged += 1
+                print(f"[pfas-watch] {label}: unchanged ({new_hash}).")
+                continue
 
-        if last is None:
+            # Changed: durable row FIRST, alert email SECOND (best-effort). A crash
+            # between them loses the alert, never the record — and the row already
+            # advanced the stored hash, so next run won't re-fire.
+            note, body_diff = summarize_diff(
+                pc.visible_text(last_text), pc.visible_text(content))
+            se.export_snapshot(content, se.snapshot_name("pfas", label, today, new_hash, "txt"), cfg)
             sw.append_pfas_snapshot_row(
-                sheets, sheet_id, today, label, url, "baseline",
-                new_hash, chars, "initial snapshot (no alert)", _now(), content)
-            baselined += 1
-            print(f"[pfas-watch] {label}: baseline recorded ({new_hash}).")
-            continue
-
-        last_hash, last_text = last
-        if new_hash == last_hash:
-            unchanged += 1
-            print(f"[pfas-watch] {label}: unchanged ({new_hash}).")
-            continue
-
-        # Changed: durable row FIRST, alert email SECOND (best-effort). A crash
-        # between them loses the alert, never the record — and the row already
-        # advanced the stored hash, so next run won't re-fire.
-        note, body_diff = summarize_diff(
-            pc.visible_text(last_text), pc.visible_text(content))
-        sw.append_pfas_snapshot_row(
-            sheets, sheet_id, today, label, url, "changed",
-            new_hash, chars, note, _now(), content)
-        changed += 1
-        print(f"[pfas-watch] {label}: CHANGED ({last_hash} -> {new_hash}; {note}).")
-        try:
-            ea.send_email(
-                f"[PFAS watch] Page changed: {label}",
-                format_change_body(label, url, note, body_diff),
-                cfg,
-            )
-        except Exception as e:  # noqa: BLE001 — alert is best-effort; row is recorded
-            print(f"[pfas-watch] {label}: change recorded but alert email FAILED: {e}")
+                sheets, sheet_id, today, label, url, "changed",
+                new_hash, chars, note, _now(), content)
+            changed += 1
+            print(f"[pfas-watch] {label}: CHANGED ({last_hash} -> {new_hash}; {note}).")
+            try:
+                ea.send_email(
+                    f"[PFAS watch] Page changed: {label}",
+                    format_change_body(label, url, note, body_diff),
+                    cfg,
+                )
+            except Exception as e:  # noqa: BLE001 — alert is best-effort; row is recorded
+                print(f"[pfas-watch] {label}: change recorded but alert email FAILED: {e}")
+        except Exception as e:  # noqa: BLE001 — isolate ONE page's failure
+            print(f"[pfas-watch] {label}: FAILED this run "
+                  f"({type(e).__name__}) — other pages continue.")
+            exit_code = 1
 
     print(f"[pfas-watch] done — {changed} changed, {baselined} baselined, "
           f"{unchanged} unchanged.")

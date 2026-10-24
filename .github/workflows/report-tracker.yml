@@ -1,0 +1,74 @@
+name: report-tracker
+
+# Report expectations tracker (ADR 071): daily expansion of the hand-edited
+# Expected Reports / Trigger Rules tabs into due instances, matching of
+# newly arrived records from the existing streams (nSITE feed tabs, WDS,
+# Hand-Curated Files, GovQA Archive Watch, Ridge Wood Reports) to those
+# instances, and the never-deleted Missing & Overdue Log, all on the PRIVATE
+# Sheet (GSHEET_ID_PRIVATE). The job writes ONLY its own seven tabs and is
+# read-only on every existing tab; it fails closed (exit 1, nothing written)
+# when no usable private Sheet is configured.
+#
+# Ships report_tracking.enabled: FALSE — a brand-new job built unattended
+# (overnight-coder Step 3), so this runs on schedule but is a deliberate
+# no-op until a human seeds the hand tables (report_tracker_seed.py --apply)
+# and flips the flag. No Anthropic (deterministic rules, no classifier) and
+# no Drive/OAuth. 7pm ET (11pm UTC) runs after the nSITE profile watchers
+# (pfas 7am ... public-notices 6pm) and after the 3am backfill, so the day's
+# new feed rows are on the Sheet before it reads them. Its state is its own
+# private tabs, never _meta, so it never races the other jobs.
+on:
+  schedule:
+    - cron: "0 23 * * *"    # 7pm ET (11pm UTC). DST drift of +/-1h is acceptable.
+  workflow_dispatch:
+    inputs:
+      email:
+        description: "Also send the owner-only review email this run (normally Sundays)"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: report-tracker
+  cancel-in-progress: false
+
+jobs:
+  report-tracker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+      - name: Write service-account key to a temp file
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
+      - name: Track expected reports
+        env:
+          # Reads the public case-file Sheet (arrival streams) and writes the
+          # PRIVATE Sheet only. SMTP + owner list for the Sunday review email.
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
+          GSHEET_ID_PRIVATE: ${{ secrets.GSHEET_ID_PRIVATE }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          MONITOR_OWNER_EMAILS: ${{ secrets.MONITOR_OWNER_EMAILS }}
+          UNSUBSCRIBED_EMAILS: ${{ secrets.UNSUBSCRIBED_EMAILS }}
+          # workflow_dispatch input, operator-supplied; read by Python via
+          # os.environ — never shell-evaluated.
+          REPORT_TRACKER_EMAIL: ${{ inputs.email }}
+        run: python report_tracker.py

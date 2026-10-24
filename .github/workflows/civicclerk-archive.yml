@@ -27,17 +27,25 @@ concurrency:
 jobs:
   civicclerk-archive:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: "pip"
+      - name: Install system OCR tooling
+        # continue-on-error (found by the advisor, 2026-10-13): a flaky apt
+        # mirror must never fail this whole job -- ensure_searchable()/
+        # ocr_in_place() already fail open when ocrmypdf is missing, and
+        # ridgewood.yml's H2S safety-alert logic specifically must not
+        # depend on this step succeeding (ADR 016).
+        continue-on-error: true
+        run: sudo apt-get update && sudo apt-get install -y ocrmypdf
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install --require-hashes -r requirements.txt
       - name: Write service-account key to a temp file
         env:
           GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}

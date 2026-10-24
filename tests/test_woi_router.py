@@ -33,19 +33,27 @@ def _reading_lines(well, temp, adj=False, dt="3/14/2025 15:40"):
     return lines
 
 
-def _build_pdf(path, readings, header=True, total_pages=45, per_page=5, co=None):
+# The table's own column header (one line, so each label word sits at a
+# rising x). woi_table_parser reads the column order from it (layout guard).
+HEADER_FULL = ("Well ID Date/Time ADJ CH4 (%) CO2 (%) O2 (%) Balance (%) Diff. Press. "
+               "Temp. Flow Well Pres. Header Pres. Comments")
+
+
+def _build_pdf(path, readings, header=True, total_pages=45, per_page=5, co=None,
+               header_line=HEADER_FULL):
     """readings: list of (well, temp) or (well, temp, adj). Places the
     'Gas Extraction Report' header on p8 and the gas rows across interior pages
     (small font so many rows fit); pads to total_pages of filler. `co`, if given,
-    is a list of (well, date, ppm) written as an Attachment-2 CO page on p9."""
+    is a list of (well, date, ppm) written as an Attachment-2 CO page on the last page."""
     norm = [(r[0], r[1], r[2] if len(r) > 2 else False) for r in readings]
     chunks = [norm[i:i + per_page] for i in range(0, len(norm), per_page)]
     doc = fitz.open()
     for p in range(total_pages):
         page = doc.new_page()
         if header and p == 7:
-            page.insert_text((20, 20), "Attachment 1\nGas Extraction Report", fontsize=8)
-        elif co and p == 8:
+            page.insert_text((20, 20), "Attachment 1\nGas Extraction Report\n" + header_line,
+                             fontsize=6)
+        elif co and p == total_pages - 1:  # Attachment 2 follows Attachment 1
             lines = ["Attachment 2 - June 2025 CO Data", "Well ID", "Date", "ppm"]
             for well, date, ppm in co:
                 lines += [well, date, str(ppm)]
@@ -193,3 +201,112 @@ def test_bug_would_false_fire_without_peak_preservation():
     parsed = _parsed(measurements=[], severity="notable",
                      full_text="HOV permitted ceiling of 180 F")
     assert ea.is_urgent(parsed, CFG) is True
+
+
+# --- coder:woi-layout-guard ---------------------------------------------------
+
+def test_is_woi_report_finds_header_past_page_25(tmp_path):
+    # The Q3 2023 Consent Judgment report carries its gas table from p163; the
+    # old 25-page scan never saw it.
+    doc = fitz.open()
+    for p in range(45):
+        page = doc.new_page()
+        page.insert_text((20, 20), "Gas Extraction Report" if p == 40 else f"Narrative {p}",
+                         fontsize=8)
+    path = tmp_path / "late.pdf"
+    doc.save(str(path))
+    doc.close()
+    assert woi_router.is_woi_report(str(path), META, page_threshold=30) is True
+
+
+def test_reading_above_plausibility_ceiling_never_alerts_and_is_flagged(tmp_path, monkeypatch):
+    # A valid row (gases sum to 100) whose temperature is 526.8: the shape a
+    # shifted column produces. It must reach no alerting path, but be flagged.
+    reads = _many(54, temp=90) + [("AHWW0402", 526.8), ("AHW272R4", 140)]
+    pdf = _build_pdf(tmp_path / "ceil.pdf", reads)
+    cfg = {**CFG, "temperature_thresholds": {"max_plausible_wellhead_f": 250}}
+    parsed = _parsed(severity="notable")
+    flags = []
+    routed = woi_router.route_measurements(parsed, pdf, META, cfg, review_flags=flags)
+    assert routed is not None
+    temps = [m["value"] for m in parsed.measurements
+             if m["metric"] == "temperature" and m["basis"] == "measured"]
+    assert 526.8 not in temps and 140 in temps
+    held = [m for m in parsed.measurements if m["value"] == 526.8]
+    assert [(m["metric"], m["basis"]) for m in held] == [("temperature", "unknown")]
+    assert "plausibility ceiling" in held[0]["note"]
+    assert ea.is_urgent(parsed, cfg) is False                    # 140 < 145, 526.8 held out
+    assert all(r.temp != 526.8 for r in routed["readings"])     # well_watch never sees it
+    assert all(d["max_temp_f"] != 526.8 for d in routed["summary"])
+    assert [f["kind"] for f in flags] == ["woi_temp_above_ceiling"]
+    assert flags[0]["value_f"] == 526.8 and flags[0]["well_id"] == "AHWW0402"
+
+
+def test_rejected_table_is_flagged_even_when_not_routed(tmp_path):
+    # An unknown layout (no Temp column): nothing routed, the rejection is flagged.
+    hdr = "Well ID Date/Time ADJ CH4 (%) CO2 (%) O2 (%) Balance (%) Diff. Press. Comments"
+    pdf = _build_pdf(tmp_path / "unknown.pdf", _many(60, temp=90), header_line=hdr)
+    parsed = _parsed()
+    flags = []
+    assert woi_router.route_measurements(parsed, pdf, META, CFG, review_flags=flags) is None
+    assert [f["kind"] for f in flags] == ["rejected_gas_table"]
+    assert "column layout not recognized" in flags[0]["detail"]
+
+
+def test_route_keeps_classifier_measurements_it_does_not_rederive(tmp_path):
+    reads = _many(54, temp=90) + [("AHW272R4", 177)]
+    pdf = _build_pdf(tmp_path / "keep.pdf", reads)
+    h2s = {"metric": "hydrogen_sulfide", "value": 12, "unit": "ppb", "basis": "measured"}
+    parsed = _parsed(measurements=[h2s, {"metric": "temperature", "value": 999,
+                                         "unit": "F", "basis": "measured"}])
+    woi_router.route_measurements(parsed, pdf, META, CFG)
+    assert h2s in parsed.measurements
+    assert 999 not in [m["value"] for m in parsed.measurements if m["metric"] == "temperature"]
+
+
+def test_gas_only_rows_route_without_changing_any_max_temperature(tmp_path):
+    # ADR 005 addendum 2026-10-19: a row whose Temp prints "---" is kept as a
+    # gas-only reading. It must not move any well's max temperature, the peak,
+    # the emitted temperatures, the headline, the severity floor or well_watch.
+    import well_watch
+    base_reads = _many(54, temp=90) + [("AHW272R4", 177)]
+    base = woi_router.route_measurements(_parsed(), _build_pdf(tmp_path / "base.pdf", base_reads),
+                                         META, CFG)
+    reads = base_reads + [("AHW272R4", "---"), ("AHW999", "---")]
+    pdf = _build_pdf(tmp_path / "gas_only.pdf", reads)
+    parsed = _parsed(severity="urgent")
+    parsed.severity_floor, parsed.severity_before_floor = ["measured_temperature"], "notable"
+    routed = woi_router.route_measurements(parsed, pdf, META, CFG)
+    gas_only = [r for r in routed["readings"] if r.temp is None]
+    assert {r.well_id for r in gas_only} == {"AHW272R4", "AHW999"}
+    by_well = {d["well"]: d for d in routed["summary"]}
+    base_max = {d["well"]: d["max_temp_f"] for d in base["summary"]}
+    assert {w_: by_well[w_]["max_temp_f"] for w_ in base_max} == base_max
+    assert by_well["AHW272R4"]["max_temp_f"] == 177.0
+    assert by_well["AHW999"]["max_temp_f"] is None
+    assert routed["summary"][0]["well"] == "AHW272R4"   # wells with no temp sort last
+    temps = [m["value"] for m in parsed.measurements if m["metric"] == "temperature"]
+    assert temps == [177.0]
+    assert woi_router.build_key_data_point(routed, cfg=CFG).startswith("AHW272R4: max measured 177")
+    woi_router.recheck_severity_floor(parsed, routed, CFG)
+    assert parsed.severity == "urgent"                   # the real 177F reading survives
+    cfg = {**CFG, "well_watch": {"wells": [{"pattern": r"^AHW+0*272", "threshold_f": 145}]}}
+    (_, hits), = well_watch.find_hits(routed["readings"], cfg)
+    assert [h.temp for h in hits] == [177.0]
+
+
+def test_guard_ignores_gas_only_rows(tmp_path):
+    # A report whose Temp cells print "---" on all but one row must not route
+    # on the strength of its gas columns: the classifier's 177 stays.
+    reads = _many(54, temp="---") + [("AHW1", 90)]
+    pdf = _build_pdf(tmp_path / "bad_temp.pdf", reads)
+    parsed = _parsed(measurements=[{"metric": "temperature", "value": 177,
+                                    "unit": "F", "basis": "measured"}])
+    assert woi_router.route_measurements(parsed, pdf, META, CFG) is None
+    assert [m["value"] for m in parsed.measurements] == [177]
+
+
+def test_guard_counts_only_readings_with_a_temperature(tmp_path):
+    reads = _many(10, temp=90) + _many(60, temp="---", start=400)
+    pdf = _build_pdf(tmp_path / "mostly_gas_only.pdf", reads)
+    assert woi_router.route_measurements(_parsed(), pdf, META, CFG) is None

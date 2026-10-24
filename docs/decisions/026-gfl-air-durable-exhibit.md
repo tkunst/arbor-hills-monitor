@@ -91,3 +91,74 @@ cursor, or the alert path.
 - **Snapshot-level episode state for the capture boundary.** More machinery;
   per-reading classification already captures every elevated hour faithfully
   without tracking cross-poll episode markers.
+
+## Addendum 2026-10-06: capture every reading, every field
+
+**Why.** GFL's public dashboard shows only the `H2S_Text`/`CH4_Text` labels, which read
+"BDL" for every value below 7 ppb, including stuck sensors' constant values; the numbers
+exist only in the ArcGIS feed. The `sample` capture kept about 3 of every 24 calm hourly
+readings per station (one poll on 2026-10-06 captured 14 of about 144), so most numeric
+values were preserved nowhere but GFL's feed. Trisha: "make sure we have a backup of all
+actual readings for both CH4 and H2S... Don't want to rely on that dashboard staying live."
+
+**Decision.** New `gfl_air.capture.mode`: `all` (now live) keeps every perimeter reading;
+`sample` keeps the original behavior. Each capture row now also carries `h2s_text`,
+`ch4_text`, and `raw`, a verbatim copy of every field the source returned.
+`_READING_FIELDS` now requests every measurement field the layer publishes
+(adds `Relative_Humidity`, `Barometric_Pressure`, `Direction_Text`, `Date_Text`).
+About 150 readings and about 80 KB of JSON per daily poll.
+
+**Failure handling.** A capture gap is never silent: the run finishes its alert path
+and then exits 1 (the GitHub failure email surfaces it) when the upload fails, when
+capture is enabled without the Drive folder/creds, when the over-cap branch re-baselines
+(it captures the oldest cap+1 fetched rows first, but anything past them is skipped), or
+when the source rejected the extended field list and the readings query fell back to
+the core fields (live alerting keeps working; the capture is thinner). An unknown or empty
+`capture.mode` captures everything (fails safe). The monthly full-feed snapshot (separate
+change, ADR 063) is the backstop that recovers anything a flagged run missed, and it also
+catches upstream deletions or edits. A one-time manual full snapshot of the whole feed
+(225,699 readings, 2022-05-01 to 2026-10-06, every field, SHA-256 manifest) was taken on
+2026-10-06 and kept outside the repo, with an off-site copy in Trisha's private Drive.
+
+**Real-specimen check.** Live fetch with the new field list: the server returned all 14
+fields; `mode: all` captured 120 of 120 perimeter readings, each with numeric values,
+labels, and the full raw record.
+
+## Addendum 2026-10-06 (hourly): capture about every hour
+
+**Why.** The daily run (8am ET) captures every reading since its last poll, so a reading
+could sit in GFL's feed for up to about 24 hours before we held a copy. If the source
+changed or removed a reading inside that window, the original would never be seen.
+Trisha chose hourly saves.
+
+**Decision.** `gfl_air_hourly_capture.py`, run by `.github/workflows/gfl-air-hourly-capture.yml`
+at 23 minutes past each hour (GitHub's cron often runs late, so in practice every 1-2
+hours). It saves every new perimeter reading to the same app-only Drive folder in the same
+capture format, named `gfl-air-capture-<date>-oid<max>-h.json` (the `-h` keeps its files
+distinct from the daily run's, so neither silently replaces the other), reusing
+`_capture_row` and `_write_capture`.
+No alerts and no Sheet writes. Its cursor is derived from Drive (the highest `oid<N>` among
+existing capture file names, listing the last 3 days first and widening only if nothing is
+found), so it shares no state with the daily run and a failed hour is simply retried by the
+next. Both jobs' files count toward the cursor, and a reading may appear in two files
+(harmless). With no capture file visible at all (a new folder or a rotated OAuth client),
+the job saves the source's newest rows at once so a cursor exists from then on. A large
+backlog is captured oldest-first, `max_readings_per_run` (5,000) per run.
+
+**Failure policy.** A failed hour logs and exits 0, because the next hour retries and the
+daily run still captures everything since its own Sheet cursor and exits 1 on any capture
+gap. Runs starting in four UTC hours (03, 09, 15, 21) exit 1 on failure, so a persistent
+problem sends a few GitHub failure emails a day, and a late or dropped scheduled run cannot
+hide it for a whole day. Source OBJECTIDs going backwards (a table reset that would make
+the cursor miss new readings) and new rows that are not perimeter readings both count as
+failures. A missing Drive configuration always exits 1.
+
+**Residual.** A source-side reinsert that renumbers every OBJECTID would make this job copy
+the whole table again, 5,000 readings per run, until it catches up (duplicates, no loss).
+The monthly snapshot reports such a reinsert (ADR 063). The opposite case, OBJECTIDs
+restarting lower after a table reset, makes every hourly run fail loudly until a person
+steps in (and the daily run's Sheet cursor shares the same blind spot).
+
+**Real-specimen check.** With a cursor three hours behind the live feed and the upload
+stubbed out, the job fetched and captured 15 readings (MS-2 to MS-6, 3 hours; MS-1 is
+silent), each with all 14 source fields in `raw`.

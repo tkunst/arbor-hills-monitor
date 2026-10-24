@@ -15,10 +15,16 @@ never the document's fault, so it must not poison the document.
 
 Detection is duck-typed (a status_code attribute plus a narrow set of message
 substrings) so callers need not import anthropic. An optional isinstance check
-catches the SDK's connection/timeout/rate-limit/server errors, which may carry
-no status_code. The message set is kept deliberately narrow: a genuine
-bad-document 400 (malformed request, un-openable PDF, max_tokens truncation)
-must still accrue strikes so truly poison docs stay self-terminating.
+catches the SDK's connection/timeout/rate-limit/server/authentication errors,
+which may carry no status_code. An Anthropic 401/403 (a revoked, expired or
+mis-scoped key) is transient too: a key problem is never the document's fault,
+and treating it as a strike would stub every real filing within three runs —
+but an nSITE download 401/403 (a requests.HTTPError behind download_pdf's
+RuntimeError) is per-document and still strikes, since nSITE refuses specific
+documents on referer grounds. The message set is kept deliberately narrow: a
+genuine bad-document 400 (malformed request, un-openable PDF, max_tokens
+truncation) must still accrue strikes so truly poison docs stay
+self-terminating.
 """
 from __future__ import annotations
 
@@ -50,17 +56,52 @@ def _status_of(exc: BaseException):
     return None
 
 
+def _chain(exc: BaseException):
+    """`exc` and every exception behind it (`__cause__`, then `__context__`),
+    nearest first, cycle-safe. nsite_client.download_pdf wraps a requests
+    failure in a RuntimeError `from` it, so the 5xx/connection error that
+    decides transience sits one link down."""
+    seen = set()
+    cur = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        yield cur
+        cur = cur.__cause__ if cur.__cause__ is not None else cur.__context__
+
+
 def is_transient(exc: BaseException) -> bool:
     """True if `exc` is an infrastructure/quota error to retry on a later run
     WITHOUT a poison strike; False for genuine unprocessable-source errors
     (un-openable PDF, OCR failure, max_tokens truncation, generic 400), which
-    SHOULD accrue strikes toward the poison threshold."""
+    SHOULD accrue strikes toward the poison threshold. Checks `exc` and the
+    exceptions it was raised `from` (stall-hardening review, 2026-10-23): an
+    nSITE download that failed on a 503 or a dropped connection is an outage,
+    not a bad document."""
+    return any(_is_transient_one(e) for e in _chain(exc))
+
+
+def _is_transient_one(exc: BaseException) -> bool:
     # 1) HTTP status: 429 (rate limit) and any 5xx (server / overload) are
     #    transient. A 400 is usually a real bad request; the one transient 400 is
     #    the usage-cap message, caught by the marker check below — so do NOT treat
     #    all 400s as transient here.
+    #    A 401/403 from the ANTHROPIC API (revoked, expired or mis-scoped key)
+    #    is likewise never the document's fault (stall-hardening review,
+    #    2026-10-23): counting it as a strike would stub every real filing
+    #    "skipped" within three runs of a key problem — the same false-poison
+    #    shape as the 2026-07-07 cap — and would read to the liveness guard as
+    #    the pipeline working through its queue instead of as the stall it is.
+    #    That is read ONLY from a direct `status_code` attribute (the SDK's
+    #    APIStatusError shape). A 401/403 carried on `.response.status_code`
+    #    is a requests.HTTPError from the nSITE DOWNLOAD (reachable through
+    #    download_pdf's cause chain), and nSITE does 403 a specific document
+    #    on referer grounds — that is per-document, so it must still strike
+    #    and stub rather than retry silently forever (round-3 review).
     status = _status_of(exc)
     if status is not None and (status == 429 or status >= 500):
+        return True
+    direct = getattr(exc, "status_code", None)
+    if isinstance(direct, int) and not isinstance(direct, bool) and direct in (401, 403):
         return True
 
     # 2) The anthropic SDK's connection/timeout/rate-limit/server errors may carry
@@ -76,8 +117,21 @@ def is_transient(exc: BaseException) -> bool:
                 anthropic.APITimeoutError,
                 anthropic.RateLimitError,
                 anthropic.InternalServerError,
+                anthropic.AuthenticationError,   # 401: the key, never the document
+                anthropic.PermissionDeniedError, # 403: ditto
             ),
         ):
+            return True
+    except Exception:
+        pass
+
+    # 2b) A requests-level connection failure or timeout on the nSITE download
+    #     (no HTTP status at all) is an outage, never the document's fault.
+    #     Optional import, same reasoning as above.
+    try:
+        import requests
+
+        if isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout)):
             return True
     except Exception:
         pass

@@ -17,320 +17,360 @@
 <link rel="stylesheet" href="../style.css">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
+<script src="search.js" defer></script>
 </head>
 <body>
 <div class="wrap">
 
-<p><a href="../index.html">&larr; Arbor Hills Monitor</a></p>
+<p><a href="../">&larr; Arbor Hills Monitor</a></p>
 
 <h1>Public Records on Arbor Hills</h1>
-<p class="findings-count">1,819 documents &middot; page 33 of 37</p>
+<p class="findings-count">2,088 documents &middot; page 33 of 42</p>
 
-<div class="findings-list">
+<div class="search-ui" id="public-records-search" hidden>
+<div class="search-ui-bar">
+<label for="pr-search-q" class="sr-only">Search all records</label>
+<input type="search" id="pr-search-q" class="search-ui-input" placeholder="Search all records" aria-label="Search all records" autocomplete="off">
+<button type="button" id="pr-search-clear" class="search-ui-clear" hidden>Clear search</button>
+</div>
+<details class="search-ui-filters">
+<summary>Filters</summary>
+<div class="search-ui-facets">
+<label>Facility <select id="pr-filter-facility"><option value="">All facilities</option></select></label>
+<label>Type <select id="pr-filter-type"><option value="">All types</option></select></label>
+<label>Severity <select id="pr-filter-severity"><option value="">All severities</option></select></label>
+<label>From <input type="date" id="pr-filter-date-min" autocomplete="off"></label>
+<label>To <input type="date" id="pr-filter-date-max" autocomplete="off"></label>
+</div>
+</details>
+<p class="search-ui-status" id="pr-search-status" aria-live="polite" hidden></p>
+<div class="findings-list" id="pr-search-results" hidden></div>
+</div>
+
+<div class="findings-list" id="pr-browse-list">
 <article class="finding">
-<p class="finding-meta">2016-04-20 &middot; Arbor Hills Remediation Area &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1vaiyuzau8mJ9gxQGWsBRQ2b1ucj6OgJt/view?usp=drivesdk">DMR Summary Data for period 03/01/2016 - 03/31/2016_V1</a></h3>
-<p>Discharge Monitoring Report for Arbor Hills Remediation Area covering March 2016. The facility reported effluent quality measurements for flow, suspended solids, biochemical oxygen demand, nutrients, metals, and other parameters. One exceedance noted: ammonia nitrogen at 7.1 mg/L exceeded the permit limit of 6.4 mg/L.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Ammonia Nitrogen measured at 7.1 mg/L, exceeding permit maximum monthly average limit of 6.4 mg/L, March 2016.</p>
+<p class="finding-meta">2018-10-18 &middot; Arbor Hills Remediation Area &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/1yp68PQD_uX2M5bZpvxnGp1LWSnrOiBZO/view?usp=drivesdk">Notification of Bypass</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>Advanced Disposal reported an unauthorized bypass at the Arbor Hills Remediation Area on October 1, 2018, when heavy rains caused the east treatment pond to overflow, discharging approximately 14,400 gallons through the flume. The company immediately pumped water from the pond to stop the overflow within four hours and implemented corrective measures including more frequent inspections and a lock-out/tag-out procedure on the gradient control pump.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> 14,400 gallons discharged through flume on October 1, 2018 at 13:00 EST; overflow stopped at 17:00 EST; surface water not directly impacted.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-04-20 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/17Qqx1ZwtpUvgw8BWVFAZuQzgQsoiLllG/view?usp=drivesdk">DMR Daily Data for period 03/01/2016 - 03/31/2016_V1</a></h3>
-<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering March 2016, filed by Advanced Disposal Services (now Republic Services) under permit MI0045713. The report documents daily monitoring of final effluent parameters including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, metals (arsenic, mercury, nickel, selenium), temperature, pH, dissolved oxygen, and vinyl chloride. Most days showed zero or near-zero flow with sparse analytical data; measurable readings appeared only on select dates mid- to late-March.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual violation or exceedance identified in this routine monitoring report. Temperature readings (8.0–11.0°F) and pH (8.43–8.53 SU) fall within permit ranges; dissolved oxygen ranged 9.06–19.99 mg/L (above 7.0 mg/L limit); metals and organics either not detected or reported at trace levels.</p>
+<p class="finding-meta">2018-10-17 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/1iV5gd5o6MgcFHsDr8umwRgWpG2lZqXGj/view?usp=drivesdk">Test Observation</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>EGLE air quality staff observed Day 2 of compliance testing (October 17, 2018) at the Fortistar Landfill Gas to Energy Plant at Arbor Hills Landfill, focusing on GT2 turbine emissions testing with and without ductburners. Testing is required by both ROP and Consent Order; preliminary SO2 results appear to be exceeding permit limits, consistent with findings from the initial May 2018 testing event. The facility is currently in non-compliance with SO2 emission limits and EPA is in enforcement negotiations with Fortistar.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Preliminary SO2 results exceeding permit limit on GT2 (and consistent with all turbines in May 2018 initial testing); H2S measured at 350 ppm via Draeger Tube on 10/17/2018.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-04-14 &middot; Arbor Hills Landfill &middot; procedural &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1AdrCygTBjytlA00ldyMnzurnsMVC-KVo/view?usp=drivesdk">Violation Notice</a></h3>
-<p>Advanced Disposal disputes Republic Services&#x27; adequacy in managing landfill gas collection and control at Arbor Hills, arguing that despite installation of 55 new wells, odor complaints persist due to insufficient compressor infrastructure, poor liquid management, and inadequate backup capacity. Advanced filed a motion in Washtenaw Circuit Court seeking court-ordered corrective measures, including independent third-party engineering review and specific upgrades to gas handling systems.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Current collection volume is 7,000 SCFM; backup capacity would be reduced to approximately 4,500 SCFM if the Fortistar plant shuts down, causing odor problems within hours.</p>
+<p class="finding-meta">2018-10-16 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1lkIDTj4qvZbdQFkZnu7KtzBs20-owcQj/view?usp=drivesdk">Site</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a third-party stack emission test report for Arbor Hills Energy, LLC&#x27;s landfill gas–fueled turbines at the Arbor Hills Landfill (SRN N2688), conducted October 16–19, 2018. The test measured compliance with Michigan&#x27;s Renewable Operating Permit (MI-ROP-N2688-2011a) for NOx, CO, VOC, SO₂, and HCl emissions from three EGT Typhoon turbines and one Solar Taurus turbine. The facility exceeded permitted SO₂ emission limits across all four turbines.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> SO₂ measured emission rates exceeded permit limits for all turbines and duct burners; Turbine No. 3 NOx would exceed annual permit limit if operated continuously (36.3 ton/yr measured vs. 33.0 ton/yr limit), October 2018.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-03-29 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1-uEmiTd6WBl-Icf4n_1BB6PfyxSXbQQV/view?usp=drivesdk">Violation Notice</a></h3>
-<p>Republic Services&#x27; response to a March 2015 MDEQ Violation Notice for off-site odors at Arbor Hills West Landfill. The company describes 53 gas extraction wells installed and tuned, surface scans conducted, and additional infrastructure improvements implemented between January and March 2016 to address odor migration and collection deficiencies. Republic reports a 25% increase in gas collection rate since January and proposes a sampling strategy for ambient air monitoring.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> 53 new and replacement gas extraction wells installed and completed by March 22, 2016; 25% increase in gas collection rate since January 2016.</p>
+<p class="finding-meta">2018-10-16 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/1R3iKXgDzbteDzE3HagMaz-CNgldWH4Rg/view?usp=drivesdk">Test Observation</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>EGLE Air Quality Division staff observed Day 1 of required compliance retesting of Fortistar&#x27;s four landfill gas turbines at Arbor Hills on October 16, 2018. Preliminary SO2 results appeared to exceed the permit limit (18–20 ppm), and a hydrogen sulfide sample registered 350 ppm. The facility was otherwise in normal operating condition with no visible emissions or unusual odors observed at the test location, though intermittent LFG odor was detected downwind of the treatment system.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Hydrogen sulfide (H2S) measured at 350 ppm in LFG sample on 10/16/2018; preliminary SO2 results 18–20 ppm, exceeding permit limit.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-03-28 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1aCVOwNyIiJvIQhPoS1FysmxS-Jmo_Gud/view?usp=drivesdk">DMR Daily Data for period 02/01/2016 - 02/29/2016_V1</a></h3>
-<p>This is a routine Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering February 2016. It documents daily measurements of treated effluent parameters including flow, suspended solids, nutrients, metals, and water quality indicators at the final effluent monitoring location. All reported values appear within typical operational ranges with no flagged exceedances noted.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Effluent temperatures ranged from 34.9°F to 41.4°F during reporting days in February 2016; no permit violation or exceedance indicated.</p>
+<p class="finding-meta">2018-10-12 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/1EhffSrbiRlctZWjbjsqXXtzVGgpMsNf6/view?usp=drivesdk">Violation Notice</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>The Michigan Department of Environmental Quality issued a Second Violation Notice to Arbor Hills Landfill on October 12, 2018, citing inadequate odor control and rejecting the facility&#x27;s initial compliance response as insufficient. The notice demands that the operator provide detailed corrective actions with specific timelines and measures to prevent odor recurrence by October 26, 2018, or face escalated enforcement.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Second Violation Notice issued October 12, 2018 for inadequate odor control measures; operator&#x27;s September 24 response deemed unacceptable; deadline for acceptable corrective action plan October 26, 2018.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-03-28 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1o1ylabhD5FZmxnu6nf8nNOanP2M4Fitt/view?usp=drivesdk">DMR Summary Data for period 02/01/2016 - 02/29/2016_V1</a></h3>
-<p>This is a February 2016 Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area (Permit MI0045713 v4.0) documenting routine water-quality monitoring of treated effluent. The report shows measurements of flow, suspended solids, biochemical oxygen demand, nutrients, metals, temperature, pH, dissolved oxygen, and vinyl chloride across multiple sampling events. All reported values appear to be within permit limits.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No permit violations or exceedances noted in February 2016 DMR data; all parameters remained within permitted thresholds.</p>
+<p class="finding-meta">2018-10-05 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1uoLo4FRavhEwgdn0CpRCW0v3-J0x9m6H/view?usp=drivesdk">DMR Daily Data for period 09/01/2018 - 09/30/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering September 1–30, 2018, filed by Green for Life under permit MI0045713 v5.0. The report documents daily monitoring of effluent parameters including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, metals (arsenic, mercury, selenium), temperature, pH, and dissolved oxygen. The facility reported &#x27;No Discharge&#x27; for all monitored periods.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Document states &#x27;No Discharge: Y&#x27; for all daily monitoring periods in September 2018; no specific quantitative readings are provided in the extract.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-03-23 &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1XyVLaNRGbHKKkHyEW4U48H_Gs0aIuEj_/view?usp=drivesdk">Air Permit to Install</a></h3>
-<p>Michigan Department of Environmental Quality issued Permit to Install 179-13 to BFI Waste Services of North America, LLC on March 24, 2014, authorizing installation and operation of two enclosed flares (2,600 CFM and 4,600 CFM) for controlling excess landfill gas at the Arbor Hills Landfill (SRN N2688). The permit sets emission limits for NMOC, NOx, CO, SO2, HCl, and VOC, and requires continuous temperature monitoring, periodic performance testing, and semi-annual reporting of exceedances.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific measured readings provided; document establishes permitted emission limits and operational standards for enclosed flares, including requirement for continuous temperature monitoring with ±1% accuracy or ±0.5°C minimum.</p>
+<p class="finding-meta">2018-10-05 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1oWM23iy82gG8Huh-So8q4Xc64vdWpmp8/view?usp=drivesdk">DMR Summary Data for period 09/01/2018 - 09/30/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering September 1–30, 2018. The document reports water-quality monitoring for treated effluent under NPDES permit MI0045713 v5.0, including flow, suspended solids, biochemical oxygen demand, ammonia, phosphorus, heavy metals (arsenic, mercury, selenium), temperature, pH, and dissolved oxygen. The report indicates &#x27;No Discharge&#x27; for the period, meaning no measurable quantities were reported for the sampled parameters.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No discharge reported for September 2018; permit MI0045713 v5.0 requires monitoring of TSS (max 25 mg/L daily), CBOD5 (max 10 mg/L daily), ammonia (max 2.0 mg/L daily), and pH (6.5–9.0 SU).</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-03-23 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/153vA2B_PVPToxjJ1Bs2VbE9B7qyHDiaU/view?usp=drivesdk">Site</a></h3>
-<p>Air Quality Specialist, Inc. conducted a pollutant emissions test on the Zink enclosed flare exhaust stack at Arbor Hills Landfill on March 23, 2016, measuring NMOC, NOx, CO, SO2, HCl, and VOC concentrations to verify compliance with Michigan permit PTI No. 179-13 and federal regulations. All measured pollutant emission rates met their respective permitted limits, with notably low concentrations across all parameters.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> NMOC exhaust concentration 1.1 ppm (limit 20.0 ppm); NOx 2.15 lb/hr (limit 20.0 lb/hr); CO 0.08 lb/hr (limit 15.6 lb/hr); SO2 3.95 lb/hr (limit 14.0 lb/hr); HCl 0.16 lb/hr (limit 6.0 lb/hr); VOC 0.14 lb/hr (limit 7.1 lb/hr) — all compliant on March 23, 2016.</p>
+<p class="finding-meta">2018-09-28 (added 2026-10-05) &middot; Arbor Hills Landfill &middot; procedural &middot; Source: U.S. EPA Region 5 (FOIA Reading Room release EPA-R5-2019-004654, Conservancy Initiative request)</p>
+<h3><a href="https://drive.google.com/file/d/1adA-H6Tbyc8VkI5errKYsMcLV064ZvAG/view">EPA R5 Consent Agreement and Final Order, BFI Waste Systems of North America, Arbor Hills Landfill, 2018-09-28</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-03-23 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1CmZZkP1sI3Pwm4HjND3lwCfPyu2L1sOz/view?usp=drivesdk">Test Observation</a></h3>
-<p>EGLE Air Quality Division staff observed a scheduled performance test of the enclosed flare (EUENCLOSEDFLARE#1) at Arbor Hills Landfill on March 23, 2016. The test was required by the ROP and PTI No. 179-13, with EUENCLOSEDFLARE#2 decommissioned prior to testing. Testing had not yet commenced at the time of the inspector&#x27;s departure due to probe setup issues.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Thermocouple readings at 9:30 AM: 1822F (probe 1), 1767F (probe 2), 1620F (probe 3); permitted set-point temperature range 1550–1625°F for EUENCLOSEDFLARE#1.</p>
+<p class="finding-meta">2018-09-24 &middot; Arbor Hills Landfill &middot; opinion &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1feA4TGflLWMGfybantIkVNpRhiSJfwgj/view?usp=drivesdk">Violation Notice</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a lawyer&#x27;s response to a Notice of Violation (NOV) issued by Michigan DEQ in September 2018, alleging that Arbor Hills Landfill created a Level 3 &#x27;distinct and definite objectionable landfill garbage odor&#x27; in nearby residential areas in violation of state air quality rules. The operator argues that two years of RK &amp; Associates odor monitoring (10,512 readings) showed minimal detectable odors, that the facility has substantially improved landfill gas collection efficiency since taking over the system in February 2017, and that the DEQ&#x27;s use of a vague &#x27;MDEQ-AQD Odor Scale&#x27; as enforcement basis violates due process.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> RK Associates monitoring (Nov 2016–Aug 2018): 89.3% of 10,512 readings showed zero odors; 10.2% &lt;2 dilution factor; only three readings &lt;7 dilutions, last on Feb 18, 2017. Two &#x27;&gt;2&#x27; readings on Aug 23, 2018 (inspection date).</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-03-15 &middot; Arbor Hills Landfill &middot; evidence &middot; urgent</p>
-<h3><a href="https://drive.google.com/file/d/1iTCy2w8Pr8MkPAIvErZV_YT4VKDa9f1O/view?usp=drivesdk">Violation Notice</a></h3>
-<p>MDEQ issued a Violation Notice on March 15, 2016 citing Arbor Hills Landfill for Rule 433(1) violations due to ongoing odor nuisance detected off-site. Despite a corrective action plan submitted in February 2016, odors persisted through early March with close to 150 community complaints received. MDEQ required Republic Services to conduct well evaluations, daily surface monitoring, and perimeter air monitoring for hydrogen sulfide, methane, and VOCs.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> 150+ odor complaints from nearby residential areas; odors detected off-site on 8 separate inspection dates (Feb 16–Mar 8, 2016) in violation of Rule 433(1) (gases must not create nuisance at property boundary).</p>
+<p class="finding-meta">2018-09-21 (added 2026-08-22) &middot; Arbor Hills Landfill &middot; procedural &middot; Source: Golder Associates for Advanced Disposal Services -&gt; EGLE WMRPD Jackson District</p>
+<h3><a href="https://drive.google.com/file/d/1BU_Gj43AKmpPLV_DL12g8ipj8hwWZupr/view">Revised Hydrogeologic Monitoring Plan, Arbor Hills West Expanded Sanitary Landfill -- September 2018 Revision (Golder Associates, Sep 21 2018)</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-03-07 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1_ORrCHhNF3X1jtKWY8VNgRRPkAZATzde/view?usp=drivesdk">On-Site Inspection</a></h3>
-<p>EGLE conducted a complaint/compliance inspection on March 7, 2016 in response to significant residential odor complaints since early January 2016 at Arbor Hills Landfill. Republic Services and Advanced Disposal Services described ongoing gas well expansion and corrective actions across multiple cells, with plans to add 17 new wells in Cell 4 and additional wells in Cells 1, 2, and 5 to improve gas collection efficiency. AQD observed distinct odors near Cell 5 Well 262 and the east end of Cell 4, and stressed the need for more frequent surface monitoring and expedited construction improvements.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Gas flow to gas plant measured at 6,800 cfm (lower than operator&#x27;s earlier estimate of 8,400–9,000 cfm and below the facility&#x27;s goal of 7,500+ cfm); distinct, strong odor observed on north end of Cell 5 near Well 262, March 7, 2016.</p>
+<p class="finding-meta">2018-09-14 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1iQMw4GG0XP1dIM30N2F2S6gYV68NpI3t/view?usp=drivesdk">DMR Summary Data for period 08/01/2018 - 08/31/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering August 2018, filed by Green for Life in September 2018. The report indicates &quot;No Discharge&quot; and lists permit limits and monitoring parameters for water quality including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, metals, temperature, pH, and dissolved oxygen. All data fields are marked with asterisks, indicating no actual measurements or exceedances are reported for the period.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No discharge reported; all sample measurements marked as unreported (asterisks). Cannot extract specific factual readings.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-02-19 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1KSVRi1lJZ_RYYtPC2zSxBB9hDB0unUjt/view?usp=drivesdk">DMR Summary Data for period 01/01/2016 - 01/31/2016_V1</a></h3>
-<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering January 2016, filed by Advanced Disposal Services under NPDES permit MI0045713 v4.0. The report documents permitted limits and monitoring requirements for various water-quality parameters including suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, metals (arsenic, mercury, nickel, selenium), temperature, pH, dissolved oxygen, and vinyl chloride. All data fields in the actual measurements section are redacted or marked with asterisks, so no actual readings are reported.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific measured readings are disclosed; the document contains only permit requirement limits and monitoring schedules, not actual January 2016 analytical results.</p>
+<p class="finding-meta">2018-09-14 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1cMvt7MJERM9Ii5fV8NuH8f73_38uEHby/view?usp=drivesdk">DMR Daily Data for period 08/01/2018 - 08/31/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering August 2018, filed by Advanced Disposal Services (Green for Life). The report documents daily monitoring of effluent parameters including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, arsenic, mercury, selenium, temperature, pH, and dissolved oxygen. The document indicates &quot;No Discharge&quot; for the monitoring period.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative readings are provided in the document; all daily data fields are blank. The report structure shows permitted limits for various parameters but contains no actual measured values for August 2018.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-02-19 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1xfaU64o1RgjYEVMxAWWvDreu1CIfqw_Q/view?usp=drivesdk">DMR Daily Data for period 01/01/2016 - 01/31/2016_V1</a></h3>
-<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering January 2016, filed by Advanced Disposal Services under NPDES Permit MI0045713. The report indicates &quot;No Discharge&quot; for the monitoring period and includes parameter tables for flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, metals (arsenic, mercury, nickel, selenium), temperature, pH, dissolved oxygen, and vinyl chloride at the final effluent monitoring location.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific measured readings provided; document states &quot;No Discharge: Y&quot; for all parameter sets during 01/01/2016–01/31/2016.</p>
+<p class="finding-meta">2018-08-31 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/16M2Sw9W9JL5FG-bK4KjYw3iIUKNUz1ae/view?usp=drivesdk">Violation Notice</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>Michigan DEQ issued a violation notice to Advanced Disposal Services for odor violations at Arbor Hills Landfill. AQD staff detected a Level 3 landfill garbage odor in residential areas south of Napier Road on August 23, 2018, violating Rules 901(b) and 433(1)(c). DEQ received nearly 900 odor complaints between January 1 and August 23, 2018.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Level 3 landfill garbage odor detected August 23, 2018 in residential area south of Napier Road; nearly 900 odor complaints received January 1 – August 23, 2018.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-02-16 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1ztw4GLY3myqoIIthXLm5ID84yu3uqZuV/view?usp=drivesdk">On-Site Inspection</a></h3>
-<p>An EGLE Air Quality Division inspection on 2/16/2016 found Arbor Hills Landfill in non-compliance status. The facility experienced a spike in odor complaints (38 in January, 91 in February 2016) attributed to excess landfill gas emissions. US EPA became involved in February 2016 and issued 114 Information requests; Fortistar&#x27;s failed SO2 testing and off-site odor non-compliance were documented.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> 91 odor complaints received in February 2016 and 38 in January 2016; facility non-compliance status determined; excess landfill gas emissions identified as cause; Fortistar failed SO2 testing.</p>
+<p class="finding-meta">2018-08-30 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/15akqcMseN5smm3Vm04pBd5LDCfeDxm5G/view?usp=drivesdk">Violation Notice</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>The Michigan DEQ Air Quality Division issued a violation notice to FORTISTAR Methane Group / Arbor Hills Energy on August 30, 2018, documenting multiple exceedances of SO2 emission limits during performance testing in July 2018. The violations include failure to meet turbine and duct-burner SO2 caps, failure to complete required performance testing within the contractual window, operation of a gas collection control system out of compliance with federal standards, and an unpermitted PSD major modification resulting in a significant net SO2 emissions increase exceeding 40 tons per year.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> SO2 emissions during July 2018 testing: Turbine 1 at 3.90 lb/hr (permit limit 2.9 lb/hr); Turbine 2 at 5.47 lb/hr; Turbine 3 at 5.68 lb/hr; Ductburner 1 at 2.64 lb/hr (permit limit 0.3 lb/hr); Turbine 4 at 2.15 lb/MWhr (permit limit 0.9 lb/MWhr). Testing conducted with 25 landfill gas wells shut off.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-02-16 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1dBMjTrPFLKjhQ1m0ODx27H6-bBP2p8hz/view?usp=drivesdk">Full Compliance Evaluation</a></h3>
-<p>This Full Compliance Evaluation (FCE) report covers Arbor Hills Landfill&#x27;s air quality compliance for the period 2/16/2015–2/16/2016. The document primarily details an intensive investigation into widespread odor complaints that began in early January 2016, involving multiple odor evaluations, an unannounced EPA Region 5 inspection, and coordination with federal and state monitoring teams. Semi-annual and annual ROP (Renewable Operating Permit) certifications are also reviewed, with most compliance items marked acceptable despite some deviations related to well-field exceedances, control-system downtime, and a prior CO emissions violation.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Distinct and definite landfill gas odor detected on 6 Mile Road near landfill NW corner on multiple dates (01/06/2016, 01/29/2016, 02/05/2016, 02/12/2016, 02/14/2016); ongoing complaint investigation spanning 01/04/2016–02/16/2016.</p>
+<p class="finding-meta">2018-08-23 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/1VlorDTaZStgDj4DhGO89HL9R4x-TAzvW/view?usp=drivesdk">On-Site Inspection</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>EGLE conducted a scheduled on-site inspection on August 23, 2018, to assess progress on gas collection and control system upgrades and discuss waste and compost operations. The inspection confirmed non-compliance status due to a Level 3 garbage odor observed off-site in the Northville Ridge subdivision, triggering a Rule 901 violation notice. EGLE documented ongoing odor issues linked to waste management practices and recommended implementation of expert-report recommendations for odor control.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Level 3 garbage odor observed off-site in Northville Ridge subdivision on August 23, 2018; Rule 901 violation notice forthcoming. Odor complaints for 2018 upwards of 900.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-02-16 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1seB09RLF1QFUxd_oKxoRBnDPWYZxdYUh/view?usp=drivesdk">On-Site Inspection</a></h3>
-<p>On February 16, 2016, the US EPA Region V conducted an unannounced compliance inspection of Arbor Hills Landfill accompanied by Michigan AQD and OWMRP staff. The inspection focused on ongoing odor complaints from nearby residential areas, particularly in Cell 4 (newly constructed in 2014), and included geospatial air monitoring for methane and hydrogen sulfide in downwind and residential areas. AQD and EPA staff detected landfill gas odors at multiple locations on and off-site, though no Rule 901 violation had been formally verified at the time of inspection.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Cell 4 (waste accepted May 2014, ~2 years old at inspection) identified as primary LFG odor source; 11 of 15 newly installed wells were online; ongoing odor complaints from east, northeast, and southeast residential subdivisions; no FLIR-detected gas leaks observed.</p>
+<p class="finding-meta">2018-08-06 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/11CDvLxYmhgljBu0PTsR1y0kL6tGN7VFC/view?usp=drivesdk">DMR Summary Data for period 07/01/2018 - 07/31/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering July 2018, filed by Green for Life (GFL) on August 6, 2018. The report documents monitoring of final effluent parameters including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, arsenic, mercury, selenium, temperature, and pH under permit MI0045713. Most measurement fields are redacted (marked with asterisks), preventing extraction of specific July 2018 effluent readings.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> The document contains no specific factual readings for the July 2018 period—all sample measurement data are redacted (****).</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-02-15 &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1NoWAfUQMi1Svo6sVIwbzyZ6Xo2NYTVjC/view?usp=drivesdk">Violation Notice</a></h3>
-<p>Advanced Disposal and Republic Services responded to a February 2, 2016 violation notice for off-site odor and nuisance conditions at Arbor Hills West. The companies attributed odors to Cell 4 waste overlaying older cells with incomplete gas collection infrastructure, and outlined a remediation plan including replacement of 9 wells in December 2015, installation of 20 replacement and 6 new extraction wells beginning February 5, 2016, deployment of a 2,000 SCFM flare by March 31, 2016, and weekly surface scans during construction.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Violation Notice issued February 2, 2016 for Rule 433(1)(c) off-site odor and nuisance conditions; primary source identified as north end of Cell 4, with odors migrating from older waste in Cells 1, 2, and 5 through incomplete gas collection areas.</p>
+<p class="finding-meta">2018-08-06 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1rXG0CjzuM2XwkKoPPJla1jVC9L68iFyI/view?usp=drivesdk">DMR Daily Data for period 07/01/2018 - 07/31/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) filed by Green for Life for the Arbor Hills Remediation Area covering July 2018. The report documents daily monitoring of final effluent parameters including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, metals (arsenic, mercury, selenium), pH, dissolved oxygen, and temperature. The facility reported &#x27;No Discharge&#x27; for the monitoring period.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative readings are provided in the document; data table cells are empty. The report structure shows parameters monitored but actual measured values are not populated.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-02-02 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1Plwc0XMCR2x_zHhXG4LQ5VjTwnp-rVRp/view?usp=drivesdk">Violation Notice</a></h3>
-<p>On January 28, 2016, the Michigan DEQ conducted an inspection of Arbor Hills West Expanded Sanitary Landfill and issued a violation notice for odor emissions detected offsite at sufficient frequency and intensity to violate Part 115, Rule 433(1) of Michigan&#x27;s solid waste rules. The operator was directed to submit a compliance response and action plan by February 15, 2016, addressing the cause and corrective measures for the gas odor condition.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Odors detected offsite at sufficient frequency and intensity in violation of Part 115, Rule 433(1) — property boundary nuisance violation, January 28, 2016 inspection.</p>
+<p class="finding-meta">2018-07-24 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1LbSEPdI4n_XPA6Dadmzv7rGsqzcbbNsr/view?usp=drivesdk">Compliance Communication</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>The Michigan Department of Environmental Quality conducted a July 2018 groundwater compliance inspection at Arbor Hills Landfill, focusing on a composting-area collection pond. The agency identified three compliance concerns: inadequate documentation of the pond liner&#x27;s design and age, risk of storm water overtopping and contaminating the lined pond during wet seasons, and improper use of collected water for dust suppression on roads.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Collection pond liner installed approximately 20 years prior (circa 1998); no as-built documentation available; storm water runoff poses risk of un-permitted groundwater discharge during spring wet periods.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-01-20 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1v4lHKcpNL2G8MNR7_az9SIIuWEvZZjMl/view?usp=drivesdk">Schedule - Submit Additional Monitoring Requirements</a></h3>
-<p>GFL submitted a Schedule of Compliance form on January 20, 2016 indicating that no discharge occurred from the holding ponds during December 2015, and therefore sampling for additional monitoring requirements was not performed as specified in the permit.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No discharge from holding ponds in December 2015; sampling for additional monitoring requirements not performed.</p>
+<p class="finding-meta">2018-07-24 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1iamX2gRdCwU87-rn7RCRxUQbfbwR6h5l/view?usp=drivesdk">Inspection Report, 7-16-18</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>A DEQ groundwater reconnaissance inspection of Arbor Hills Landfill on July 16–24, 2018 examined leachate management at the compost area. The facility was found in compliance with Rule 2204 and Rule 2205 discharge standards, though the inspection noted a non-functional aerator and storm water collection issues that the facility agreed to address by installing a soil berm and providing as-built documentation.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative readings or violations documented; inspection found facility in compliance with discharge standards.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-01-20 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1kffuidmW63r1qnFube7_jvCItg04n-54/view?usp=drivesdk">DMR Summary Data for period 12/01/2015 - 12/31/2015_V1</a></h3>
-<p>This is a Discharge Monitoring Report (DMR) for Arbor Hills Remediation Area for December 2015, covering water-quality parameters including suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, arsenic, mercury, nickel, selenium, temperature, pH, and dissolved oxygen. The report shows permit requirements and monitoring frequencies but contains no actual measured values—all data cells are blank or marked with asterisks. This is a procedural filing certifying compliance monitoring under NPDES permit MI0045713 v4.0.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No actual measured discharge data reported; document shows permit requirement structure only (e.g., TSS limit 30 mg/L monthly average, 45 mg/L daily maximum).</p>
+<p class="finding-meta">2018-07-19 (added 2026-09-28) &middot; 7941 Salem Rd, Alumitech (Part 201 site 81000840) &middot; procedural &middot; Source: EGLE RRD, RIDE public file listing</p>
+<h3><a href="https://drive.google.com/file/d/1vLtghcWVrVcislSrBxeC3KatlszYq1D0/view">MDEQ acknowledgement of receipt of Baseline Environmental Assessment B201801662JK, Alumitech Properties LLC</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-01-20 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1QAIwJJCF9Yyr76MRqkmrlhnfrcRwKOlr/view?usp=drivesdk">DMR Daily Data for period 12/01/2015 - 12/31/2015_V1</a></h3>
-<p>This is a December 2015 Discharge Monitoring Report (DMR) for Arbor Hills Remediation Area under NPDES Permit MI0045713. The report shows water-quality parameters for the final effluent at the facility during the month, filed on 2016-01-20. The document indicates &#x27;No Discharge: Y&#x27; for all monitoring sets, meaning no reportable discharge occurred during the period.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No discharge reported for December 2015; document contains no specific quantitative readings—only permit limit columns and date rows with no data entries visible.</p>
+<p class="finding-meta">2018-07-13 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1GyUoMlxvRM_YUCT4uPsMbvLWO1PUBekq/view?usp=drivesdk">DMR Summary Data for period 06/01/2018 - 06/30/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering June 1–30, 2018, submitted by Green for Life on July 13, 2018. The report documents water quality parameters for the facility&#x27;s final effluent under NPDES permit MI0045713 v5.0, including suspended solids, biochemical oxygen demand, nutrients, metals, temperature, and pH. All data cells are redacted (marked with asterisks), so no actual measured values or exceedances are disclosed in this filing.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings are disclosed; all measurement data in the DMR are redacted.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2016-01-09 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1Tz3oJNF0yZHTUKQHRFSP9lRvy4FkcLel/view?usp=drivesdk">2015 Annual SWPPP Report</a></h3>
-<p>Advanced Disposal Services submitted their 2015 Annual Storm Water Pollution Prevention Plan (SWPPP) review report for the Arbor Hills Landfill on January 9, 2016. The submission confirms that facility information, site mapping, exposure documentation, spill records, employee training, maintenance records, comprehensive inspections, and corrective actions are all current and compliant with permit requirements.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or violations reported; this is a compliance certification checklist with all items marked &#x27;Yes&#x27;.</p>
+<p class="finding-meta">2018-07-13 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1OrBqsjoBD659Qn2nH9LRVgeqGoi79FHq/view?usp=drivesdk">DMR Daily Data for period 06/01/2018 - 06/30/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) filed by Green for Life for the Arbor Hills Remediation Area covering June 1–30, 2018. The report documents daily monitoring of final effluent parameters including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, arsenic, mercury, selenium, temperature, pH, and dissolved oxygen under permit MI0045713. The document indicates &quot;No Discharge&quot; for the reporting period.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Document states &quot;No Discharge: Y&quot; for all monitoring sets during June 2018; no actual measured effluent readings are provided in the truncated data shown.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-12-07 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1wWjoFs3QXU43R5RjbF_jKXYMjWBJEYYl/view?usp=drivesdk">DMR Summary Data for period 11/01/2015 - 11/30/2015_V1</a></h3>
-<p>This is a November 2015 Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area submitted under NPDES permit MI0045713. The report documents wastewater monitoring parameters including suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, heavy metals (arsenic, mercury, nickel, selenium), and vinyl chloride, with permit limits specified for each parameter. All reported data fields are redacted (marked with asterisks), so no actual measured values are disclosed in this submission.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No measured data disclosed; all sample measurement fields are redacted with asterisks.</p>
+<p class="finding-meta">2018-06-22 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1BEdVnlnLTBk8gOyGN8zSnTytARjbZSni/view?usp=drivesdk">Copy of images from storm water review of compost site</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>DEQ inspector Matt Konieczki sends photographs from a storm water review of the Arbor Hills compost site to colleague Rachel Burns on June 22, 2018, with a note to discuss findings on Monday. The actual images and detailed text attachments are not readable in this submission.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or measurements are provided in the email text itself; the substantive content resides in image files and attachments not accessible here.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-12-07 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1Dp1oWBaiLp8eXM_xGF2Ud8EwrlhzU9th/view?usp=drivesdk">DMR Daily Data for period 11/01/2015 - 11/30/2015_V1</a></h3>
-<p>This is a routine Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering November 2015. The report documents daily monitoring of effluent parameters including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, arsenic, mercury, nickel, selenium, temperature, pH, dissolved oxygen, and vinyl chloride. The document indicates &quot;No Discharge: Y&quot; for all monitoring sets, meaning there was no effluent discharge during the reporting period.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No quantitative discharge data provided; document shows &#x27;No Discharge: Y&#x27; for all parameters during 11/1/2015–11/30/2015, with monitoring limits established but no actual readings recorded.</p>
+<p class="finding-meta">2018-06-18 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1KU5W38mfvOsLL82rOaCgLqPHB4WNfHfy/view?usp=drivesdk">DMR Daily Data for period 05/01/2018 - 05/31/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering May 2018, submitted by Green for Life under NPDES Permit MI0045713. The report documents daily monitoring of final effluent parameters including flow, suspended solids, biochemical oxygen demand, nutrients, metals, pH, and dissolved oxygen. The document indicates &#x27;No Discharge&#x27; across all monitoring sets for the entire period.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No discharge reported for the month of May 2018; the document contains parameter limits and monitoring locations but no actual measured values are presented in the visible data tables.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-11-12 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1qpgW32TxT-DXaKw1MmpsKRODwzA659jp/view?usp=drivesdk">Violation Notice</a></h3>
-<p>MDEQ issued a Violation Notice on November 6, 2015, citing Arbor Hills Energy LLC for exceeding sulfur dioxide (SO₂) emission limits on two turbines and associated ductburners at the facility (SRN N2688). The company contested the violation in a November 10 response, arguing that fuel gas analysis is more accurate than the Method 6C test data MDEQ used to calculate the exceedance, and that Michigan DEQ had previously accepted fuel analysis for compliance demonstration.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> EUTURBINE1-S3 exceeded SO₂ limit of 12.5 TPY as of June 2015; EUTURBINE3-S3 exceeded SO₂ limit of 12.5 TPY as of April 2015; EUDUCTBURNER1-S3 exceeded SO₂ limit of 1.5 TPY as of March 2015; EUDUCTBURNER3-S3 exceeded SO₂ limit of 1.5 TPY as of April 2015 (per Method 6C test data from March 10–11, 2015).</p>
+<p class="finding-meta">2018-06-18 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1b0NRjS7X-My7HQhxtteyy0xQHTP7wI3w/view?usp=drivesdk">DMR Summary Data for period 05/01/2018 - 05/31/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This Discharge Monitoring Report (DMR) from May 2018 for the Arbor Hills Remediation Area (permit MI0045713 v5.0) documents the facility&#x27;s compliance with water-discharge monitoring requirements. The report lists permitted limits for various parameters including flow, suspended solids, CBOD5, ammonia nitrogen, phosphorus, metals, temperature, pH, and dissolved oxygen. All measured data cells are redacted (marked with asterisks), preventing assessment of actual compliance status for the reporting period.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific measured readings provided; all data cells redacted with asterisks. Document is a template/framework showing permitted limits only (e.g., TSS max monthly average 20 mg/L, pH range 6.5–9.0).</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-11-10 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1I1mOvZX10D54TR0BXBeoT8NT-6eVp40h/view?usp=drivesdk">DMR Daily Data for period 10/01/2015 - 10/31/2015_V1</a></h3>
-<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering October 1-31, 2015, filed by Advanced Disposal Services under permit MI0045713 v4.0. The report lists monitoring parameters for final effluent at the facility, including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, metals (arsenic, mercury, nickel, selenium), pH, dissolved oxygen, temperature, and vinyl chloride. The document indicates &quot;No Discharge: Y&quot; for all monitoring sets, meaning no discharge occurred during the reporting period.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No discharge reported for October 2015; document structure shows monitored parameters (temperature, pH, dissolved oxygen, metals, vinyl chloride) and their permitted limits, but no specific measured values are populated in the provided excerpt.</p>
+<p class="finding-meta">2018-06-07 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1M13I-c5d8ucKXYo0txww4S-nMK7KnxWt/view?usp=drivesdk">NPDES Certificate of Coverage under General Permit (COC)</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>The Michigan Department of Environmental Quality issued a Certificate of Coverage (COC No. MIS210766) under the federal NPDES General Permit authorizing Advanced Disposal Services to discharge storm water from Arbor Hills Landfill to Johnson Creek. The facility is required to comply with Storm Water Pollution Prevention Plan requirements, source controls, and applicable Total Maximum Daily Loads for dissolved oxygen and E. coli.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or violations. This is an authorization document stating the permittee certifies compliance with storm water requirements as of October 10, 2016.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-11-10 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/16R-XFxcSP-AgXkpwsbbqYGeM-oZmyZnJ/view?usp=drivesdk">DMR Summary Data for period 10/01/2015 - 10/31/2015_V1</a></h3>
-<p>This is a Discharge Monitoring Report for the Arbor Hills Remediation Area covering October 1–31, 2015, filed by Advanced Disposal Services under permit MI0045713 v4.0. The report documents water-quality monitoring parameters including suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, arsenic, mercury, nickel, selenium, temperature, pH, dissolved oxygen, and vinyl chloride. All reported data fields are redacted (marked with asterisks), so no actual measured values or exceedances are disclosed in this document.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No factual readings disclosed; all data fields are redacted with asterisks.</p>
+<p class="finding-meta">2018-06-04 (added 2026-10-05) &middot; Arbor Hills Energy &middot; procedural &middot; Source: U.S. EPA Region 5 (FOIA Reading Room release EPA-R5-2019-004654, Conservancy Initiative request)</p>
+<h3><a href="https://drive.google.com/file/d/1wFlhPpJlQW1XruZZOjK9eV6CnTEmQ_3d/view">EPA R5 memo recommending second FOV to Arbor Hills Energy LLC, 2018-06-04</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-11-06 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1RyWHOyJwyPPhlE5LoWhEcXC9QxSEHWn2/view?usp=drivesdk">Violation Notice</a></h3>
-<p>On November 6, 2015, Michigan&#x27;s DEQ Air Quality Division issued a violation notice to Arbor Hills Energy for SO₂ emissions exceeding permit limits on two European Gas Turbines and associated duct burners. Performance testing conducted in March 2015 showed that when evaluated using the DEQ-accepted calculation method (Method 6C), the facility violated its SO₂ emission limits for multiple units between March and June 2015.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> EUTURBINE1-S3 exceeded SO₂ limit of 12.5 TPY as of June 2015; EUTURBINE3 exceeded 12.5 TPY as of April 2015; EUDUCTBURNER1-S3 exceeded 1.5 TPY limit as of March 2015; EUDUCTBURNER3 exceeded 1.5 TPY as of April 2015.</p>
+<p class="finding-meta">2018-06-04 (added 2026-10-05) &middot; Arbor Hills Energy &middot; evidence &middot; Source: U.S. EPA Region 5 (FOIA Reading Room release EPA-R5-2019-004654, Conservancy Initiative request)</p>
+<h3><a href="https://drive.google.com/file/d/1OmVoV5_e19Noz_JxI9qEKsTpRwmlTL-K/view">EPA R5 second FOV to Arbor Hills Energy LLC, Arbor Hills Landfill gas-to-energy plant, 2018-06-04</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-11-04 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1jhxosaImpckG6vyHGyhgW6BEWEDUjilu/view?usp=drivesdk">Enforcement Notice</a></h3>
-<p>The Michigan Department of Environmental Quality issued an enforcement notice to Fortistar/Arbor Hills Energy on November 4, 2015, for exceeding SO2 emission limits at two gas-fired turbines and associated duct burners, violating the facility&#x27;s Renewable Operating Permit. The violation was designated a High Priority Violation (HPV) by the U.S. EPA, and the company was offered an opportunity to meet and discuss resolution including a compliance schedule and monetary penalty.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> SO2 emission limits exceeded at two gas-fired turbines and duct burners, Renewable Operating Permit MI-ROP-N2688-2011, designated High Priority Violation by U.S. EPA, September 11, 2015.</p>
+<p class="finding-meta">2018-06-01 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1B_4KH2Z2hXeLnL-ZgJYU-u6EOmpva5OH/view?usp=drivesdk">Test Observation</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>An EGLE inspector observed the final day of performance testing (June 1, 2018) of the FORTISTAR Landfill Gas to Energy Plant&#x27;s turbines at Arbor Hills Landfill, required by ROP and Consent Order. Testing included criteria pollutant and HCL emissions measurements across three EGT turbines with and without ductburners. No visible emissions, fugitive dust, or unusual odors were detected during the inspection, and landfill conditions appeared good on the south hill.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> SO2 reading of 28 ppm with ductburner operating on 6/1/2018 (compared to 19 ppm without ductburner on 5/30); ductburners raise temperature from 900°F to 1200°F.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-10-19 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/18Q4W92gagpTa9Szii66noxkfBTFdbSEv/view?usp=drivesdk">DMR Summary Data for period 09/01/2015 - 09/30/2015_V1</a></h3>
-<p>Discharge Monitoring Report for Arbor Hills Remediation Area covering September 1–30, 2015, filed under permit MI0045713 v4.0. The report documents effluent parameters including suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, metals (arsenic, mercury, nickel, selenium), and vinyl chloride. All data fields in the actual measurement section are redacted (marked with asterisks), indicating no discharge during the reporting period.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No Discharge marked &#x27;Y&#x27; for the period; all sample measurement values redacted.</p>
+<p class="finding-meta">2018-05-30 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/1fsJTHTklQJjTdHTNDLB-woSFeUv5mBNZ/view?usp=drivesdk">Test Observation</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>EGLE staff observed Day 2 of mandatory performance testing of the Fortistar gas-to-energy turbines at Arbor Hills Landfill on May 30, 2018. Preliminary SO2 results appeared to exceed permit limits (4 tons/hour vs. 2.9 limit; 17 tons/year vs. 12.5 limit), while other pollutants tested within limits. The inspector noted landfill odors near the treatment building and in upwind areas.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> SO2 Run 1 preliminary: 4 tons/hour (permit limit 2.9 tons/hour); 17 tons/year (permit limit 12.5 tons/year)</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-10-19 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/17ZJwNyDultPA9v5cDVwLw5G1kwMCKcvT/view?usp=drivesdk">DMR Daily Data for period 09/01/2015 - 09/30/2015_V1</a></h3>
-<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area for September 2015, filed by Advanced Disposal Services under permit MI0045713 v4.0. The report documents monitoring of discharge parameters including suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, arsenic, mercury, nickel, selenium, temperature, pH, dissolved oxygen, and vinyl chloride from Final Effluent monitoring location. The document indicates &quot;No Discharge: Y&quot; across all five parameter sets, meaning no discharge occurred during the reporting period.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No discharge reported for September 2015; all monitoring parameters marked &quot;No Discharge: Y&quot; across all five parameter sets.</p>
+<p class="finding-meta">2018-05-29 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
+<h3><a href="https://drive.google.com/file/d/1EhCFt1PT2GecM-M98RnaM7l3oMf4M4_U/view?usp=drivesdk">Site</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>Derenzo Environmental Services conducted compliance stack testing of four landfill gas-fired turbines at Arbor Hills Energy (SRN N2688) from May 29 to June 1, 2018. The testing measured emissions of NOx, CO, SO2, HCl, and VOC to verify compliance with Michigan ROP Permit MI-ROP-N2688-2011. Results show all pollutants met permit limits except SO2, which exceeded allowable rates for all turbines and duct burners tested.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> SO2 emissions exceeded permit limits for all four turbines: Turbine 1 at 3.90 lb/hr (permit 2.9), Turbine 2 at 5.47 lb/hr (permit 2.9), Turbine 3 at 5.68 lb/hr (permit 2.9), Turbine 4 at 2.15 lb/MWhr (permit 0.9).</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-10-02 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1780s-e-MhbHnPuGjRTnyubyp4oeqcISp/view?usp=drivesdk">Violation Notice</a></h3>
-<p>Michigan DEQ issued a Violation Notice on September 11, 2015, citing Arbor Hills Energy LLC for exceeding permitted SO₂ emission limits during performance testing on March 10–11, 2015. The facility&#x27;s response disputes the accuracy of the EPA Method 6C measurement and argues that fuel-gas analysis demonstrates compliance with the permitted limits.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> SO₂ emissions from EUTURBINE1-S3 and EUTURBINE3-S3 measured at 6.2 and 5.0 lbs/hr respectively during March 2015 testing, exceeding permit limits of 4.6 and 2.9 lbs/hr (DEQ calculation); facility claims compliance at 2.04 lbs/hr using fuel analysis method showing H₂S at 125.76 ppm in raw landfill gas.</p>
+<p class="finding-meta">2018-05-22 (added 2026-09-28) &middot; 7941 Salem Rd, Alumitech (Part 201 site 81000840) &middot; evidence &middot; Source: EGLE RRD, RIDE public file listing</p>
+<h3><a href="https://drive.google.com/file/d/100W0I5GimJd6wdSKOfv8wogwsDuKgtbY/view">Baseline Environmental Assessment B201801662JK submitted by Alumitech Properties LLC, 7941 Salem Rd</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-09-25 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1m3YKSlmbWneiCxTaYDE6fFQuiXQrC1gJ/view?usp=drivesdk">DMR Daily Data for period 08/01/2015 - 08/31/2015_V1</a></h3>
-<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering August 1–31, 2015, filed by Advanced Disposal Services under NPDES permit MI0045713. The report documents daily monitoring of effluent parameters including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, metals (arsenic, mercury, nickel, selenium), pH, dissolved oxygen, temperature, and vinyl chloride. The facility reports &quot;No Discharge: Y&quot; for all monitoring locations.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Document indicates no discharge occurred during the August 2015 monitoring period; specific measured effluent readings are not visible in the provided text.</p>
+<p class="finding-meta">2018-05-07 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1GGpWZVNFbCi0PBfxp2IFS6H23QbUGcPy/view?usp=drivesdk">DMR Daily Data for period 04/01/2018 - 04/30/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a routine Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering April 1-30, 2018, filed under permit MI0045713 v5.0. The document reports daily monitoring data for Final Effluent (1) across multiple parameters including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, metals (arsenic, mercury, selenium), pH, dissolved oxygen, and temperature. The report indicates &quot;No Discharge&quot; (Y) for all monitoring locations, meaning no effluent was released during the reporting period.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No quantitative readings are provided in the document; it presents parameter names and permit limits but the actual daily values are not populated in the visible text. The document notes &quot;No Discharge: Y&quot; for all four monitoring sets.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-09-25 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1Fv4KFeYo4zdwdZXmnhV2u1IYDgl0H2xy/view?usp=drivesdk">DMR Summary Data for period 08/01/2015 - 08/31/2015_V1</a></h3>
-<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area for August 2015, submitted under NPDES permit MI0045713 v4.0. The report certifies water-quality parameters (suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, arsenic, mercury, nickel, selenium, temperature, pH, dissolved oxygen, and vinyl chloride) for the facility&#x27;s final effluent. All data cells in the document are redacted (marked with asterisks), so no actual measured values are disclosed.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific measured data points disclosed; all sample measurements redacted.</p>
+<p class="finding-meta">2018-05-07 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1s2d4wuPwozQIwOloftdiCSfnV2A1BNac/view?usp=drivesdk">DMR Summary Data for period 04/01/2018 - 04/30/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) for Arbor Hills Remediation Area covering April 2018, submitted by Green for Life (GFL) under permit MI0045713 v5.0. The report documents monitoring of water quality parameters including suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, arsenic, mercury, selenium, temperature, pH, and dissolved oxygen from the facility&#x27;s final effluent. All data cells are redacted (marked with asterisks), so no actual measured values are disclosed in this document.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings are provided; all quantitative data cells are redacted.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-09-11 &middot; Arbor Hills Landfill &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1lUFF96o8zL3m0Y7CBWlmQoCy1njxIw-F/view?usp=drivesdk">Violation Notice</a></h3>
-<p>The Michigan DEQ Air Quality Division issued a violation notice to Arbor Hills Energy on September 11, 2015, citing exceedances of permitted SO₂ emission limits for two European Gas Turbines (EUTURBINE1-S3 and EUTURBINE3-S3) based on performance testing conducted in March 2015. The AQD calculated SO₂ emissions that exceeded the permit limits, and the company was required to submit a written response by October 2, 2015, explaining the violations and corrective actions.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> SO₂ emissions exceeded permitted limits: EUTURBINE1-S3 alone at 6.2 lbs/hr (limit 4.6 lbs/hr) and with ductburner at 5.0 lbs/hr (limit 3.2 lbs/hr); EUTURBINE3-S3 alone at 4.8 lbs/hr (limit 2.9 lbs/hr) and with ductburner at 3.2 lbs/hr (limit 2.9 lbs/hr), March 10-11, 2015.</p>
+<p class="finding-meta">2018-05-02 (added 2026-09-28) &middot; MITC corridor (RIDE location 82008712) &middot; procedural &middot; Source: EGLE RRD, RIDE public file listing</p>
+<h3><a href="https://drive.google.com/file/d/1EtuzJs3EsogzXrLjA5EQMS9eAD78fag3/view">MDEQ acknowledgement of receipt of Baseline Environmental Assessment B201808201LV, DTE Electric Company</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-08-13 &middot; Arbor Hills Remediation Area &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1WiFXDUl_zPBpPuCYtq2TKshpHBnxh2Li/view?usp=drivesdk">Site</a></h3>
-<p>Golder Associates notified EGLE of a permit violation at Arbor Hills Remediation Area in April 2015: total suspended solids (TSS) in discharge samples exceeded both daily maximum and monthly average limits on April 28–30. The exceedance was caused by low pond levels and sediment disturbance from newly installed diffusers; corrective action included ceasing discharge and implementing new operational procedures to draw only from the middle of the pond.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> TSS monthly average 38 mg/L vs. permit limit 30 mg/L; daily concentrations 53.2–54.0 mg/L vs. daily limit 45 mg/L; April 28–30, 2015.</p>
+<p class="finding-meta">2018-04-13 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/17QetA4KxXjfAU7O5jwP44FI-rFBaarDB/view?usp=drivesdk">Air Permit to Install</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is an Air Permit to Install (PTI No. 79-17) issued April 13, 2018, for Advanced Disposal Services&#x27; Arbor Hills Landfill (SRN N2688). The permit authorizes installation of a 5,000 scfm open utility flare as backup landfill gas control capacity, along with modifications to the existing gas collection and control system. The permit sets specific emission limits for NOx, CO, visible emissions, and NMOC, with detailed monitoring, testing, and recordkeeping requirements.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No measured temperature or emissions readings are provided in this document; it is a forward-looking permit specifying design parameters and operational limits for equipment not yet constructed (installation date &#x27;To Be Determined&#x27;).</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-07-16 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1D4ANovgmeZCxasqDaOf6fL1L8zTz-oMi/view?usp=drivesdk">Test Observation</a></h3>
-<p>EGLE Air Quality Division staff observed stack emissions testing on July 16, 2015 for the EUTURBINE4-S3 gas turbine at Arbor Hills Energy (Section 3 of ROP MI-ROP-N2688-2011). Testing measured oxygen, NOx, SO2, CO, HCl, and VOCs required under the facility&#x27;s permit. No visible emissions were observed from the stack during the testing runs.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> H2S levels measured at 180 ppm (Run 1), 180 ppm (Run 2), and 190 ppm (Run 3) in the landfill gas feeding Turbine No. 4 on July 16, 2015.</p>
+<p class="finding-meta">2018-04-12 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1It_G4hhgRcw-DF_XTOCJRW0rFABr-4Wg/view?usp=drivesdk">DMR Summary Data for period 03/01/2018 - 03/31/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering March 1–31, 2018, filed by Green for Life on April 12, 2018. The document reports on water discharge parameters including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, heavy metals (arsenic, mercury, selenium), thermal discharge, temperature, pH, and dissolved oxygen. All reported measurements are marked as asterisks (*****), indicating no actual data or exceedances were recorded during the reporting period.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific discharge measurements or violations reported; all data fields marked as asterisks. Document confirms routine monitoring protocol compliance for permit MI0045713 v5.0.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-05-28 &middot; Arbor Hills Remediation Area &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/14UIR54w4i0hInlFp2ti9lWfJS39ydxSB/view?usp=drivesdk">Site</a></h3>
-<p>On May 14, 2015, Golder Associates notified Michigan DEQ of a permit violation at the Arbor Hills Remediation Area (NPDES Permit MI0045713) involving total suspended solids (TSS) exceedances in discharge samples collected April 28–30, 2015. The monthly average TSS concentration reached 38 mg/L, exceeding the permitted limit of 30 mg/L, and daily maximum concentrations exceeded the 45 mg/L limit on three consecutive days. Discharge was ceased on April 30 and the pond remains shut down pending sampling in October or November 2015 before operations resume.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> TSS monthly average 38 mg/L vs. 30 mg/L permit limit; daily exceedances 53.6–54.0 mg/L vs. 45 mg/L ceiling, April 28–30, 2015, Arbor Hills Remediation Area (NPDES MI0045713).</p>
+<p class="finding-meta">2018-04-12 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1vfpy-tn0EKHEsG70w0hnRc4g7PCX_FSN/view?usp=drivesdk">DMR Daily Data for period 03/01/2018 - 03/31/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a routine monthly Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering March 1–31, 2018, filed under NPDES Permit MI0045713 v5.0. The report documents daily monitoring of final effluent parameters including suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, metals (arsenic, mercury, selenium), temperature, pH, and dissolved oxygen. The document states &quot;No Discharge: Y&quot; across all four monitoring sets, indicating no active discharge occurred during the period.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No discharge reported for March 2018; the facility operated under a &#x27;No Discharge&#x27; status during the reporting period.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-05-21 &middot; procedural &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1BcmWwaQN0-_4_f6sFujNhiepvPQgK5dQ/view?usp=drivesdk">Administrative Consent Order</a></h3>
-<p>This is a 2015 Administrative Consent Order (AQD No. 16-2015) resolving alleged violations of Arbor Hills Energy&#x27;s Renewable Operating Permit (ROP No. MI-ROP-N2688-2011). The violations involved exceeded carbon monoxide (CO) emission limits from a gas-fired turbine and duct burner, and failure to timely submit a complete test report. The company agreed to pay $15,000 in settlement fees and conduct additional emission testing through June 2018 to demonstrate compliance.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Carbon monoxide (CO) emission limits exceeded from EUTURBINE1-S3 and EUDUCTBURNER1-S3; settlement of $15,000 assessed; additional testing required through June 1, 2018.</p>
+<p class="finding-meta">2018-04-09 (added 2026-09-28) &middot; MITC corridor (RIDE location 82008712) &middot; evidence &middot; Source: EGLE RRD, RIDE public file listing</p>
+<h3><a href="https://drive.google.com/file/d/1LxWXZs-NOBPNpubYwNs8GoMxVCZyBbBl/view">Baseline Environmental Assessment B201808201LV submitted by DTE Electric Company, MITC corridor</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-05-15 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1epjMNbg2ic4fDHgmmbDQ0jVKRxKF2_Ic/view?usp=drivesdk">Site</a></h3>
-<p>Email chain from April 2015 between Golder Associates and DEQ regarding lab analytical methods for selenium sampling at Arbor Hills. The discussion focuses on QA/QC protocol compliance and EPA Method 200.8 specifications for ICP-MS analysis, with the consultant seeking approval to begin discharge sampling on April 14, 2015.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual environmental readings or measurements are provided; this is a procedural discussion about lab methodology approval and sampling authorization.</p>
+<p class="finding-meta">2018-03-19 (added 2026-10-05) &middot; Arbor Hills Landfill &middot; procedural &middot; Source: U.S. EPA Region 5 (FOIA Reading Room release EPA-R5-2018-005757)</p>
+<h3><a href="https://drive.google.com/file/d/1zcfA82GbRJhBGkDdz7TcuwaFGBh5AfIT/view">EPA R5 Notice of Intent to File Civil Administrative Complaint, Advanced Disposal Services, Arbor Hills Landfill, 2018-03-19</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-05-06 &middot; N2688 &middot; procedural &middot; Source: EGLE Air Quality Division</p>
-<h3><a href="https://drive.google.com/file/d/1DE5R-xpNz2Yu6EhU7sY0XgI7a_yxkBwm/view">Arbor Hills Landfill (N2688) Renewable Operating Permit renewal application, filed with EGLE Air Quality Division May 6 2015 (ROP0000656 predecessor MI-ROP-N2688-2011)</a></h3>
+<p class="finding-meta">2018-03-19 (added 2026-10-05) &middot; Arbor Hills Landfill &middot; procedural &middot; Source: U.S. EPA Region 5 (FOIA Reading Room release EPA-R5-2018-005757)</p>
+<h3><a href="https://drive.google.com/file/d/1-dJx_ts2zKbxmgXSeRhLeoKJdWZyoZO5/view">EPA R5 Notice of Intent to File Civil Administrative Complaint, BFI Waste Systems of North America (Republic Services), Arbor Hills Landfill gas collection system, 2018-03-19</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-04-17 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1AkQ32aY3yQ7dhXqxWOiwd_YD-omPlrJl/view?usp=drivesdk">Site</a></h3>
-<p>A permittee at Arbor Hills (AHRA) requests approval to use an alternative analytical method (ICP-DRC-MS) for selenium testing instead of the permit-specified EPA Method 200.8, claiming the new method offers better sensitivity and lower reporting limits. DEQ staff discuss whether the alternative method requires formal ATP (Alternative Test Procedure) approval from EPA or can be approved by the Department directly.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or violation data stated; document is internal regulatory correspondence about analytical method approval procedures.</p>
+<p class="finding-meta">2018-03-09 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1HctP5ZWYTl4M5nkYIXQTFtVfP2mk22iX/view?usp=drivesdk">On-Site Inspection</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>EGLE air quality staff conducted an odor observation around Arbor Hills Landfill on March 9, 2018, following recent complaints received on March 1 and March 9. The inspector drove through the surrounding area including the Ridge Wood subdivision and found only a slight garbage odor on Napier Road along the east perimeter; no odors were detected downwind of the active face, in the subdivision, or at Northville High School.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Slight garbage odor observed on Napier Road along east perimeter; no odors detected downwind of active face or in Ridge Wood subdivision on March 9, 2018.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-04-17 &middot; Arbor Hills Remediation Area &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/17nLC_rJ6SDabbqKt0LCc9x87YFXCpFXe/view?usp=drivesdk">Site</a></h3>
-<p>This email documents permit violations at Arbor Hills Landfill&#x27;s discharge ponds during January 2015, when ammonia and selenium concentrations exceeded permit limits. The operator ceased discharge immediately upon discovery and proposes an alternate analytical method for selenium to support resumption of discharge. No notice of violation was issued per discussion with DEQ.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> January 2015: discharge exceeded calculated monthly average permit concentration limits for Ammonia and Selenium; discharge to surface water immediately ceased; West Pond Ammonia 8.1 mg/L (Feb 25), West Pond Selenium 9.5 ug/L (Feb 25).</p>
+<p class="finding-meta">2018-03-09 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1HZpfWvND5x--H1R5UEhLZzW51gXPcysO/view?usp=drivesdk">On-Site Inspection</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>EGLE conducted an on-site inspection of Arbor Hills Landfill on March 9, 2018, focusing on Cell 4E construction and gas system modifications including new headers and a proposed flare. The facility was found in compliance; no odors were detected during perimeter observations, and the odor control plan had been approved by both AQD and the Waste Management Radiological Protection Division.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No odors observed during perimeter inspection on 3/9/18; Cell 4E construction proceeding with gas well decommissioning pending and new horizontal wells planned.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-04-17 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1RgUqtytywxp3ghigFIDA1s1eXM61R6r-/view?usp=drivesdk">Note to File</a></h3>
-<p>On April 14, 2015, DEQ-WRD approved Arbor Hills&#x27; request to use an alternative laboratory testing method (ICP-DRC-MS) for selenium analysis, treating it as a variance within EPA Method 200.8 rather than a new method.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual measurement or violation stated; this is a procedural approval for analytical methodology.</p>
+<p class="finding-meta">2018-03-01 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/19Oaru-C9yhi9qUacNUwGLKyx9hsYLRX_/view?usp=drivesdk">DMR Daily Data for period 02/01/2018 - 02/28/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a February 2018 Discharge Monitoring Report (DMR) filed by Advanced Disposal Services (Green for Life) for the Arbor Hills Remediation Area under NPDES Permit MI0045713. The report documents daily monitoring parameters including flow, suspended solids, biochemical oxygen demand, nutrients, metals (arsenic, mercury, selenium), pH, dissolved oxygen, and temperature for the final effluent during the period 2/1/2018–2/28/2018, with all parameters marked as &quot;No Discharge.&quot;</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No actual discharge or measurement data are shown in the body of this form; all parameter columns are blank. The document represents a reporting structure only.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-04-17 &middot; Arbor Hills Remediation Area &middot; evidence &middot; notable</p>
-<h3><a href="https://drive.google.com/file/d/1T6CaLU5HKiK3CQ-GN0hqjyJ_SwDoQrJx/view?usp=drivesdk">Site</a></h3>
-<p>A hydrogeologist reports that Arbor Hills landfill is not currently discharging from its ponds due to ammonia and selenium concentration exceedances detected in January 2015. Sampling on February 25 shows ammonia and selenium levels in both the west and east ponds, with selenium remaining above permit limits. The operator requests approval to use a more sensitive analytical method (ICP-DRC-MS) for selenium analysis, which may show results below permit limits and allow discharge from the east pond.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Selenium concentrations above permit limits in both west pond (9.5 ug/L) and east pond (6.4 ug/L), February 25, 2015; discharge halted due to January exceedances.</p>
+<p class="finding-meta">2018-03-01 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1pu9PXgMbnw0UcsJAtHgiZ99e78QQr7FZ/view?usp=drivesdk">DMR Summary Data for period 02/01/2018 - 02/28/2018_V1</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) for the Arbor Hills Remediation Area covering February 2018, filed by Green for Life (GFL) under permit MI0045713 v5.0. The report documents water quality parameters for the final effluent, including suspended solids, biochemical oxygen demand, ammonia, phosphorus, metals, temperature, and pH. All data fields are redacted or marked with asterisks, indicating no actual measurements or exceedances are disclosed in this summary version.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific quantitative readings disclosed; all sample measurement fields are redacted or marked with asterisks.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-04-17 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1Ih2FQsXi7X5JMDXY8MVZI12tAGcFmv7B/view?usp=drivesdk">Site</a></h3>
-<p>A consultant (Golder Associates) reports selenium concentrations below permit limits in east and west pond samples using a modified laboratory preparation method, and seeks DEQ approval to discharge in April 2015. The Michigan DEQ Water Resources Division directs the consultant to contact the Permits Unit in Lansing for review and approval of the alternative testing methodology.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Selenium concentrations below permit limit in east and west pond samples using modified preparation method; April 2015 discharge initiation requested.</p>
+<p class="finding-meta">2018-02-28 (added 2026-08-12) &middot; Arbor Hills Landfill &middot; procedural &middot; Source: Golder Associates for Advanced Disposal Services -&gt; EGLE WMRPD Jackson District</p>
+<h3><a href="https://drive.google.com/file/d/198ETBqxECd5hYOpOzPNeURFBXpR-SvLE/view">Revised Hydrogeologic Monitoring Plan, Arbor Hills West Expanded Sanitary Landfill (Golder Associates, Feb 28 2018)</a></h3>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-04-17 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1m4dAzUK7tu5owXIY-nLEyFJjpDVOZRzx/view?usp=drivesdk">Site</a></h3>
-<p>Email chain from April 2015 between Golder and DEQ staff regarding selenium sample analysis methods and QA/QC protocols. The correspondence discusses EPA Method 200.8 compliance, collision cell technology specifications, and seeks approval to begin discharge sampling on April 14, 2015 to meet permit hold-time requirements.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual readings or measurements provided; document is procedural discussion of analytical methods and sampling approval.</p>
+<p class="finding-meta">2018-02-21 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1f7rMSneILVN-I1scGbKJND0cK2Vb1K2Y/view?usp=drivesdk">Landfill Inspection</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>EGLE Air Quality Division inspected Arbor Hills Landfill on February 21, 2018, to verify Asbestos NESHAP compliance. The facility was found compliant overall in handling friable and non-friable asbestos waste, tracking procedures, and waste manifests, but lacked a posted asbestos danger sign and was asked to provide an updated site map with deposit locations and a photo of the corrected sign.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual measurements or violations cited; inspection found the facility in compliance with asbestos handling procedures. One deficiency noted: missing asbestos danger sign (stated to be in repair shop after truck damage).</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-04-17 &middot; Arbor Hills Remediation Area &middot; procedural &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1QaNPjUs7bGn5lGQL-JfiMuY1hnN7L7N-/view?usp=drivesdk">Site</a></h3>
-<p>This is an internal EPA and Michigan DEQ email chain (April 2015) discussing approval of an alternative analytical method (ICP-DRC-MS) for measuring selenium in wastewater samples from an unnamed facility. The permittee proposed using ICP-DRC-MS instead of the permit-specified EPA Method 200.8, citing better speed, precision, and sensitivity; EPA confirmed the method qualifies as an acceptable variation under 40 CFR Part 136.6 and does not require formal ATP review.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> No specific factual measurement or violation stated. Document is procedural guidance on selenium testing methodology.</p>
+<p class="finding-meta">2018-02-21 &middot; Arbor Hills Landfill &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1zLBfJiFY1nOl99OkhRRBs4Y9FDW_UvmY/view?usp=drivesdk">Evaluation Image: A designated area is set aside from the general refuse area of the facility.  No danger sign posted.</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>An inspection photograph from February 2018 documents a designated area separated from the main refuse zone at Arbor Hills Landfill, with no hazard signage posted in that location. The image alone provides no quantitative data or violation determination.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No specific factual reading or claim provided; document is a visual record only.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-04-17 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1-0e9Oox3Ni6wAiLQ-0GaurS5-budIc0H/view?usp=drivesdk">Site</a></h3>
-<p>Golder Associates submitted selenium test results from Arbor Hills pond samples to Michigan DEQ on April 6, 2015, requesting approval to initiate discharge in April. The four water samples from east and west ponds showed total selenium concentrations of 0.17–0.54 µg/L, reported as below the NPDES permit limit using a modified preparation method.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Selenium concentrations: NPDES GC-1: 0.54 µg/L, East Pond: 0.17 µg/L, West Pond (B): 0.18 µg/L, West Pond (M): 0.18 µg/L, all collected March 17–18, 2015; reported as below permit limit.</p>
+<p class="finding-meta">2018-02-20 &middot; Arbor Hills Landfill &middot; procedural &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/1IXvxehGW3HLbNPI4l9A1pMZY_5zJGXDG/view?usp=drivesdk">Violation Notice</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>Advanced Disposal Services (ADS) responds to a February 6, 2018 Notice of Violation for detected Level 3 landfill odor on North Napier Road, disputing the violation and arguing that episodic odors from landfill and composting operations do not constitute a regulatory breach. ADS asserts it is applying best management practices and has retained odor-monitoring consultants; it proposes to hire an industry expert to audit odor-control measures.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> Level 3 odor detected January 25, 2018 on North Napier Road downwind of facility during MDEQ inspection; ADS-retained RK &amp; Associates found only &gt;2 LFG odor at property line evening of same day.</p>
 </article>
 <article class="finding">
-<p class="finding-meta">2015-04-15 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
-<h3><a href="https://drive.google.com/file/d/1fdMJ21Ks8-9dKSZ02sl0O2KX-tmzJJBH/view?usp=drivesdk">Schedule - Pollutant Minimization Program (PMP) Annual Report</a></h3>
-<p>This 2014 annual mercury monitoring report for the Arbor Hills Remediation Area documents quarterly wastewater sampling results from the site&#x27;s remediation system. Mercury concentrations ranged from below detection (&lt;0.500 ng/L) to 1.91 ng/L, all well below the 10 ng/L rolling average limit specified in the approved Mercury Pollutant Minimization Plan.</p>
-<p class="finding-kdp"><strong>Key data point:</strong> Average influent mercury concentration for 2014: 1.16 ng/L, well below the 10 ng/L twelve-point rolling average limit; no measured concentrations exceeded the permitted ceiling.</p>
+<p class="finding-meta">2018-02-16 &middot; Arbor Hills Remediation Area &middot; evidence &middot; routine</p>
+<h3><a href="https://drive.google.com/file/d/10zVyge_B17-x-7-LL95fsMi9sBc47D-B/view?usp=drivesdk">DMR Summary Data for period 12/01/2017 - 12/31/2017_V2</a></h3>
+<p class="finding-auto-label">Automated summary of the linked document above. This summary and any key data point below are machine-generated and may contain errors. Consult the source document before relying on them.</p>
+<p>This is a Discharge Monitoring Report (DMR) for Arbor Hills Remediation Area covering December 2017. It documents measured water-quality parameters from the final effluent, including flow, suspended solids, biochemical oxygen demand, ammonia nitrogen, phosphorus, arsenic, mercury, selenium, temperature, pH, and dissolved oxygen. All reported values appear to comply with their permitted limits.</p>
+<p class="finding-kdp"><strong>Key data point:</strong> No violations documented; all parameters within permit limits for the December 2017 reporting period.</p>
 </article>
 </div>
 
-<p class="findings-nav"><a href="page-32.html">&larr; Newer</a> &middot; <a href="page-34.html">Older &rarr;</a></p>
+<p class="findings-nav" id="pr-browse-nav"><a href="page-32.html">&larr; Newer</a> &middot; <a href="page-34.html">Older &rarr;</a></p>
 
 <footer class="site-footer">
-<p>Generated 2026-09-13 14:59 UTC from the monitor's case file. An independent project. All source data is public regulatory records from Michigan EGLE and other public sources.</p>
+<p>Generated 2026-10-23 13:26 UTC from the monitor's case file. An independent project of Landfill Records Project LLC. All source data is public regulatory records from Michigan EGLE and other public sources.</p>
 </footer>
 
 </div>
