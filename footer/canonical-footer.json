@@ -1,0 +1,14 @@
+{
+  "_about": "Canonical legal footer for BOTH sites. arborhillsmonitor.org pages are checked by tests/test_site_footer.py; policy.arborhillsmonitor.org (repo tkunst/better-arbor-hills) vendors a copy of this file and its footer-drift workflow fails if the copy and this file differ. Change the footer here first, then update both sites.",
+  "legal_links": [
+    {"label": "Terms", "path": "/terms-of-use/"},
+    {"label": "Privacy", "path": "/privacy-policy/"},
+    {"label": "Disclaimer", "path": "/disclaimer/"},
+    {"label": "Corrections", "path": "/corrections/"},
+    {"label": "IP & Fair Use", "path": "/ip-fair-use/"}
+  ],
+  "legal_links_base_url": "https://arborhillsmonitor.org",
+  "monitor_disclaimer": "Arbor Hills Monitor presents public regulatory records and monitoring data as an informational resource. This site does not constitute legal, medical, environmental, or professional advice. Verify all information against the cited primary sources -- including EGLE's own portals -- before relying on it.",
+  "policy_disclaimer": "These pages are advocacy and express the author's views. They draw on public regulatory records but do not constitute legal, medical, environmental, or professional advice. Verify all information against the cited primary sources -- including EGLE's own portals -- before relying on it.",
+  "llc_line": "An independent project of Landfill Records Project LLC."
+}

@@ -53,4 +53,5 @@ egle-n2688-state.json
 # single source of truth (changed by PR); the alias map is GENERATED from it
 # (`python3 well_aliases.py --export`). Exactly these two paths — never widen it.
 !data/well_registry.json
+!footer/canonical-footer.json
 !data/well_aliases.json

@@ -34,6 +34,10 @@ jobs:
               data/well_registry.json|data/well_aliases.json)
                 continue
                 ;;
+              # Shared legal-footer config for both sites (2026-10-24).
+              footer/canonical-footer.json)
+                continue
+                ;;
             esac
             bn=$(basename "$f")
             case "$bn" in
