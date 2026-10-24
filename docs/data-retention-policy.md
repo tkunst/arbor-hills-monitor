@@ -1,7 +1,7 @@
 # Data Retention Policy
 
 Landfill Records Project LLC (publisher of arborhillsmonitor.org)
-Effective: on publication of the Privacy Policy
+Effective: October 24, 2026
 
 This is the retention policy referred to in Section 7 of the site's Privacy Policy
 (`site/privacy-policy/`). It covers the personal data the project holds. Public
