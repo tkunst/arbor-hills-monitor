@@ -79,6 +79,7 @@ a { color: var(--link); }
   padding-left: 1.2rem;
 }
 
+footer.site-footer .legal-nav { font-size: 0.82rem; margin-bottom: 0.8rem; }
 footer.site-footer {
   margin-top: 3rem;
   padding-top: 1.5rem;

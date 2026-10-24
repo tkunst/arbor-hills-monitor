@@ -459,7 +459,9 @@ def render_page(open_entries: list[dict], closed_entries: list[dict],
 {_COUNTDOWN_SCRIPT}
 
 <footer class="site-footer">
-<p>Generated {_esc(generated_at)} from Michigan EGLE's public notices. This is an informational summary, not a legal notice; always confirm the deadline and details on EGLE's own portal before relying on them. An independent project of Landfill Records Project LLC. All source data is public regulatory filings from Michigan EGLE.</p>
+<p class="legal-nav"><a href="/terms-of-use/">Terms</a> &middot; <a href="/privacy-policy/">Privacy</a> &middot; <a href="/disclaimer/">Disclaimer</a> &middot; <a href="/corrections/">Corrections</a> &middot; <a href="/ip-fair-use/">IP &amp; Fair Use</a></p>
+<p class="footer-disclaimer">Arbor Hills Monitor presents public regulatory records and monitoring data as an informational resource. This site does not constitute legal, medical, environmental, or professional advice. Verify all information against the cited primary sources -- including EGLE&rsquo;s own portals -- before relying on it.</p>
+<p>Generated {_esc(generated_at)} from Michigan EGLE's public notices. This is an informational summary, not a legal notice; always confirm the deadline and details on EGLE's own portal before relying on them. An independent project of Landfill Records Project LLC. Source data comes from public records of Michigan EGLE and other government entities, and from other publicly available documents.</p>
 </footer>
 
 </div>
