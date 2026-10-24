@@ -2,14 +2,18 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://arborhillsmonitor.org/</loc></url>
   <url><loc>https://arborhillsmonitor.org/2022-event/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/corrections/</loc></url>
   <url><loc>https://arborhillsmonitor.org/data/</loc></url>
   <url><loc>https://arborhillsmonitor.org/data/flagged-wells/</loc></url>
   <url><loc>https://arborhillsmonitor.org/data/perimeter-air/</loc></url>
   <url><loc>https://arborhillsmonitor.org/data/wellfield/</loc></url>
   <url><loc>https://arborhillsmonitor.org/data/wellhead-h2s/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/disclaimer/</loc></url>
   <url><loc>https://arborhillsmonitor.org/faq/</loc></url>
   <url><loc>https://arborhillsmonitor.org/glossary/</loc></url>
   <url><loc>https://arborhillsmonitor.org/hydrogen-sulfide/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/ip-fair-use/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/privacy-policy/</loc></url>
   <url><loc>https://arborhillsmonitor.org/public-comment/</loc></url>
   <url><loc>https://arborhillsmonitor.org/public-records/</loc></url>
   <url><loc>https://arborhillsmonitor.org/public-records/page-2.html</loc></url>
@@ -55,6 +59,7 @@
   <url><loc>https://arborhillsmonitor.org/public-records/page-42.html</loc></url>
   <url><loc>https://arborhillsmonitor.org/sem-exceedance-map/</loc></url>
   <url><loc>https://arborhillsmonitor.org/sem-inspection-2026-06-16/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/terms-of-use/</loc></url>
   <url><loc>https://arborhillsmonitor.org/thermal-map/</loc></url>
   <url><loc>https://arborhillsmonitor.org/unanswered-questions/</loc></url>
   <url><loc>https://arborhillsmonitor.org/wellfield-explorer/</loc></url>

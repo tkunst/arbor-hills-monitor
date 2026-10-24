@@ -459,6 +459,7 @@ def render_page(open_entries: list[dict], closed_entries: list[dict],
 {_COUNTDOWN_SCRIPT}
 
 <footer class="site-footer">
+<p class="legal-nav"><a href="/terms-of-use/">Terms</a> &middot; <a href="/privacy-policy/">Privacy</a> &middot; <a href="/disclaimer/">Disclaimer</a> &middot; <a href="/corrections/">Corrections</a> &middot; <a href="/ip-fair-use/">IP &amp; Fair Use</a></p>
 <p>Generated {_esc(generated_at)} from Michigan EGLE's public notices. This is an informational summary, not a legal notice; always confirm the deadline and details on EGLE's own portal before relying on them. An independent project of Landfill Records Project LLC. All source data is public regulatory filings from Michigan EGLE.</p>
 </footer>
 
