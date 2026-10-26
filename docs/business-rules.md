@@ -19,7 +19,7 @@ it.
 
 | ID | Rule | Theme | Category |
 |----|------|-------|----------|
-| RR-1 | R1–R8 risk taxonomy | Risk register | classification |
+| RR-1 | R1–R9 risk taxonomy | Risk register | classification |
 | RR-2 | R8-heavy signal keywords gate large-doc windowing | Risk register | policy |
 | DC-1 | doc_type = evidence / procedural / opinion | Doc classification | classification |
 | DC-2 | severity = routine / notable / urgent (145F embedded) | Doc classification | classification |
@@ -75,12 +75,12 @@ it.
 
 ## Risk register
 
-### RR-1 — R1–R8 risk taxonomy
+### RR-1 — R1–R9 risk taxonomy
 
-Every document is tagged against a fixed 8-risk register that defines what this community group is fighting.
+Every document is tagged against a fixed 9-risk register that defines what this community group is fighting.
 
-- **Given** a document about the landfill; **When** it is classified; **Then** it may be tagged with any of: R1 Expansion eligibility, R2 Violations history, R3 Odor nuisance, R4 Air quality, R5 Water quality, R6 Environmental justice, R7 Truck traffic, R8 Overheating/ETLF — using only these IDs, tagging none if none apply.
-- `risk_register.py:19-91`
+- **Given** a document about the landfill; **When** it is classified; **Then** it may be tagged with any of: R1 Expansion eligibility, R2 Violations history, R3 Odor nuisance, R4 Air quality, R5 Water quality, R6 Environmental justice, R7 Truck traffic, R8 Overheating/ETLF, R9 Subsurface gas migration — using only these IDs, tagging none if none apply.
+- `risk_register.py:20-106`
 - classification
 
 ### RR-2 — R8-heavy signal keywords gate large-document windowing
@@ -88,7 +88,7 @@ Every document is tagged against a fixed 8-risk register that defines what this 
 The keyword list that decides which pages of a huge report get read is deliberately weighted toward the overheating/ETLF story.
 
 - **Given** a report over the page threshold containing the terms "hov", "woi", "exceedance", "temperature", "mact", "leachate", "pfas", "consent judgment", "2020-0593-ce", etc.; **When** the parser windows it; **Then** only pages containing one of these 18 lowercased substrings (plus the cover page) are sent to the classifier.
-- `risk_register.py:95-114`
+- `risk_register.py:110-129`
 - policy
 
 ---
@@ -117,7 +117,7 @@ The single most credibility-critical field. Every extracted reading is stamped w
 
 ### DC-4 — Only valid register IDs survive classification
 
-- **Given** the classifier returns risk tags including a hallucinated "R9"; **When** the ParsedDoc is assembled; **Then** tags are filtered to the passed-in register's IDs, so "R9" is dropped and only R1–R8 persist.
+- **Given** the classifier returns risk tags including a hallucinated "R99"; **When** the ParsedDoc is assembled; **Then** tags are filtered to the passed-in register's IDs, so "R99" is dropped and only R1–R9 persist.
 - `egle_doc_parser.py:369-370`
 - validation
 

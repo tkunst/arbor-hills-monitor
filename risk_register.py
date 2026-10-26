@@ -1,5 +1,5 @@
 """
-risk_register.py — R1-R8 risk definitions + R8 signal keywords.
+risk_register.py — R1-R9 risk definitions + R8 signal keywords.
 
 Single source of truth for the monitor's risk register. `egle_doc_parser`
 takes a risk register as a parameter (it does NOT hardcode this), so the parser
@@ -87,6 +87,20 @@ RISK_REGISTER = [
             "(Wells of Interest) Status Reports and gas-extraction exceedance "
             "reports with temperature columns. Consent Judgment CJ No. "
             "2020-0593-CE."
+        ),
+    },
+    {
+        "id": "R9",
+        "name": "Subsurface gas migration",
+        "description": (
+            "Landfill gas (methane) moving underground beyond the waste "
+            "boundary through soil, utility trenches, conduits or wells. "
+            "Federal and state landfill rules cap methane at 25% of its lower "
+            "explosive limit (LEL) in facility structures and at the LEL at "
+            "the property boundary (40 CFR 258.23). Evidence lives in "
+            "perimeter gas-probe monitoring (including the Consent Judgment's "
+            "boundary probes along Napier Rd) and in records of underground "
+            "construction near the waste edge."
         ),
     },
 ]

@@ -45,7 +45,7 @@ encouragement to comment lives on the advocacy site, not here.
    risk register and signal keywords. Output per doc:
    - `summary`, `key_data_point`
    - `doc_type`: evidence / procedural / opinion
-   - `risks`: which of R1–R8 it speaks to
+   - `risks`: which of R1–R9 it speaks to
    - `severity`: routine / notable / urgent
    - `measurements[]`: structured readings (temperature/CO/O₂), each flagged
      **measured vs permitted_limit** — see `docs/decisions/004`.
@@ -53,7 +53,7 @@ encouragement to comment lives on the advocacy site, not here.
    - *New Documents* / *Historical Documents* — the live + backfilled feeds.
    - *Evidence by Risk* — evidence docs only, one row per (risk, doc). Filter to
      R8, print, hand to EGLE.
-   - *Risk Register* — R1–R8 with auto-counted evidence + most-recent date.
+   - *Risk Register* — R1–R9 with auto-counted evidence + most-recent date.
    - *Measurements* — every structured reading; derive per-well temperature
      trends from here without reprocessing.
 5. **Alerts** (SMTP): urgent → same-day email; procedural + everything else →
@@ -452,12 +452,14 @@ encouragement to comment lives on the advocacy site, not here.
 > paste the URL directly into the address bar rather than clicking it from
 > Gmail or a Sheets cell.
 
-## Risk register (R1–R8)
+## Risk register (R1–R9)
 
 R1 expansion eligibility · R2 violations history · R3 odor nuisance · R4 air
 quality · R5 water quality · R6 environmental justice · R7 truck traffic ·
 **R8 overheating / ETLF** (the evidence-dense new one — HOV waivers, WOI Status
-Reports, temperature exceedances, CJ No. 2020-0593-CE). Full text in
+Reports, temperature exceedances, CJ No. 2020-0593-CE) · R9 subsurface gas
+migration (landfill gas moving underground past the waste boundary; perimeter
+gas probes, 40 CFR 258.23). Full text in
 `risk_register.py`.
 
 ## Develop / run tests

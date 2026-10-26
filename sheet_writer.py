@@ -8,7 +8,7 @@ Human tabs:
   - "Evidence by Risk"     THE case file: evidence-type docs only, one row per
                            (risk, doc) — fan-out, so a doc tagged R4+R8 makes
                            two rows. Filter to R8, print, hand to EGLE.
-  - "Risk Register"        R1-R8 with auto-counted evidence + most-recent date.
+  - "Risk Register"        R1-R9 with auto-counted evidence + most-recent date.
   - "Measurements"         atomic structured readings, one row per (doc, reading).
 
 Internal tabs (prefixed "_", ignored by human readers):
