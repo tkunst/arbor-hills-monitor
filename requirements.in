@@ -1,5 +1,5 @@
 # Core
-anthropic>=0.69          # Claude API (egle_doc_parser classification)
+anthropic>=1.15.0          # Claude API (egle_doc_parser classification)
 PyMuPDF>=1.24            # fitz — PDF text-layer detection (needs_ocr vs has_text)
 ocrmypdf>=16.0           # adds a searchable text layer in place (--skip-text)
 PyYAML>=6.0              # config.yml
