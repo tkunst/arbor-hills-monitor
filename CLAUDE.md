@@ -6,7 +6,7 @@ Context for any AI agent (or human) working in this repo.
 
 An independent, automated monitor of EGLE regulatory filings for the Arbor
 Hills Landfill (SRN N2688). It backfills the ~754 existing documents and
-watches for new ones, classifies each against a risk register (R1–R8), keeps a
+watches for new ones, classifies each against a risk register (R1–R9), keeps a
 full-text-searchable PDF archive + a Google Sheet case file, and sends alerts.
 
 **Editorial posture — UPDATED (Trisha's direction, 2026-08-30): "accuracy over
@@ -173,7 +173,7 @@ external users but no sensitive data). Public repo.
   "skipped" with no recovery path. Duck-typed detection; `anthropic` is an
   optional import so callers don't need it installed just to classify an
   error.
-- `risk_register.py` — R1–R8 + R8 signal keywords (single source of truth).
+- `risk_register.py` — R1–R9 + R8 signal keywords (single source of truth).
 - `document_titles.py` — Arbor-Hills-specific half of ADR 065, kept OUT of
   egle_doc_parser.py on purpose: `title_is_generic` (config-driven exact/
   prefix match against nSITE's six generic placeholder titles),

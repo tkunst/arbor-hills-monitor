@@ -4,7 +4,7 @@ egle_doc_parser.py — THE reusable document-parsing module (the Decode base).
 Takes a PDF + metadata + a risk register; returns a ParsedDoc. Domain-agnostic:
 the risk register is passed in, never hardcoded, so Decode can reuse this with a
 different register (diagnostic criteria, eligibility standards) instead of
-R1-R8.
+R1-R9.
 
 Pipeline:
   1. classify() (ocr_util.py, moved from here, unchanged — PyMuPDF text-layer
