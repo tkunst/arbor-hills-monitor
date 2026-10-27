@@ -262,7 +262,7 @@ external users but no sensitive data). Public repo.
   meets the usual rule). `scripts/backfill_well_aliases.py` relabels existing rows: it defaults to
   a dry run, and `--apply` is Trisha's to run.
 - `drive_client.py` — Google Drive + Sheets API (service account, folder ID).
-- `archive_client.py` — **ADR 006**: Google Drive access for the durable PDF
+- `archive_client.py` — **ADR 007**: Google Drive access for the durable PDF
   mirror, authenticated as Trisha via OAuth (`drive.file` scope only) rather
   than the service account `drive_client.py` above uses — a service account
   on a personal Gmail has no Drive quota and can't create files, so the
@@ -407,7 +407,9 @@ external users but no sensitive data). Public repo.
   keyword-windowing and PyMuPDF's `find_tables()` both miss the bulk of
   per-well readings on these, so this module parses EVERY page with a line
   state-machine instead and validates each reading before emitting ADR-004
-  `measurements[]` directly). `woi_router.py` above is its only caller.
+  `measurements[]` directly). `woi_router.py` above is the live-pipeline
+  caller; `review_flags.py` and the one-off `scripts/co_summary.py`/
+  `scripts/woi_summary.py` also call into it directly.
   Validation gate: CH4 + CO2 + O2 + Balance ≈ 100. Attachment 1 is the FULL
   wellfield, broader than the formally-designated Wells of Interest —
   `extract_woi_well_list()` tags which wells are on the WOI list rather than
