@@ -21,8 +21,8 @@ failed upload) or the source deleting or editing PAST readings. This job closes 
      after that succeeds, so a failed comparison or email is retried against the same
      baseline next run instead of being hidden.
 
-Gated on `gfl_feed_snapshot.enabled` (ships false: a new job against a live
-external system is switched on by a human, per docs/overnight-coder.md). Every
+Gated on `gfl_feed_snapshot.enabled` (switched on 2026-10-06, Trisha — see
+CLAUDE.md's Activation status table for the current flag state). Every
 failure exits 1 so the GitHub failure email surfaces it; a pull whose row count
 disagrees with the server's own count is never uploaded. Standalone and
 self-terminating, like pfas_watcher.py.

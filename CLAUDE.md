@@ -174,6 +174,17 @@ external users but no sensitive data). Public repo.
   optional import so callers don't need it installed just to classify an
   error.
 - `risk_register.py` — R1–R9 + R8 signal keywords (single source of truth).
+- `backfill_metric_taxonomy.py` — **ADR 034**: a one-shot, DRY-RUN-BY-DEFAULT
+  script that reclassifies the live case-file Sheet's existing `other`-bucket
+  Measurements rows (written before `egle_doc_parser.METRIC_VALUES` grew a
+  named metric) by deduplicating on note text and running each distinct note
+  through the SAME model classifier the live pipeline uses
+  (`egle_doc_parser.classify_note_metric` — one vocabulary, never a forked
+  second one). `--apply` updates only the Metric column and writes a per-row
+  JSON revert manifest; idempotent (only rows still exactly `other` are ever
+  touched) and reversible. Builds its own Anthropic client directly — NOT
+  covered by `egle_doc_parser.py`'s classifier-timeout wiring (see that
+  entry above).
 - `document_titles.py` — Arbor-Hills-specific half of ADR 065, kept OUT of
   egle_doc_parser.py on purpose: `title_is_generic` (config-driven exact/
   prefix match against nSITE's six generic placeholder titles),
@@ -186,6 +197,17 @@ external users but no sensitive data). Public repo.
   downstream write (Drive mirror, feed/evidence rows, digest/alert, `_state`
   payload) inherits them for free. `poison_stub.py` (no parse exists for a
   poison doc) applies only the override map.
+- `name_check.py` — deterministic, NO-LLM detection of personal names and
+  internal-only content in text bound for the public Public Records feed:
+  stdlib regex + a fixed denylist, so it runs offline and reproducibly in
+  CI. Two layers — `find_denylist_hits` (the specific people/internal
+  markers already known; reliable, near-zero false positives, so it's what
+  the dedupe-curate redaction loop keys its convergence on) and
+  `find_heuristic_hits` (structural name shapes minus an org/term allowlist;
+  advisory only, surfaces a possible NEW name for a human to confirm, never
+  blocks convergence on its own). Used by the dedupe-curate intake check and
+  the findings-feed publish gate; `document_titles.py` above and
+  `dataset_provenance.py` below both call it.
 - `nsite_client.py` — EGLE nSITE API: session, list, download. **A coupling
   that used to exist, fixed 2026-10-23 (coder:poison-import-move):** until
   then `nsite_client.py` imported `poison_doc_extractor` at MODULE level, and
@@ -240,6 +262,18 @@ external users but no sensitive data). Public repo.
   meets the usual rule). `scripts/backfill_well_aliases.py` relabels existing rows: it defaults to
   a dry run, and `--apply` is Trisha's to run.
 - `drive_client.py` — Google Drive + Sheets API (service account, folder ID).
+- `archive_client.py` — **ADR 006**: Google Drive access for the durable PDF
+  mirror, authenticated as Trisha via OAuth (`drive.file` scope only) rather
+  than the service account `drive_client.py` above uses — a service account
+  on a personal Gmail has no Drive quota and can't create files, so the
+  mirror needs Trisha's own quota instead. Credentials come from three
+  shared env vars (`GOAUTH_CLIENT_ID`/`GOAUTH_CLIENT_SECRET`/
+  `GOAUTH_REFRESH_TOKEN`, minted by `scripts/oauth_setup.py`); callers pass
+  their own destination folder ID to `find_in_folder()`/`upload_file()`
+  rather than this module hardcoding one, so every Mirror (B, D, and every
+  later one listed above) shares this one client. Import-light: the google
+  OAuth libs load lazily so the core monitor, which never archives, doesn't
+  need `google-auth-oauthlib`.
 - `sheet_writer.py` — the four+1 sheet tabs; routing/fan-out is pure & tested.
   **ADR 065** appended `Document Date`/`EGLE Title` at the END of
   `FEED_HEADERS`/`EVIDENCE_HEADERS`/`ARCHIVE_HEADERS`/`ALL_EVIDENCE_HEADERS`
@@ -368,6 +402,16 @@ external users but no sensitive data). Public repo.
   implausible number in the model's text; this catches a plausible-looking
   number (the 2026-10-08 "202°F", a Depth to Bottom sounding in feet) the
   table parse doesn't support. Unrouted documents are unchanged.
+- `woi_table_parser.py` — **ADR 005**: table-aware extractor for EGLE WOI
+  Status Reports (~180-320 page tabular filings; the generic classifier's
+  keyword-windowing and PyMuPDF's `find_tables()` both miss the bulk of
+  per-well readings on these, so this module parses EVERY page with a line
+  state-machine instead and validates each reading before emitting ADR-004
+  `measurements[]` directly). `woi_router.py` above is its only caller.
+  Validation gate: CH4 + CO2 + O2 + Balance ≈ 100. Attachment 1 is the FULL
+  wellfield, broader than the formally-designated Wells of Interest —
+  `extract_woi_well_list()` tags which wells are on the WOI list rather than
+  assuming every parsed well is one.
 - `backfill.py` — nightly batch of 50, self-terminating, resumable. Mirrors
   each doc to Drive inline (`archiver.mirror_one_now()`) before writing its
   Sheet row. **FORCE_REPROCESS read cache (coder:backfill-purge-read-cache,
@@ -508,6 +552,15 @@ external users but no sensitive data). Public repo.
   prefix/zero-padding is inconsistent); `since` drops re-printed historical
   rows. Runs only on the live WOI-routed path — the NESHAP semi-annual roster
   and any spreadsheet EGLE emails outside nSITE are not covered.
+- `neshap_table_parser.py` — **ADR 033**: table-aware extractor for GFL's
+  Arbor Hills Semi-Annual NESHAP reports (40 CFR Part 63 Subpart AAAA,
+  ROP-N2688-2011), parsing Appendix A exceedance rosters, Appendix F
+  enhanced-monitoring/visual-inspection logs, and report-level RCA/downwell
+  flags into a NEW, separate dataset — different document family, data
+  model, and output than `woi_table_parser.py`/`egle_doc_parser.py`, which it
+  does not touch. A dataset-generation tool only, NOT on the live watcher
+  path (see `well_watch.py` above). See
+  `docs/decisions/033-neshap-exceedance-extraction.md`.
 - `pfas_client.py` — content-hash normalizer for EGLE's PFAS pages (isolates
   `<main>`, ignores Sitecore theme cache-busters). Pure; stdlib-only.
 - `pfas_watcher.py` — daily page-watch: alerts on any change vs. the last
@@ -609,9 +662,7 @@ external users but no sensitive data). Public repo.
   changed field set, emails Trisha (the owner list) ONLY — the new snapshot's
   `.compared` marker is set only after that succeeds, so a failed comparison
   or email retries against the same baseline next run. Gated on
-  `gfl_feed_snapshot.enabled` (switched on 2026-10-06, Trisha — the module's
-  own docstring is stale and still says "ships false"; a future change should
-  fix that comment to match).
+  `gfl_feed_snapshot.enabled` (switched on 2026-10-06, Trisha).
 - `civicclerk_watcher.py` — Stream F: twice-daily change-watch on MMPC +
   Washtenaw County BOC meeting events (hand-picked, via `mmpc_client.fetch_event`)
   plus the Board of Public Works/DPA (categoryId 68, AUTO-DISCOVERED via the new
@@ -754,6 +805,24 @@ external users but no sensitive data). Public repo.
   unwatched. Pure refactor — verified behavior-preserving (the resolved
   19-site set is byte-identical pre/post) before merging, since
   `nsite_submissions.enabled: true` is already live.
+- `nsite_watch_common.py` — shared scaffolding factored out of the six
+  nSITE-profile daily watchers below (Violations/Compliance Actions/
+  Evaluations/Permits/Complaints/Public Notices), each of which had its own
+  byte-identical copy of `_now`/`_today_date`/`_load_json`/
+  `alerting_is_configured` (and, in five of the six, `_row_digest`), plus a
+  `run()` body ~72% similar once tab/label/noun/snapshot-builder differences
+  are normalized out — this module is the one place that scaffolding lives
+  now, behind `run_profile_watch()`. Deliberately NOT applied to
+  `nsite_submissions_watcher.py` (only ~28% similar to the family, kept
+  standalone, including its own `_is_due` — every one of the six watchers
+  already imports `_is_due` directly FROM `nsite_submissions_watcher`, never
+  copied, and this module does not re-export it) or to any watcher PR #137
+  already gave per-item isolation. `run_profile_watch()` takes `is_due_fn`
+  as a plain parameter rather than resolving `_is_due` itself, so a test's
+  `monkeypatch.setattr(vw, "_is_due", ...)` on one watcher still works
+  (late-bound through that watcher's own module globals). Each watcher's
+  diff design (multiset/ref-number-keyed/fingerprint) stays its own — only
+  the orchestration around it moved here.
 - `nsite_violations_watcher.py` — Stream L: daily snapshot-diff of EGLE's
   nSITE **Violations** profile (the state's own *enforcement* record — a
   formal out-of-compliance finding, not a filing or a permit status) for
@@ -1135,6 +1204,13 @@ external users but no sensitive data). Public repo.
   `report_tracking.enabled` (shipped `false`; activated 2026-10-23 (Trisha) after the seed `--apply`, `shadow_until: 2026-11-06`; `review_email_enabled` stays false until two clean weeks);
   workflow `report-tracker.yml`, 7pm ET. Owner-only Sunday review email via
   `owner_notices.send_owner_email`.
+- `findings_feed.py` — pure render/format logic (no I/O, no Sheets API) for
+  the public "Findings" feed (`site/public-records/`): every document from
+  the case-file Sheet's New/Historical Documents tabs, newest first,
+  paginated as static HTML. `scripts/gen_findings_feed.py` is the thin I/O
+  wrapper that fetches the two tabs and calls `build_pages()` — the same
+  pure/I/O split `sheet_writer.py` uses between row-building and the API
+  itself, and the same shape `public_comment_feed.py` below reuses.
 - `public_comment_feed.py` — **ADR 035**: pure render logic (no I/O, same
   shape as `findings_feed.py`) for the public "Public Comment Periods" page
   (`site/public-comment/`) — an Open table and a Closed table, sourced from
