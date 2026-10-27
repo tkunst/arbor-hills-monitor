@@ -4,7 +4,7 @@ name: sast
 # BLOCKING GATE: it scans every PR + push and FAILS the build on any medium+
 # severity/confidence finding (final `exit "$rc"`). The pre-existing findings
 # (1 XXE B314, 1 B310 urlopen, 3 B324 SHA1) were all cleared in the
-# CD-governance package (see docs/session-2026-07-18-cd-governance-enforcement.md);
+# CD-governance package (see docs/sessions/session-2026-07-18-cd-governance-enforcement.md);
 # the current scan is green. Bandit is PINNED (see below) so a future release
 # can't silently turn this required check red without a deliberate bump.
 # Phase C adds `bandit` to branch-protection required_status_checks.
