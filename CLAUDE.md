@@ -1089,8 +1089,8 @@ external users but no sensitive data). Public repo.
   display-only. `--probe`. Gated on `mpart.enabled` (activated 2026-09-29). See ADR 060.
 - `govqa_client.py` — Stream U: fetch + parse for EGLE's PUBLIC FOIA archive on GovQA (ADR 059),
   following the handoff's §1C-bis method. KEYWORD LIST via lazily imported headless Playwright
-  (`PlaywrightGrid`; NOT in requirements.txt — the workflow installs a pinned version only when
-  enabled/probing; any launch error becomes a structural error): one term per search, newest first,
+  (`PlaywrightGrid`; NOT in requirements.txt — its own hashed `requirements-govqa.txt` (Dependabot-
+  visible since 2026-10-30; >= 1.61 for Ubuntu 26.04), installed only when enabled/probing; any launch error becomes a structural error): one term per search, newest first,
   paged with `ASPx.GVPagerOnClick`; `sweep_term` stops at the first page whose requests are ALL
   already known (mixed pages keep reading) and flags `overflow`; `with_backoff` = fresh context +
   30 s/2 min retries, then a structural error and move on. A zero-row grid is believed only with

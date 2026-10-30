@@ -1959,7 +1959,10 @@ def test_no_path_reaches_the_public_feed_the_public_sheet_or_another_archiver():
 def test_the_workflow_never_receives_the_public_sheet_id_is_notify_only_and_pins_playwright():
     wf = (ROOT / ".github" / "workflows" / "govqa-watch.yml").read_text()
     assert "secrets.GSHEET_ID_PRIVATE" in wf and not re.search(r"secrets\.GSHEET_ID\s*\}\}", wf)
-    assert re.search(r"pip install playwright==\d+\.\d+\.\d+", wf)
+    assert "pip install --require-hashes -r requirements-govqa.txt" in wf          # Dependabot-visible, hash-pinned
+    lock = (ROOT / "requirements-govqa.txt").read_text()
+    m = re.search(r"^playwright==(\d+)\.(\d+)\.(\d+) \\\n\s+--hash=sha256:", lock, re.M)
+    assert m and (int(m[1]), int(m[2])) >= (1, 61)                                 # 1.61+ = Ubuntu 26.04 support
     from config_loader import load_config
     cfg = load_config()["govqa"]
     assert cfg["enabled"] is True and cfg["download_attachments"] is False    # activated 2026-09-28, notify-only

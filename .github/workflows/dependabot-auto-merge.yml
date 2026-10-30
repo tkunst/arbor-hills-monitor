@@ -278,20 +278,20 @@ jobs:
           # so they always surface as their own standalone PR; this is the
           # second, independent half of that -- never auto-merge one even if
           # it somehow arrived grouped).
-          forced_review=$(echo "$entries" | jq -r '[.[] | select((.name == "anthropic" or .name == "google-api-python-client") and .update_type != "version-update:semver-patch")] | length')
+          forced_review=$(echo "$entries" | jq -r '[.[] | select((.name == "anthropic" or .name == "google-api-python-client" or .name == "playwright") and .update_type != "version-update:semver-patch")] | length')
           non_patch_minor=$(echo "$entries" | jq -r '[.[] | select(.update_type != null and (.update_type | test("^version-update:semver-(patch|minor)$") | not))] | length')
 
           if [ "$missing_type" -gt 0 ]; then
             echo "At least one dependency entry has no update-type. Not auto-merging."
             echo "result=unknown" >> "$GITHUB_OUTPUT"
           elif [ "$forced_review" -gt 0 ]; then
-            echo "Includes a non-patch bump of anthropic and/or google-api-python-client -- needs-review (only their patch bumps auto-merge)."
+            echo "Includes a non-patch bump of anthropic, google-api-python-client and/or playwright -- needs-review (only their patch bumps auto-merge)."
             echo "result=major-or-other" >> "$GITHUB_OUTPUT"
           elif [ "$non_patch_minor" -gt 0 ]; then
             echo "Found a non-patch/minor update-type among this PR's dependencies."
             echo "result=major-or-other" >> "$GITHUB_OUTPUT"
           else
-            echo "All bumped dependencies are patch/minor, and any anthropic/google-api-python-client bump is patch-only."
+            echo "All bumped dependencies are patch/minor, and any anthropic/google-api-python-client/playwright bump is patch-only."
             echo "result=patch-or-minor" >> "$GITHUB_OUTPUT"
           fi
 

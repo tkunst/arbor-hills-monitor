@@ -105,6 +105,11 @@ updates:
           # coverage.
           - "anthropic"
           - "google-api-python-client"
+          # playwright (requirements-govqa.txt, govqa-watch only; added 2026-10-30):
+          # the hermetic tests never launch a real browser, so a green run
+          # proves nothing about the GovQA scrape. Same treatment as the two
+          # above: its own PR, patch auto-merges, minor/major wait for review.
+          - "playwright"
         update-types:
           - "patch"
           - "minor"

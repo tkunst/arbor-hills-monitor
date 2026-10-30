@@ -62,7 +62,8 @@ jobs:
       - name: Install the headless browser (only when enabled or probing)
         if: steps.gate.outputs.enabled == 'true' || inputs.probe == true
         run: |
-          pip install playwright==1.64.1  # >=1.61 supports Ubuntu 26.04 (ubuntu-latest since 2026-10-28)
+          # Hashed lockfile so Dependabot proposes Playwright upgrades (>= 1.61 for Ubuntu 26.04).
+          pip install --require-hashes -r requirements-govqa.txt
           playwright install --with-deps chromium
       - name: Write service-account key to a temp file
         env:

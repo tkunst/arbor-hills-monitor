@@ -1,0 +1,10 @@
+# Stream U (govqa-watch.yml) ONLY: the headless browser for the GovQA keyword
+# sweep (govqa_client.PlaywrightGrid, imported lazily). Kept out of the main
+# requirements.in on purpose, so the other ~46 workflows don't download a
+# 46 MB wheel + Chromium they never use. Lives in its own hashed lockfile so
+# Dependabot's pip-compile support sees it and proposes upgrades (it sat at
+# 1.58 while 1.64 shipped, and broke when ubuntu-latest became 26.04 on
+# 2026-10-28; Ubuntu 26.04 needs >= 1.61). The -c keeps shared transitive
+# deps (typing-extensions, greenlet) at the main lockfile's versions.
+-c requirements.txt
+playwright>=1.64.1
