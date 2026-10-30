@@ -32,11 +32,7 @@ concurrency:
 
 jobs:
   govqa-watch:
-    # Pinned (2026-10-29): ubuntu-latest moved to Ubuntu 26.04 on 2026-10-28, and
-    # Playwright 1.58.0 can't install Chromium there ("Playwright does not support
-    # chromium on ubuntu26.04-x64"; run 40779909458). Unpin once a Playwright release
-    # supports 26.04 and requirements are bumped. This is the only Playwright workflow.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -66,7 +62,7 @@ jobs:
       - name: Install the headless browser (only when enabled or probing)
         if: steps.gate.outputs.enabled == 'true' || inputs.probe == true
         run: |
-          pip install playwright==1.58.0
+          pip install playwright==1.64.1  # >=1.61 supports Ubuntu 26.04 (ubuntu-latest since 2026-10-28)
           playwright install --with-deps chromium
       - name: Write service-account key to a temp file
         env:
