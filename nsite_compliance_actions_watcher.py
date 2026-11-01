@@ -93,12 +93,10 @@ CLOSED.
 NO DRIVE / OAUTH (same scope call as every other watch, ADR 012): the
 deliverable is the ALERT + the durable Sheet row.
 
-Runs daily — but its workflow file is currently parked at
-docs/pending-workflows/nsite-compliance-actions-watch.yml, NOT under
-.github/workflows/, because the session that wrote it had no credential with
-the `workflow` OAuth scope. Harmless while enabled is false; it MUST be moved
-into .github/workflows/ before that flag is flipped, or this watch is never
-scheduled. See docs/pending-workflows/README.md.
+Runs daily from .github/workflows/nsite-compliance-actions-watch.yml. The
+file was first parked in docs/pending-workflows/ (the session that wrote it had
+no credential with the `workflow` OAuth scope) and moved into place later; see
+docs/pending-workflows/README.md for that fallback.
 """
 from __future__ import annotations
 
