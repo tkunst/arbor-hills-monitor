@@ -217,12 +217,10 @@ encouragement to comment lives on the advocacy site, not here.
     `nsite_submissions.tiers` (3/3/13 here vs 6/6/7 there). Snapshot-diff
     into the `Violations Watch` tab; first sighting baselines silently. New
     source, ships disabled — see
-    `docs/decisions/023-nsite-violations-watch.md` for activation, which has
-    **two** steps here rather than the usual one: this stream's workflow file
-    is parked at `docs/pending-workflows/nsite-violations-watch.yml` and must
-    be moved into `.github/workflows/` before `enabled` is flipped, or the
-    watch is never scheduled. (The build session's credentials lacked the
-    `workflow` OAuth scope — see `docs/pending-workflows/README.md`.)
+    `docs/decisions/023-nsite-violations-watch.md` for activation. Its
+    workflow was first parked in `docs/pending-workflows/` (the build
+    session's credentials lacked the `workflow` OAuth scope) and has since
+    been moved to `.github/workflows/nsite-violations-watch.yml`.
 
 17. **nSITE Compliance Actions watch (Stream M)** (daily, optional —
     `nsite_compliance_actions.enabled: false`, ships disabled): watches a
@@ -243,9 +241,8 @@ encouragement to comment lives on the advocacy site, not here.
     actions are closed). Snapshot-diff into the `Compliance Actions Watch`
     tab; first sighting baselines silently. New source, ships disabled — see
     `docs/decisions/028-nsite-compliance-actions-watch.md` for activation
-    (**two** steps: its workflow is parked at
-    `docs/pending-workflows/nsite-compliance-actions-watch.yml` and must be
-    moved into `.github/workflows/` before `enabled` is flipped).
+    (its workflow, first parked in `docs/pending-workflows/`, now lives at
+    `.github/workflows/nsite-compliance-actions-watch.yml`).
 
 18. **nSITE Evaluations watch (Stream N)** (daily, optional —
     `nsite_evaluations.enabled: false`, ships disabled): watches a FIFTH nSITE
