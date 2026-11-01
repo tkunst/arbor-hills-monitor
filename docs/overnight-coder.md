@@ -93,6 +93,9 @@ overrides apply on top of everything else in this document:
   read it at session start as usual and follow it throughout. This document
   doesn't repeat those rules, it only adds the PR/review/merge procedure
   wrapped around them.
+- `docs/architecture.md` — the full per-module notes (moved out of
+  `CLAUDE.md` 2026-11-01). Read the entry for every module you will touch, and
+  update it in the same PR when the module's behavior changes.
 
 ## Procedure
 
