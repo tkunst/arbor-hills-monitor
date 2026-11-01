@@ -7,7 +7,7 @@ ADR 017 (ROP), ADR 018 (MMD), ADR 020 (nSITE Submissions), ADR 026 (the
 ships-disabled Drive-exhibit precedent), `docs/data-lifecycle-architecture.md`
 (the durability model). Trisha's ruling: 2026-07-26 ("PR2" of the
 data-lifecycle gap plan); handoff
-`docs/overnight-coder-handoffs/drive-snapshot-exporter.md`.
+`docs/overnight-coder-handoffs/archive/drive-snapshot-exporter.md`.
 
 ## Context
 

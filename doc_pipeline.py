@@ -1,6 +1,6 @@
 """
 doc_pipeline.py — the one per-document pipeline shared by watcher.run and
-backfill.run (consolidation PR 3, docs/overnight-coder-handoffs/
+backfill.run (consolidation PR 3, docs/overnight-coder-handoffs/archive/
 sheet-writer-watcher-consolidation.md).
 
 Both jobs used to carry their own ~150-line copy of the same steps, and every

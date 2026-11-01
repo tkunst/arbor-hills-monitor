@@ -1,6 +1,6 @@
 # ADR 070 — An owner-only channel: weekly housekeeping email + same-day owner alerts
 
-*2026-10-15, coder:owner-weekly-email (handoff: `docs/overnight-coder-handoffs/owner-weekly-email.md`).
+*2026-10-15, coder:owner-weekly-email (handoff: `docs/overnight-coder-handoffs/archive/owner-weekly-email.md`).
 Ships disabled.*
 
 ## Context

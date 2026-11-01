@@ -1,5 +1,5 @@
 """doc_pipeline_liveness.py + watcher._check_liveness — the nSITE document
-pipeline's silent-stall guard (docs/overnight-coder-handoffs/stall-hardening.md,
+pipeline's silent-stall guard (docs/overnight-coder-handoffs/archive/stall-hardening.md,
 part (a); the 2026-08-02 digest-recovery lesson).
 
 Pure tests mirror tests/test_gfl_air.py's liveness_decision block; the run()

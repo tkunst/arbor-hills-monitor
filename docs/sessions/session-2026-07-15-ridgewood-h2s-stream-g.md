@@ -1,6 +1,6 @@
 # Session 2026-07-15 — Ridge Wood Elementary H2S archiver (Stream G)
 
-Overnight-coder loop against `docs/overnight-coder-handoffs/ridgewood-h2s.md`
+Overnight-coder loop against `docs/overnight-coder-handoffs/archive/ridgewood-h2s.md`
 (data-sources item 8), then a live daytime activation + full backfill with Trisha.
 Shipped as **Stream G / ADR 016** — the handoff and recon both said "Stream F", but
 F / ADR 015 were already taken by CivicClerk meeting-watch; the one stale cross-ref

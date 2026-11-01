@@ -1,6 +1,6 @@
 """
 doc_pipeline_liveness.py — the nSITE document pipeline's liveness / silent-
-stall guard (docs/overnight-coder-handoffs/stall-hardening.md, part (a)):
+stall guard (docs/overnight-coder-handoffs/archive/stall-hardening.md, part (a)):
 the pure health-state update, the pure alarm decision and the notice body.
 The orchestration wrapper (`_check_liveness`) lives in watcher.py, mirroring
 how gfl_air_liveness.py / gfl_air_watcher._check_liveness are split.

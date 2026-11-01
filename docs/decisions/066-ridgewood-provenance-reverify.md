@@ -13,7 +13,7 @@ Ridge Wood Elementary H2S report to Drive and records `Source URL`, `Content Has
 `Archive Link`, `Fetched At` in the `Ridge Wood Reports` tab — enabled since
 2026-07-15, the ~66-month historical backfill mirrored. What it does NOT do: once a
 month is recorded it is never looked at again (month-keyed dedup). Trisha's goal,
-spelled out in `docs/overnight-coder-handoffs/selfreport-provenance-archive.md`
+spelled out in `docs/overnight-coder-handoffs/archive/selfreport-provenance-archive.md`
 (staged 2026-10-08): "assume it could disappear or change; the only copy left is
 ours, with provenance." Three concrete gaps:
 

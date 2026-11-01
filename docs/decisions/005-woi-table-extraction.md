@@ -299,7 +299,7 @@ measurements. In the 2026-10-08 report:
 
 ## Addendum (2026-10-19): Well ID under Alias headers, `---` cells, gas-only rows
 
-Spec: `docs/overnight-coder-handoffs/woi-parser-wellid-dashes.md` (round-4
+Spec: `docs/overnight-coder-handoffs/archive/woi-parser-wellid-dashes.md` (round-4
 wellfield review). Trisha's rulings of 2026-10-19: keep gas-only readings;
 do not capture the valve-setting or comments columns.
 
@@ -514,7 +514,7 @@ is not written to the Sheet.
 
 ## Addendum (2026-10-20): gas tables split across two page ranges
 
-Spec: `docs/overnight-coder-handoffs/woi-split-table-join.md`
+Spec: `docs/overnight-coder-handoffs/archive/woi-split-table-join.md`
 (`coder:woi-split-table-join`, the follow-up to the 2026-10-19 addendum).
 
 **What these tables are.** Four reports in the corpus print each gas table
@@ -675,7 +675,7 @@ re-running `stage_wellfield.py` wait for Trisha's go.
 
 ## Addendum (2026-10-21): timestamp and ADJ printed on one line
 
-Spec: `docs/overnight-coder-handoffs/woi-dt-adj-oneline.md`
+Spec: `docs/overnight-coder-handoffs/archive/woi-dt-adj-oneline.md`
 (`coder:woi-dt-adj-oneline`, the follow-up named in the 2026-10-20
 addendum).
 
@@ -800,7 +800,7 @@ Trisha's go.
 
 ## Addendum (2026-10-21): two-digit years in row timestamps
 
-Spec: `docs/overnight-coder-handoffs/woi-two-digit-year.md`
+Spec: `docs/overnight-coder-handoffs/archive/woi-two-digit-year.md`
 (`coder:woi-two-digit-year`, found by the 2026-10-21 one-line-ADJ review).
 
 **What these rows are.** One report in the corpus, `97d39ba7` (the operator's

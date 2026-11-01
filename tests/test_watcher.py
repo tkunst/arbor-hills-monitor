@@ -1,6 +1,6 @@
 """_route_urgent_or_digest: the if/else that decides whether a newly processed
 document becomes a same-day [URGENT] email (recapped the next Sunday) or a
-routine pending_digest entry. See docs/overnight-coder-handoffs/digest-urgent-recap.md.
+routine pending_digest entry. See docs/overnight-coder-handoffs/archive/digest-urgent-recap.md.
 """
 import pytest
 

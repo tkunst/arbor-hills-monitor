@@ -23,7 +23,7 @@ Base at session start: `5ecd4ce`. Follow-on to the same-day WOI extraction sessi
 
 ## 2. GFL ArcGIS handoff (Row 6) — this repo
 
-- New `docs/overnight-coder-handoffs/gfl-air-arcgis.md`: a self-contained
+- New `docs/overnight-coder-handoffs/archive/gfl-air-arcgis.md`: a self-contained
   overnight-coder goal spec to build a `gfl_air_client.py` poller against GFL's
   public ArcGIS FeatureServer perimeter-air feed (the first source that would give
   real fenceline readings, R3 odor / R4 air, not just documents).

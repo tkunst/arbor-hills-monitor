@@ -44,7 +44,7 @@ IMPORTANT: AHW272R4 legitimately appears in the Pressure table but never the
 Temperature table, in EITHER report — it holds an approved 180F HOV, so its
 wellhead temperature readings never exceed that raised threshold. An empty
 272R4 temperature result is correct, not a parse miss (confirmed against both
-real reports; see docs/overnight-coder-handoffs/neshap-exceedance-extraction.md).
+real reports; see docs/overnight-coder-handoffs/archive/neshap-exceedance-extraction.md).
 This module does not model per-well HOV overrides — TEMPERATURE_LIMIT_F is the
 one constant baseline stated in the report narrative, not a per-well value.
 

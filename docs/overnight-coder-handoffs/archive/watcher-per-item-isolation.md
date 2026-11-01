@@ -151,7 +151,7 @@ each module's `_now`/`_today`. Confirm:
 ## Out of scope
 
 - The six nSITE profile watchers and `pfas_pws_watcher.py` (already correct).
-- `docs/overnight-coder-handoffs/sheet-writer-watcher-consolidation.md`'s generic
+- `docs/overnight-coder-handoffs/archive/sheet-writer-watcher-consolidation.md`'s generic
   `ensure_tab`/`append_watch_row`/`last_snapshots` refactor.
 - `civicclerk_watcher.run_historical_backfill` — a one-time, never-scheduled function
   whose invoking script/workflow were already deleted after use.

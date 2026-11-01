@@ -18,7 +18,7 @@ verbatim; it IS the goal.
 - **Goal (paste this):**
 
   ```
-  Follow docs/overnight-coder.md. Goal + full spec: the coder:backfill-purge-read-cache block in /Volumes/Samsung-Pro-2TB/Lotext/documents/overnight-coder-queue.md -- read that block first, it IS the goal. Copy it to docs/overnight-coder-handoffs/backfill-purge-read-cache.md as the PR's first commit.
+  Follow docs/overnight-coder.md. Goal + full spec: the coder:backfill-purge-read-cache block in /Volumes/Samsung-Pro-2TB/Lotext/documents/overnight-coder-queue.md -- read that block first, it IS the goal. Copy it to docs/overnight-coder-handoffs/archive/backfill-purge-read-cache.md as the PR's first commit.
 
   In one line: make backfill's FORCE_REPROCESS dry-run and apply paths read each purge tab once per run (cached) instead of once per doc, and wait out a Sheets 429 once before failing, so a 58-id dry-run no longer dies on the 60-reads-per-minute quota (run 39699682035). Fake-service test counting reads; real-Sheet check on one id for apply. Start from a fresh branch off origin/main. End at a DRAFT PR.
   ```

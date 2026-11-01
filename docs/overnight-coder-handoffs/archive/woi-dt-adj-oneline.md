@@ -13,7 +13,7 @@ Copied verbatim from the queue block; this block is the spec.
 - **Goal (paste this):**
 
   ```
-  Follow docs/overnight-coder.md. Goal + full spec: the coder:woi-dt-adj-oneline block in /Volumes/Samsung-Pro-2TB/Lotext/documents/overnight-coder-queue.md -- read that block first, it IS the goal. Copy it to docs/overnight-coder-handoffs/woi-dt-adj-oneline.md as the PR's first commit.
+  Follow docs/overnight-coder.md. Goal + full spec: the coder:woi-dt-adj-oneline block in /Volumes/Samsung-Pro-2TB/Lotext/documents/overnight-coder-queue.md -- read that block first, it IS the goal. Copy it to docs/overnight-coder-handoffs/archive/woi-dt-adj-oneline.md as the PR's first commit.
 
   In one line: in woi_table_parser.py, make a timestamp line that ends in ADJ ("10/21/2022 11:46 ADJ") start an ADJ row just like the two-line form, so the 3,540 such lines across 6 reports are read (and eb09e953's 117 split_unread_rows join). LIVE path: 91-file regression (every reading main reads unchanged), per-report added counts, cross-filing value check, every new >=145F reading listed, downstream headline changes. Start from a fresh branch off origin/main. End at a DRAFT PR.
   ```
