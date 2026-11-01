@@ -1,4 +1,4 @@
-"""backfill_metric_taxonomy.py — one-shot ADR-034 `other`-bucket backfill.
+"""scripts/backfill_metric_taxonomy.py — one-shot ADR-034 `other`-bucket backfill.
 
 Expanding the metric enum (egle_doc_parser.METRIC_VALUES) only affects NEWLY
 parsed documents. The thousands of Measurements rows already written as `other`
@@ -48,6 +48,8 @@ import os
 import sys
 from collections import Counter
 from datetime import datetime, timezone
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # The Measurements tab and its metric/note columns are owned by sheet_writer; we
 # reference the tab name by string to avoid importing the Sheets-writing surface
@@ -244,18 +246,7 @@ def render_report_md(
 # ---------------------------------------------------------------------------
 
 
-def _load_dotenv() -> None:
-    """Best-effort: load a .env in cwd so a local run has creds without exporting.
-    Never overrides an already-set variable."""
-    if not os.path.exists(".env"):
-        return
-    with open(".env") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k, v.strip().strip('"').strip("'"))
+from config_loader import load_dotenv as _load_dotenv  # noqa: E402  (moved 2026-11-01)
 
 
 def read_measurements(service, sheet_id: str) -> tuple[list, list]:

@@ -78,7 +78,7 @@ log = logging.getLogger(__name__)
 #
 # `MetricLiteral` IS THE ONE SOURCE OF TRUTH. The document classifier's
 # `Measurement` model annotates its `metric` field with it directly, and the
-# one-shot `other`-bucket backfill (backfill_metric_taxonomy.py) reuses the SAME
+# one-shot `other`-bucket backfill (scripts/backfill_metric_taxonomy.py) reuses the SAME
 # type via `METRIC_VALUES` (derived from it below with typing.get_args) — so the
 # two paths can never fork the vocabulary. The Literal is exactly what the
 # structured-output schema forces the model to emit.
@@ -873,7 +873,7 @@ def classify_note_metric(
     vocabulary, using the same model + structured-output mechanism + shared
     guidance (_METRIC_CLASSIFY_GUIDANCE) as the document classifier — one brain,
     one vocabulary (MetricLiteral), never a fork. Used by the one-shot
-    `other`-bucket backfill (backfill_metric_taxonomy.py).
+    `other`-bucket backfill (scripts/backfill_metric_taxonomy.py).
 
     Returns a metric string from METRIC_VALUES. A truncated/empty model response
     (parsed_output is None) fails safe to 'other' — leave the row as-is; 'other'

@@ -42,8 +42,10 @@ external users but no sensitive data). Public repo.
 
 ## Architecture (one line each)
 
-- `config_loader.py` — twelve lines: `load_config()` reads this repo's own
-  `config.yml` with `yaml.safe_load`. No secrets here (those are env/GitHub
+- `config_loader.py` — two small functions: `load_config()` reads this repo's own
+  `config.yml` with `yaml.safe_load`; `load_dotenv()` is the best-effort local
+  `.env` loader the manual scripts share (moved here from
+  `backfill_metric_taxonomy.py` 2026-11-01). No secrets here (those are env/GitHub
   Secrets only); this is the chokepoint dozens of other modules across the
   repo use to read the non-secret config, including
   `kdp_check.default_reference()`
@@ -115,7 +117,7 @@ external users but no sensitive data). Public repo.
   invisible to the liveness guard while other documents process). Lowering
   `classification_max_tokens` lowers the timeout automatically; streaming is
   the real lever on run time. `scripts/term_search.py` and
-  `backfill_metric_taxonomy.py` construct their own clients and are NOT
+  `scripts/backfill_metric_taxonomy.py` construct their own clients and are NOT
   covered.
 - `ocr_util.py` — **ADR 069**: the shared OCR module. `classify()`/
   `ocr_in_place()` (moved from `egle_doc_parser.py`, unchanged) plus the NEW
@@ -174,7 +176,8 @@ external users but no sensitive data). Public repo.
   optional import so callers don't need it installed just to classify an
   error.
 - `risk_register.py` — R1–R9 + R8 signal keywords (single source of truth).
-- `backfill_metric_taxonomy.py` — **ADR 034**: a one-shot, DRY-RUN-BY-DEFAULT
+- `scripts/backfill_metric_taxonomy.py` (moved from the repo root 2026-11-01) —
+  **ADR 034**: a one-shot, DRY-RUN-BY-DEFAULT
   script that reclassifies the live case-file Sheet's existing `other`-bucket
   Measurements rows (written before `egle_doc_parser.METRIC_VALUES` grew a
   named metric) by deduplicating on note text and running each distinct note

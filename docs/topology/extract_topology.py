@@ -112,7 +112,7 @@ DOMAIN = {
     "review_flags": "processing",       # Parser Review Flags log, private Sheet (ADR 067 amendment)
     "backfill_well_aliases": "ops",     # one-shot dry-run-default Measurements relabel (ADR 068)
     "poison_doc_extractor": "processing",  # .msg/.docx -> synthesized PDF (ADR 011)
-    "backfill_metric_taxonomy": "processing",  # one-shot `other`-bucket reclassify — ADR 034
+    "backfill_metric_taxonomy": "ops",  # scripts/, one-shot `other`-bucket reclassify — ADR 034
     "ocr_util": "processing",           # shared OCR: classify / ocr_in_place / ensure_searchable (ADR 069)
     "kdp_check": "processing",          # deterministic key-data-point temperature check (ADR 067)
     "document_titles": "processing",    # generic-title detection + display names (ADR 065)

@@ -76,7 +76,7 @@ so the existing per-well methane series is never corrupted. Same for
 5. **~52-metric size approved** — the extra NPDES/wastewater parameters are
    intended; the vocabulary was not trimmed to the old ~30–40 target.
 
-### The backfill (Part B) — `backfill_metric_taxonomy.py`
+### The backfill (Part B) — `backfill_metric_taxonomy.py` (moved to `scripts/` 2026-11-01)
 
 Expanding the enum only affects newly-parsed documents. The existing `other`
 rows are reclassified by a one-shot script that:

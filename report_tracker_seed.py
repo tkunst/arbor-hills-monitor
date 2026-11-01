@@ -456,7 +456,7 @@ def main(argv: Optional[list] = None) -> int:
         print("dry run; pass --apply to write (empty private tabs only)")
         return 0
     if os.path.exists(".env"):
-        from backfill_metric_taxonomy import _load_dotenv
+        from config_loader import load_dotenv as _load_dotenv
         _load_dotenv()
     import drive_client as dc
     import review_flags as rf
