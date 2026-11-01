@@ -11,7 +11,15 @@ from pydantic import BaseModel, ValidationError
 from typing import get_args
 
 import egle_doc_parser as p
-import backfill_metric_taxonomy as b
+import importlib.util as _ilu
+import os as _os
+
+_SPEC = _ilu.spec_from_file_location(
+    "backfill_metric_taxonomy",
+    _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                  "scripts", "backfill_metric_taxonomy.py"))
+b = _ilu.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(b)
 
 
 # ---------------------------------------------------------------------------

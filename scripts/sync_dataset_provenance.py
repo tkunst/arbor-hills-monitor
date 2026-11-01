@@ -160,7 +160,7 @@ def main(argv=None) -> int:
                     help="Also write the PROPOSED_* pairs (only after Trisha approves them).")
     args = ap.parse_args(argv)
 
-    from backfill_metric_taxonomy import _load_dotenv
+    from config_loader import load_dotenv as _load_dotenv
     _load_dotenv()
     import drive_client
 
