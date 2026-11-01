@@ -1,5 +1,5 @@
 """watcher.run's anti-stampede cap (stall-hardening part (c),
-docs/overnight-coder-handoffs/stall-hardening.md): an over-cap backlog that
+docs/overnight-coder-handoffs/archive/stall-hardening.md): an over-cap backlog that
 belongs to facilities with NO processing history is a new-facility backlog —
 deferred to backfill as before — but it must never again freeze live
 monitoring of every already-established facility (2026-07-24: two new

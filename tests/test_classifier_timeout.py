@@ -1,5 +1,5 @@
 """egle_doc_parser's Anthropic client carries an explicit per-attempt timeout
-well under the SDK's 600 s default (docs/overnight-coder-handoffs/
+well under the SDK's 600 s default (docs/overnight-coder-handoffs/archive/
 stall-hardening.md, part (b)): a degraded or throttled key must fail ONE
 document in bounded time and hand it to doc_pipeline's transient-retry
 handling, not hang the whole `daily` job to its timeout-minutes ceiling.

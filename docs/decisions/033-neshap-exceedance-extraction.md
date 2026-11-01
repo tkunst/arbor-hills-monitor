@@ -190,6 +190,6 @@ appendix ordering.
   change.
 - **No CSV committed.** Per `CLAUDE.md`'s forbidden patterns, output data
   files are never committed; only the parser + tests + this ADR land.
-- `docs/overnight-coder-handoffs/neshap-exceedance-extraction.md` — the
+- `docs/overnight-coder-handoffs/archive/neshap-exceedance-extraction.md` — the
   handoff this ADR implements — is committed alongside this change (it was
   untracked before this PR).

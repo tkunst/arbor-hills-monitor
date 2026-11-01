@@ -13,7 +13,7 @@ Copied verbatim from the queue block; this block is the spec.
 - **Goal (paste this):**
 
   ```
-  Follow docs/overnight-coder.md. Goal + full spec: the coder:woi-two-digit-year block in /Volumes/Samsung-Pro-2TB/Lotext/documents/overnight-coder-queue.md -- read that block first, it IS the goal. Copy it to docs/overnight-coder-handoffs/woi-two-digit-year.md as the PR's first commit.
+  Follow docs/overnight-coder.md. Goal + full spec: the coder:woi-two-digit-year block in /Volumes/Samsung-Pro-2TB/Lotext/documents/overnight-coder-queue.md -- read that block first, it IS the goal. Copy it to docs/overnight-coder-handoffs/archive/woi-two-digit-year.md as the PR's first commit.
 
   In one line: in woi_table_parser.py, read row timestamps printed with a two-digit year ("10/1/25 7:56", and "10/1/25 15:55 ADJ"), storing dt in the four-digit form, so reports 97d39ba7 and 6d0f88ed (~19,750 lines, 0 read today) parse. LIVE path: 91-file regression (every reading main reads unchanged), per-report added counts, cross-filing value check, every new >=145F reading listed, downstream headline/severity changes. Start from a fresh branch off origin/main. End at a DRAFT PR.
   ```

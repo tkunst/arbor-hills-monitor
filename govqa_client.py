@@ -9,7 +9,7 @@ monitor had never seen) came to light. This module is the pure-ish client for it
 watching, alerting, staging and the Sheet are govqa_watcher.py.
 
 The site is an ASP.NET WebForms page with a DevExpress grid tied to a live
-session, and the working method (docs/overnight-coder-handoffs/rrd-mpart-records.md
+session, and the working method (docs/overnight-coder-handoffs/archive/rrd-mpart-records.md
 §1C-bis, learned the hard way in 9/2026) is followed exactly:
 
   KEYWORD LIST  headless Playwright, ONE term per search, newest-first, paged with

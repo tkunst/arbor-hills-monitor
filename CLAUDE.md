@@ -514,7 +514,7 @@ external users but no sensitive data). Public repo.
   intentionally off (it raced the watcher, 2026-07-07), so draining a
   backlog is a manual `workflow_dispatch` — the notice says so.
 - `doc_pipeline_liveness.py` — **stall-hardening part (a)** (handoff
-  `docs/overnight-coder-handoffs/stall-hardening.md`; the 2026-08-02
+  `docs/overnight-coder-handoffs/archive/stall-hardening.md`; the 2026-08-02
   digest-recovery lesson, when two newly added facilities pushed the backlog
   over `watcher.max_new_docs_per_run`, the watcher deferred EVERY run to a
   backfill whose schedule was off, and nothing alarmed for two weeks). The

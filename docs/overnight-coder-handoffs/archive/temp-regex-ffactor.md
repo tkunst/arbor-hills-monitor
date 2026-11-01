@@ -10,7 +10,7 @@ Copied verbatim from the Lotext overnight-coder queue (2026-10-23).
 - **Goal (paste this):**
 
   ```
-  Follow docs/overnight-coder.md. Goal + full spec: the coder:temp-regex-ffactor block in /Volumes/Samsung-Pro-2TB/Lotext/documents/overnight-coder-queue.md -- read that block first, it IS the goal. Copy it to docs/overnight-coder-handoffs/temp-regex-ffactor.md as the PR's first commit.
+  Follow docs/overnight-coder.md. Goal + full spec: the coder:temp-regex-ffactor block in /Volumes/Samsung-Pro-2TB/Lotext/documents/overnight-coder-queue.md -- read that block first, it IS the goal. Copy it to docs/overnight-coder-handoffs/archive/temp-regex-ffactor.md as the PR's first commit.
 
   In one line: stop email_alerts._TEMP_RE from reading EPA Method 19 F-factors ("Fd (factor) 9340", OCR "9340 F,, (factor)") as Fahrenheit, keep every existing true positive, add the 10/16 N1504 OCR line as a negative test. Start from a fresh branch off origin/main. End at a DRAFT PR.
   ```

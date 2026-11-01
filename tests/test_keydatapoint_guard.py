@@ -1,5 +1,5 @@
 """key_data_point guard + urgency_reason + HOV ceiling context
-(coder:keydatapoint-guard, docs/overnight-coder-handoffs/keydatapoint-guard.md).
+(coder:keydatapoint-guard, docs/overnight-coder-handoffs/archive/keydatapoint-guard.md).
 
 The 2026-10-08 bug: an [URGENT] email and the public Sheet row for an N2688 WOI
 Status Report said a well read 202F. The 202 was a Depth to Bottom sounding (feet)

@@ -415,7 +415,7 @@ def redact_names(text):
 # --- Shared public-safety view (added for build_search_index) -----------------
 # render_entry and build_search_index both need the SAME redacted title/summary/
 # key-data-point and the SAME link scheme check -- the one thing that must be
-# exactly right (see docs/overnight-coder-handoffs/public-records-search-index.md).
+# exactly right (see docs/overnight-coder-handoffs/archive/public-records-search-index.md).
 # Computed once here so there is exactly one place this logic lives, not two
 # that can silently drift apart. Returns RAW, unescaped text: render_entry HTML-
 # escapes it with _esc() same as before; build_search_index needs no escaping of

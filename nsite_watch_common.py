@@ -13,7 +13,7 @@ the tab/label/noun/snapshot-builder differences are normalized out. This
 module is the ONE place that scaffolding lives now.
 
 DELIBERATELY NOT consolidated here (per the handoff's explicit instruction —
-see docs/overnight-coder-handoffs/sheet-writer-watcher-consolidation.md):
+see docs/overnight-coder-handoffs/archive/sheet-writer-watcher-consolidation.md):
 
   - `nsite_submissions_watcher.py` — only ~28% similar to this family (a
     different, wider site set via `nsite_submissions.tiers`, no

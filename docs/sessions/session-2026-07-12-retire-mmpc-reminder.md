@@ -116,7 +116,7 @@ tree — see `.claude/COORDINATION.md`.
    MACT exceedance produces **no measurement and no alert** today. Feeding the
    already-built, 16-test `woi_table_parser` output into `measurements[]` closes
    both the archive *and* the alerting gap.
-   - **Deliverable:** `docs/overnight-coder-handoffs/woi-auto-routing.md` — a self-contained goal
+   - **Deliverable:** `docs/overnight-coder-handoffs/archive/woi-auto-routing.md` — a self-contained goal
      spec for the `docs/overnight-coder.md` loop, with the design pinned (route
      *above* `parse_document` to keep the Decode base domain-agnostic; per-well
      summary to a new tab + only ≥131 °F readings into Measurements, not ~14k raw
@@ -137,7 +137,7 @@ tree — see `.claude/COORDINATION.md`.
 ## Loose ends (for a future session)
 
 - **WOI auto-routing (Session-WOI, item 7)** — handoff staged at
-  `docs/overnight-coder-handoffs/woi-auto-routing.md`; queued for the overnight-coder loop. Check
+  `docs/overnight-coder-handoffs/archive/woi-auto-routing.md`; queued for the overnight-coder loop. Check
   `gh pr list --state open` the morning after the run (merged PR, or a draft-PR
   stop). Manual follow-up after merge: re-extract the two historical WOI reports.
 - **Topology regen (PR #8) — DONE** — merged to `main` as `e7e7447`.

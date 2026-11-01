@@ -1,6 +1,6 @@
 # Session 2026-07-15 — GFL air liveness check (Stream E hardening)
 
-Overnight-coder loop against `docs/overnight-coder-handoffs/gfl-air-liveness.md`,
+Overnight-coder loop against `docs/overnight-coder-handoffs/archive/gfl-air-liveness.md`,
 closing ADR 014's one residual — the **OBJECTID-reset silent stall**. The wrinkle
 this session: the handoff's core premise changed under it, turning a
 "merge-on-mocked-green" hardening of a *disabled* stream into a **live-path change**.

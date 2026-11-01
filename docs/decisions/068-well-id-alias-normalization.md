@@ -1,6 +1,6 @@
 # ADR 068 — Well-ID alias normalization (curated map, exact match, WOI + Measurements)
 
-*Status: **BUILT, DRAFT PR** — 2026-10-12 (handoff `docs/overnight-coder-handoffs/well-id-normalization.md`,
+*Status: **BUILT, DRAFT PR** — 2026-10-12 (handoff `docs/overnight-coder-handoffs/archive/well-id-normalization.md`,
 queue slug `coder:well-id-normalization`). Live-path change: not auto-merged.*
 
 ## Context
@@ -126,7 +126,7 @@ Measurements row.
 
 ## Addendum (2026-10-22): one well registry, owned by this repo
 
-Spec: `docs/overnight-coder-handoffs/well-registry.md` (`coder:well-registry`).
+Spec: `docs/overnight-coder-handoffs/archive/well-registry.md` (`coder:well-registry`).
 
 **Why.** The rulings lived in a Lotext script (`merge_well_aliases.py`: 60
 aliases, 12 ruled new wells, 31 probes). This repo only got an exported copy of

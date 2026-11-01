@@ -7,7 +7,7 @@ perimeter air), merged; (2) a Trisha-requested overnight-coder *queue* system
 ## 1. Stream E — GFL perimeter air (merged)
 
 Ran the overnight-coder loop (`docs/overnight-coder.md`) against
-`docs/overnight-coder-handoffs/gfl-air-arcgis.md`. Kicked off ~1am (timed so the
+`docs/overnight-coder-handoffs/archive/gfl-air-arcgis.md`. Kicked off ~1am (timed so the
 heavy build landed near/after the weekly usage reset).
 
 **Spike verdict: path A.** The dashboard
@@ -87,7 +87,7 @@ All in `/Volumes/Samsung-Pro-2TB/Cowork-claude/`:
 - **`TASKS.md`** — two not-urgent follow-ups: optimize the overnight worker/coder
   timing (the coder runs before the worker, so worker-gated builds carry a ~2-night
   latency) and automate the nightly Apple Note.
-- This repo: **`docs/overnight-coder-handoffs/ridgewood-h2s.md`** +
+- This repo: **`docs/overnight-coder-handoffs/archive/ridgewood-h2s.md`** +
   **`gfl-air-liveness.md`** (new) — the `coder:ridgewood-h2s` and
   `coder:gfl-air-liveness` handoffs, both staged so they're runnable now.
 - Bonus: demonstrated pushing a Goal to an Apple Note (`osascript`) for
@@ -148,7 +148,7 @@ Per Trisha: make Stream E compute a rolling 24-hr average so the H2S alert match
 the action level's own averaging period (the ADR-014 decision-4 nuance).
 
 - New coder-queue item **`coder:gfl-air-24h-average`** (dependency `null`, ready)
-  with a full repo handoff `docs/overnight-coder-handoffs/gfl-air-24h-average.md`
+  with a full repo handoff `docs/overnight-coder-handoffs/archive/gfl-air-24h-average.md`
   (`c0b2a85`).
 - Design: fire the H2S alert on a **rolling 24-hr per-station average** (computed
   server-side in one grouped ArcGIS `avg(H2S)` query over `Date > now-24h`,

@@ -42,7 +42,7 @@ than it actually was.
   `_page_texts` (the sole `fitz`-touching function), so no PDF is ever opened at
   test time.
 - `docs/decisions/033-neshap-exceedance-extraction.md`,
-  `docs/overnight-coder-handoffs/neshap-exceedance-extraction.md` — documentation
+  `docs/overnight-coder-handoffs/archive/neshap-exceedance-extraction.md` — documentation
   only.
 - **Confirmed via grep: zero callers of `neshap_table_parser` anywhere else in the
   repo.** Nothing in `watcher.py`, `backfill.py`, any router, or any GitHub Actions
@@ -196,7 +196,7 @@ being traced was new, not merely because a commit landed).
 - `neshap_table_parser.py`
 - `tests/test_neshap_parser.py`
 - `docs/decisions/033-neshap-exceedance-extraction.md`
-- `docs/overnight-coder-handoffs/neshap-exceedance-extraction.md`
+- `docs/overnight-coder-handoffs/archive/neshap-exceedance-extraction.md`
 - Comparison references: `woi_table_parser.py`,
   `docs/security-reviews/security-review-2026-07-11-nsite-msg-docx-extraction.md`,
   `docs/security-reviews/security-review-2026-07-18-gfl-air-24h-average.md`
