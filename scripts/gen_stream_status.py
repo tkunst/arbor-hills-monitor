@@ -21,9 +21,9 @@ fails if the committed table and this script's live output ever diverge --
 the same pattern `tests/test_sitemap.py` uses for site/sitemap.xml.
 
 This table answers ONLY "is it live right now." Each flag's activation DATE
-and the human decision behind it stay in CLAUDE.md's hand-written per-module
-prose above the table -- that's history, not state, and a generator has no
-way to know it.
+and the human decision behind it stay in the hand-written per-module notes
+(docs/architecture.md since 2026-11-01; formerly CLAUDE.md, above the table)
+-- that's history, not state, and a generator has no way to know it.
 
 Usage: python3 scripts/gen_stream_status.py
 """
