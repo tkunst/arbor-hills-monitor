@@ -365,21 +365,6 @@ def test_a_listed_name_wrapped_across_lines_is_still_withheld(monkeypatch):
     assert out.count("[name withheld]") == 3
 
 
-def test_listed_name_words_are_dropped_from_the_deduplicated_tail(monkeypatch):
-    # Past the cap a full name's words are no longer adjacent, so phrase matching
-    # can't see them; every word of a listed name is dropped from the tail. This
-    # also covers a name added AFTER the text was cached (prepare_content re-runs
-    # at index time).
-    names = ["Jane Doe"]
-    monkeypatch.setattr(name_check, "KNOWN_NAMES", names)
-    monkeypatch.setattr(name_check, "_KNOWN_NAME_RES", [(name_check._word_re(n), n) for n in names])
-    cached_before_listing = "alpha " * 30 + "AHWW312R Jane, 158.3 doe. AHW272R4"
-    out = fts.prepare_content(cached_before_listing, cap=100)
-    tail = out.split("\n")[1] if "\n" in out else out[100:]
-    assert "AHWW312R" in out and "AHW272R4" in out
-    assert "jane" not in out.lower() and "doe" not in out.lower()
-
-
 def test_a_failed_refresh_keeps_the_good_cached_copy(tmp_path):
     cache = _script("build_fulltext_cache")
     index = tmp_path / "search-index.json"
@@ -435,14 +420,6 @@ def test_year_rule_matches_search_js():
     assert fts.entry_year({"date": "2023/05/01"}) == "2023"
 
 
-def test_possessive_and_hyphenated_name_words_are_dropped_from_the_tail(monkeypatch):
-    names = ["Scott Miller"]
-    monkeypatch.setattr(name_check, "KNOWN_NAMES", names)
-    monkeypatch.setattr(name_check, "_KNOWN_NAME_RES", [])   # phrase pass sees nothing: tail rule only
-    out = fts.prepare_content("alpha " * 30 + "Miller's report; Miller-Smith; AHWW312R", cap=100)
-    assert "miller" not in out.lower() and "AHWW312R" in out
-
-
 def test_cache_keeps_full_uncapped_text_so_late_names_are_still_phrases(tmp_path, monkeypatch):
     # The cache must hold the full text (adjacency intact): a name listed AFTER
     # caching is then withheld as a phrase at index time, wherever it appears.
@@ -465,3 +442,28 @@ def test_cache_keeps_full_uncapped_text_so_late_names_are_still_phrases(tmp_path
     monkeypatch.setattr(name_check, "_KNOWN_NAME_RES", [(name_check._word_re(n), n) for n in names])
     rec = fts.build_record(_entry(), cached, cap=1000)
     assert "jane" not in rec["content"].lower() and "doe" not in rec["content"].lower()
+
+
+def test_common_words_in_names_stay_searchable_past_the_cap(monkeypatch):
+    # "Mark Johnson" is listed, but "Johnson Creek" (a real drain) and the verb
+    # "mark" must stay searchable anywhere in a long document.
+    names = ["Mark Johnson"]
+    monkeypatch.setattr(name_check, "KNOWN_NAMES", names)
+    monkeypatch.setattr(name_check, "_KNOWN_NAME_RES", [(name_check._word_re(n), n) for n in names])
+    out = fts.prepare_content("alpha " * 30 + "Johnson Creek outfall; mark the well; Mark Johnson signed.", cap=100)
+    assert "Johnson" in out and "Creek" in out and "mark" in out
+    assert "Mark Johnson" not in out
+
+
+def test_refresh_skips_blank_pages_and_stops_after_three():
+    from datetime import date
+
+    cache = _script("build_fulltext_cache")
+    today = date(2026, 11, 2)
+    old = "2026-09-01"
+    assert not cache._needs_refresh({"status": "ok", "pages": 12, "text_pages": 11, "fetched": old}, today)
+    assert not cache._needs_refresh({"status": "ok", "pages": 100, "text_pages": 95, "fetched": old}, today)
+    assert cache._needs_refresh({"status": "ok", "pages": 100, "text_pages": 60, "fetched": old}, today)
+    assert cache._needs_refresh({"status": "no_text", "pages": 2, "text_pages": 0, "fetched": old}, today)
+    assert not cache._needs_refresh({"status": "no_text", "pages": 2, "text_pages": 0, "fetched": old,
+                                     "refreshes": cache.MAX_REFRESHES}, today)

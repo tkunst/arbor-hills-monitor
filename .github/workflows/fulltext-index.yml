@@ -33,6 +33,8 @@ on:
 
 permissions:
   contents: read
+  # Only to delete this workflow's own superseded cache entries (last step).
+  actions: write
 
 concurrency:
   group: fulltext-index
@@ -104,3 +106,17 @@ jobs:
         with:
           path: .fulltext-bundle
           key: fulltext-bundle-v1-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Delete superseded full-text cache entries
+        # Each run saves a new text cache and bundle; without this the repo's
+        # 10 GB Actions cache would evict other workflows' state (for example
+        # the OCR backfill's resume state). Keeps the newest 2 of each prefix;
+        # touches only keys starting with fulltext-.
+        if: steps.flag.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          for prefix in fulltext-text-v1- fulltext-bundle-v1-; do
+            gh cache list --key "$prefix" --sort created_at --order desc --limit 100 --json id --jq '.[2:][].id' |
+              while read -r id; do gh cache delete "$id"; done
+          done

@@ -67,11 +67,21 @@ def save_manifest(cache_dir: str, manifest: dict) -> None:
 REFRESH_SCANNED_AFTER_DAYS = 30
 
 
+MAX_REFRESHES = 3
+
+
 def _needs_refresh(m: dict, today: date) -> bool:
+    """Due a re-fetch: no text at all, or a material share of textless pages
+    (more than one page AND more than 10%: a blank separator or back page is
+    not a scan), at most MAX_REFRESHES times, every REFRESH_SCANNED_AFTER_DAYS."""
     if m.get("status") not in ("ok", "no_text"):
         return False
-    if m.get("status") == "ok" and m.get("text_pages", 0) >= m.get("pages", 0):
+    if m.get("refreshes", 0) >= MAX_REFRESHES:
         return False
+    if m.get("status") == "ok":
+        textless = m.get("pages", 0) - m.get("text_pages", 0)
+        if textless <= 1 or textless <= 0.10 * m.get("pages", 0):
+            return False
     try:
         fetched = date.fromisoformat(m.get("fetched", ""))
     except ValueError:
@@ -256,7 +266,8 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
                 f.write(content)
             status = "ok" if content else "no_text"
             manifest[key] = {"status": status, "pages": len(pages), "text_pages": text_pages,
-                             "chars": len(content), "fetched": today}
+                             "chars": len(content), "fetched": today,
+                             "refreshes": prior.get("refreshes", 0) + 1 if prior.get("status") in ("ok", "no_text") else 0}
             counts["fetched"] += 1
             counts["redactions"] += n_red
             if status == "no_text":
@@ -265,7 +276,8 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
             if prior.get("status") in ("ok", "no_text"):
                 # A failed REFRESH keeps the good cached copy and its counts; the
                 # new fetched date puts the next refresh 30 days out.
-                manifest[key] = {**prior, "fetched": today, "last_refresh_error": type(e).__name__}
+                manifest[key] = {**prior, "fetched": today, "last_refresh_error": type(e).__name__,
+                                 "refreshes": prior.get("refreshes", 0) + 1}
             else:
                 manifest[key] = {"status": f"error:{type(e).__name__}", "fetched": today,
                                  "attempts": prior.get("attempts", 0) + 1}

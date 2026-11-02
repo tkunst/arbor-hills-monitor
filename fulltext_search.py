@@ -20,12 +20,14 @@ Scope rules live HERE so both scripts and the tests share one copy:
   findings_feed.redact_names: on whole documents a bare surname inside another
   word ("Hall" in "shall") is common, and findings_feed's per-match prefix scan
   is quadratic on a 3M-character text.
-- Text is capped per document: the first PROSE_CAP_CHARS characters verbatim,
-  then each remaining distinct word once -- minus every word that belongs to a
-  listed name (listed_name_words), because phrase redaction cannot see a name
-  whose words are no longer adjacent. This runs again at index time, so a name
-  added to a list later is also dropped from text cached before it was added. A 300-page WOI table stays
-  findable by well ID without storing every number in the public index.
+- Redaction always runs on the FULL text, before any capping: the text cache
+  stores full redacted text, and prepare_content redacts first, then caps (the
+  first PROSE_CAP_CHARS characters verbatim, then each remaining distinct word
+  once). A full name's words are therefore still adjacent whenever a list is
+  applied, including a name added after the document was cached. A 300-page
+  WOI table stays findable by well ID without storing every number. (An earlier
+  version also dropped every word of a listed name from the tail; that removed
+  ordinary words like "Johnson" in "Johnson Creek" and is no longer needed.)
 """
 from __future__ import annotations
 
@@ -111,15 +113,6 @@ def redact(text: str) -> str:
     return redact_secret_names(text) or ""
 
 
-def listed_name_words() -> set[str]:
-    """Every single word of every listed name (name_check.KNOWN_NAMES and
-    REDACT_NAMES), lower-cased. Used on the de-duplicated tail, where a full
-    name's words are no longer next to each other, so phrase matching cannot work
-    there: any word that is part of a listed name is dropped from the tail."""
-    names = list(name_check.KNOWN_NAMES) + os.environ.get("REDACT_NAMES", "").split(",")
-    return {w.lower() for n in names for w in n.split() if w}
-
-
 def prepare_content(text: str, cap: int = PROSE_CAP_CHARS) -> str:
     """Redact, normalize and cap one document's text for the public index."""
     text = redact(normalize(text))
@@ -128,14 +121,10 @@ def prepare_content(text: str, cap: int = PROSE_CAP_CHARS) -> str:
     cut = text.rfind(" ", 0, cap)
     head = text[: cut if cut > cap // 2 else cap]
     seen = {w.lower() for w in head.split()}
-    name_words = listed_name_words()
     tail = []
     for w in text[len(head):].split():
         lw = w.lower()
-        # Check every part of a word, so a possessive or hyphenated form of a
-        # listed name ("Miller's", "Miller-Smith") is dropped too.
-        parts = [p for p in re.split(r"[\W_]+", lw) if p]
-        if lw in seen or len(w) > TAIL_MAX_WORD_LEN or any(p in name_words for p in parts):
+        if lw in seen or len(w) > TAIL_MAX_WORD_LEN:
             continue
         seen.add(lw)
         tail.append(w)
