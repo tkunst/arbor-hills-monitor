@@ -34,7 +34,7 @@ requests>=2.32
 # laughs: the bytes are an untrusted nSITE download, so a hostile document.xml
 # must be refused (raised → caught as a poison strike), never entity-expanded.
 defusedxml>=0.7          # XXE-safe drop-in for xml.etree in _docx_body_text
-extract-msg>=0.55       # .msg envelope + attachment extraction (GPL)
+extract-msg>=0.57.0       # .msg envelope + attachment extraction (GPL)
 xlrd>=2.0                # legacy .xls attachments (e.g. lab-report EDDs)
 openpyxl>=3.1             # .xlsx attachments, in case a future EDD is that format
 
