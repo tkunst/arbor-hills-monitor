@@ -627,3 +627,8 @@ def test_failed_batch_is_retried_not_skipped_and_old_results_cleared():
     body = js[i:js.index("}", js.index("then(function (datas)", i))]
     assert "next += batch.length" in body               # only after the batch loaded
     assert "searchResults.appendChild(moreBtn);   // make the offered retry possible" in js
+
+
+def test_year_select_is_optional_for_old_cached_pages():
+    js = open(os.path.join(_REPO, "site", "public-records", "search.js"), encoding="utf-8").read()
+    assert "if (filterYear) {\n      fillSelect(filterYear, collectYears(data));" in js
