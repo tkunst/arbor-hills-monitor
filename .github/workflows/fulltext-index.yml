@@ -70,7 +70,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .fulltext-cache
-          key: fulltext-text-v1-${{ github.run_id }}
+          key: fulltext-text-v1-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: fulltext-text-v1-
       - name: Fetch and extract new documents
         if: steps.flag.outputs.enabled == 'true'
@@ -92,7 +92,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: .fulltext-cache
-          key: fulltext-text-v1-${{ github.run_id }}
+          key: fulltext-text-v1-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Build the Pagefind bundle
         if: steps.flag.outputs.enabled == 'true'
         env:
@@ -103,4 +103,4 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: .fulltext-bundle
-          key: fulltext-bundle-v1-${{ github.run_id }}
+          key: fulltext-bundle-v1-${{ github.run_id }}-${{ github.run_attempt }}

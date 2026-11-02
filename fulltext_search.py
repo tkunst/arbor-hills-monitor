@@ -43,7 +43,8 @@ TAIL_MAX_WORD_LEN = 40
 _DRIVE_ID = re.compile(r"^https://drive\.google\.com/(?:file/d/|open\?id=)([A-Za-z0-9_-]{10,})")
 _NSITE_ID = re.compile(r"^https://[a-z0-9.-]*michigan\.gov/.*?/(?:downloadpdf|downloadfile)/(-?\d+)\b",
                        re.IGNORECASE)
-_YEAR = re.compile(r"^(\d{4})(?:-|$)")
+# Same rule as search.js entryYear(): the date's four leading digits.
+_YEAR = re.compile(r"^(\d{4})")
 _WS = re.compile(r"\s+")
 _WORD_EDGE = re.compile(r"^\W+|\W+$")
 

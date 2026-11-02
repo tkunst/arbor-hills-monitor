@@ -378,3 +378,58 @@ def test_listed_name_words_are_dropped_from_the_deduplicated_tail(monkeypatch):
     tail = out.split("\n")[1] if "\n" in out else out[100:]
     assert "AHWW312R" in out and "AHW272R4" in out
     assert "jane" not in out.lower() and "doe" not in out.lower()
+
+
+def test_a_failed_refresh_keeps_the_good_cached_copy(tmp_path):
+    cache = _script("build_fulltext_cache")
+    index = tmp_path / "search-index.json"
+    index.write_text(json.dumps([_entry()]))
+    c = tmp_path / "c"
+    c.mkdir()
+    prior = {"status": "ok", "pages": 10, "text_pages": 4, "chars": 99, "fetched": "2026-09-01"}
+    (c / "manifest.json").write_text(json.dumps({fts.doc_key(DRIVE): prior}))
+
+    class Boom:
+        def fetch(self, key, entry, dest):
+            raise ConnectionError("x")
+
+    cache.run(str(index), str(c), 10, fetcher=Boom())
+    m = json.loads((c / "manifest.json").read_text())[fts.doc_key(DRIVE)]
+    assert m["status"] == "ok" and m["pages"] == 10 and m["text_pages"] == 4
+    assert m["last_refresh_error"] == "ConnectionError" and m["fetched"] != "2026-09-01"
+
+
+def test_one_unreadable_drive_file_does_not_switch_oauth_off(tmp_path, monkeypatch):
+    cache = _script("build_fulltext_cache")
+    import archive_client as ac
+
+    calls = []
+    monkeypatch.setattr(ac, "is_configured", lambda *a, **k: True)
+    monkeypatch.setattr(ac, "oauth_drive_service", lambda: object())
+
+    def dl(_svc, file_id, dest):
+        calls.append(file_id)
+        if file_id == "bad" * 4:
+            raise PermissionError("not created by this app")
+        with open(dest, "wb") as f:
+            f.write(b"%PDF-1.7 x")
+
+    monkeypatch.setattr(ac, "download_file", dl)
+    monkeypatch.setattr(cache, "public_drive_download", lambda fid, dest: open(dest, "wb").write(b"%PDF-1.7"))
+    f = cache.Fetcher()
+    f.fetch("drive_" + "bad" * 4, {}, str(tmp_path / "1.pdf"))
+    f.fetch("drive_" + "good" * 3, {}, str(tmp_path / "2.pdf"))
+    assert calls == ["bad" * 4, "good" * 3]      # OAuth still used for the second file
+    assert f._drive_ok is True
+
+
+def test_oauth_download_must_be_a_pdf(tmp_path):
+    cache = _script("build_fulltext_cache")
+    p = tmp_path / "x.pdf"
+    p.write_bytes(b"<html>quota</html>")
+    with pytest.raises(ValueError):
+        cache.check_pdf(str(p))
+
+
+def test_year_rule_matches_search_js():
+    assert fts.entry_year({"date": "2023/05/01"}) == "2023"

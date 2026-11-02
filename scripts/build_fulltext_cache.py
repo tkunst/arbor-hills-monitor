@@ -144,6 +144,15 @@ PUBLIC_DRIVE_DOWNLOAD = "https://drive.usercontent.google.com/download"
 MAX_PDF_BYTES = 200 * 1024 * 1024
 
 
+def check_pdf(dest: str) -> None:
+    """Both download paths: under the size cap, and actually a PDF."""
+    if os.path.getsize(dest) > MAX_PDF_BYTES:
+        raise ValueError("file over size cap")
+    with open(dest, "rb") as f:
+        if f.read(5) != b"%PDF-":
+            raise ValueError("not a PDF")
+
+
 def public_drive_download(file_id: str, dest: str, timeout: int = 120) -> None:
     """Fetch a PUBLIC ("anyone with the link") Drive file without credentials.
     The Mirror copies the feed links to are public by design, so this needs no
@@ -162,9 +171,7 @@ def public_drive_download(file_id: str, dest: str, timeout: int = 120) -> None:
                 if size > MAX_PDF_BYTES:
                     raise ValueError("file over size cap")
                 f.write(chunk)
-    with open(dest, "rb") as f:
-        if f.read(5) != b"%PDF-":
-            raise ValueError("not a PDF")
+    check_pdf(dest)
 
 
 class Fetcher:
@@ -184,17 +191,24 @@ class Fetcher:
             if self._drive_ok is not False:
                 import archive_client as ac
 
-                try:
-                    if self._drive is None:
+                if self._drive is None:
+                    try:
                         if not ac.is_configured():
                             raise RuntimeError("archive OAuth not configured")
                         self._drive = ac.oauth_drive_service()
-                    ac.download_file(self._drive, file_id, dest)
-                    self._drive_ok = True
-                    return
-                except Exception:  # noqa: BLE001 -- fall back to the public link
-                    if self._drive_ok is None:
-                        self._drive_ok = False  # creds broken: stop retrying OAuth this run
+                    except Exception:  # noqa: BLE001 -- no usable creds: public link all run
+                        self._drive_ok = False
+                if self._drive is not None:
+                    try:
+                        ac.download_file(self._drive, file_id, dest)
+                        check_pdf(dest)
+                        self._drive_ok = True
+                        return
+                    except Exception as e:  # noqa: BLE001 -- this file only: public link
+                        # A refresh-token failure means the creds are dead for
+                        # the whole run; any other error is about this one file.
+                        if type(e).__name__ == "RefreshError":
+                            self._drive_ok = False
             public_drive_download(file_id, dest)
         else:
             import nsite_client as nc
@@ -246,8 +260,13 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
             if status == "no_text":
                 counts["no_text"] += 1
         except Exception as e:  # noqa: BLE001 -- one bad document must not stop the run
-            manifest[key] = {"status": f"error:{type(e).__name__}", "fetched": today,
-                             "attempts": prior.get("attempts", 0) + 1}
+            if prior.get("status") in ("ok", "no_text"):
+                # A failed REFRESH keeps the good cached copy and its counts; the
+                # new fetched date puts the next refresh 30 days out.
+                manifest[key] = {**prior, "fetched": today, "last_refresh_error": type(e).__name__}
+            else:
+                manifest[key] = {"status": f"error:{type(e).__name__}", "fetched": today,
+                                 "attempts": prior.get("attempts", 0) + 1}
             counts["errors"] += 1
         if (counts["fetched"] + counts["errors"]) % 25 == 0:
             save_manifest(cache_dir, manifest)  # resumable if the job is killed
