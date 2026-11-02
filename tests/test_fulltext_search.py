@@ -108,7 +108,7 @@ def test_prepare_content_caps_and_keeps_distinct_tail_words():
 
 
 def test_short_text_is_unchanged_apart_from_whitespace():
-    assert fts.prepare_content("a  b\n\n\nc") == "a b\nc"
+    assert fts.prepare_content("a  b\n\n\nc") == "a b c"
 
 
 # --- records -------------------------------------------------------------------
@@ -352,3 +352,29 @@ def test_bundle_refused_when_old_or_denylist_changed_or_missing(tmp_path):
     stale = _bundle(tmp_path, [DRIVE], "2026-11-03", deny="0" * 64)
     assert ok.check(str(stale), str(index), date(2026, 11, 3))[1].startswith("bundle was built before")
     assert ok.check(str(tmp_path / "nope"), str(index), date(2026, 11, 3))[0] is False
+
+
+def test_a_listed_name_wrapped_across_lines_is_still_withheld(monkeypatch):
+    names = ["Scott Miller", "Mark Johnson"]          # no surname-only entries
+    monkeypatch.setattr(name_check, "KNOWN_NAMES", names)
+    monkeypatch.setattr(name_check, "_KNOWN_NAME_RES", [(name_check._word_re(n), n) for n in names])
+    monkeypatch.setenv("REDACT_NAMES", "Pat Quigley")
+    out = fts.prepare_content("Contact Scott\nMiller or Mark  \n Johnson today; also Pat\r\nQuigley.")
+    for w in ("Scott", "Miller", "Mark", "Johnson", "Pat", "Quigley"):
+        assert w not in out, w
+    assert out.count("[name withheld]") == 3
+
+
+def test_listed_name_words_are_dropped_from_the_deduplicated_tail(monkeypatch):
+    # Past the cap a full name's words are no longer adjacent, so phrase matching
+    # can't see them; every word of a listed name is dropped from the tail. This
+    # also covers a name added AFTER the text was cached (prepare_content re-runs
+    # at index time).
+    names = ["Jane Doe"]
+    monkeypatch.setattr(name_check, "KNOWN_NAMES", names)
+    monkeypatch.setattr(name_check, "_KNOWN_NAME_RES", [(name_check._word_re(n), n) for n in names])
+    cached_before_listing = "alpha " * 30 + "AHWW312R Jane, 158.3 doe. AHW272R4"
+    out = fts.prepare_content(cached_before_listing, cap=100)
+    tail = out.split("\n")[1] if "\n" in out else out[100:]
+    assert "AHWW312R" in out and "AHW272R4" in out
+    assert "jane" not in out.lower() and "doe" not in out.lower()

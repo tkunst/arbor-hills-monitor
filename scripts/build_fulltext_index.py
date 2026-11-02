@@ -50,7 +50,7 @@ def collect_records(entries: list[dict], cache_dir: str, cap: int) -> tuple[list
             seen.add(key)
             records.append(rec)
     coverage = {"documents": len(entries), "full_text": len(records),
-                "eligible": sum(1 for e in entries if fts.is_eligible(e))}
+                "eligible": len({fts.doc_key(e["link"]) for e in entries if fts.is_eligible(e)})}
     return records, coverage
 
 

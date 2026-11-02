@@ -21,7 +21,10 @@ Scope rules live HERE so both scripts and the tests share one copy:
   word ("Hall" in "shall") is common, and findings_feed's per-match prefix scan
   is quadratic on a 3M-character text.
 - Text is capped per document: the first PROSE_CAP_CHARS characters verbatim,
-  then each remaining distinct word once. A 300-page WOI table stays
+  then each remaining distinct word once -- minus every word that belongs to a
+  listed name (listed_name_words), because phrase redaction cannot see a name
+  whose words are no longer adjacent. This runs again at index time, so a name
+  added to a list later is also dropped from text cached before it was added. A 300-page WOI table stays
   findable by well ID without storing every number in the public index.
 """
 from __future__ import annotations
@@ -41,8 +44,8 @@ _DRIVE_ID = re.compile(r"^https://drive\.google\.com/(?:file/d/|open\?id=)([A-Za
 _NSITE_ID = re.compile(r"^https://[a-z0-9.-]*michigan\.gov/.*?/(?:downloadpdf|downloadfile)/(-?\d+)\b",
                        re.IGNORECASE)
 _YEAR = re.compile(r"^(\d{4})(?:-|$)")
-_WS = re.compile(r"[ \t\r\f\v]+")
-_BLANK_LINES = re.compile(r"\n\s*\n+")
+_WS = re.compile(r"\s+")
+_WORD_EDGE = re.compile(r"^\W+|\W+$")
 
 
 def doc_key(link: str) -> str | None:
@@ -75,10 +78,10 @@ def entry_year(entry: dict) -> str:
 
 
 def normalize(text: str) -> str:
-    """Collapse runs of spaces/tabs and blank lines; keep single newlines."""
-    text = _WS.sub(" ", text or "")
-    text = _BLANK_LINES.sub("\n", text)
-    return text.strip()
+    """Collapse ALL whitespace, line breaks included, to single spaces -- before
+    any name redaction runs, so a name wrapped across lines ("Scott\nMiller")
+    is one phrase again. Search needs no line structure."""
+    return _WS.sub(" ", text or "").strip()
 
 
 def _secret_name_re():
@@ -92,7 +95,8 @@ def _secret_name_re():
             variants.add(" ".join(toks[i:]))
     if not variants:
         return None
-    alt = "|".join(re.escape(v) for v in sorted(variants, key=len, reverse=True))
+    alt = "|".join(r"\s+".join(re.escape(p) for p in v.split())
+                   for v in sorted(variants, key=len, reverse=True))
     return re.compile(r"\b(?:" + alt + r")\b", re.IGNORECASE)
 
 
@@ -107,6 +111,15 @@ def redact(text: str) -> str:
     return redact_secret_names(text) or ""
 
 
+def listed_name_words() -> set[str]:
+    """Every single word of every listed name (name_check.KNOWN_NAMES and
+    REDACT_NAMES), lower-cased. Used on the de-duplicated tail, where a full
+    name's words are no longer next to each other, so phrase matching cannot work
+    there: any word that is part of a listed name is dropped from the tail."""
+    names = list(name_check.KNOWN_NAMES) + os.environ.get("REDACT_NAMES", "").split(",")
+    return {w.lower() for n in names for w in n.split() if w}
+
+
 def prepare_content(text: str, cap: int = PROSE_CAP_CHARS) -> str:
     """Redact, normalize and cap one document's text for the public index."""
     text = redact(normalize(text))
@@ -115,10 +128,11 @@ def prepare_content(text: str, cap: int = PROSE_CAP_CHARS) -> str:
     cut = text.rfind(" ", 0, cap)
     head = text[: cut if cut > cap // 2 else cap]
     seen = {w.lower() for w in head.split()}
+    name_words = listed_name_words()
     tail = []
     for w in text[len(head):].split():
         lw = w.lower()
-        if lw in seen or len(w) > TAIL_MAX_WORD_LEN:
+        if lw in seen or len(w) > TAIL_MAX_WORD_LEN or _WORD_EDGE.sub("", lw) in name_words:
             continue
         seen.add(lw)
         tail.append(w)

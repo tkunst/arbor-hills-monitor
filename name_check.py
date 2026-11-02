@@ -94,8 +94,10 @@ ORG_ALLOWLIST = [
 
 def _word_re(term: str) -> re.Pattern:
     # Whole-word, case-insensitive. \b on each side so "Testa" does not match
-    # inside "attestation" and "Miller" does not match a substring.
-    return re.compile(r"\b" + re.escape(term) + r"\b", re.IGNORECASE)
+    # inside "attestation" and "Miller" does not match a substring. Any run of
+    # whitespace (including a line break) between a full name's words matches,
+    # since extracted PDF text often wraps a name across lines.
+    return re.compile(r"\b" + r"\s+".join(re.escape(p) for p in term.split()) + r"\b", re.IGNORECASE)
 
 
 _KNOWN_NAME_RES = [(_word_re(n), n) for n in KNOWN_NAMES]

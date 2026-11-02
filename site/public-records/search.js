@@ -480,9 +480,14 @@
         if (!cov || !cov.full_text) {
           return;
         }
+        // Out of the ELIGIBLE documents (hand-curated records and records
+        // without a Mirror or EGLE link are never full-text searched), so the
+        // count can actually reach its total.
+        var total = cov.eligible || cov.documents;
         fulltextLabel.textContent = "Search inside the documents' text (" +
           Number(cov.full_text).toLocaleString("en-US") + " of " +
-          Number(cov.documents).toLocaleString("en-US") + " documents so far)";
+          Number(total).toLocaleString("en-US") +
+          (cov.full_text >= total ? " documents)" : " documents so far)");
         fulltextToggle.hidden = false;
       })
       .catch(function () {
