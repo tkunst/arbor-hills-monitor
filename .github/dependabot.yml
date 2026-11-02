@@ -55,6 +55,16 @@ updates:
       - "dependencies"
     commit-message:
       prefix: "build(deps)"
+    ignore:
+      # Stay on PyMuPDF 1.x (Trisha, 2026-11-01, PR #191 closed). 2.0 parsed
+      # every WOI table, scanned filing, .msg and .docx identically, but it adds
+      # ~190 MB of dependencies (onnxruntime, numpy, networkx) to every CI
+      # install and changes OCR text of image attachments (sub-pixel image
+      # placement). Nothing here uses 2.0's new layout features. Patch/minor
+      # 1.x updates still come through; SECURITY updates are not affected by
+      # `ignore`. Revisit if 1.x stops getting fixes.
+      - dependency-name: "pymupdf"
+        update-types: ["version-update:semver-major"]
     groups:
       # One grouped PR per week for everything patch/minor; a major bump for
       # any package is deliberately left OUT of this group (no `major` in
