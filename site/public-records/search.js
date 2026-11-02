@@ -608,6 +608,11 @@
     browseList.hidden = true;
     browseNav.hidden = true;
     searchResults.hidden = false;
+    // Clear the previous (title/summary or older) results right away, so they
+    // can never be mistaken for this search's answer while it loads or fails.
+    while (searchResults.firstChild) {
+      searchResults.removeChild(searchResults.firstChild);
+    }
     setStatus("Searching inside the documents...");
     loadPagefind()
       .then(function (pf) {
@@ -634,10 +639,14 @@
         var localOnly = !!(f.dateMin || f.dateMax || f.facility === NOT_STATED ||
           f.type === NOT_STATED || f.severity === NOT_STATED || f.year === NOT_STATED);
 
+        // `next` only advances once a batch has loaded, so a failed batch is
+        // retried by the next "Show more" instead of being skipped.
         function fetchBatch() {
           var batch = hits.slice(next, next + FULLTEXT_PAGE_SIZE);
-          next += batch.length;
-          return Promise.all(batch.map(function (h) { return h.data(); }));
+          return Promise.all(batch.map(function (h) { return h.data(); })).then(function (datas) {
+            next += batch.length;
+            return datas;
+          });
         }
 
         function loadMore() {
@@ -693,6 +702,9 @@
               return;
             }
             moreBtn.disabled = false;
+            if (!moreBtn.parentNode) {
+              searchResults.appendChild(moreBtn);   // make the offered retry possible
+            }
             setStatus("Couldn't load more results. Try Show more again, or search again.");
           });
         }

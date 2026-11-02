@@ -605,3 +605,25 @@ def test_fulltext_click_fetch_cap_is_present():
     js = open(os.path.join(_REPO, "site", "public-records", "search.js"), encoding="utf-8").read()
     assert "FULLTEXT_MAX_FETCH_PER_CLICK" in js and "fetchedThisClick < FULLTEXT_MAX_FETCH_PER_CLICK" in js
     assert "no readable text" not in js   # the label never claims all the rest are textless
+
+
+def test_first_name_marker_takes_the_surname_with_it():
+    out, n = name_check.redact_denylist("Complaint from Trisha Smithfield, re odor. Trisha-directed. trisha said ok")
+    assert "Smithfield" not in out and "trisha" not in out.lower()
+    assert "odor" in out and " said ok" in out      # a lower-case next word is left alone
+    assert n == 3
+
+
+def test_fulltext_toggle_runs_do_not_double_deploy_pages_when_off():
+    with open(os.path.join(_REPO, ".github", "workflows", "pages.yml"), encoding="utf-8") as f:
+        y = f.read()
+    gate = "if: github.event.workflow_run.name != 'fulltext-index' || steps.fulltext.outputs.enabled == 'true'"
+    assert y.count(gate) == 3
+
+
+def test_failed_batch_is_retried_not_skipped_and_old_results_cleared():
+    js = open(os.path.join(_REPO, "site", "public-records", "search.js"), encoding="utf-8").read()
+    i = js.index("function fetchBatch()")
+    body = js[i:js.index("}", js.index("then(function (datas)", i))]
+    assert "next += batch.length" in body               # only after the batch loaded
+    assert "searchResults.appendChild(moreBtn);   // make the offered retry possible" in js

@@ -56,6 +56,10 @@ KNOWN_NAMES = [
 # does NOT publish -- see findings_feed; this is defense-in-depth in case such
 # text ever lands in a PUBLISHED field like title or source_public). Matched as
 # case-insensitive substrings.
+# Markers that are a person's FIRST name: redact_denylist also withholds the
+# capitalized word right after them (the surname) in whole-document text.
+FIRST_NAME_MARKERS = {"trisha"}
+
 INTERNAL_MARKERS = [
     "trisha",              # "Trisha-directed", "Trisha's FOIA Downloads"
     "full-circle",         # internal working-folder name
@@ -152,9 +156,23 @@ def redact_denylist(text: str, name_repl: str = "[name withheld]",
         text, k = rx.subn(name_repl, text)
         n += k
     for marker in INTERNAL_MARKERS:
-        text, k = re.compile(re.escape(marker), re.IGNORECASE).subn(marker_repl, text)
+        if marker in FIRST_NAME_MARKERS:
+            # A first-name marker in running text is usually followed by the
+            # surname: withhold that Capitalized word too, so "<first> <Surname>"
+            # never becomes "[withheld] <Surname>" (a searchable surname).
+            rx = _first_name_re(marker)
+        else:
+            rx = re.compile(re.escape(marker), re.IGNORECASE)
+        text, k = rx.subn(marker_repl, text)
         n += k
     return text, n
+
+
+def _first_name_re(marker: str) -> re.Pattern:
+    """Case-insensitive first name, then an optional Capitalized next word (the
+    surname); the surname part is case-SENSITIVE so an ordinary lower-case word
+    after the name is left alone."""
+    return re.compile(r"(?i:" + re.escape(marker) + r")(?:\s+[A-Z][\w'\u2019-]+)?")
 
 
 def find_heuristic_hits(text: str) -> list[dict]:

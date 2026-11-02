@@ -83,11 +83,17 @@ jobs:
             echo "::warning::full-text bundle missing or stale; deploying without full-text search"
           fi
       - name: Configure Pages
+        # A run triggered by fulltext-index only matters when full text is on;
+        # with the flag off it would just redeploy the same site a second time
+        # each day, so those runs skip deploying.
+        if: github.event.workflow_run.name != 'fulltext-index' || steps.fulltext.outputs.enabled == 'true'
         uses: actions/configure-pages@v6
       - name: Upload site/ as the Pages artifact
+        if: github.event.workflow_run.name != 'fulltext-index' || steps.fulltext.outputs.enabled == 'true'
         uses: actions/upload-pages-artifact@v5
         with:
           path: 'site'
       - name: Deploy to GitHub Pages
+        if: github.event.workflow_run.name != 'fulltext-index' || steps.fulltext.outputs.enabled == 'true'
         id: deployment
         uses: actions/deploy-pages@v5
