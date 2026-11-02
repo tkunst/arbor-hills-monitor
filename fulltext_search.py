@@ -21,13 +21,14 @@ Scope rules live HERE so both scripts and the tests share one copy:
   word ("Hall" in "shall") is common, and findings_feed's per-match prefix scan
   is quadratic on a 3M-character text.
 - Redaction always runs on the FULL text, before any capping: the text cache
-  stores full redacted text, and prepare_content redacts first, then caps (the
-  first PROSE_CAP_CHARS characters verbatim, then each remaining distinct word
-  once). A full name's words are therefore still adjacent whenever a list is
-  applied, including a name added after the document was cached. A 300-page
-  WOI table stays findable by well ID without storing every number. (An earlier
-  version also dropped every word of a listed name from the tail; that removed
-  ordinary words like "Johnson" in "Johnson Creek" and is no longer needed.)
+  stores full redacted text, and prepare_content redacts first, then caps. So a
+  full name's words are still adjacent whenever a list is applied, including a
+  name added after the document was cached.
+- The cap is a plain cut: the first PROSE_CAP_CHARS characters, verbatim, and
+  nothing after them (review round 8: an earlier "each remaining distinct word
+  once" tail produced word orders that are not in the document, shown as
+  "matching text" and matchable as phrases). A longer document is marked
+  `truncated` and the page says only its first part is searched.
 """
 from __future__ import annotations
 
@@ -37,10 +38,7 @@ import os
 
 import name_check
 
-PROSE_CAP_CHARS = 100_000
-# Words longer than this in the de-duplicated tail are dropped (base64 blobs,
-# run-together table rows): nobody searches for them and they bloat the index.
-TAIL_MAX_WORD_LEN = 40
+PROSE_CAP_CHARS = 300_000
 
 _DRIVE_ID = re.compile(r"^https://drive\.google\.com/(?:file/d/|open\?id=)([A-Za-z0-9_-]{10,})")
 _NSITE_ID = re.compile(r"^https://[a-z0-9.-]*michigan\.gov/.*?/(?:downloadpdf|downloadfile)/(-?\d+)\b",
@@ -114,21 +112,16 @@ def redact(text: str) -> str:
 
 
 def prepare_content(text: str, cap: int = PROSE_CAP_CHARS) -> str:
-    """Redact, normalize and cap one document's text for the public index."""
-    text = redact(normalize(text))
+    """Redact, normalize, then cut one document's text to at most `cap`
+    characters (at a word boundary when one is reasonably close)."""
+    return _cut(redact(normalize(text)), cap)
+
+
+def _cut(text: str, cap: int) -> str:
     if len(text) <= cap:
         return text
     cut = text.rfind(" ", 0, cap)
-    head = text[: cut if cut > cap // 2 else cap]
-    seen = {w.lower() for w in head.split()}
-    tail = []
-    for w in text[len(head):].split():
-        lw = w.lower()
-        if lw in seen or len(w) > TAIL_MAX_WORD_LEN:
-            continue
-        seen.add(lw)
-        tail.append(w)
-    return head + ("\n" + " ".join(tail) if tail else "")
+    return text[: cut if cut > cap // 2 else cap]
 
 
 def build_record(entry: dict, text: str, cap: int = PROSE_CAP_CHARS) -> dict | None:
@@ -137,10 +130,13 @@ def build_record(entry: dict, text: str, cap: int = PROSE_CAP_CHARS) -> dict | N
     Mirror copy), so a full-text hit opens the same document the list does."""
     if not is_eligible(entry):
         return None
-    content = prepare_content(text, cap)
+    full = redact(normalize(text))
+    content = _cut(full, cap)
     if not content:
         return None
     meta = {"title": entry.get("title") or "(untitled document)"}
+    if len(content) < len(full):
+        meta["truncated"] = "1"
     filters: dict[str, list[str]] = {}
     for field in ("date", "facility", "type", "severity"):
         if entry.get(field):

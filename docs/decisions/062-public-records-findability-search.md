@@ -201,9 +201,12 @@ Its tooltip says which date it is.
   3. Every document's text gets both of the feed's name redactions
      (`name_check.redact_denylist`, new, and `findings_feed.redact_names` /
      `REDACT_NAMES`), at cache time and again at index time.
-  4. Per-document cap: the first 100,000 characters verbatim, then each
-     remaining distinct word once (a 300-page WOI table stays findable by well
-     ID). A bundle over `max_bundle_mb` (400) is refused, not deployed.
+  4. Per-document cap: the first 300,000 characters, verbatim, and nothing
+     after them, so every excerpt and phrase match is real document text. A
+     longer document's results say only its first part is searched. (A
+     "remaining distinct words" tail was tried and dropped in review: it
+     produced word orders that are not in the document.) A bundle over
+     `max_bundle_mb` (400) is refused, not deployed.
 - **UI:** a "Search inside the documents' text (N of M documents so far)"
   checkbox appears only when `fulltext/coverage.json` exists. Results reuse the
   existing card, labelled "Matching text from the document" (not a summary),

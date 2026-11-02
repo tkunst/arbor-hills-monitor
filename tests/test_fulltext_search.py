@@ -95,16 +95,19 @@ def test_build_record_redacts_again_at_index_time(monkeypatch):
 
 # --- cap -----------------------------------------------------------------------
 
-def test_prepare_content_caps_and_keeps_distinct_tail_words():
-    head = "alpha " * 30
-    tail = "AHWW312R 158.3 AHWW312R alpha " + "x" * 50 + " AHW272R4"
-    out = fts.prepare_content(head + tail, cap=100)
-    assert len(out.split("\n")[0]) <= 100
-    tail_words = out.split("\n")[1].split()
-    assert tail_words.count("AHWW312R") == 1          # each distinct word once
-    assert "AHW272R4" in tail_words and "158.3" in tail_words
-    assert "alpha" not in tail_words                   # already in the head
-    assert not any(len(w) > fts.TAIL_MAX_WORD_LEN for w in tail_words)
+def test_cap_is_a_plain_verbatim_cut_with_no_reordered_tail():
+    # Nothing after the cap: an earlier de-duplicated tail produced word orders
+    # that are not in the document (shown as "matching text", phrase-matchable).
+    text = "alpha " * 30 + "AHWW312R 158.3 AHW272R4"
+    out = fts.prepare_content(text, cap=100)
+    assert len(out) <= 100 and out == text[: len(out)].strip()
+    assert "AHWW312R" not in out
+
+
+def test_build_record_marks_a_truncated_document():
+    long_rec = fts.build_record(_entry(), "word " * 100, cap=50)
+    assert long_rec["meta"]["truncated"] == "1"
+    assert "truncated" not in fts.build_record(_entry(), "short text", cap=50)["meta"]
 
 
 def test_short_text_is_unchanged_apart_from_whitespace():
@@ -194,7 +197,7 @@ def test_index_collect_records_only_published_non_hand_curated(tmp_path):
     entries = [_entry(), _entry(source="x", link=other)]
     records, cov = idx.collect_records(entries, str(tmp_path), 1000)
     assert [r["url"] for r in records] == [DRIVE]
-    assert cov == {"documents": 2, "full_text": 1, "eligible": 1}
+    assert cov == {"documents": 2, "full_text": 1, "eligible": 1, "pending": 1}
 
 
 # --- flag ----------------------------------------------------------------------
@@ -440,17 +443,18 @@ def test_cache_keeps_full_uncapped_text_so_late_names_are_still_phrases(tmp_path
     names = ["Jane Doe"]
     monkeypatch.setattr(name_check, "KNOWN_NAMES", names)
     monkeypatch.setattr(name_check, "_KNOWN_NAME_RES", [(name_check._word_re(n), n) for n in names])
-    rec = fts.build_record(_entry(), cached, cap=1000)
+    rec = fts.build_record(_entry(), cached, cap=10 ** 7)
+    assert "for the operator" in rec["content"]
     assert "jane" not in rec["content"].lower() and "doe" not in rec["content"].lower()
 
 
-def test_common_words_in_names_stay_searchable_past_the_cap(monkeypatch):
+def test_common_words_in_listed_names_stay_searchable(monkeypatch):
     # "Mark Johnson" is listed, but "Johnson Creek" (a real drain) and the verb
     # "mark" must stay searchable anywhere in a long document.
     names = ["Mark Johnson"]
     monkeypatch.setattr(name_check, "KNOWN_NAMES", names)
     monkeypatch.setattr(name_check, "_KNOWN_NAME_RES", [(name_check._word_re(n), n) for n in names])
-    out = fts.prepare_content("alpha " * 30 + "Johnson Creek outfall; mark the well; Mark Johnson signed.", cap=100)
+    out = fts.prepare_content("Johnson Creek outfall; mark the well; Mark Johnson signed.")
     assert "Johnson" in out and "Creek" in out and "mark" in out
     assert "Mark Johnson" not in out
 
@@ -508,3 +512,33 @@ def test_an_outage_stops_after_a_run_of_connection_errors(tmp_path):
     assert counts["transient"] == cache.MAX_CONSECUTIVE_TRANSIENT and counts["stopped_transient"] == 1
     m = json.loads((tmp_path / "c" / "manifest.json").read_text())
     assert all(v["attempts"] == 0 for v in m.values())
+
+
+def test_drive_html_interstitial_is_transient_and_stops_the_run(tmp_path):
+    import retry_policy
+
+    cache = _script("build_fulltext_cache")
+    assert retry_policy.is_transient(cache.ThrottledError("quota page"))
+
+
+def test_nsite_429_wrapped_in_runtimeerror_is_detected():
+    cache = _script("build_fulltext_cache")
+    try:
+        try:
+            raise _HTTP429("x")
+        except _HTTP429 as inner:
+            raise RuntimeError("download failed") from inner
+    except RuntimeError as e:
+        assert cache._status_in_chain(e) == 429
+
+
+def test_index_and_cache_agree_on_max_attempts():
+    assert _script("build_fulltext_index").MAX_ATTEMPTS == _script("build_fulltext_cache").MAX_ATTEMPTS
+
+
+def test_pending_count(tmp_path):
+    idx = _script("build_fulltext_index")
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "a": {"status": "ok"}, "b": {"status": "no_text"},
+        "c": {"status": "error:X", "attempts": 1}, "d": {"status": "error:X", "attempts": 3}}))
+    assert idx.pending_count({"a", "b", "c", "d", "e"}, str(tmp_path)) == 2   # c (retrying) + e (new)

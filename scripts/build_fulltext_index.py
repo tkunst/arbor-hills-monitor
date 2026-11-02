@@ -49,9 +49,32 @@ def collect_records(entries: list[dict], cache_dir: str, cap: int) -> tuple[list
         if rec:
             seen.add(key)
             records.append(rec)
-    coverage = {"documents": len(entries), "full_text": len(records),
-                "eligible": len({fts.doc_key(e["link"]) for e in entries if fts.is_eligible(e)})}
+    eligible = {fts.doc_key(e["link"]) for e in entries if fts.is_eligible(e)}
+    coverage = {"documents": len(entries), "full_text": len(records), "eligible": len(eligible),
+                "pending": pending_count(eligible, cache_dir)}
     return records, coverage
+
+
+# Same retry limit as build_fulltext_cache.MAX_ATTEMPTS (pinned by a test).
+MAX_ATTEMPTS = 3
+
+
+def pending_count(eligible: set, cache_dir: str) -> int:
+    """Eligible documents the cache job will still try: never fetched, or failed
+    fewer than MAX_ATTEMPTS times. When this is 0, every remaining eligible
+    document has no readable text (or failed for good), so the page stops saying
+    "so far"."""
+    path = os.path.join(cache_dir, "manifest.json")
+    manifest = {}
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            manifest = json.load(f)
+    n = 0
+    for key in eligible:
+        m = manifest.get(key)
+        if m is None or (str(m.get("status", "")).startswith("error") and m.get("attempts", 0) < MAX_ATTEMPTS):
+            n += 1
+    return n
 
 
 async def write_bundle(records: list[dict], out_dir: str) -> None:

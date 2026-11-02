@@ -1190,8 +1190,9 @@ behavior, update its entry here in the same PR.
   (`"source"` key present), and only Drive-mirror or nSITE links (`doc_key`). Text
   is redacted with BOTH of the feed's name lists (`name_check.redact_denylist`,
   added for this, and `findings_feed.redact_names` / `REDACT_NAMES`) when cached
-  and again when indexed, then capped (`PROSE_CAP_CHARS` verbatim, then each
-  remaining distinct word once). This module IS the publish gate for the bundle:
+  and again when indexed, ALWAYS on the full text, then cut to `PROSE_CAP_CHARS`
+  verbatim (nothing after the cut; a longer document is marked `truncated` and
+  its results say so). This module IS the publish gate for the bundle:
   `check_publish_safety` cannot read Pagefind's compressed shards.
   `scripts/build_fulltext_cache.py` fills an incremental text cache (Drive OAuth
   with a public-link fallback; at most `max_downloads_per_run` per run; 3 retries;

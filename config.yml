@@ -2626,5 +2626,5 @@ fulltext_search:
   enabled: false
   max_downloads_per_run: 2000
   max_fetch_minutes: 150
-  prose_cap_chars: 100000
+  prose_cap_chars: 300000
   max_bundle_mb: 400

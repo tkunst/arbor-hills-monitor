@@ -484,10 +484,11 @@
         // without a Mirror or EGLE link are never full-text searched), so the
         // count can actually reach its total.
         var total = cov.eligible || cov.documents;
+        var still = cov.pending > 0 ? " documents so far)" :
+          (cov.full_text < total ? " documents; the rest have no readable text)" : " documents)");
         fulltextLabel.textContent = "Search inside the documents' text (" +
           Number(cov.full_text).toLocaleString("en-US") + " of " +
-          Number(total).toLocaleString("en-US") +
-          (cov.full_text >= total ? " documents)" : " documents so far)");
+          Number(total).toLocaleString("en-US") + still;
         fulltextToggle.hidden = false;
       })
       .catch(function () {
@@ -583,7 +584,9 @@
     label.className = "finding-auto-label";
     label.textContent = "Matching text from the document. Scanned pages are read by " +
       "text recognition, which can make mistakes; names on the monitor's withheld " +
-      "list are replaced. Open the document to read it in full.";
+      "list are replaced. " +
+      (meta.truncated ? "This is a long document: only its first part is searched. " : "") +
+      "Open the document to read it in full.";
     card.appendChild(label);
     var p = document.createElement("p");
     p.className = "finding-fulltext";

@@ -168,6 +168,13 @@ def check_pdf(dest: str) -> None:
             raise ValueError("not a PDF")
 
 
+class ThrottledError(Exception):
+    """Drive answered a download with an HTML page instead of the file (its
+    quota / interstitial page, served with status 200). Carries status_code 503
+    so retry_policy treats it as transient: never the document's fault."""
+    status_code = 503
+
+
 def public_drive_download(file_id: str, dest: str, timeout: int = 120) -> None:
     """Fetch a PUBLIC ("anyone with the link") Drive file without credentials.
     The Mirror copies the feed links to are public by design, so this needs no
@@ -179,6 +186,7 @@ def public_drive_download(file_id: str, dest: str, timeout: int = 120) -> None:
                       params={"id": file_id, "export": "download", "confirm": "t"},
                       stream=True, timeout=timeout) as r:
         r.raise_for_status()
+        ctype = (r.headers.get("Content-Type") or "").lower()
         size = 0
         with open(dest, "wb") as f:
             for chunk in r.iter_content(1 << 16):
@@ -186,7 +194,23 @@ def public_drive_download(file_id: str, dest: str, timeout: int = 120) -> None:
                 if size > MAX_PDF_BYTES:
                     raise ValueError("file over size cap")
                 f.write(chunk)
+    if "text/html" in ctype:
+        raise ThrottledError("Drive returned an HTML page instead of the file")
     check_pdf(dest)
+
+
+def _status_in_chain(exc: BaseException):
+    """First HTTP status found on the exception or anything it was raised from
+    (nsite_client.download_pdf wraps its last failure in a RuntimeError)."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        for status in (getattr(exc, "status_code", None),
+                       getattr(getattr(exc, "response", None), "status_code", None)):
+            if isinstance(status, int):
+                return status
+        exc = exc.__cause__ or exc.__context__
+    return None
 
 
 class Fetcher:
@@ -299,7 +323,7 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
                 # Back off for the whole run on the first rate limit, or after a
                 # run of transient failures (an outage): the rest wait for the
                 # next run instead of failing one after another.
-                if getattr(getattr(e, "response", None), "status_code", None) == 429 or \
+                if _status_in_chain(e) == 429 or isinstance(e, ThrottledError) or \
                         consecutive_transient >= MAX_CONSECUTIVE_TRANSIENT:
                     counts["stopped_transient"] = 1
                     break
