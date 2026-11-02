@@ -1189,7 +1189,7 @@ behavior, update its entry here in the same PR.
   redaction, gate and ADR 064 facility scope carry over), never a hand-curated row
   (`"source"` key present), and only Drive-mirror or nSITE links (`doc_key`). Text
   is redacted with BOTH of the feed's name lists (`name_check.redact_denylist`,
-  added for this, and `findings_feed.redact_names` / `REDACT_NAMES`) when cached
+  added for this, and the `REDACT_NAMES` + full-text-only `FULLTEXT_REDACT_NAMES` secrets, whole-word) when cached
   and again when indexed, ALWAYS on the full text, then cut to `PROSE_CAP_CHARS`
   verbatim (nothing after the cut; a longer document is marked `truncated` and
   its results say so). This module IS the publish gate for the bundle:

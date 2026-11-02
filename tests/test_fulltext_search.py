@@ -632,3 +632,20 @@ def test_failed_batch_is_retried_not_skipped_and_old_results_cleared():
 def test_year_select_is_optional_for_old_cached_pages():
     js = open(os.path.join(_REPO, "site", "public-records", "search.js"), encoding="utf-8").read()
     assert "if (filterYear) {\n      fillSelect(filterYear, collectYears(data));" in js
+
+
+def test_fulltext_only_names_are_withheld_in_full_text_but_never_touch_the_feed(monkeypatch):
+    import findings_feed
+
+    monkeypatch.delenv("REDACT_NAMES", raising=False)
+    monkeypatch.setenv("FULLTEXT_REDACT_NAMES", "Pat Quigley Doe")
+    out = fts.redact_secret_names("Pat Quigley Doe filed it; Doe later; Quigley Doe too.")
+    assert "Quigley" not in out and "Doe" not in out
+    # The feed's redactor is built from REDACT_NAMES only, so these names can
+    # never be relabelled "an EGLE inspector" on the public feed.
+    assert findings_feed._build_name_redactor() is None
+
+
+def test_workflow_passes_the_fulltext_only_secret_to_both_steps():
+    with open(os.path.join(_REPO, ".github", "workflows", "fulltext-index.yml"), encoding="utf-8") as f:
+        assert f.read().count("FULLTEXT_REDACT_NAMES: ${{ secrets.FULLTEXT_REDACT_NAMES }}") == 2

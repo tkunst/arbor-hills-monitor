@@ -84,12 +84,23 @@ def normalize(text: str) -> str:
     return _WS.sub(" ", text or "").strip()
 
 
+# Names withheld from full text ONLY. REDACT_NAMES also rewrites the public feed
+# ("an EGLE inspector", findings_feed.redact_names), so a name that is not an
+# EGLE inspector must never go there; it goes in this secret instead (Trisha,
+# 2026-11-02). Comma-separated full names; same variant rule (full name down to
+# the bare surname).
+FULLTEXT_ONLY_ENV = "FULLTEXT_REDACT_NAMES"
+
+
 def _secret_name_re():
-    """Whole-word regex over every REDACT_NAMES variant (full name down to the
+    """Whole-word regex over every REDACT_NAMES and FULLTEXT_REDACT_NAMES variant
+    (full name down to the
     bare surname, longest first -- the same variants findings_feed builds), or
     None when the secret is unset. Read at call time so tests and CI env apply."""
     variants = set()
-    for name in os.environ.get("REDACT_NAMES", "").split(","):
+    names = (os.environ.get("REDACT_NAMES", "") + "," +
+             os.environ.get(FULLTEXT_ONLY_ENV, "")).split(",")
+    for name in names:
         toks = name.strip().split()
         for i in range(len(toks)):
             variants.add(" ".join(toks[i:]))

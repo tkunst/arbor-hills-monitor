@@ -11,7 +11,7 @@ name: fulltext-index
 #      max_fetch_minutes (incremental; the whole Mirror fills in about two runs).
 #   3. Save the text cache, then build the Pagefind bundle from it
 #      (build_fulltext_index.py: published entries only, no hand-curated rows,
-#      denylist + REDACT_NAMES redaction, size cap) and save the bundle as its
+#      denylist + REDACT_NAMES + FULLTEXT_REDACT_NAMES redaction, size cap) and save the bundle as its
 #      own cache entry.
 #   4. pages.yml restores the newest bundle into site/public-records/fulltext/
 #      at deploy time (it is triggered by this workflow finishing).
@@ -84,6 +84,8 @@ jobs:
           GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN_KUNST }}
           GOAUTH_ARCHIVE_FOLDER_ID: ${{ secrets.GOAUTH_ARCHIVE_FOLDER_ID }}
           REDACT_NAMES: ${{ secrets.REDACT_NAMES }}
+          # Full-text-only withheld names (not inspectors; never in REDACT_NAMES).
+          FULLTEXT_REDACT_NAMES: ${{ secrets.FULLTEXT_REDACT_NAMES }}
           MAX_DOWNLOADS: ${{ github.event.inputs.max_downloads }}
         run: |
           python scripts/build_fulltext_cache.py --cache .fulltext-cache \
@@ -99,6 +101,8 @@ jobs:
         if: steps.flag.outputs.enabled == 'true'
         env:
           REDACT_NAMES: ${{ secrets.REDACT_NAMES }}
+          # Full-text-only withheld names (not inspectors; never in REDACT_NAMES).
+          FULLTEXT_REDACT_NAMES: ${{ secrets.FULLTEXT_REDACT_NAMES }}
         run: python scripts/build_fulltext_index.py --cache .fulltext-cache --out .fulltext-bundle
       - name: Save the bundle for pages.yml
         if: steps.flag.outputs.enabled == 'true'
