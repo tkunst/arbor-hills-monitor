@@ -28,6 +28,11 @@
   // full-text toggle simply never appears.
   var FULLTEXT_DIR = "fulltext/";
   var FULLTEXT_PAGE_SIZE = 20;
+  // Browser-side filters (date range, "Not stated") are applied after Pagefind,
+  // so one click may need several batches; never fetch more than this many
+  // result fragments for one click, so a broad query can't trigger thousands
+  // of requests.
+  var FULLTEXT_MAX_FETCH_PER_CLICK = 200;
 
   var container = document.getElementById("public-records-search");
   if (!container) {
@@ -484,8 +489,11 @@
         // without a Mirror or EGLE link are never full-text searched), so the
         // count can actually reach its total.
         var total = cov.eligible || cov.documents;
+        // Only "so far" while documents are still queued; once nothing is
+        // pending, the remainder is a mix of scans with no text layer and files
+        // that could not be read, so the label names both, not just one.
         var still = cov.pending > 0 ? " documents so far)" :
-          (cov.full_text < total ? " documents; the rest have no readable text)" : " documents)");
+          (cov.full_text < total ? " documents; the others have no text layer or couldn't be read)" : " documents)");
         fulltextLabel.textContent = "Search inside the documents' text (" +
           Number(cov.full_text).toLocaleString("en-US") + " of " +
           Number(total).toLocaleString("en-US") + still;
@@ -635,6 +643,8 @@
         function loadMore() {
           moreBtn.disabled = true;
           var target = shown + FULLTEXT_PAGE_SIZE;
+          var fetchedThisClick = 0;
+          var hitLimit = false;
 
           function step() {
             return fetchBatch().then(function (datas) {
@@ -647,8 +657,12 @@
                   shown += 1;
                 }
               });
+              fetchedThisClick += datas.length;
               if (shown < target && next < hits.length) {
-                return step();
+                if (fetchedThisClick < FULLTEXT_MAX_FETCH_PER_CLICK) {
+                  return step();
+                }
+                hitLimit = true;
               }
               moreBtn.disabled = false;
               if (next >= hits.length && moreBtn.parentNode) {
@@ -658,7 +672,8 @@
               if (localOnly) {
                 setStatus(hits.length + noun + " these words; " +
                   (next >= hits.length ? shown + " match your filters." :
-                    "showing the first " + shown + " that match your filters."));
+                    "showing the first " + shown + " that match your filters." +
+                    (hitLimit ? " Few results match the date range; narrow the words or use the Year filter, or press Show more." : "")));
               } else {
                 setStatus(hits.length + noun + " these words. Showing " + shown + ".");
               }

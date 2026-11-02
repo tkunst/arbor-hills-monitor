@@ -97,7 +97,9 @@ def _secret_name_re():
         return None
     alt = "|".join(r"\s+".join(re.escape(p) for p in v.split())
                    for v in sorted(variants, key=len, reverse=True))
-    return re.compile(r"\b(?:" + alt + r")\b", re.IGNORECASE)
+    # (?<!\w)/(?!\w), not \b: a name that starts or ends with punctuation
+    # ("Jane Doe Jr.") has no word boundary after the final "." before a space.
+    return re.compile(r"(?<!\w)(?:" + alt + r")(?!\w)", re.IGNORECASE)
 
 
 def redact_secret_names(text: str) -> str:

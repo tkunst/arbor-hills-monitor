@@ -586,3 +586,22 @@ def test_html_from_several_documents_stops_the_run(tmp_path):
 def test_show_more_recovers_from_a_failed_fetch():
     js = open(os.path.join(_REPO, "site", "public-records", "search.js"), encoding="utf-8").read()
     assert "Couldn't load more results" in js and "moreBtn.disabled = false;" in js
+
+
+def test_secret_name_with_trailing_punctuation_is_withheld(monkeypatch):
+    monkeypatch.setenv("REDACT_NAMES", "Jane Doe Jr.")
+    out = fts.redact_secret_names("Letter from Jane Doe Jr. wrote back; Doe Jr. again.")
+    assert "Jane" not in out and "Doe" not in out
+
+
+def test_denylist_name_with_trailing_punctuation_is_withheld(monkeypatch):
+    names = ["J. Smith Jr."]
+    monkeypatch.setattr(name_check, "_KNOWN_NAME_RES", [(name_check._word_re(n), n) for n in names])
+    out, n = name_check.redact_denylist("Signed J. Smith Jr. today; attestation stays.")
+    assert "Smith" not in out and n == 1
+
+
+def test_fulltext_click_fetch_cap_is_present():
+    js = open(os.path.join(_REPO, "site", "public-records", "search.js"), encoding="utf-8").read()
+    assert "FULLTEXT_MAX_FETCH_PER_CLICK" in js and "fetchedThisClick < FULLTEXT_MAX_FETCH_PER_CLICK" in js
+    assert "no readable text" not in js   # the label never claims all the rest are textless

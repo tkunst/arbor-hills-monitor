@@ -97,7 +97,9 @@ def _word_re(term: str) -> re.Pattern:
     # inside "attestation" and "Miller" does not match a substring. Any run of
     # whitespace (including a line break) between a full name's words matches,
     # since extracted PDF text often wraps a name across lines.
-    return re.compile(r"\b" + r"\s+".join(re.escape(p) for p in term.split()) + r"\b", re.IGNORECASE)
+    # (?<!\w)/(?!\w) rather than \b, so a listed name that starts or ends with
+    # punctuation ("Jr.") still matches; identical to \b for plain names.
+    return re.compile(r"(?<!\w)" + r"\s+".join(re.escape(p) for p in term.split()) + r"(?!\w)", re.IGNORECASE)
 
 
 _KNOWN_NAME_RES = [(_word_re(n), n) for n in KNOWN_NAMES]
