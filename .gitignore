@@ -55,3 +55,8 @@ egle-n2688-state.json
 !data/well_registry.json
 !footer/canonical-footer.json
 !data/well_aliases.json
+
+# Full-text search bundle + text cache (ADR 062 addendum): built in CI, never committed.
+site/public-records/fulltext/
+.fulltext-cache/
+.fulltext-bundle/

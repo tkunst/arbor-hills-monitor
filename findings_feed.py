@@ -713,12 +713,14 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
 <input type="search" id="pr-search-q" class="search-ui-input" placeholder="Search all records" aria-label="Search all records" autocomplete="off">
 <button type="button" id="pr-search-clear" class="search-ui-clear" hidden>Clear search</button>
 </div>
+<p class="search-ui-fulltext" id="pr-fulltext-toggle" hidden><label><input type="checkbox" id="pr-search-fulltext"> <span id="pr-fulltext-label">Search inside the documents&rsquo; text</span></label></p>
 <details class="search-ui-filters">
 <summary>Filters</summary>
 <div class="search-ui-facets">
 <label>Facility <select id="pr-filter-facility"><option value="">All facilities</option></select></label>
 <label>Type <select id="pr-filter-type"><option value="">All types</option></select></label>
 <label>Severity <select id="pr-filter-severity"><option value="">All severities</option></select></label>
+<label>Year <select id="pr-filter-year" title="Year of the date on the document (or the date it was filed, when the document has none)"><option value="">All years</option></select></label>
 <label>From <input type="date" id="pr-filter-date-min" autocomplete="off"></label>
 <label>To <input type="date" id="pr-filter-date-max" autocomplete="off"></label>
 </div>

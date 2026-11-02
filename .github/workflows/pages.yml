@@ -21,7 +21,9 @@ on:
   # wasted CI minutes once a day -- not worth a second signal (e.g. a
   # commit-sha comparison) to suppress.
   workflow_run:
-    workflows: ["findings-feed"]
+    # fulltext-index: redeploy once a new full-text search bundle is built
+    # (ADR 062 addendum), so the bundle is never a day behind the feed.
+    workflows: ["findings-feed", "fulltext-index"]
     types: [completed]
   workflow_dispatch: {}
 
@@ -50,12 +52,48 @@ jobs:
           # fires, since it happens inside the same, now-finished run) — so
           # check out `main` explicitly rather than trust the event's default.
           ref: ${{ github.event_name == 'workflow_run' && 'main' || github.sha }}
+      - name: Full-text search flag
+        id: fulltext
+        run: python3 scripts/fulltext_flag.py >> "$GITHUB_OUTPUT"
+      - name: Restore the newest full-text search bundle
+        # Built and cached by fulltext-index.yml (never committed). If none is
+        # cached, or the flag is off, the page deploys without it and the
+        # full-text toggle simply never appears (search.js only shows it when
+        # fulltext/coverage.json exists).
+        if: steps.fulltext.outputs.enabled == 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: .fulltext-bundle
+          key: fulltext-bundle-v1-${{ github.run_id }}
+          restore-keys: fulltext-bundle-v1-
+      - name: Place the bundle next to the public records page
+        if: steps.fulltext.outputs.enabled == 'true'
+        # Only a bundle that matches the CURRENT published index and denylist and
+        # is at most 2 days old is deployed (scripts/fulltext_bundle_ok.py); a
+        # stale one is left out, so a withdrawn document or a newly listed name
+        # can never stay searchable.
+        run: |
+          if [ -f .fulltext-bundle/coverage.json ] && \
+             python3 scripts/fulltext_bundle_ok.py .fulltext-bundle site/public-records/search-index.json | grep -q '^ok=true$'; then
+            rm -rf site/public-records/fulltext
+            cp -R .fulltext-bundle site/public-records/fulltext
+            rm -f site/public-records/fulltext/bundle-manifest.json
+            echo "full-text bundle placed"
+          else
+            echo "::warning::full-text bundle missing or stale; deploying without full-text search"
+          fi
       - name: Configure Pages
+        # A run triggered by fulltext-index only matters when full text is on;
+        # with the flag off it would just redeploy the same site a second time
+        # each day, so those runs skip deploying.
+        if: github.event.workflow_run.name != 'fulltext-index' || steps.fulltext.outputs.enabled == 'true'
         uses: actions/configure-pages@v6
       - name: Upload site/ as the Pages artifact
+        if: github.event.workflow_run.name != 'fulltext-index' || steps.fulltext.outputs.enabled == 'true'
         uses: actions/upload-pages-artifact@v5
         with:
           path: 'site'
       - name: Deploy to GitHub Pages
+        if: github.event.workflow_run.name != 'fulltext-index' || steps.fulltext.outputs.enabled == 'true'
         id: deployment
         uses: actions/deploy-pages@v5

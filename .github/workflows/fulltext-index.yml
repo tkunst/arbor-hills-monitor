@@ -1,0 +1,122 @@
+name: fulltext-index
+
+# Full-text search over the Mirror PDFs for the public records page (ADR 062
+# addendum, 2026-11-02). Runs after each successful findings-feed run (so it
+# always reads the just-published search-index.json), plus a manual dispatch.
+#
+#   1. Restore the text cache (Actions cache, never committed: data files are
+#      never committed, see CLAUDE.md).
+#   2. build_fulltext_cache.py: download + extract + redact up to
+#      fulltext_search.max_downloads_per_run NEW documents, stopping after
+#      max_fetch_minutes (incremental; the whole Mirror fills in about two runs).
+#   3. Save the text cache, then build the Pagefind bundle from it
+#      (build_fulltext_index.py: published entries only, no hand-curated rows,
+#      denylist + REDACT_NAMES redaction, size cap) and save the bundle as its
+#      own cache entry.
+#   4. pages.yml restores the newest bundle into site/public-records/fulltext/
+#      at deploy time (it is triggered by this workflow finishing).
+#
+# Gated on config.yml's fulltext_search.enabled (ships false): with the flag
+# off every step after the check is skipped, nothing is cached and nothing new
+# deploys. stdout is public: the scripts print counts and exception class names
+# only, never a title, URL or file name (SEC-001).
+on:
+  workflow_run:
+    workflows: ["findings-feed"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      max_downloads:
+        description: "New documents to fetch this run (blank = config value)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  # Only to delete this workflow's own superseded cache entries (last step).
+  actions: write
+
+concurrency:
+  group: fulltext-index
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    # build_fulltext_cache.py stops fetching after config's max_fetch_minutes
+    # (150), leaving room for the cache save and the bundle build.
+    timeout-minutes: 200
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Same reason as pages.yml: on workflow_run, check out the commit
+          # findings-feed just pushed, not the SHA it started from.
+          ref: ${{ github.event_name == 'workflow_run' && 'main' || github.sha }}
+      - name: Feature flag
+        id: flag
+        run: python3 scripts/fulltext_flag.py >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v7
+        if: steps.flag.outputs.enabled == 'true'
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python deps
+        if: steps.flag.outputs.enabled == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes -r requirements.txt
+          pip install --require-hashes -r requirements-fulltext.txt
+      - name: Restore the text cache
+        if: steps.flag.outputs.enabled == 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: .fulltext-cache
+          key: fulltext-text-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: fulltext-text-v1-
+      - name: Fetch and extract new documents
+        if: steps.flag.outputs.enabled == 'true'
+        env:
+          # The archiver's OAuth client reads the Mirror copies it created; if it
+          # fails, the script falls back to the public no-credential link.
+          GOAUTH_CLIENT_ID: ${{ secrets.GOAUTH_CLIENT_ID_KUNST }}
+          GOAUTH_CLIENT_SECRET: ${{ secrets.GOAUTH_CLIENT_SECRET_KUNST }}
+          GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN_KUNST }}
+          GOAUTH_ARCHIVE_FOLDER_ID: ${{ secrets.GOAUTH_ARCHIVE_FOLDER_ID }}
+          REDACT_NAMES: ${{ secrets.REDACT_NAMES }}
+          MAX_DOWNLOADS: ${{ github.event.inputs.max_downloads }}
+        run: |
+          python scripts/build_fulltext_cache.py --cache .fulltext-cache \
+            ${MAX_DOWNLOADS:+--max-downloads "$MAX_DOWNLOADS"}
+      - name: Save the text cache
+        # Saved even if a later step fails, so a run's downloads are never lost.
+        if: always() && steps.flag.outputs.enabled == 'true' && hashFiles('.fulltext-cache/manifest.json') != ''
+        uses: actions/cache/save@v6
+        with:
+          path: .fulltext-cache
+          key: fulltext-text-v1-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Build the Pagefind bundle
+        if: steps.flag.outputs.enabled == 'true'
+        env:
+          REDACT_NAMES: ${{ secrets.REDACT_NAMES }}
+        run: python scripts/build_fulltext_index.py --cache .fulltext-cache --out .fulltext-bundle
+      - name: Save the bundle for pages.yml
+        if: steps.flag.outputs.enabled == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .fulltext-bundle
+          key: fulltext-bundle-v1-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Delete superseded full-text cache entries
+        # Each run saves a new text cache and bundle; without this the repo's
+        # 10 GB Actions cache would evict other workflows' state (for example
+        # the OCR backfill's resume state). Keeps the newest 2 of each prefix;
+        # touches only keys starting with fulltext-.
+        if: steps.flag.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          for prefix in fulltext-text-v1- fulltext-bundle-v1-; do
+            gh cache list --key "$prefix" --sort created_at --order desc --limit 100 --json id --jq '.[2:][].id' |
+              while read -r id; do gh cache delete "$id"; done
+          done

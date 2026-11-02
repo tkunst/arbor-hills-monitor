@@ -163,3 +163,61 @@ Three overnight-coder items, staged in `documents/overnight-coder-queue.md`
 - **Full-text PDF search (client-side, v2 of Option A).** Deferred, not
   rejected — worth doing only if excerpt search proves too shallow in
   practice.
+
+## Addendum 2026-11-02 — full-text search over the Mirror PDFs, plus a Year facet
+
+Status: proposed (ships with `fulltext_search.enabled: false`; Trisha decides
+before it goes live). Trisha, 2026-11-02: "we definitely need" full-text search
+over the Mirror files, and a Year facet.
+
+**Year facet (live with the next feed regeneration, no flag).** A Year dropdown
+in the existing Filters panel, built from each entry's own `date` (the date on
+the document, else the date filed: `findings_feed._search_entry`'s
+precedence), newest first, plus "Not stated / other" when an entry has no date.
+Its tooltip says which date it is.
+
+**Full text (the escalation path this ADR named).** Still 100% static and $0:
+
+- **Engine: Pagefind** (MIT, `pagefind[extended]` 1.6.0 in its own hashed
+  `requirements-fulltext.txt`, used only by `fulltext-index.yml`). It writes a
+  sharded index: the browser downloads only the shards a query needs, so the
+  bundle can be large without every visitor paying for it. Built through its
+  Python API (`add_custom_record`), so no per-document HTML pages are needed.
+- **Pipeline:** `scripts/build_fulltext_cache.py` downloads each eligible
+  document (Drive Mirror copy via the archiver's OAuth client, falling back to
+  the public no-credential link; nSITE links via `nsite_client`), extracts its
+  text with PyMuPDF and caches it, incrementally (at most
+  `max_downloads_per_run` new documents a run, failures retried 3 times).
+  `scripts/build_fulltext_index.py` joins the published `search-index.json`
+  with that cache and writes the bundle. Both live in the Actions cache, never
+  in git (data files are never committed). `pages.yml` restores the newest
+  bundle into `site/public-records/fulltext/` at deploy time.
+- **Scope = the gate** (check_publish_safety cannot read Pagefind's compressed
+  shards, so the rules live in `fulltext_search.py` and are tested there):
+  1. Only entries already in the PUBLISHED `search-index.json`: the existing
+     redaction, gate and core-facility scope (ADR 064) carry over.
+  2. Hand-curated rows are never full-text indexed (third-party material; the
+     drive.file scope cannot read them anyway). They stay in title/summary search.
+  3. Every document's text gets both of the feed's name redactions
+     (`name_check.redact_denylist`, new, and `findings_feed.redact_names` /
+     `REDACT_NAMES`), at cache time and again at index time.
+  4. Per-document cap: the first 300,000 characters, verbatim, and nothing
+     after them, so every excerpt and phrase match is real document text. A
+     longer document's results say only its first part is searched. (A
+     "remaining distinct words" tail was tried and dropped in review: it
+     produced word orders that are not in the document.) A bundle over
+     `max_bundle_mb` (400) is refused, not deployed.
+- **UI:** a "Search inside the documents' text (N of M documents so far)"
+  checkbox appears only when `fulltext/coverage.json` exists. Results reuse the
+  existing card, labelled "Matching text from the document" (not a summary),
+  with matches highlighted. Pagefind's excerpt is rebuilt from text nodes and
+  `<mark>` elements only, never parsed as markup.
+- **Not covered:** scans with no text layer are only searchable once
+  `backfill_mirror_ocr.py` / ADR 069 has given them one; image attachments
+  and hand-curated files are not full-text searched.
+
+**Name policy (decided by Trisha, 2026-11-02):** in full text, names on the
+two lists (the `name_check` denylist, which includes listed EGLE and operator
+staff, and `REDACT_NAMES`) are withheld; every other name in a document's text
+is published as written (for example a correspondent's first name in an email).
+The heuristic name detector is not applied to whole documents.

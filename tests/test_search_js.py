@@ -144,3 +144,44 @@ def test_search_js_and_python_port_agree_on_edge_punctuation_set():
     py_chars = set(ast.literal_eval(py_match.group(1)))
 
     assert js_chars == py_chars
+
+
+# --- Year facet + full-text mode (ADR 062 addendum, 2026-11-02) ---------------
+
+def test_year_facet_is_in_the_page_and_the_script():
+    import findings_feed
+
+    page = findings_feed.build_pages([], "2026-11-02")["index.html"]
+    assert 'id="pr-filter-year"' in page
+    js = _search_js_text()
+    assert 'getElementById("pr-filter-year")' in js
+    assert "matchesFacet(entryYear(entry), f.year)" in js
+
+
+def test_fulltext_toggle_ships_hidden_and_is_revealed_only_by_coverage():
+    import findings_feed
+
+    page = findings_feed.build_pages([], "2026-11-02")["index.html"]
+    assert re.search(r'<p class="search-ui-fulltext" id="pr-fulltext-toggle" hidden>', page)
+    js = _search_js_text()
+    assert 'FULLTEXT_DIR + "coverage.json"' in js
+    assert "fulltextToggle.hidden = false" in js
+
+
+def test_pagefind_is_loaded_lazily_from_the_same_origin_bundle():
+    js = _search_js_text()
+    # Only a relative import of the bundle next to the page: no CDN, no other host.
+    assert 'import("./" + FULLTEXT_DIR + "pagefind.js")' in js
+    assert re.search(r"import\(\s*['\"]https?:", js) is None
+
+
+def test_fulltext_excerpt_is_built_from_text_nodes_and_mark_elements():
+    js = _search_js_text()
+    assert 'document.createElement("mark")' in js
+    assert "document.createTextNode(text)" in js
+    assert "split(/<mark>|<\\/mark>/)" in js
+
+
+def test_fulltext_results_are_labelled_as_document_text_not_a_summary():
+    js = _search_js_text()
+    assert "Matching text from the document." in js

@@ -56,6 +56,10 @@ KNOWN_NAMES = [
 # does NOT publish -- see findings_feed; this is defense-in-depth in case such
 # text ever lands in a PUBLISHED field like title or source_public). Matched as
 # case-insensitive substrings.
+# Markers that are a person's FIRST name: redact_denylist also withholds the
+# capitalized word right after them (the surname) in whole-document text.
+FIRST_NAME_MARKERS = {"trisha"}
+
 INTERNAL_MARKERS = [
     "trisha",              # "Trisha-directed", "Trisha's FOIA Downloads"
     "full-circle",         # internal working-folder name
@@ -94,8 +98,12 @@ ORG_ALLOWLIST = [
 
 def _word_re(term: str) -> re.Pattern:
     # Whole-word, case-insensitive. \b on each side so "Testa" does not match
-    # inside "attestation" and "Miller" does not match a substring.
-    return re.compile(r"\b" + re.escape(term) + r"\b", re.IGNORECASE)
+    # inside "attestation" and "Miller" does not match a substring. Any run of
+    # whitespace (including a line break) between a full name's words matches,
+    # since extracted PDF text often wraps a name across lines.
+    # (?<!\w)/(?!\w) rather than \b, so a listed name that starts or ends with
+    # punctuation ("Jr.") still matches; identical to \b for plain names.
+    return re.compile(r"(?<!\w)" + r"\s+".join(re.escape(p) for p in term.split()) + r"(?!\w)", re.IGNORECASE)
 
 
 _KNOWN_NAME_RES = [(_word_re(n), n) for n in KNOWN_NAMES]
@@ -130,6 +138,41 @@ def find_denylist_hits(text: str) -> list[dict]:
         if marker in low:
             hits.append({"kind": "internal_marker", "match": marker})
     return hits
+
+
+def redact_denylist(text: str, name_repl: str = "[name withheld]",
+                    marker_repl: str = "[withheld]") -> tuple[str, int]:
+    """Replace every DENYLIST hit in `text` (known names whole-word, internal
+    markers as case-insensitive substrings -- the same matching rules
+    find_denylist_hits uses) and return (redacted_text, n_replaced). Used where a
+    whole document's text is published, e.g. the public records full-text search
+    index, so a listed name can never be searched for there."""
+    if not text:
+        return text, 0
+    n = 0
+    # Longest name first: a bare surname replaced before the full name it is part
+    # of would leave the first name behind ("Mike [name withheld]").
+    for rx, _name in sorted(_KNOWN_NAME_RES, key=lambda p: len(p[1]), reverse=True):
+        text, k = rx.subn(name_repl, text)
+        n += k
+    for marker in INTERNAL_MARKERS:
+        if marker in FIRST_NAME_MARKERS:
+            # A first-name marker in running text is usually followed by the
+            # surname: withhold that Capitalized word too, so "<first> <Surname>"
+            # never becomes "[withheld] <Surname>" (a searchable surname).
+            rx = _first_name_re(marker)
+        else:
+            rx = re.compile(re.escape(marker), re.IGNORECASE)
+        text, k = rx.subn(marker_repl, text)
+        n += k
+    return text, n
+
+
+def _first_name_re(marker: str) -> re.Pattern:
+    """Case-insensitive first name, then an optional Capitalized next word (the
+    surname); the surname part is case-SENSITIVE so an ordinary lower-case word
+    after the name is left alone."""
+    return re.compile(r"(?i:" + re.escape(marker) + r")(?:\s+[A-Z][\w'\u2019-]+)?")
 
 
 def find_heuristic_hits(text: str) -> list[dict]:
