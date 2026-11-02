@@ -222,7 +222,8 @@ person who is not an EGLE inspector, because the public feed rewrites its names
 as "an EGLE inspector". Same variant rule (full name down to the bare surname).
 
 **Name policy (decided by Trisha, 2026-11-02):** in full text, names on the
-two lists (the `name_check` denylist, which includes listed EGLE and operator
-staff, and `REDACT_NAMES`) are withheld; every other name in a document's text
+withheld lists (the `name_check` denylist, which includes listed EGLE and
+operator staff, `REDACT_NAMES`, and the full-text-only `FULLTEXT_REDACT_NAMES`)
+are withheld; every other name in a document's text
 is published as written (for example a correspondent's first name in an email).
 The heuristic name detector is not applied to whole documents.
