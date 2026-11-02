@@ -5,7 +5,7 @@ records search (ADR 062 addendum, 2026-11-02).
 Reads the PUBLISHED site/public-records/search-index.json (never the Sheet),
 and for every eligible entry (fulltext_search.is_eligible: not hand-curated, a
 Drive-mirror or nSITE link) that is not cached yet: downloads the PDF, extracts
-its text with PyMuPDF, redacts the name_check denylist, caps it, and writes
+its text with PyMuPDF, redacts both name lists (full text, never capped -- see below), and writes
 <cache>/<key>.txt plus a line in <cache>/manifest.json. Incremental and
 resumable: at most --max-downloads new documents per run, so the first fill
 spreads over several days instead of one long job. A document that fails is
@@ -37,9 +37,11 @@ import fulltext_search as fts  # noqa: E402
 DEFAULT_INDEX = "site/public-records/search-index.json"
 MANIFEST = "manifest.json"
 MAX_ATTEMPTS = 3
-# Cached text is capped more generously than the index cap, so the index cap can
-# be raised later without re-downloading everything.
-CACHE_CAP_CHARS = 300_000
+# The cache keeps each document's FULL normalized + redacted text (up to
+# MAX_RAW_CHARS), never the capped/de-duplicated form: de-duplication breaks the
+# adjacency of a full name's words, so it must only ever happen AFTER redaction
+# (at index time, in prepare_content), where a name listed after the document was
+# cached is still a matchable phrase. (Review rounds 3 and 5 on PR #203.)
 
 
 def load_manifest(cache_dir: str) -> dict:
@@ -100,7 +102,7 @@ def pending(entries: list[dict], manifest: dict, today: date | None = None) -> l
 
 
 # Stop reading a document's pages once this much raw text is in hand: the cache
-# keeps at most CACHE_CAP_CHARS of prose plus distinct words, so reading every
+# only needs so much text to make the document findable, so reading every
 # page of a 6,500-page compilation only costs CI time (seen in the real Mirror).
 MAX_RAW_CHARS = 3_000_000
 
@@ -249,7 +251,7 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
             text_pages = sum(1 for p in pages if p is None or p.strip())
             raw = "\n".join(p for p in pages if p)
             _, n_red = fts.name_check.redact_denylist(fts.normalize(raw))
-            content = fts.prepare_content(raw, cap=CACHE_CAP_CHARS)
+            content = fts.redact(fts.normalize(raw))
             with open(os.path.join(cache_dir, key + ".txt"), "w", encoding="utf-8") as f:
                 f.write(content)
             status = "ok" if content else "no_text"

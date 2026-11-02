@@ -46,7 +46,6 @@ _NSITE_ID = re.compile(r"^https://[a-z0-9.-]*michigan\.gov/.*?/(?:downloadpdf|do
 # Same rule as search.js entryYear(): the date's four leading digits.
 _YEAR = re.compile(r"^(\d{4})")
 _WS = re.compile(r"\s+")
-_WORD_EDGE = re.compile(r"^\W+|\W+$")
 
 
 def doc_key(link: str) -> str | None:
@@ -133,7 +132,10 @@ def prepare_content(text: str, cap: int = PROSE_CAP_CHARS) -> str:
     tail = []
     for w in text[len(head):].split():
         lw = w.lower()
-        if lw in seen or len(w) > TAIL_MAX_WORD_LEN or _WORD_EDGE.sub("", lw) in name_words:
+        # Check every part of a word, so a possessive or hyphenated form of a
+        # listed name ("Miller's", "Miller-Smith") is dropped too.
+        parts = [p for p in re.split(r"[\W_]+", lw) if p]
+        if lw in seen or len(w) > TAIL_MAX_WORD_LEN or any(p in name_words for p in parts):
             continue
         seen.add(lw)
         tail.append(w)

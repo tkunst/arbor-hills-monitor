@@ -433,3 +433,35 @@ def test_oauth_download_must_be_a_pdf(tmp_path):
 
 def test_year_rule_matches_search_js():
     assert fts.entry_year({"date": "2023/05/01"}) == "2023"
+
+
+def test_possessive_and_hyphenated_name_words_are_dropped_from_the_tail(monkeypatch):
+    names = ["Scott Miller"]
+    monkeypatch.setattr(name_check, "KNOWN_NAMES", names)
+    monkeypatch.setattr(name_check, "_KNOWN_NAME_RES", [])   # phrase pass sees nothing: tail rule only
+    out = fts.prepare_content("alpha " * 30 + "Miller's report; Miller-Smith; AHWW312R", cap=100)
+    assert "miller" not in out.lower() and "AHWW312R" in out
+
+
+def test_cache_keeps_full_uncapped_text_so_late_names_are_still_phrases(tmp_path, monkeypatch):
+    # The cache must hold the full text (adjacency intact): a name listed AFTER
+    # caching is then withheld as a phrase at index time, wherever it appears.
+    cache = _script("build_fulltext_cache")
+    monkeypatch.setattr(name_check, "KNOWN_NAMES", [])
+    monkeypatch.setattr(name_check, "_KNOWN_NAME_RES", [])
+    index = tmp_path / "search-index.json"
+    index.write_text(json.dumps([_entry()]))
+    long_text = ("filler " * 20000) + "signed Jane Doe for the operator"
+
+    class Ok:
+        def fetch(self, key, entry, dest):
+            open(dest, "wb").close()
+
+    cache.run(str(index), str(tmp_path / "c"), 10, fetcher=Ok(), extract=lambda _p: [long_text])
+    cached = (tmp_path / "c" / (fts.doc_key(DRIVE) + ".txt")).read_text()
+    assert "Jane Doe for the operator" in cached          # not de-duplicated / capped
+    names = ["Jane Doe"]
+    monkeypatch.setattr(name_check, "KNOWN_NAMES", names)
+    monkeypatch.setattr(name_check, "_KNOWN_NAME_RES", [(name_check._word_re(n), n) for n in names])
+    rec = fts.build_record(_entry(), cached, cap=1000)
+    assert "jane" not in rec["content"].lower() and "doe" not in rec["content"].lower()
