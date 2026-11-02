@@ -168,7 +168,7 @@ decision behind it; this table only answers "is it live right now."
 | `report_tracking.enabled` | yes |
 | `report_tracking.review_email_enabled` | no |
 | `egle_newsroom.enabled` | yes |
-| `fulltext_search.enabled` | no |
+| `fulltext_search.enabled` | yes |
 <!-- stream-status:end -->
 
 ## Forbidden patterns (do not do these)

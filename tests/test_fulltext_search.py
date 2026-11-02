@@ -202,12 +202,6 @@ def test_index_collect_records_only_published_non_hand_curated(tmp_path):
 
 # --- flag ----------------------------------------------------------------------
 
-def test_flag_ships_off():
-    flag = _script("fulltext_flag")
-    with open(os.path.join(_REPO, "config.yml"), encoding="utf-8") as f:
-        assert flag.enabled(f.read()) is False
-
-
 @pytest.mark.parametrize("text,expected", [
     ("fulltext_search:\n  enabled: true\n  max_bundle_mb: 1\n", True),
     ("fulltext_search:\n  enabled: false\n", False),

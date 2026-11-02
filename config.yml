@@ -2613,8 +2613,7 @@ egle_newsroom:
     topic_min_body_hits: 2
 
 # Full-text search over the Mirror PDFs on the public records page (ADR 062
-# addendum, 2026-11-02). Ships OFF: Trisha decides the privacy scope before it
-# goes live. scripts/build_fulltext_cache.py fills the text cache incrementally
+# addendum, 2026-11-02). Shipped OFF; activated 2026-11-02 (Trisha). scripts/build_fulltext_cache.py fills the text cache incrementally
 # (at most max_downloads_per_run new documents per run, and it stops fetching
 # after max_fetch_minutes so the job always saves its cache before
 # fulltext-index.yml's timeout; Trisha 2026-11-02: fill the whole Mirror within
@@ -2623,7 +2622,8 @@ egle_newsroom:
 # full-text indexed; every document's text is redacted with the name_check
 # denylist. A bundle over max_bundle_mb is refused, not deployed.
 fulltext_search:
-  enabled: false
+  # ACTIVATED 2026-11-02 (Trisha) after PRs #203/#204; FULLTEXT_REDACT_NAMES set.
+  enabled: true
   max_downloads_per_run: 2000
   max_fetch_minutes: 150
   prose_cap_chars: 300000
