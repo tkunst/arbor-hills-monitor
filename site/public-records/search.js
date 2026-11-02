@@ -671,7 +671,15 @@
               }
             });
           }
-          return step();
+          return step().catch(function () {
+            // A failed fragment fetch (network blip, bundle redeployed mid-
+            // session) must not leave the button stuck: re-enable it and say so.
+            if (run !== fulltextRun) {
+              return;
+            }
+            moreBtn.disabled = false;
+            setStatus("Couldn't load more results. Try Show more again, or search again.");
+          });
         }
 
         if (hits.length > FULLTEXT_PAGE_SIZE) {

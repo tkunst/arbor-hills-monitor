@@ -542,3 +542,47 @@ def test_pending_count(tmp_path):
         "a": {"status": "ok"}, "b": {"status": "no_text"},
         "c": {"status": "error:X", "attempts": 1}, "d": {"status": "error:X", "attempts": 3}}))
     assert idx.pending_count({"a", "b", "c", "d", "e"}, str(tmp_path)) == 2   # c (retrying) + e (new)
+
+
+def test_one_unshared_file_cannot_stall_the_fill(tmp_path):
+    # Drive's HTML page for ONE document: the run continues past it, and after
+    # MAX_THROTTLED_PER_DOC tries it becomes a strike, so it can't block forever.
+    cache = _script("build_fulltext_cache")
+    links = [f"https://drive.google.com/file/d/{c * 26}/view" for c in "ab"]
+    index = tmp_path / "search-index.json"
+    index.write_text(json.dumps([_entry(link=l) for l in links]))
+    bad = fts.doc_key(links[0])
+
+    class OneBad:
+        def fetch(self, key, entry, dest):
+            if key == bad:
+                raise cache.ThrottledError("sign-in page")
+            open(dest, "wb").close()
+
+    for _ in range(cache.MAX_THROTTLED_PER_DOC):
+        counts = cache.run(str(index), str(tmp_path / "c"), 10, fetcher=OneBad(), extract=lambda _p: ["t"])
+        assert counts["stopped_transient"] == 0          # one document never stops the run
+    m = json.loads((tmp_path / "c" / "manifest.json").read_text())
+    assert m[fts.doc_key(links[1])]["status"] == "ok"
+    assert m[bad]["throttled"] == cache.MAX_THROTTLED_PER_DOC and m[bad]["attempts"] == 1
+
+
+def test_html_from_several_documents_stops_the_run(tmp_path):
+    cache = _script("build_fulltext_cache")
+    links = [f"https://drive.google.com/file/d/{c * 26}/view" for c in "abcdef"]
+    index = tmp_path / "search-index.json"
+    index.write_text(json.dumps([_entry(link=l) for l in links]))
+    calls = []
+
+    class Throttled:
+        def fetch(self, key, entry, dest):
+            calls.append(key)
+            raise cache.ThrottledError("quota page")
+
+    counts = cache.run(str(index), str(tmp_path / "c"), 10, fetcher=Throttled())
+    assert counts["stopped_transient"] == 1 and len(calls) == cache.MAX_THROTTLED_DOCS_PER_RUN
+
+
+def test_show_more_recovers_from_a_failed_fetch():
+    js = open(os.path.join(_REPO, "site", "public-records", "search.js"), encoding="utf-8").read()
+    assert "Couldn't load more results" in js and "moreBtn.disabled = false;" in js

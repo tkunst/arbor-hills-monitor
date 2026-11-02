@@ -40,6 +40,11 @@ MANIFEST = "manifest.json"
 MAX_ATTEMPTS = 3
 # Stop the run after this many transient failures in a row (an outage).
 MAX_CONSECUTIVE_TRANSIENT = 5
+# Drive's HTML page instead of a file: stop the run once this many DIFFERENT
+# documents get it (real throttling), and treat it as the document's own failure
+# once one document has had it this many times (not shared / own quota).
+MAX_THROTTLED_DOCS_PER_RUN = 3
+MAX_THROTTLED_PER_DOC = 3
 # The cache keeps each document's FULL normalized + redacted text (up to
 # MAX_RAW_CHARS), never the capped/de-duplicated form: de-duplication breaks the
 # adjacency of a full name's words, so it must only ever happen AFTER redaction
@@ -276,6 +281,7 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
               "fetched": 0, "no_text": 0, "errors": 0, "redactions": 0, "stopped_on_time": 0,
               "transient": 0, "stopped_transient": 0}
     consecutive_transient = 0
+    throttled_docs = 0
     today = date.today().isoformat()
     for key, entry in todo[:max_downloads]:
         if max_minutes is not None and (clock() - started) / 60 >= max_minutes:
@@ -308,6 +314,14 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
             # Plus the builtin socket-level errors the Drive client can raise
             # (subprocess.TimeoutExpired, a hung PDF, is NOT one of these).
             transient = retry_policy.is_transient(e) or isinstance(e, (ConnectionError, TimeoutError))
+            # An HTML answer instead of the file is usually Drive throttling, but
+            # a file that isn't publicly shared (or has its own quota used up)
+            # answers the same way every time: after MAX_THROTTLED_PER_DOC such
+            # answers it counts as the document's own failure, so one bad file
+            # can never stall the fill on every run.
+            throttled = isinstance(e, ThrottledError)
+            if throttled and prior.get("throttled", 0) + 1 >= MAX_THROTTLED_PER_DOC:
+                transient = False
             if prior.get("status") in ("ok", "no_text"):
                 # A failed REFRESH keeps the good cached copy and its counts; the
                 # new fetched date puts the next refresh 30 days out.
@@ -316,6 +330,8 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
             else:
                 manifest[key] = {"status": f"error:{type(e).__name__}", "fetched": today,
                                  "attempts": prior.get("attempts", 0) + (0 if transient else 1)}
+                if throttled:
+                    manifest[key]["throttled"] = prior.get("throttled", 0) + 1
             counts["errors"] += 1
             if transient:
                 counts["transient"] += 1
@@ -323,7 +339,9 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
                 # Back off for the whole run on the first rate limit, or after a
                 # run of transient failures (an outage): the rest wait for the
                 # next run instead of failing one after another.
-                if _status_in_chain(e) == 429 or isinstance(e, ThrottledError) or \
+                if throttled:
+                    throttled_docs += 1
+                if _status_in_chain(e) == 429 or throttled_docs >= MAX_THROTTLED_DOCS_PER_RUN or \
                         consecutive_transient >= MAX_CONSECUTIVE_TRANSIENT:
                     counts["stopped_transient"] = 1
                     break
