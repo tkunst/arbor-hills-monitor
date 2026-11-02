@@ -142,7 +142,9 @@ def redact_denylist(text: str, name_repl: str = "[name withheld]",
     if not text:
         return text, 0
     n = 0
-    for rx, _name in _KNOWN_NAME_RES:
+    # Longest name first: a bare surname replaced before the full name it is part
+    # of would leave the first name behind ("Mike [name withheld]").
+    for rx, _name in sorted(_KNOWN_NAME_RES, key=lambda p: len(p[1]), reverse=True):
         text, k = rx.subn(name_repl, text)
         n += k
     for marker in INTERNAL_MARKERS:

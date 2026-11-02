@@ -68,13 +68,19 @@ jobs:
           restore-keys: fulltext-bundle-v1-
       - name: Place the bundle next to the public records page
         if: steps.fulltext.outputs.enabled == 'true'
+        # Only a bundle that matches the CURRENT published index and denylist and
+        # is at most 2 days old is deployed (scripts/fulltext_bundle_ok.py); a
+        # stale one is left out, so a withdrawn document or a newly listed name
+        # can never stay searchable.
         run: |
-          if [ -f .fulltext-bundle/coverage.json ]; then
+          if [ -f .fulltext-bundle/coverage.json ] && \
+             python3 scripts/fulltext_bundle_ok.py .fulltext-bundle site/public-records/search-index.json | grep -q '^ok=true$'; then
             rm -rf site/public-records/fulltext
             cp -R .fulltext-bundle site/public-records/fulltext
+            rm -f site/public-records/fulltext/bundle-manifest.json
             echo "full-text bundle placed"
           else
-            echo "::warning::fulltext_search is enabled but no bundle is cached yet; deploying without full-text search"
+            echo "::warning::full-text bundle missing or stale; deploying without full-text search"
           fi
       - name: Configure Pages
         uses: actions/configure-pages@v6

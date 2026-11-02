@@ -7,8 +7,8 @@ name: fulltext-index
 #   1. Restore the text cache (Actions cache, never committed: data files are
 #      never committed, see CLAUDE.md).
 #   2. build_fulltext_cache.py: download + extract + redact up to
-#      fulltext_search.max_downloads_per_run NEW documents (incremental; the
-#      first fill spreads over several days).
+#      fulltext_search.max_downloads_per_run NEW documents, stopping after
+#      max_fetch_minutes (incremental; the whole Mirror fills in about two runs).
 #   3. Save the text cache, then build the Pagefind bundle from it
 #      (build_fulltext_index.py: published entries only, no hand-curated rows,
 #      denylist + REDACT_NAMES redaction, size cap) and save the bundle as its
@@ -42,7 +42,9 @@ jobs:
   build:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # build_fulltext_cache.py stops fetching after config's max_fetch_minutes
+    # (150), leaving room for the cache save and the bundle build.
+    timeout-minutes: 200
     steps:
       - uses: actions/checkout@v7
         with:

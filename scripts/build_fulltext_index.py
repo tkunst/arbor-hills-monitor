@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import shutil
@@ -62,6 +63,26 @@ async def write_bundle(records: list[dict], out_dir: str) -> None:
                                           meta=r["meta"], filters=r["filters"], sort=r["sort"])
 
 
+BUNDLE_MANIFEST = "bundle-manifest.json"
+
+
+def denylist_fingerprint() -> str:
+    """sha256 of the (public) name_check lists, so pages.yml can refuse a bundle
+    built before a name was added to them."""
+    import name_check
+
+    blob = json.dumps([sorted(name_check.KNOWN_NAMES), sorted(name_check.INTERNAL_MARKERS)])
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def bundle_manifest(records: list[dict], built: str) -> dict:
+    """What pages.yml checks before deploying a cached bundle
+    (scripts/fulltext_bundle_ok.py): which links it indexes, when, and against
+    which denylist. Links are already public (they are the published index)."""
+    return {"built": built, "links": sorted({r["url"] for r in records}),
+            "denylist_sha": denylist_fingerprint()}
+
+
 def dir_mb(path: str) -> float:
     total = 0
     for root, _dirs, files in os.walk(path):
@@ -94,6 +115,10 @@ def main(argv=None) -> int:
     coverage["bundle_mb"] = round(size, 1)
     with open(os.path.join(args.out, "coverage.json"), "w", encoding="utf-8") as f:
         json.dump(coverage, f)
+    from datetime import datetime, timezone
+
+    with open(os.path.join(args.out, BUNDLE_MANIFEST), "w", encoding="utf-8") as f:
+        json.dump(bundle_manifest(records, datetime.now(timezone.utc).date().isoformat()), f)
     print("fulltext bundle:", " ".join(f"{k}={v}" for k, v in coverage.items()))
     if size > max_mb:
         print(f"bundle {size:.0f} MB exceeds max_bundle_mb={max_mb:.0f}; refusing to publish it")

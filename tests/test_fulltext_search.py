@@ -286,3 +286,69 @@ def test_scanned_documents_are_refetched_after_ocr_window():
     }
     got = [key for key, _ in cache.pending(entries, manifest, today=date(2026, 11, 2))]
     assert got == [k[4], k[5], k[0], k[2]]
+
+
+def test_fetching_stops_on_the_time_budget(tmp_path):
+    cache = _script("build_fulltext_cache")
+    links = [f"https://drive.google.com/file/d/{c * 26}/view" for c in "abc"]
+    index = tmp_path / "search-index.json"
+    index.write_text(json.dumps([_entry(link=l) for l in links]))
+    ticks = iter([0, 0, 61 * 60, 61 * 60, 61 * 60])   # start, doc 1 check, then past 60 min
+
+    class Ok:
+        def fetch(self, key, entry, dest):
+            open(dest, "wb").close()
+
+    counts = cache.run(str(index), str(tmp_path / "c"), 10, fetcher=Ok(),
+                       extract=lambda _p: ["text"], max_minutes=60, clock=lambda: next(ticks))
+    assert counts["fetched"] == 1 and counts["stopped_on_time"] == 1
+    m = json.loads((tmp_path / "c" / "manifest.json").read_text())
+    assert len(m) == 1   # the rest stay pending for the next run
+
+
+def test_denylist_redaction_takes_the_full_name_before_the_surname(monkeypatch):
+    names = ["Testa", "Anthony Testa"]          # surname listed first, as in KNOWN_NAMES
+    monkeypatch.setattr(name_check, "_KNOWN_NAME_RES", [(name_check._word_re(n), n) for n in names])
+    out, _ = name_check.redact_denylist("Signed, Anthony Testa. Testa again.")
+    assert "Anthony" not in out and "Testa" not in out
+
+
+def _bundle(tmp_path, links, built, deny=None):
+    idx = _script("build_fulltext_index")
+    b = tmp_path / "b"
+    b.mkdir()
+    (b / "bundle-manifest.json").write_text(json.dumps(
+        {"built": built, "links": links, "denylist_sha": deny or idx.denylist_fingerprint()}))
+    return b
+
+
+def test_bundle_ok_only_when_current(tmp_path):
+    from datetime import date
+
+    ok = _script("fulltext_bundle_ok")
+    other = "https://drive.google.com/file/d/2bbbbbbbbbbbbbbbbbbbbbbbbbb/view"
+    index = tmp_path / "search-index.json"
+    index.write_text(json.dumps([_entry(), _entry(link=other)]))
+    today = date(2026, 11, 3)
+    good = _bundle(tmp_path, [DRIVE], "2026-11-02")
+    assert ok.check(str(good), str(index), today)[0] is True
+    # a new document published since the build is fine
+    index.write_text(json.dumps([_entry(), _entry(link=other), _entry(link=NSITE)]))
+    assert ok.check(str(good), str(index), today)[0] is True
+    # a withdrawn one is not
+    index.write_text(json.dumps([_entry(link=other)]))
+    assert ok.check(str(good), str(index), today) == (False, "1 indexed document(s) are no longer published")
+
+
+def test_bundle_refused_when_old_or_denylist_changed_or_missing(tmp_path):
+    from datetime import date
+
+    ok = _script("fulltext_bundle_ok")
+    index = tmp_path / "search-index.json"
+    index.write_text(json.dumps([_entry()]))
+    old = _bundle(tmp_path, [DRIVE], "2026-10-30")
+    assert ok.check(str(old), str(index), date(2026, 11, 3))[0] is False
+    (tmp_path / "b").rename(tmp_path / "old")
+    stale = _bundle(tmp_path, [DRIVE], "2026-11-03", deny="0" * 64)
+    assert ok.check(str(stale), str(index), date(2026, 11, 3))[1].startswith("bundle was built before")
+    assert ok.check(str(tmp_path / "nope"), str(index), date(2026, 11, 3))[0] is False

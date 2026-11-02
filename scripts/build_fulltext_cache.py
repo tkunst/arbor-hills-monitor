@@ -205,7 +205,14 @@ class Fetcher:
 
 
 def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
-        extract=extract_pages_isolated) -> dict:
+        extract=extract_pages_isolated, max_minutes: float | None = None, clock=None) -> dict:
+    """Fetch up to max_downloads pending documents, stopping early once
+    max_minutes have passed (so the CI job always finishes and saves its cache
+    instead of hitting its own timeout mid-download)."""
+    import time
+
+    clock = clock or time.monotonic
+    started = clock()
     os.makedirs(cache_dir, exist_ok=True)
     with open(index_path, encoding="utf-8") as f:
         entries = json.load(f)
@@ -213,9 +220,12 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
     todo = pending(entries, manifest)
     fetcher = fetcher or Fetcher()
     counts = {"eligible": sum(1 for e in entries if fts.is_eligible(e)), "pending": len(todo),
-              "fetched": 0, "no_text": 0, "errors": 0, "redactions": 0}
+              "fetched": 0, "no_text": 0, "errors": 0, "redactions": 0, "stopped_on_time": 0}
     today = date.today().isoformat()
     for key, entry in todo[:max_downloads]:
+        if max_minutes is not None and (clock() - started) / 60 >= max_minutes:
+            counts["stopped_on_time"] = 1
+            break
         prior = manifest.get(key, {})
         try:
             with tempfile.TemporaryDirectory() as td:
@@ -265,7 +275,8 @@ def main(argv=None) -> int:
         print("fulltext_search.enabled is false; nothing to do")
         return 0
     max_dl = args.max_downloads if args.max_downloads is not None else int(cfg.get("max_downloads_per_run", 300))
-    counts = run(args.index, args.cache, max_dl)
+    max_min = cfg.get("max_fetch_minutes")
+    counts = run(args.index, args.cache, max_dl, max_minutes=float(max_min) if max_min else None)
     print("fulltext cache:", " ".join(f"{k}={v}" for k, v in counts.items()))
     return 0
 
