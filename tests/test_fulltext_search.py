@@ -79,8 +79,7 @@ def test_redact_denylist_replaces_known_names_and_markers(monkeypatch):
 
 def test_prepare_content_redacts_with_both_lists(monkeypatch):
     monkeypatch.setattr(name_check, "_KNOWN_NAME_RES", [(name_check._word_re("Testa"), "Testa")])
-    monkeypatch.setattr(fts.findings_feed, "redact_names",
-                        lambda t: t.replace("Quigley", "a resident") if t else t)
+    monkeypatch.setenv("REDACT_NAMES", "Pat Quigley")
     out = fts.prepare_content("Letter from Quigley to Testa about well AHWW312R")
     assert "Testa" not in out and "Quigley" not in out
     assert "AHWW312R" in out
@@ -253,3 +252,37 @@ def test_a_hanging_extraction_is_an_error_not_a_stalled_run(tmp_path):
     assert counts["errors"] == 1
     m = json.loads((tmp_path / "c" / "manifest.json").read_text())
     assert m[fts.doc_key(DRIVE)]["status"] == "error:TimeoutExpired"
+
+
+def test_secret_names_match_whole_words_only(monkeypatch):
+    # On whole documents a bare surname inside another word is common: "Hall"
+    # must not turn every "shall" in a permit into a redaction.
+    monkeypatch.setenv("REDACT_NAMES", "Jo Hall")
+    out = fts.redact_secret_names("The permittee shall notify Jo Hall. Hall agreed; hallway.")
+    assert "shall" in out and "hallway" in out
+    assert "Hall" not in out.replace("hallway", "")
+    assert out.count("[name withheld]") == 2
+
+
+def test_secret_names_unset_is_a_no_op(monkeypatch):
+    monkeypatch.delenv("REDACT_NAMES", raising=False)
+    assert fts.redact_secret_names("Jo Hall shall") == "Jo Hall shall"
+
+
+def test_scanned_documents_are_refetched_after_ocr_window():
+    from datetime import date
+
+    cache = _script("build_fulltext_cache")
+    links = [f"https://drive.google.com/file/d/{c * 26}/view" for c in "abcdef"]
+    entries = [_entry(link=l) for l in links]
+    k = [fts.doc_key(l) for l in links]
+    manifest = {
+        k[0]: {"status": "no_text", "pages": 3, "text_pages": 0, "fetched": "2026-09-01"},   # due
+        k[1]: {"status": "no_text", "pages": 3, "text_pages": 0, "fetched": "2026-10-30"},   # too recent
+        k[2]: {"status": "ok", "pages": 10, "text_pages": 6, "fetched": "2026-09-01"},       # partly scanned, due
+        k[3]: {"status": "ok", "pages": 10, "text_pages": 10, "fetched": "2026-01-01"},      # complete: never
+        # k[4] never fetched -> new work, must come first
+        k[5]: {"status": "error:Timeout", "attempts": 1},                                    # retry -> new work
+    }
+    got = [key for key, _ in cache.pending(entries, manifest, today=date(2026, 11, 2))]
+    assert got == [k[4], k[5], k[0], k[2]]

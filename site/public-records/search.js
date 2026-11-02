@@ -588,7 +588,7 @@
   }
 
   function runFulltext(f) {
-    var run = ++fulltextRun;
+    var run = fulltextRun;
     browseList.hidden = true;
     browseNav.hidden = true;
     searchResults.hidden = false;
@@ -612,32 +612,58 @@
         moreBtn.className = "search-ui-more";
         moreBtn.textContent = "Show more";
 
-        function loadMore() {
-          moreBtn.disabled = true;
+        // Date-range and "Not stated" choices are applied here, after Pagefind,
+        // so keep loading batches until a page of MATCHING cards is shown or the
+        // hits run out (bounded: never more than all hits).
+        var localOnly = !!(f.dateMin || f.dateMax || f.facility === NOT_STATED ||
+          f.type === NOT_STATED || f.severity === NOT_STATED || f.year === NOT_STATED);
+
+        function fetchBatch() {
           var batch = hits.slice(next, next + FULLTEXT_PAGE_SIZE);
           next += batch.length;
-          return Promise.all(batch.map(function (h) { return h.data(); })).then(function (datas) {
-            if (run !== fulltextRun) {
-              return;
-            }
-            datas.forEach(function (d) {
-              if (passesLocalFilters(d.meta || {}, f)) {
-                searchResults.insertBefore(renderFulltextCard(d), moreBtn.parentNode ? moreBtn : null);
-                shown += 1;
+          return Promise.all(batch.map(function (h) { return h.data(); }));
+        }
+
+        function loadMore() {
+          moreBtn.disabled = true;
+          var target = shown + FULLTEXT_PAGE_SIZE;
+
+          function step() {
+            return fetchBatch().then(function (datas) {
+              if (run !== fulltextRun) {
+                return;
+              }
+              datas.forEach(function (d) {
+                if (passesLocalFilters(d.meta || {}, f)) {
+                  searchResults.insertBefore(renderFulltextCard(d), moreBtn.parentNode ? moreBtn : null);
+                  shown += 1;
+                }
+              });
+              if (shown < target && next < hits.length) {
+                return step();
+              }
+              moreBtn.disabled = false;
+              if (next >= hits.length && moreBtn.parentNode) {
+                searchResults.removeChild(moreBtn);
+              }
+              var noun = hits.length === 1 ? " document contains" : " documents contain";
+              if (localOnly) {
+                setStatus(hits.length + noun + " these words; " +
+                  (next >= hits.length ? shown + " match your filters." :
+                    "showing the first " + shown + " that match your filters."));
+              } else {
+                setStatus(hits.length + noun + " these words. Showing " + shown + ".");
+              }
+              if (!shown && next >= hits.length) {
+                var none = document.createElement("p");
+                none.textContent = hits.length ?
+                  "No document text matches with these filters." :
+                  "No document text matches. Try the title and summary search instead (untick the box).";
+                searchResults.appendChild(none);
               }
             });
-            moreBtn.disabled = false;
-            if (next >= hits.length && moreBtn.parentNode) {
-              searchResults.removeChild(moreBtn);
-            }
-            setStatus(hits.length + " document" + (hits.length === 1 ? "" : "s") +
-              " contain these words. Showing " + shown + ".");
-            if (!hits.length) {
-              var none = document.createElement("p");
-              none.textContent = "No document text matches. Try the title and summary search instead (untick the box).";
-              searchResults.appendChild(none);
-            }
-          });
+          }
+          return step();
         }
 
         if (hits.length > FULLTEXT_PAGE_SIZE) {
@@ -659,6 +685,10 @@
   // Keeps the index's own order (newest-first, same as the chronological
   // list) rather than re-sorting results.
   function runFilter() {
+    // Every filter run (title search, browse view, reset) supersedes any
+    // full-text search still in flight, so a slow Pagefind response can never
+    // overwrite newer results.
+    fulltextRun += 1;
     var f = currentFilters();
     var active = isActive(f);
     clearBtn.hidden = !active;

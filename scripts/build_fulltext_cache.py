@@ -58,11 +58,32 @@ def save_manifest(cache_dir: str, manifest: dict) -> None:
     os.replace(tmp, path)
 
 
-def pending(entries: list[dict], manifest: dict) -> list[tuple[str, dict]]:
-    """(key, entry) for every eligible entry that still needs a fetch: never
-    tried, or failed fewer than MAX_ATTEMPTS times. Deduplicated by key (two feed
-    rows can share one Mirror copy). Pure, for the tests."""
-    out, seen = [], set()
+# A document cached with pages that had no text (a scan, or a partly scanned
+# compilation) is fetched again after this many days: backfill_mirror_ocr.py /
+# ADR 069 add a text layer IN PLACE (same Drive file id, so the same cache key),
+# and without a refresh that document would stay unsearchable forever.
+REFRESH_SCANNED_AFTER_DAYS = 30
+
+
+def _needs_refresh(m: dict, today: date) -> bool:
+    if m.get("status") not in ("ok", "no_text"):
+        return False
+    if m.get("status") == "ok" and m.get("text_pages", 0) >= m.get("pages", 0):
+        return False
+    try:
+        fetched = date.fromisoformat(m.get("fetched", ""))
+    except ValueError:
+        return True
+    return (today - fetched).days >= REFRESH_SCANNED_AFTER_DAYS
+
+
+def pending(entries: list[dict], manifest: dict, today: date | None = None) -> list[tuple[str, dict]]:
+    """(key, entry) for every eligible entry that needs a fetch, NEW work first:
+    never tried, or failed fewer than MAX_ATTEMPTS times; then documents cached
+    with textless pages that are due a refresh (_needs_refresh). Deduplicated by
+    key (two feed rows can share one Mirror copy). Pure, for the tests."""
+    today = today or date.today()
+    new, refresh, seen = [], [], set()
     for e in entries:
         if not fts.is_eligible(e):
             continue
@@ -72,8 +93,10 @@ def pending(entries: list[dict], manifest: dict) -> list[tuple[str, dict]]:
         seen.add(key)
         m = manifest.get(key)
         if m is None or (m.get("status", "").startswith("error") and m.get("attempts", 0) < MAX_ATTEMPTS):
-            out.append((key, e))
-    return out
+            new.append((key, e))
+        elif _needs_refresh(m, today):
+            refresh.append((key, e))
+    return new + refresh
 
 
 # Stop reading a document's pages once this much raw text is in hand: the cache
@@ -99,16 +122,17 @@ def extract_pages_isolated(pdf_path: str, timeout: int = EXTRACT_TIMEOUT_S) -> l
         return json.load(f)
 
 
-def extract_pages(pdf_path: str, max_chars: int = MAX_RAW_CHARS) -> list[str]:
+def extract_pages(pdf_path: str, max_chars: int = MAX_RAW_CHARS) -> list[str | None]:
     """Text of each page, in order; pages past the raw-text budget are counted
-    but not read (returned as "")."""
+    but not read (returned as None, so they never look like textless scans to
+    the refresh rule)."""
     import fitz  # PyMuPDF
 
     out, total = [], 0
     with fitz.open(pdf_path) as doc:
         for page in doc:
             if total >= max_chars:
-                out.append("")
+                out.append(None)
                 continue
             t = page.get_text()
             total += len(t)
@@ -198,8 +222,8 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
                 pdf = os.path.join(td, "doc.pdf")
                 fetcher.fetch(key, entry, pdf)
                 pages = extract(pdf)
-            text_pages = sum(1 for p in pages if p.strip())
-            raw = "\n".join(pages)
+            text_pages = sum(1 for p in pages if p is None or p.strip())
+            raw = "\n".join(p for p in pages if p)
             _, n_red = fts.name_check.redact_denylist(fts.normalize(raw))
             content = fts.prepare_content(raw, cap=CACHE_CAP_CHARS)
             with open(os.path.join(cache_dir, key + ".txt"), "w", encoding="utf-8") as f:

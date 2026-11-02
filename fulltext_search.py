@@ -13,10 +13,13 @@ Scope rules live HERE so both scripts and the tests share one copy:
   text: they can be third-party material, and the archive OAuth scope
   (drive.file) cannot read files a person uploaded anyway. They stay in the
   title/summary search.
-- Every document's text goes through BOTH name redactions the public feed
-  uses -- name_check.redact_denylist() and findings_feed.redact_names() (the
-  REDACT_NAMES secret) -- before it is cached and again before it is indexed
-  (either list can grow between runs).
+- Every document's text goes through BOTH name lists the public feed uses --
+  name_check's denylist (redact_denylist) and the REDACT_NAMES secret -- before
+  it is cached and again before it is indexed (either list can grow between
+  runs). REDACT_NAMES is matched WHOLE-WORD here (redact_secret_names), unlike
+  findings_feed.redact_names: on whole documents a bare surname inside another
+  word ("Hall" in "shall") is common, and findings_feed's per-match prefix scan
+  is quadratic on a 3M-character text.
 - Text is capped per document: the first PROSE_CAP_CHARS characters verbatim,
   then each remaining distinct word once. A 300-page WOI table stays
   findable by well ID without storing every number in the public index.
@@ -25,7 +28,8 @@ from __future__ import annotations
 
 import re
 
-import findings_feed
+import os
+
 import name_check
 
 PROSE_CAP_CHARS = 100_000
@@ -77,10 +81,30 @@ def normalize(text: str) -> str:
     return text.strip()
 
 
+def _secret_name_re():
+    """Whole-word regex over every REDACT_NAMES variant (full name down to the
+    bare surname, longest first -- the same variants findings_feed builds), or
+    None when the secret is unset. Read at call time so tests and CI env apply."""
+    variants = set()
+    for name in os.environ.get("REDACT_NAMES", "").split(","):
+        toks = name.strip().split()
+        for i in range(len(toks)):
+            variants.add(" ".join(toks[i:]))
+    if not variants:
+        return None
+    alt = "|".join(re.escape(v) for v in sorted(variants, key=len, reverse=True))
+    return re.compile(r"\b(?:" + alt + r")\b", re.IGNORECASE)
+
+
+def redact_secret_names(text: str) -> str:
+    rx = _secret_name_re()
+    return rx.sub("[name withheld]", text) if (rx and text) else text
+
+
 def redact(text: str) -> str:
-    """Both public-feed name redactions, in the same order everywhere."""
+    """Both public-feed name lists, in the same order everywhere."""
     text, _ = name_check.redact_denylist(text)
-    return findings_feed.redact_names(text) or ""
+    return redact_secret_names(text) or ""
 
 
 def prepare_content(text: str, cap: int = PROSE_CAP_CHARS) -> str:
