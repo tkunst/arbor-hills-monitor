@@ -33,10 +33,13 @@ from datetime import date
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import fulltext_search as fts  # noqa: E402
+import retry_policy  # noqa: E402
 
 DEFAULT_INDEX = "site/public-records/search-index.json"
 MANIFEST = "manifest.json"
 MAX_ATTEMPTS = 3
+# Stop the run after this many transient failures in a row (an outage).
+MAX_CONSECUTIVE_TRANSIENT = 5
 # The cache keeps each document's FULL normalized + redacted text (up to
 # MAX_RAW_CHARS), never the capped/de-duplicated form: de-duplication breaks the
 # adjacency of a full name's words, so it must only ever happen AFTER redaction
@@ -246,7 +249,9 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
     todo = pending(entries, manifest)
     fetcher = fetcher or Fetcher()
     counts = {"eligible": sum(1 for e in entries if fts.is_eligible(e)), "pending": len(todo),
-              "fetched": 0, "no_text": 0, "errors": 0, "redactions": 0, "stopped_on_time": 0}
+              "fetched": 0, "no_text": 0, "errors": 0, "redactions": 0, "stopped_on_time": 0,
+              "transient": 0, "stopped_transient": 0}
+    consecutive_transient = 0
     today = date.today().isoformat()
     for key, entry in todo[:max_downloads]:
         if max_minutes is not None and (clock() - started) / 60 >= max_minutes:
@@ -273,15 +278,35 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
             if status == "no_text":
                 counts["no_text"] += 1
         except Exception as e:  # noqa: BLE001 -- one bad document must not stop the run
+            # An outage, a 429 or a dropped connection is never the document's
+            # fault (retry_policy, same rule as the document pipeline): no strike,
+            # no refresh used up. Only a real per-document failure counts.
+            # Plus the builtin socket-level errors the Drive client can raise
+            # (subprocess.TimeoutExpired, a hung PDF, is NOT one of these).
+            transient = retry_policy.is_transient(e) or isinstance(e, (ConnectionError, TimeoutError))
             if prior.get("status") in ("ok", "no_text"):
                 # A failed REFRESH keeps the good cached copy and its counts; the
                 # new fetched date puts the next refresh 30 days out.
                 manifest[key] = {**prior, "fetched": today, "last_refresh_error": type(e).__name__,
-                                 "refreshes": prior.get("refreshes", 0) + 1}
+                                 "refreshes": prior.get("refreshes", 0) + (0 if transient else 1)}
             else:
                 manifest[key] = {"status": f"error:{type(e).__name__}", "fetched": today,
-                                 "attempts": prior.get("attempts", 0) + 1}
+                                 "attempts": prior.get("attempts", 0) + (0 if transient else 1)}
             counts["errors"] += 1
+            if transient:
+                counts["transient"] += 1
+                consecutive_transient += 1
+                # Back off for the whole run on the first rate limit, or after a
+                # run of transient failures (an outage): the rest wait for the
+                # next run instead of failing one after another.
+                if getattr(getattr(e, "response", None), "status_code", None) == 429 or \
+                        consecutive_transient >= MAX_CONSECUTIVE_TRANSIENT:
+                    counts["stopped_transient"] = 1
+                    break
+            else:
+                consecutive_transient = 0
+        else:
+            consecutive_transient = 0
         if (counts["fetched"] + counts["errors"]) % 25 == 0:
             save_manifest(cache_dir, manifest)  # resumable if the job is killed
     save_manifest(cache_dir, manifest)

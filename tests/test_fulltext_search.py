@@ -177,12 +177,12 @@ def test_cache_run_records_a_failure_without_stopping(tmp_path):
 
     class Boom:
         def fetch(self, key, entry, dest):
-            raise TimeoutError("x")
+            raise ValueError("not a PDF")   # a real per-document failure: one strike
 
     counts = cache.run(str(index), str(tmp_path / "c"), 10, fetcher=Boom())
     assert counts["errors"] == 1
     m = json.loads((tmp_path / "c" / "manifest.json").read_text())
-    assert m[fts.doc_key(DRIVE)] == {"status": "error:TimeoutError", "fetched": m[fts.doc_key(DRIVE)]["fetched"],
+    assert m[fts.doc_key(DRIVE)] == {"status": "error:ValueError", "fetched": m[fts.doc_key(DRIVE)]["fetched"],
                                       "attempts": 1}
 
 
@@ -467,3 +467,44 @@ def test_refresh_skips_blank_pages_and_stops_after_three():
     assert cache._needs_refresh({"status": "no_text", "pages": 2, "text_pages": 0, "fetched": old}, today)
     assert not cache._needs_refresh({"status": "no_text", "pages": 2, "text_pages": 0, "fetched": old,
                                      "refreshes": cache.MAX_REFRESHES}, today)
+
+
+class _HTTP429(Exception):
+    class response:  # requests-style HTTPError shape that retry_policy reads
+        status_code = 429
+
+
+def test_transient_failures_are_not_strikes_and_a_429_stops_the_run(tmp_path):
+    cache = _script("build_fulltext_cache")
+    links = [f"https://drive.google.com/file/d/{c * 26}/view" for c in "abc"]
+    index = tmp_path / "search-index.json"
+    index.write_text(json.dumps([_entry(link=l) for l in links]))
+    calls = []
+
+    class RateLimited:
+        def fetch(self, key, entry, dest):
+            calls.append(key)
+            raise _HTTP429("slow down")
+
+    counts = cache.run(str(index), str(tmp_path / "c"), 10, fetcher=RateLimited())
+    assert calls == [fts.doc_key(links[0])]          # stopped after the first 429
+    assert counts["stopped_transient"] == 1
+    m = json.loads((tmp_path / "c" / "manifest.json").read_text())
+    assert m[fts.doc_key(links[0])]["attempts"] == 0   # no strike: retried next run
+    assert [k for k, _ in cache.pending(json.loads(index.read_text()), m)][0] == fts.doc_key(links[0])
+
+
+def test_an_outage_stops_after_a_run_of_connection_errors(tmp_path):
+    cache = _script("build_fulltext_cache")
+    links = [f"https://drive.google.com/file/d/{c * 26}/view" for c in "abcdefgh"]
+    index = tmp_path / "search-index.json"
+    index.write_text(json.dumps([_entry(link=l) for l in links]))
+
+    class Down:
+        def fetch(self, key, entry, dest):
+            raise ConnectionError("network down")
+
+    counts = cache.run(str(index), str(tmp_path / "c"), 10, fetcher=Down())
+    assert counts["transient"] == cache.MAX_CONSECUTIVE_TRANSIENT and counts["stopped_transient"] == 1
+    m = json.loads((tmp_path / "c" / "manifest.json").read_text())
+    assert all(v["attempts"] == 0 for v in m.values())
