@@ -83,6 +83,7 @@ module, and update that entry in the same PR.
 - `report_tracker.py` / `report_tracker_seed.py` — expected reports vs. arrivals, private Sheet, and its seed data (ADR 071).
 - `upcoming.py` — reads the private Sheet's hand-kept `Upcoming` tab for the Sunday digest.
 - `findings_feed.py` / `public_comment_feed.py` — pure renderers for the public Findings and Public Comment pages.
+- `fulltext_search.py` + `scripts/build_fulltext_cache.py` / `build_fulltext_index.py` — full-text search over the Mirror PDFs (Pagefind bundle, built in CI, never committed; ADR 062 addendum).
 - `scripts/backfill_metric_taxonomy.py` — one-shot ADR 034 Measurements reclassify; dry run by default.
 
 **County / meeting sources**
@@ -167,6 +168,7 @@ decision behind it; this table only answers "is it live right now."
 | `report_tracking.enabled` | yes |
 | `report_tracking.review_email_enabled` | no |
 | `egle_newsroom.enabled` | yes |
+| `fulltext_search.enabled` | no |
 <!-- stream-status:end -->
 
 ## Forbidden patterns (do not do these)

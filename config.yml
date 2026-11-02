@@ -2611,3 +2611,16 @@ egle_newsroom:
             "consent judgment", "violation notice", "odor", "landfill gas",
             "renewable natural gas", "methane", "Part 303", "Part 201", "dewatering"]
     topic_min_body_hits: 2
+
+# Full-text search over the Mirror PDFs on the public records page (ADR 062
+# addendum, 2026-11-02). Ships OFF: Trisha decides the privacy scope before it
+# goes live. scripts/build_fulltext_cache.py fills the text cache incrementally
+# (at most max_downloads_per_run new documents per run); build_fulltext_index.py
+# writes the Pagefind bundle the page searches. Hand-curated rows are never
+# full-text indexed; every document's text is redacted with the name_check
+# denylist. A bundle over max_bundle_mb is refused, not deployed.
+fulltext_search:
+  enabled: false
+  max_downloads_per_run: 300
+  prose_cap_chars: 100000
+  max_bundle_mb: 400

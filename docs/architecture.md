@@ -1182,6 +1182,27 @@ behavior, update its entry here in the same PR.
   wrapper that fetches the two tabs and calls `build_pages()` — the same
   pure/I/O split `sheet_writer.py` uses between row-building and the API
   itself, and the same shape `public_comment_feed.py` below reuses.
+- `fulltext_search.py` — **ADR 062 addendum (2026-11-02; shipped OFF behind
+  `fulltext_search.enabled`)**: pure scope + text rules for full-text search over
+  the Mirror PDFs on the public records page. Only entries already in the
+  PUBLISHED `site/public-records/search-index.json` are eligible (so the feed's
+  redaction, gate and ADR 064 facility scope carry over), never a hand-curated row
+  (`"source"` key present), and only Drive-mirror or nSITE links (`doc_key`). Text
+  is redacted with BOTH of the feed's name lists (`name_check.redact_denylist`,
+  added for this, and `findings_feed.redact_names` / `REDACT_NAMES`) when cached
+  and again when indexed, then capped (`PROSE_CAP_CHARS` verbatim, then each
+  remaining distinct word once). This module IS the publish gate for the bundle:
+  `check_publish_safety` cannot read Pagefind's compressed shards.
+  `scripts/build_fulltext_cache.py` fills an incremental text cache (Drive OAuth
+  with a public-link fallback; at most `max_downloads_per_run` per run; 3 retries;
+  raw extraction stops at 3M chars a document) and `scripts/build_fulltext_index.py`
+  writes the Pagefind bundle (`pagefind[extended]`, own hashed
+  `requirements-fulltext.txt`) plus `coverage.json`, refusing one over
+  `max_bundle_mb`. `.github/workflows/fulltext-index.yml` runs both after
+  findings-feed and keeps text cache and bundle in the Actions cache; `pages.yml`
+  restores the newest bundle into `site/public-records/fulltext/` at deploy. The
+  page's checkbox appears only when `fulltext/coverage.json` exists. Flags are read
+  by the stdlib `scripts/fulltext_flag.py` (fails closed). Logs: counts only.
 - `public_comment_feed.py` — **ADR 035**: pure render logic (no I/O, same
   shape as `findings_feed.py`) for the public "Public Comment Periods" page
   (`site/public-comment/`) — an Open table and a Closed table, sourced from

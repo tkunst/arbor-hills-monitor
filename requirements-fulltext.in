@@ -1,0 +1,9 @@
+# fulltext-index.yml ONLY: Pagefind builds the public records full-text search
+# bundle (ADR 062 addendum, 2026-11-02; scripts/build_fulltext_index.py). MIT
+# licensed. The [extended] binary adds CJK segmentation we don't need but is the
+# variant whose wheels ship for every runner platform. Kept out of the main
+# requirements.in so the other workflows never download it; its own hashed
+# lockfile so Dependabot's pip-compile support proposes upgrades. The -c keeps
+# any shared transitive deps at the main lockfile's versions.
+-c requirements.txt
+pagefind[extended]>=1.6.0

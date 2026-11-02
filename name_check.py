@@ -132,6 +132,25 @@ def find_denylist_hits(text: str) -> list[dict]:
     return hits
 
 
+def redact_denylist(text: str, name_repl: str = "[name withheld]",
+                    marker_repl: str = "[withheld]") -> tuple[str, int]:
+    """Replace every DENYLIST hit in `text` (known names whole-word, internal
+    markers as case-insensitive substrings -- the same matching rules
+    find_denylist_hits uses) and return (redacted_text, n_replaced). Used where a
+    whole document's text is published, e.g. the public records full-text search
+    index, so a listed name can never be searched for there."""
+    if not text:
+        return text, 0
+    n = 0
+    for rx, _name in _KNOWN_NAME_RES:
+        text, k = rx.subn(name_repl, text)
+        n += k
+    for marker in INTERNAL_MARKERS:
+        text, k = re.compile(re.escape(marker), re.IGNORECASE).subn(marker_repl, text)
+        n += k
+    return text, n
+
+
 def find_heuristic_hits(text: str) -> list[dict]:
     """ADVISORY hits: structural name shapes not already covered by the
     denylist and not allowlisted as an org/term. May false-positive -- surface

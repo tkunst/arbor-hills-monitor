@@ -22,6 +22,13 @@
   // chosen to not collide with any real facility/type/severity value.
   var NOT_STATED = "__not_stated__";
 
+  // Full-text search (ADR 062 addendum, 2026-11-02). The Pagefind bundle is
+  // built in CI into this folder next to the page and is never committed; when
+  // it is absent (feature off, or the build skipped) coverage.json 404s and the
+  // full-text toggle simply never appears.
+  var FULLTEXT_DIR = "fulltext/";
+  var FULLTEXT_PAGE_SIZE = 20;
+
   var container = document.getElementById("public-records-search");
   if (!container) {
     return;
@@ -34,6 +41,10 @@
   var filterFacility = document.getElementById("pr-filter-facility");
   var filterType = document.getElementById("pr-filter-type");
   var filterSeverity = document.getElementById("pr-filter-severity");
+  var filterYear = document.getElementById("pr-filter-year");
+  var fulltextToggle = document.getElementById("pr-fulltext-toggle");
+  var fulltextBox = document.getElementById("pr-search-fulltext");
+  var fulltextLabel = document.getElementById("pr-fulltext-label");
   var dateMin = document.getElementById("pr-filter-date-min");
   var dateMax = document.getElementById("pr-filter-date-max");
   var statusEl = document.getElementById("pr-search-status");
@@ -125,6 +136,35 @@
     fillSelect(filterFacility, collect(data, "facility"));
     fillSelect(filterType, collect(data, "type"));
     fillSelect(filterSeverity, collect(data, "severity"));
+    fillSelect(filterYear, collectYears(data));
+  }
+
+  // The year of an entry's own date ("YYYY", "YYYY-MM" or "YYYY-MM-DD"), or ""
+  // -- the same precedence the index's `date` already carries (the date on the
+  // document, else the date filed; see findings_feed._search_entry).
+  function entryYear(entry) {
+    var m = /^(\d{4})/.exec(entry.date || "");
+    return m ? m[1] : "";
+  }
+
+  // Newest year first (the list itself is newest-first); NOT_STATED last iff
+  // some entry has no date at all.
+  function collectYears(data) {
+    var seen = {};
+    var hasMissing = false;
+    data.forEach(function (entry) {
+      var y = entryYear(entry);
+      if (y) {
+        seen[y] = true;
+      } else {
+        hasMissing = true;
+      }
+    });
+    var years = Object.keys(seen).sort().reverse();
+    if (hasMissing) {
+      years.push(NOT_STATED);
+    }
+    return years;
   }
 
   function currentFilters() {
@@ -141,13 +181,15 @@
       facility: filterFacility.value,
       type: filterType.value,
       severity: filterSeverity.value,
+      year: filterYear ? filterYear.value : "",
+      fulltext: !!(fulltextBox && fulltextBox.checked && !fulltextToggle.hidden),
       dateMin: dateMin.value,
       dateMax: dateMax.value
     };
   }
 
   function isActive(f) {
-    return !!(f.rawQuery || f.facility || f.type || f.severity || f.dateMin || f.dateMax);
+    return !!(f.rawQuery || f.facility || f.type || f.severity || f.year || f.dateMin || f.dateMax);
   }
 
   function matchesFacet(value, filterValue) {
@@ -419,6 +461,201 @@
     });
   }
 
+  // ---- Full-text search over the documents' own text ----------------------
+
+  var pagefindPromise = null;
+  var fulltextRun = 0;
+
+  // Shows the toggle only when a bundle was actually deployed next to this
+  // page; coverage.json is a few bytes, fetched once on load.
+  function initFulltextToggle() {
+    if (!fulltextToggle) {
+      return;
+    }
+    fetch(FULLTEXT_DIR + "coverage.json", { credentials: "omit" })
+      .then(function (resp) {
+        return resp.ok ? resp.json() : null;
+      })
+      .then(function (cov) {
+        if (!cov || !cov.full_text) {
+          return;
+        }
+        fulltextLabel.textContent = "Search inside the documents' text (" +
+          Number(cov.full_text).toLocaleString("en-US") + " of " +
+          Number(cov.documents).toLocaleString("en-US") + " documents so far)";
+        fulltextToggle.hidden = false;
+      })
+      .catch(function () {
+        /* No bundle deployed: the toggle stays hidden. */
+      });
+  }
+
+  function loadPagefind() {
+    if (!pagefindPromise) {
+      pagefindPromise = import("./" + FULLTEXT_DIR + "pagefind.js").then(function (pf) {
+        return pf.options({ excerptLength: 40 }).then(function () {
+          return pf;
+        });
+      });
+      pagefindPromise.catch(function () {
+        pagefindPromise = null;
+      });
+    }
+    return pagefindPromise;
+  }
+
+  // Pagefind's own filter names match the facet ids; NOT_STATED has no
+  // Pagefind equivalent, so that choice is applied after loading instead.
+  function pagefindFilters(f) {
+    var out = {};
+    if (f.facility && f.facility !== NOT_STATED) {
+      out.facility = f.facility;
+    }
+    if (f.type && f.type !== NOT_STATED) {
+      out.type = f.type;
+    }
+    if (f.severity && f.severity !== NOT_STATED) {
+      out.severity = f.severity;
+    }
+    if (f.year && f.year !== NOT_STATED) {
+      out.year = f.year;
+    }
+    return out;
+  }
+
+  function passesLocalFilters(meta, f) {
+    var entry = { date: meta.date, facility: meta.facility, type: meta.type, severity: meta.severity };
+    return (
+      (f.facility !== NOT_STATED || !entry.facility) &&
+      (f.type !== NOT_STATED || !entry.type) &&
+      (f.severity !== NOT_STATED || !entry.severity) &&
+      (f.year !== NOT_STATED || !entryYear(entry)) &&
+      matchesDateRange(entry, f.dateMin, f.dateMax)
+    );
+  }
+
+  // Pagefind returns an HTML excerpt: the document text, entity-escaped, with
+  // matches wrapped in <mark>. Built here as text nodes + <mark> elements only:
+  // split on the two mark tags, decode the five entities by hand, and append
+  // every piece with textContent, so no document text is ever parsed as markup.
+  function decodeEntities(str) {
+    return str
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;|&#x27;|&apos;/g, "'")
+      .replace(/&amp;/g, "&");
+  }
+
+  function appendExcerpt(parent, excerpt) {
+    var parts = String(excerpt || "").split(/<mark>|<\/mark>/);
+    for (var i = 0; i < parts.length; i++) {
+      if (!parts[i]) {
+        continue;
+      }
+      var text = decodeEntities(parts[i]);
+      if (i % 2 === 1) {
+        var m = document.createElement("mark");
+        m.textContent = text;
+        parent.appendChild(m);
+      } else {
+        parent.appendChild(document.createTextNode(text));
+      }
+    }
+  }
+
+  function renderFulltextCard(data) {
+    var meta = data.meta || {};
+    var card = renderCard({
+      date: meta.date,
+      facility: meta.facility,
+      type: meta.type,
+      severity: meta.severity,
+      title: meta.title,
+      link: data.url
+    });
+    var label = document.createElement("p");
+    label.className = "finding-auto-label";
+    label.textContent = "Matching text from the document. Scanned pages are read by " +
+      "text recognition, which can make mistakes; names on the monitor's withheld " +
+      "list are replaced. Open the document to read it in full.";
+    card.appendChild(label);
+    var p = document.createElement("p");
+    p.className = "finding-fulltext";
+    appendExcerpt(p, data.excerpt);
+    card.appendChild(p);
+    return card;
+  }
+
+  function runFulltext(f) {
+    var run = ++fulltextRun;
+    browseList.hidden = true;
+    browseNav.hidden = true;
+    searchResults.hidden = false;
+    setStatus("Searching inside the documents...");
+    loadPagefind()
+      .then(function (pf) {
+        return pf.search(f.rawQuery, { filters: pagefindFilters(f) });
+      })
+      .then(function (search) {
+        if (run !== fulltextRun) {
+          return;
+        }
+        while (searchResults.firstChild) {
+          searchResults.removeChild(searchResults.firstChild);
+        }
+        var hits = (search && search.results) || [];
+        var next = 0;
+        var shown = 0;
+        var moreBtn = document.createElement("button");
+        moreBtn.type = "button";
+        moreBtn.className = "search-ui-more";
+        moreBtn.textContent = "Show more";
+
+        function loadMore() {
+          moreBtn.disabled = true;
+          var batch = hits.slice(next, next + FULLTEXT_PAGE_SIZE);
+          next += batch.length;
+          return Promise.all(batch.map(function (h) { return h.data(); })).then(function (datas) {
+            if (run !== fulltextRun) {
+              return;
+            }
+            datas.forEach(function (d) {
+              if (passesLocalFilters(d.meta || {}, f)) {
+                searchResults.insertBefore(renderFulltextCard(d), moreBtn.parentNode ? moreBtn : null);
+                shown += 1;
+              }
+            });
+            moreBtn.disabled = false;
+            if (next >= hits.length && moreBtn.parentNode) {
+              searchResults.removeChild(moreBtn);
+            }
+            setStatus(hits.length + " document" + (hits.length === 1 ? "" : "s") +
+              " contain these words. Showing " + shown + ".");
+            if (!hits.length) {
+              var none = document.createElement("p");
+              none.textContent = "No document text matches. Try the title and summary search instead (untick the box).";
+              searchResults.appendChild(none);
+            }
+          });
+        }
+
+        if (hits.length > FULLTEXT_PAGE_SIZE) {
+          searchResults.appendChild(moreBtn);
+        }
+        moreBtn.addEventListener("click", loadMore);
+        return loadMore();
+      })
+      .catch(function () {
+        if (run !== fulltextRun) {
+          return;
+        }
+        setStatus("Full-text search is temporarily unavailable. Untick the box to search titles and summaries.");
+      });
+  }
+
+  initFulltextToggle();
+
   // Keeps the index's own order (newest-first, same as the chronological
   // list) rather than re-sorting results.
   function runFilter() {
@@ -427,6 +664,10 @@
     clearBtn.hidden = !active;
     if (!active) {
       showBrowseView();
+      return;
+    }
+    if (f.fulltext && f.qTokens.length) {
+      runFulltext(f);
       return;
     }
     if (!indexData) {
@@ -443,6 +684,7 @@
         matchesFacet(entry.facility, f.facility) &&
         matchesFacet(entry.type, f.type) &&
         matchesFacet(entry.severity, f.severity) &&
+        matchesFacet(entryYear(entry), f.year) &&
         matchesDateRange(entry, f.dateMin, f.dateMax)
       );
     });
@@ -468,6 +710,9 @@
     filterFacility.value = "";
     filterType.value = "";
     filterSeverity.value = "";
+    if (filterYear) {
+      filterYear.value = "";
+    }
     dateMin.value = "";
     dateMax.value = "";
     runFilter();
@@ -477,6 +722,12 @@
   filterFacility.addEventListener("change", onFilterChange);
   filterType.addEventListener("change", onFilterChange);
   filterSeverity.addEventListener("change", onFilterChange);
+  if (filterYear) {
+    filterYear.addEventListener("change", onFilterChange);
+  }
+  if (fulltextBox) {
+    fulltextBox.addEventListener("change", onFilterChange);
+  }
   dateMin.addEventListener("change", onFilterChange);
   dateMax.addEventListener("change", onFilterChange);
   clearBtn.addEventListener("click", resetFilters);
