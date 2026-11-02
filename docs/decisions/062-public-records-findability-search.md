@@ -213,7 +213,8 @@ Its tooltip says which date it is.
   `backfill_mirror_ocr.py` / ADR 069 has given them one; image attachments
   and hand-curated files are not full-text searched.
 
-**Open for Trisha before enabling:** the denylist redaction withholds the names
-of EGLE and operator staff in public documents as well (it is the same list the
-feed uses). Is that the right call for full text, or should official names stay
-searchable?
+**Name policy (decided by Trisha, 2026-11-02):** in full text, names on the
+two lists (the `name_check` denylist, which includes listed EGLE and operator
+staff, and `REDACT_NAMES`) are withheld; every other name in a document's text
+is published as written (for example a correspondent's first name in an email).
+The heuristic name detector is not applied to whole documents.
