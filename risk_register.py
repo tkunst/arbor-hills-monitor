@@ -1,5 +1,5 @@
 """
-risk_register.py — R1-R9 risk definitions + R8 signal keywords.
+risk_register.py — R1-R10 risk definitions + R8 signal keywords.
 
 Single source of truth for the monitor's risk register. `egle_doc_parser`
 takes a risk register as a parameter (it does NOT hardcode this), so the parser
@@ -101,6 +101,22 @@ RISK_REGISTER = [
             "perimeter gas-probe monitoring (including the Consent Judgment's "
             "boundary probes along Napier Rd) and in records of underground "
             "construction near the waste edge."
+        ),
+    },
+    {
+        "id": "R10",
+        "name": "Methane emissions to air",
+        "description": (
+            "Landfill gas escaping to the atmosphere instead of being collected "
+            "and destroyed: the gas-collection system's capture share against "
+            "the gas-generation model (collected flow in the gas plants' "
+            "monthly reports vs. LandGEM), surface emissions monitoring "
+            "exceedances (500 ppm methane above background under the federal "
+            "landfill air rules, 40 CFR 60 Subpart XXX / 63 Subpart AAAA), "
+            "cover cracks and leaks, gas-plant or flare downtime and venting, "
+            "greenhouse-gas reporting (40 CFR 98 Subpart HH), and satellite or "
+            "aircraft methane plumes (e.g. Carbon Mapper). Distinct from R9 "
+            "(gas moving underground) and R4 (perimeter air monitors)."
         ),
     },
 ]

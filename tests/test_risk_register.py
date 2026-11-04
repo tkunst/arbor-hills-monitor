@@ -265,4 +265,11 @@ def test_non_action_titles_are_not_urgent(title):
 def test_r9_subsurface_gas_migration_is_registered():
     assert rr.RISK_NAMES["R9"] == "Subsurface gas migration"
     assert "R9" in rr.VALID_RISK_IDS
-    assert [r["id"] for r in rr.RISK_REGISTER] == [f"R{i}" for i in range(1, 10)]
+    assert [r["id"] for r in rr.RISK_REGISTER] == [f"R{i}" for i in range(1, 11)]
+
+
+# --- R10 (2026-11-04, Trisha): methane emissions to air --------------------
+
+def test_r10_methane_emissions_to_air_is_registered():
+    assert rr.RISK_NAMES["R10"] == "Methane emissions to air"
+    assert "R10" in rr.VALID_RISK_IDS
