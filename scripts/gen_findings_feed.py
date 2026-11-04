@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import drive_client  # noqa: E402
 import findings_feed  # noqa: E402
 import sheet_writer  # noqa: E402
+from config_loader import load_config  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.join(REPO_ROOT, "site", "public-records")
@@ -92,12 +93,22 @@ def main() -> None:
     # internal `source` (col C, may carry names) is never published.
     handcurated_rows = _tab_values(service, sheet_id, sheet_writer.TAB_HANDCURATED, "A2:M")
     rows = findings_feed.merge_and_sort(new_rows, historical_rows)
+    archive_links = _archive_links(service, sheet_id)
+    # ADR 065 overrides at render time (see apply_title_overrides) -- before
+    # the link swap below, while rows still carry the Sheet's own link.
+    title_cfg = load_config().get("document_titles") or {}
+    rows = findings_feed.apply_title_overrides(
+        rows, title_cfg.get("overrides") or {}, archive_links)
+    for r in findings_feed.placeholder_title_rows(rows, title_cfg.get("generic_exact")):
+        print(f"::warning::placeholder title still shown: {r.get('document_name')!r} "
+              f"(filed {r.get('date_filed') or '?'}, {r.get('link') or 'no link'}) -- "
+              "add a document_titles.overrides entry in config.yml")
     # The nSITE link errors for a human clicking it in a browser (see
     # findings_feed.resolve_display_link's docstring) -- swap in the durable
     # Drive mirror wherever one exists before rendering. Hand-Curated rows
     # already carry a Drive link (never an nSITE one), so they merge in after
     # this step rather than through it.
-    rows = findings_feed.resolve_display_links(rows, _archive_links(service, sheet_id))
+    rows = findings_feed.resolve_display_links(rows, archive_links)
     rows = findings_feed.merge_handcurated(rows, handcurated_rows)
 
     previous_total = _previous_total(OUT_DIR)

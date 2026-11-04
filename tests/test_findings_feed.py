@@ -237,6 +237,45 @@ def test_resolve_display_links_applies_per_row_and_preserves_everything_else():
     assert resolved[1]["link"] == ""  # no doc_id extractable from a blank link -- passthrough
 
 
+# --- apply_title_overrides / placeholder_title_rows ----------------------
+
+def test_apply_title_overrides_replaces_a_stale_placeholder_cell():
+    # A doc already in the Sheet when its override was added keeps "Site" in
+    # its Document Name cell; the feed must still show the override.
+    rows = ff.parse_feed_rows([_row(name="Site", link=_NSITE_LINK)])
+    out = ff.apply_title_overrides(rows, {"-3977391404391944171": "Real title"})
+    assert out[0]["document_name"] == "Real title"
+    assert out[0]["egle_title"] == "Site"  # raw title kept for the "EGLE title:" note
+
+
+def test_apply_title_overrides_finds_the_doc_id_of_a_row_already_linked_to_its_mirror():
+    # Inline mirror succeeded at ingest -> the Sheet Link is the Drive URL,
+    # which carries no doc_id; the Archived PDFs map is read in reverse.
+    rows = ff.parse_feed_rows([_row(name="nForm Document", link=_DRIVE_LINK)])
+    out = ff.apply_title_overrides(rows, {"-3977391404391944171": "Real title"},
+                                   {"-3977391404391944171": _DRIVE_LINK})
+    assert out[0]["document_name"] == "Real title"
+
+
+def test_apply_title_overrides_keeps_an_existing_egle_title():
+    rows = ff.parse_feed_rows([_row(name="Old name", link=_NSITE_LINK, egle_title="nForm Document")])
+    out = ff.apply_title_overrides(rows, {"-3977391404391944171": "Real title"})
+    assert out[0]["egle_title"] == "nForm Document"
+
+
+def test_apply_title_overrides_leaves_unmatched_and_linkless_rows_alone():
+    rows = ff.parse_feed_rows([_row(name="Site", link=_NSITE_LINK), _row(name="Doc B", link="")])
+    assert ff.apply_title_overrides(rows, {"999": "Other"}) == rows
+    assert ff.apply_title_overrides(rows, {}) == rows
+
+
+def test_placeholder_title_rows_flags_bare_generic_titles_case_insensitively():
+    rows = ff.parse_feed_rows([_row(name="nForm Document"), _row(name="site"),
+                               _row(name="Site inspection report")])
+    hits = ff.placeholder_title_rows(rows, ["nForm Document", "Site"])
+    assert [r["document_name"] for r in hits] == ["nForm Document", "site"]
+
+
 # --- facility_display ---------------------------------------------------
 
 def test_facility_display_aliases_wrd():

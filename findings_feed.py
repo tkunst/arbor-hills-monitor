@@ -116,6 +116,45 @@ def resolve_display_links(rows: list[dict], archive_links: dict) -> list[dict]:
     return [dict(r, link=resolve_display_link(r["link"], archive_links)) for r in rows]
 
 
+def apply_title_overrides(rows: list[dict], overrides: dict,
+                          archive_links: dict | None = None) -> list[dict]:
+    """ADR 065 overrides (config.yml `document_titles.overrides`, doc_id ->
+    name) applied at RENDER time too, not only at ingest. doc_pipeline
+    resolves them when a document is first processed, so a doc that was
+    already in the Sheet when its override was added keeps its placeholder
+    "Document Name" cell forever unless someone rewrites the cell (found
+    2026-11-04: an overridden "Site" row still showed "Site"). Applying the
+    map here makes config the single source of truth for the public feed.
+    The doc_id comes from the nSITE link, or -- for a row whose Sheet Link is
+    already its Drive mirror (the inline mirror at ingest succeeded) -- from
+    `archive_links` ({doc_id: archive_url}) read in reverse. When the row has
+    no raw EGLE title recorded, the replaced name is kept as `egle_title` so
+    the "EGLE title:" note still shows the original."""
+    if not overrides:
+        return rows
+    by_archive_url = {url: did for did, url in (archive_links or {}).items()}
+    out = []
+    for r in rows:
+        link = r.get("link") or ""
+        did = by_archive_url.get(link) or doc_id_from_nsite_link(link)
+        name = overrides.get(did) if did else None
+        if name and name != r.get("document_name"):
+            r = dict(r, document_name=name,
+                     egle_title=r.get("egle_title") or r.get("document_name") or "")
+        out.append(r)
+    return out
+
+
+def placeholder_title_rows(rows: list[dict], generic_exact) -> list[dict]:
+    """Rows whose displayed title is still a bare generic nSITE placeholder
+    ("nForm Document", "Site", ...) after overrides -- a classifier miss nobody
+    has fixed yet. gen_findings_feed.py prints these as workflow warnings so a
+    miss surfaces in the run log instead of waiting for a reader to spot it."""
+    generic = {g.strip().lower() for g in (generic_exact or []) if g.strip()}
+    return [r for r in rows
+            if (r.get("document_name") or "").strip().lower() in generic]
+
+
 # EGLE's own filing metadata sometimes embeds a date in a document's title
 # that doesn't match its actual Date Filed -- confirmed on a real doc: title
 # read "On-Site Inspection (06/01/2025)", the actual inspection/filing date

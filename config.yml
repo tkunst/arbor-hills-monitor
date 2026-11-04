@@ -556,6 +556,16 @@ document_titles:
     "7377919204018821699": "Submitted by Arbor Hills Landfill: Stack Test Report for Enclosed Flares (FGENCLOSEDFLARES-S2) under NESHAP Subpart AAAA"
     "8445516826773948510": "Submitted by Arbor Hills Landfill: Air Quality Test Report Submittal, Submission HQR-V0Y8-PSAJY, Test Date 09/01/2026"
     "-4886796656621920312": "Golder Associates PFAS Site Characterization Report, Arbor Hills Sanitary Landfill, for Advanced Disposal Services (October 2020)"
+    # 8 placeholder rows the 10/23 sweep missed (one is the 11/2 classifier miss), added 2026-11-04.
+    # Same two shapes and prompt as the 10/23 set; name_check clean.
+    "216800649051934454": "Submitted by Arbor Hills Landfill: Air emissions stack test results for enclosed flares (FGENCLOSEDFLARES-S2), NOx and CO"
+    "7663546814952679264": "Submitted by GFL: 40 CFR 63 Subpart AAAA NESHAP Compliance Form, 2024 2nd Semi-Annual Report"
+    "-6308288428723062765": "Submitted by Arbor Hills Landfill: First Interim Short-Term Stormwater Characterization Study (STSWCS) Report, PFAS"
+    "-4068477108646126254": "Submitted by Arbor Hills Remediation Area: Schedule of Compliance Submittal with First Interim STSWCS Report"
+    "326972623888842489": "Submitted by Arbor Hills Landfill: Air Quality Test Plan Submittal version 1.12, test start 09/01/2026"
+    "-71471772528808520": "Email correspondence (USFWS to Crandell Environmental): No effect determination for Eastern massasauga rattlesnake"
+    "-5419898085199364155": "Email correspondence (GFL to EGLE): RE: 2022 Second Quarter Report - CJ No. 2020-0593-CE"
+    "8931395597323960221": "Email correspondence (GFL to EGLE): RE: 2022 Second Quarter Report - CJ No. 2020-0593-CE"
 
 # --- WOI (Wells of Interest) auto-routing (ADR 005 integration, added 2026-07-13) ---
 # The semi-annual WOI Status Reports (the two are 181 and 323 pp of per-well

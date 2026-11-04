@@ -115,6 +115,12 @@ def _parse_and_resolve(ctx: RunContext, d: dict, local: str):
         well_alias_map=ctx.well_alias_map,
     )
     clean_display_title = dt.sanitize_display_title(parsed.display_title) if is_generic else ""
+    if is_generic and not clean_display_title and did not in ctx.title_overrides:
+        # Say WHICH step failed, never the candidate text: Actions logs are
+        # public and a rejected title may be rejected because it holds a name.
+        why = ("sanitizer rejected the proposed title" if parsed.display_title
+               else "classifier returned no display_title")
+        print(f"  [title] {did}: generic nSITE title kept ({why})")
     d["egle_title"] = d["document_name"]
     d["document_name"] = dt.resolve_display_name(
         did, d["egle_title"], clean_display_title, ctx.title_overrides)
