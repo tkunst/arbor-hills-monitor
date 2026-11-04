@@ -99,7 +99,10 @@ def main() -> None:
     title_cfg = load_config().get("document_titles") or {}
     rows = findings_feed.apply_title_overrides(
         rows, title_cfg.get("overrides") or {}, archive_links)
-    for r in findings_feed.placeholder_title_rows(rows, title_cfg.get("generic_exact")):
+    # Only the three placeholders ruled useless 2026-10-23; "Correspondence" /
+    # "Submital Attachments" rows are known and would bury a new miss.
+    for r in findings_feed.placeholder_title_rows(
+            rows, ("nForm Document", "Site", "Submission PDF")):
         print(f"::warning::placeholder title still shown: {r.get('document_name')!r} "
               f"(filed {r.get('date_filed') or '?'}, {r.get('link') or 'no link'}) -- "
               "add a document_titles.overrides entry in config.yml")
