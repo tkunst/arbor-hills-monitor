@@ -6,7 +6,7 @@ Context for any AI agent (or human) working in this repo.
 
 An independent, automated monitor of EGLE regulatory filings for the Arbor
 Hills Landfill (SRN N2688). It backfills the ~754 existing documents and
-watches for new ones, classifies each against a risk register (R1–R9), keeps a
+watches for new ones, classifies each against a risk register (R1–R10), keeps a
 full-text-searchable PDF archive + a Google Sheet case file, and sends alerts.
 
 **Editorial posture — UPDATED (Trisha's direction, 2026-08-30): "accuracy over
@@ -54,7 +54,7 @@ module, and update that entry in the same PR.
 - `ocr_util.py` — shared OCR: `classify`, `ocr_in_place`, `needs_ocr`, `ensure_searchable` (ADR 069).
 - `kdp_check.py` — deterministic temperature consistency check on the model's key data point / summary (ADR 067).
 - `retry_policy.py` — transient vs. permanent per-document errors, so infra blips never strike a filing.
-- `risk_register.py` — R1–R9 + signal keywords (single source of truth).
+- `risk_register.py` — R1–R10 + signal keywords (single source of truth).
 - `document_titles.py` — generic nSITE titles → display names (ADR 065).
 - `name_check.py` — no-LLM personal-name / internal-content check for anything public.
 - `poison_doc_extractor.py` — non-PDF nSITE sources (.msg, .docx, images, zips) → PDF (ADR 011).
