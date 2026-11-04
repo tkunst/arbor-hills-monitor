@@ -452,7 +452,7 @@ encouragement to comment lives on the advocacy site, not here.
 ## Risk register (R1–R10)
 
 R1 expansion eligibility · R2 violations history · R3 odor nuisance · R4 air
-quality · R5 water quality · R6 environmental justice · R7 truck traffic ·
+quality · R5 water quality · R6 environmental justice · R7 roads and trucks ·
 **R8 overheating / ETLF** (the evidence-dense new one — HOV waivers, WOI Status
 Reports, temperature exceedances, CJ No. 2020-0593-CE) · R9 subsurface gas
 migration (landfill gas moving underground past the waste boundary; perimeter
