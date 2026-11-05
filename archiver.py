@@ -55,6 +55,7 @@ import drive_client as dc
 import sheet_writer as sw
 import nsite_client as nc
 import archive_client as ac
+import mirror_index as mi
 from config_loader import load_config
 
 
@@ -69,7 +70,7 @@ def _mirror_and_record(session, drive, sheets, sheet_id: str, doc: dict,
                         document_name: str, date_filed: str, risks, nsite_link: str,
                         local_path: str | None = None,
                         document_date: str = "", egle_title: str = "",
-                        ocr_stats=None) -> str:
+                        ocr_stats=None, index_cfg: dict | None = None) -> str:
     """Upload doc to Drive and record the Archived PDFs index row, returning
     the Drive link. RAISES on any failure (download, upload, or Sheet write)
     — callers decide what "failure" means for them: run()'s batch loop logs
@@ -89,12 +90,17 @@ def _mirror_and_record(session, drive, sheets, sheet_id: str, doc: dict,
 
     `ocr_stats`: parse_document()'s page check for `local_path` (ParsedDoc.
     ocr_stats), so the upload skips a second all-pages scan when the bytes
-    are unchanged (CODER-PLAN step 2). Ignored on the download path."""
+    are unchanged (CODER-PLAN step 2). Ignored on the download path.
+
+    `index_cfg`: the loaded config, used ONLY to decide whether to write a
+    `Mirror Index` row for this upload (ADR 073; mirror_index.target() is None
+    unless `mirror_index.enabled`). None = never index."""
     did = doc["doc_id"]
     srn = doc.get("facility_srn", "N2688")
+    index = mi.target(index_cfg, sheets, sheet_id, "nsite", did)
     if local_path:
         link = ac.upload_pdf(drive, local_path, f"{srn}_{did}.pdf", ac.folder_id(),
-                             ocr_stats=ocr_stats)
+                             ocr_stats=ocr_stats, index=index)
         sw.append_archive_row(
             sheets, sheet_id, did, document_name, date_filed, risks, nsite_link, link, _now(),
             document_date=document_date, egle_title=egle_title or document_name)
@@ -104,7 +110,7 @@ def _mirror_and_record(session, drive, sheets, sheet_id: str, doc: dict,
     local = os.path.join(tmp, f"{srn}_{did}.pdf")
     try:
         nc.download_pdf(session, doc, local)
-        link = ac.upload_pdf(drive, local, f"{srn}_{did}.pdf", ac.folder_id())
+        link = ac.upload_pdf(drive, local, f"{srn}_{did}.pdf", ac.folder_id(), index=index)
         sw.append_archive_row(
             sheets, sheet_id, did, document_name, date_filed, risks, nsite_link, link, _now(),
             document_date=document_date, egle_title=egle_title or document_name)
@@ -181,6 +187,12 @@ def mirror_one_now(session, sheets, sheet_id: str, doc: dict, drive_state: dict,
         # distinguishing "empty" from "failed" would make splitting this
         # worthwhile, but isn't the case today.
         try:
+            # ADR 073: read the Mirror Index flag once per run, alongside the
+            # Drive handshake. A config read failure just means "don't index".
+            try:
+                drive_state["index_cfg"] = load_config()
+            except Exception:  # noqa: BLE001
+                drive_state["index_cfg"] = None
             drive_state["service"] = ac.oauth_drive_service()
             drive_state["links"] = sw.archived_doc_links(sheets, sheet_id)
         except Exception as e:  # noqa: BLE001 — best-effort for the whole run
@@ -214,6 +226,7 @@ def mirror_one_now(session, sheets, sheet_id: str, doc: dict, drive_state: dict,
                 document_date=doc.get("document_date", ""),
                 egle_title=doc.get("egle_title", "") or doc.get("document_name", ""),
                 ocr_stats=ocr_stats,
+                index_cfg=drive_state.get("index_cfg"),
             )
             drive_state["links"][doc_id] = link
             return link
@@ -289,6 +302,7 @@ def run() -> int:
                 document_date=payload.get("document_date", ""),
                 egle_title=(payload.get("egle_title") or payload.get("document_name")
                             or meta.get("document_name", "")),
+                index_cfg=cfg,
             )
             mirrored += 1
             print(f"  ok  {meta.get('date_filed','')}  {meta.get('document_name','')[:50]}")

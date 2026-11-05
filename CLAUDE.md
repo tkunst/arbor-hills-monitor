@@ -80,6 +80,7 @@ module, and update that entry in the same PR.
 - `email_alerts.py` — urgent alerts + weekly digest; urgency decision is pure.
 - `owner_notices.py` — owner-only weekly email + same-day owner alerts (ADR 070).
 - `review_flags.py` — "needs human review" log on the private Sheet (ADR 067 amendment).
+- `mirror_index.py` — the public `Mirror Index` tab: Drive checksums + page/OCR stats per mirrored PDF, written at upload; flag `mirror_index.enabled` (ADR 073).
 - `report_tracker.py` / `report_tracker_seed.py` — expected reports vs. arrivals, private Sheet, and its seed data (ADR 071).
 - `upcoming.py` — reads the private Sheet's hand-kept `Upcoming` tab for the Sunday digest.
 - `findings_feed.py` / `public_comment_feed.py` — pure renderers for the public Findings and Public Comment pages.
@@ -169,6 +170,7 @@ decision behind it; this table only answers "is it live right now."
 | `report_tracking.review_email_enabled` | no |
 | `egle_newsroom.enabled` | yes |
 | `fulltext_search.enabled` | yes |
+| `mirror_index.enabled` | no |
 <!-- stream-status:end -->
 
 ## Forbidden patterns (do not do these)
@@ -277,6 +279,12 @@ decision behind it; this table only answers "is it live right now."
   AND a durable append-only record (every row is also data):
   `GFL Info Site Watch`, `Ridge Wood Reports`, `RRD Documents`,
   `EGLE Newsroom Watch` — these get the strict/raising contract above.
+  `Mirror Index` (ADR 073, `mirror_index.py`) is a state tab later steps
+  SKIP WORK from: its reader `read_index()` uses `_tab_rows_strict()`, and a
+  row is only ever trusted when Drive's LIVE `sha256Checksum` equals its
+  `mirror_sha256` (missing row / blank / mismatch / read error = process the
+  file the old way). Its writer upserts by `drive_id` (last row wins on a
+  race), never appends after a failed read, and never fails the upload.
   `Evidence by Risk` and `WDS Evidence by Risk` are a DIFFERENT exception
   worth naming: they're read back too, but only by
   `rebuild_risk_register_tab()`/`rebuild_all_evidence_tab()` to recompute two

@@ -108,7 +108,7 @@ def find_in_folder(service, name: str, folder_id: str) -> str | None:
 
 
 def upload_file(service, local_path: str, name: str, mimetype: str, folder_id: str,
-                *, ocr_stats=None) -> str:
+                *, ocr_stats=None, index=None) -> str:
     """Upload (or reuse) one file in the given folder. Returns its webViewLink —
     the durable, shareable URL recorded in the Archived PDFs / WDS Page Snapshots
     / MMPC Archived Files tabs. Idempotent per find_in_folder()'s caveat above.
@@ -138,7 +138,15 @@ def upload_file(service, local_path: str, name: str, mimetype: str, folder_id: s
     Ridge Wood's own ensure_searchable_with_stats() call). Passed on as
     `known`; ensure_searchable trusts it only when its sha256 matches
     local_path's bytes, so a stale or wrong value just means the old full
-    page scan."""
+    page scan.
+
+    `index` (ADR 073): a mirror_index.IndexTarget, or None. Only when given
+    (the caller builds one only with `mirror_index.enabled` on, and only for a
+    public PDF source) does this ask Drive for the file's checksums and write a
+    `Mirror Index` row AFTER the upload succeeded; that write never raises. With
+    None, this function behaves exactly as before ADR 073 (same Drive request
+    fields, no hashing, no Sheets call). Not done on the reuse-existing path:
+    no new bytes were uploaded (the step-4 backfill covers existing files)."""
     from googleapiclient.http import MediaFileUpload
 
     existing = find_in_folder(service, name, folder_id)
@@ -147,19 +155,28 @@ def upload_file(service, local_path: str, name: str, mimetype: str, folder_id: s
         return got["webViewLink"]
 
     upload_path = local_path
+    stats = None
     if mimetype == "application/pdf":
         import ocr_util
 
-        upload_path, _stats = ocr_util.ensure_searchable_with_stats(local_path, known=ocr_stats)
+        upload_path, stats = ocr_util.ensure_searchable_with_stats(local_path, known=ocr_stats)
+    if mimetype != "application/pdf":
+        index = None  # ADR 073 indexes PDFs only
 
     try:
         media = MediaFileUpload(upload_path, mimetype=mimetype, resumable=True)
         meta = {"name": name, "parents": [folder_id]}
+        fields = "id, webViewLink"
+        if index is not None:
+            import mirror_index
+            fields = mirror_index.DRIVE_FIELDS
         f = (
             service.files()
-            .create(body=meta, media_body=media, fields="id, webViewLink")
+            .create(body=meta, media_body=media, fields=fields)
             .execute(num_retries=GOOGLE_API_NUM_RETRIES)
         )
+        if index is not None:
+            _record_index(index, f, stats, local_path)
         return f["webViewLink"]
     finally:
         if upload_path != local_path:
@@ -169,9 +186,25 @@ def upload_file(service, local_path: str, name: str, mimetype: str, folder_id: s
                 pass
 
 
-def upload_pdf(service, local_path: str, name: str, folder_id: str, *, ocr_stats=None) -> str:
+def _record_index(index, drive_meta: dict, stats, local_path: str, raw_revision_pinned: str = "") -> None:
+    """ADR 073 index write after a successful upload. Never raises."""
+    import mirror_index
+    original = ""
+    if getattr(index, "local_is_source", False):
+        try:
+            import ocr_util
+            original = ocr_util.file_sha256(local_path)
+        except Exception:  # noqa: BLE001 — a blank original sha is fine
+            original = ""
+    mirror_index.record(index, drive_meta, stats, original_sha256=original,
+                        raw_revision_pinned=raw_revision_pinned)
+
+
+def upload_pdf(service, local_path: str, name: str, folder_id: str, *, ocr_stats=None,
+               index=None) -> str:
     """Thin wrapper over upload_file() for a PDF mirror (archiver.py, mmpc_archiver.py)."""
-    return upload_file(service, local_path, name, "application/pdf", folder_id, ocr_stats=ocr_stats)
+    return upload_file(service, local_path, name, "application/pdf", folder_id,
+                       ocr_stats=ocr_stats, index=index)
 
 
 # ---------------------------------------------------------------------------
@@ -220,18 +253,29 @@ def pin_head_revision(service, file_id: str) -> str:
 
 
 def update_file_content(service, file_id: str, local_path: str,
-                        mimetype: str = "application/pdf") -> str:
+                        mimetype: str = "application/pdf", *, index=None, ocr_stats=None,
+                        raw_revision_pinned: str = "") -> str:
     """Overwrite a file's content IN PLACE (files().update with a new
     media_body) — SAME file id, so every Sheet link / public-records page
     link / emailed link that points at it keeps working; no files().create,
     ever. Returns the file id (re-confirmed from the response, not just
-    echoed back) so the caller can assert it didn't change."""
+    echoed back) so the caller can assert it didn't change.
+
+    `index` (ADR 073): as in upload_file(); the caller (the OCR backfill)
+    passes the replacement's OcrStats and the pinned raw revision id. None =
+    unchanged behavior. Not wired to a caller yet (CODER-PLAN step 5)."""
     from googleapiclient.http import MediaFileUpload
 
     media = MediaFileUpload(local_path, mimetype=mimetype, resumable=True)
+    fields = "id"
+    if index is not None:
+        import mirror_index
+        fields = mirror_index.DRIVE_FIELDS.replace("webViewLink, ", "")
     f = (
         service.files()
-        .update(fileId=file_id, media_body=media, fields="id")
+        .update(fileId=file_id, media_body=media, fields=fields)
         .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
+    if index is not None:
+        _record_index(index, f, ocr_stats, local_path, raw_revision_pinned)
     return f["id"]

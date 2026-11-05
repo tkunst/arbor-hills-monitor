@@ -59,7 +59,7 @@ def _wire(monkeypatch, cfg, fetch_by_category, upload=None, drive_auth_ok=True):
     monkeypatch.setattr(ca.mc, "download_file", lambda session, file_id, dest: dest)
     uploaded = []
 
-    def _upload(drive, local, name, folder):
+    def _upload(drive, local, name, folder, **kw):
         uploaded.append((name, folder))
         return f"https://drive.example/{name}"
 
@@ -160,7 +160,7 @@ def test_mirror_fetch_failure_is_isolated_other_mirrors_still_run(monkeypatch):
 def test_one_file_upload_failure_does_not_abort_the_batch(monkeypatch):
     attempted = []
 
-    def _upload(drive, local, name, folder):
+    def _upload(drive, local, name, folder, **kw):
         attempted.append(name)
         if name == "168.pdf":
             raise RuntimeError("upload quota exceeded")
@@ -230,7 +230,7 @@ def test_temp_file_is_cleaned_up_after_a_successful_upload(monkeypatch, tmp_path
         return dest
 
     monkeypatch.setattr(ca.mc, "download_file", _download)
-    monkeypatch.setattr(ca.ac, "upload_pdf", lambda drive, local, name, folder: "https://drive.example/x")
+    monkeypatch.setattr(ca.ac, "upload_pdf", lambda drive, local, name, folder, **kw: "https://drive.example/x")
     monkeypatch.setattr(ca.ac, "oauth_drive_service", lambda: object())
 
     assert ca.run() == 0

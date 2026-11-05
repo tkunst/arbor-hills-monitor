@@ -243,6 +243,15 @@ behavior, update its entry here in the same PR.
   meets the usual rule). `scripts/backfill_well_aliases.py` relabels existing rows: it defaults to
   a dry run, and `--apply` is Trisha's to run.
 - `drive_client.py` — Google Drive + Sheets API (service account, folder ID).
+- `mirror_index.py` — **ADR 073** (CODER-PLAN step 3, 2026-11-05): the public
+  `Mirror Index` tab, one row per mirrored PDF (Drive sha256/md5/size/head
+  revision + pages, image-only pages, `text_status`, OCR engine). Pure row
+  builder + `text_status()` table; strict `read_index()` (last row per
+  `drive_id` wins); `upsert_row()` (never appends after a failed read);
+  `record()` never raises. Only nSITE (`archiver`), MMPC and CivicClerk uploads
+  pass an `IndexTarget`, and `target()` returns None unless
+  `mirror_index.enabled`. Tab created on first enabled write, not by
+  `ensure_tabs()`. Readers skip work only on a live Drive sha256 match.
 - `archive_client.py` — **ADR 007**: Google Drive access for the durable PDF
   mirror, authenticated as Trisha via OAuth (`drive.file` scope only) rather
   than the service account `drive_client.py` above uses — a service account
@@ -257,6 +266,9 @@ behavior, update its entry here in the same PR.
   need `google-auth-oauthlib`. `upload_file()`/`upload_pdf()` take an optional
   `ocr_stats=` (an `ocr_util.OcrStats` for `local_path`), passed on as `known`
   so a PDF the caller already page-checked isn't scanned again (sha-verified).
+  `index=` (ADR 073): an optional `mirror_index.IndexTarget`; when given, the
+  create/update asks Drive for its checksums and a `Mirror Index` row is
+  written after the upload (never failing it). None = unchanged request.
 - `sheet_writer.py` — the four+1 sheet tabs; routing/fan-out is pure & tested.
   **ADR 065** appended `Document Date`/`EGLE Title` at the END of
   `FEED_HEADERS`/`EVIDENCE_HEADERS`/`ARCHIVE_HEADERS`/`ALL_EVIDENCE_HEADERS`
