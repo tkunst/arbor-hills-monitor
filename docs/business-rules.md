@@ -79,7 +79,7 @@ it.
 
 Every document is tagged against a fixed 10-risk register that defines what this community group is fighting.
 
-- **Given** a document about the landfill; **When** it is classified; **Then** it may be tagged with any of: R1 Expansion eligibility, R2 Violations history, R3 Odor nuisance, R4 Air quality, R5 Water quality, R6 Environmental justice, R7 Truck traffic, R8 Overheating/ETLF, R9 Subsurface gas migration, R10 Methane emissions to air — using only these IDs, tagging none if none apply.
+- **Given** a document about the landfill; **When** it is classified; **Then** it may be tagged with any of: R1 Expansion eligibility, R2 Violations history, R3 Odor nuisance, R4 Air quality, R5 Water quality, R6 Environmental justice, R7 Roads and trucks, R8 Overheating/ETLF, R9 Subsurface gas migration, R10 Methane emissions to air — using only these IDs, tagging none if none apply.
 - `risk_register.py:20-122`
 - classification
 

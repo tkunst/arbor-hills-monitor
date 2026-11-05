@@ -70,9 +70,11 @@ RISK_REGISTER = [
     },
     {
         "id": "R7",
-        "name": "Truck traffic",
+        "name": "Roads and trucks",
         "description": (
-            "Heavy truck impacts near schools and residential streets. "
+            "Road impacts of landfill traffic: heavy trucks near schools and "
+            "residential streets, road dust and mud tracked onto public roads, "
+            "haul routes, and road closures or road work tied to the site. "
             "'No Truck Zone' on Six Mile Rd; Northville Township working group."
         ),
     },
