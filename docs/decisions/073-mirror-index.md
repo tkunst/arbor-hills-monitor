@@ -1,7 +1,7 @@
 # ADR 073 — `Mirror Index`: one metadata row per mirrored PDF
 
 Date: 2026-11-05
-Status: accepted (ships disabled; `mirror_index.enabled: false` until Trisha approves)
+Status: proposed (ships disabled; `mirror_index.enabled: false` until Trisha approves: Gate B)
 Builds on: ADR 007 (OAuth durable Drive archive), ADR 010/037 (MMPC and
 CivicClerk meeting archives), ADR 069 (OCR on upload), CODER-PLAN step 2
 (`ocr_util.OcrStats`). Source analysis: Lotext
@@ -31,10 +31,10 @@ One row per Drive file, upserted by `drive_id`. Columns:
 | `source_kind` | `nsite`, `mmpc` or `civicclerk` |
 | `source_key` | nSITE doc id, or the CivicClerk file id |
 | `mirror_sha256`, `mirror_md5`, `size`, `head_revision` | From Drive's own create/update response, verbatim. Blank if Drive returned none. |
-| `original_sha256` | sha256 of the bytes the SOURCE served. Filled only for MMPC/CivicClerk, where the uploaded input is exactly the download. Blank for nSITE: that file may already have been OCR'd in place by `parse_document()` or synthesized from `.msg`/`.docx`, so its hash would only look like the source's. |
+| `original_sha256` | sha256 of the bytes the SOURCE served. Filled only at upload, only for MMPC/CivicClerk, where the uploaded input is exactly the download. Blank for nSITE: that file may already have been OCR'd in place by `parse_document()` or synthesized from `.msg`/`.docx`, so its hash would only look like the source's. Never overwritten: a later write with it blank (a content replacement) keeps the existing value, and `update_file_content()` never hashes its input as the source's. |
 | `pages`, `image_only_pages` | From `ocr_util.OcrStats` for the UPLOADED bytes (`image_only_pages` is a count) |
 | `text_status` | See table below |
-| `ocr_engine` | `none`, or the file's `/Creator` when it starts with `OCRmyPDF` |
+| `ocr_engine` | `none`, or the file's `/Creator` (first 120 chars) when it starts with `OCRmyPDF`. Intentionally public: the same text is in the public PDF. (It stays out of public Actions logs.) |
 | `raw_revision_pinned` | Revision id the OCR backfill pinned before overwriting (blank at upload) |
 | `indexed_at` | UTC ISO timestamp of the write |
 
@@ -64,7 +64,8 @@ succeeded. Callers build a target with `mirror_index.target(cfg, ...)`, which
 returns `None` unless `mirror_index.enabled` is true.
 
 Indexed today: nSITE PDFs (`archiver._mirror_and_record`, both the inline
-`mirror_one_now()` path and the nightly `run()` catch-up), MMPC meeting PDFs,
+`mirror_one_now()` path, which reads the flag from the run's own config handed
+in by `doc_pipeline`, and the nightly `run()` catch-up), MMPC meeting PDFs,
 CivicClerk (DPW/BOC) meeting PDFs.
 
 Never indexed, by construction (no target passed; a test pins it): GovQA and
@@ -124,7 +125,8 @@ This also keeps `sheet_writer.py` out of this change.
 - Flipping the flag (Gate B) makes the next uploads write rows; existing files
   get rows from the step-4 backfill (`--dry-run` by default, `--apply` is
   Gate C).
-- One extra Sheets read (column A) and one write per indexed upload. Uploads
-  are a few a day, plus the nightly archive batch (up to 100).
+- Per indexed upload: one Sheets read (`A:N`) and one write, plus a one-time
+  tab check per process (`ensure_tab`: a metadata get and a header write).
+  Uploads are a few a day, plus the nightly archive batch (up to 100).
 - Changes `archive_client.py`, a module pinned by the Lotext staging job; that
   job needs a re-pin after merge (Gate A).

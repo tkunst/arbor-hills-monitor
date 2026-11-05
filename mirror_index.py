@@ -167,30 +167,48 @@ def read_index(sheets, sheet_id: str, tab: str = TAB) -> dict[str, dict]:
     return latest_by_drive_id(_read_data_rows(sheets, sheet_id, tab))
 
 
+# (sheets client, sheet_id, tab) this process has already ensure_tab()'d, so
+# a batch of uploads pays the tab check once, not per row.
+_ENSURED: set = set()
+
+_ORIGINAL_COL = HEADERS.index("original_sha256")
+
+
 def upsert_row(sheets, sheet_id: str, row: list, tab: str = TAB) -> None:
     """Write `row` over the LAST existing row with the same drive_id, else
     append it. Creates the tab on first use. RAISES on any failure, including
     a failed strict read (never appends blind: an unknown current state would
-    mean a duplicate row) -- record() is the never-raises layer."""
+    mean a duplicate row) -- record() is the never-raises layer.
+
+    `original_sha256` is provenance of the bytes the SOURCE served, recorded
+    once at upload: a later write with it blank (e.g. the OCR backfill
+    replacing the file's content) keeps the existing value."""
     import sheet_writer as sw
     from drive_client import GOOGLE_API_NUM_RETRIES
 
-    sw.ensure_tab(sheets, sheet_id, tab, HEADERS)
-    # Column A with POSITIONS kept (blank rows stay as []), so a hit maps to
-    # its real sheet row; _tab_rows_strict drops blank rows, which would shift
+    key = (id(sheets), sheet_id, tab)
+    if key not in _ENSURED:
+        sw.ensure_tab(sheets, sheet_id, tab, HEADERS)
+        _ENSURED.add(key)
+    # Rows with POSITIONS kept (blank rows stay as []), so a hit maps to its
+    # real sheet row; _tab_rows_strict drops blank rows, which would shift
     # the row number. No try/except: any failure raises (never append blind).
     resp = sheets.spreadsheets().values().get(
-        spreadsheetId=sheet_id, range=f"'{tab}'!A:A",
+        spreadsheetId=sheet_id, range=f"'{tab}'!A:N",
     ).execute(num_retries=GOOGLE_API_NUM_RETRIES)
-    col = resp.get("values", [])
+    data = resp.get("values", [])
     drive_id = str(row[0])
     hit = None
-    for i, r in enumerate(col):
+    for i, r in enumerate(data):
         if i > 0 and r and str(r[0]).strip() == drive_id:
             hit = i
     if hit is None:
         sw.append_rows(sheets, sheet_id, tab, [row])
         return
+    old = data[hit]
+    if not row[_ORIGINAL_COL] and len(old) > _ORIGINAL_COL and old[_ORIGINAL_COL]:
+        row = list(row)
+        row[_ORIGINAL_COL] = old[_ORIGINAL_COL]
     sheet_row = hit + 1  # values index 0 = sheet row 1 (the header)
     sheets.spreadsheets().values().update(
         spreadsheetId=sheet_id, range=f"'{tab}'!A{sheet_row}",
