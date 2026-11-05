@@ -335,14 +335,14 @@ def _wire(monkeypatch, cfg, *, months, specs, drive=True):
     # matching this repo's established convention of never invoking the real
     # binary in a test). Tests that specifically exercise the OCR-applied
     # review-tier behavior override this themselves.
-    monkeypatch.setattr(ra.ocr_util, "ensure_searchable", lambda path, **kw: path)
+    monkeypatch.setattr(ra.ocr_util, "ensure_searchable_with_stats", lambda path, **kw: (path, None))
 
     monkeypatch.setattr(ra.ac, "is_configured", lambda env=ra.FOLDER_ENV: drive)
     monkeypatch.setattr(ra.ac, "folder_id", lambda env=ra.FOLDER_ENV: "FID")
     if drive:
         monkeypatch.setattr(ra.ac, "oauth_drive_service", lambda: object())
 
-        def fake_upload(service, local, name, folder):
+        def fake_upload(service, local, name, folder, **kw):
             uploads.append(name)
             return f"http://drive/{name}"
         monkeypatch.setattr(ra.ac, "upload_pdf", fake_upload)
@@ -519,11 +519,11 @@ def test_scan_only_report_ocrd_before_extraction_forced_to_review(monkeypatch, t
 
     def fake_ensure_searchable(path, **kw):
         assert path.endswith("ridgewood-2026-08.pdf")   # the ORIGINAL scan-only download
-        return ocrd_path
-    monkeypatch.setattr(ra.ocr_util, "ensure_searchable", fake_ensure_searchable)
+        return ocrd_path, None
+    monkeypatch.setattr(ra.ocr_util, "ensure_searchable_with_stats", fake_ensure_searchable)
 
     upload_paths = []
-    def fake_upload(service, local, name, folder):
+    def fake_upload(service, local, name, folder, **kw):
         upload_paths.append(local)
         return f"http://drive/{name}"
     monkeypatch.setattr(ra.ac, "upload_pdf", fake_upload)
@@ -556,7 +556,7 @@ def test_incidental_ocr_touch_does_not_force_review_when_native_text_present(mon
 
     touched = str(tmp_path / "touched.pdf")
     make_report_pdf(touched, "2026-10", ["<1"] * 30, all_clear=True, text=True)
-    monkeypatch.setattr(ra.ocr_util, "ensure_searchable", lambda path, **kw: touched)
+    monkeypatch.setattr(ra.ocr_util, "ensure_searchable_with_stats", lambda path, **kw: (touched, None))
 
     assert ra.run() == 0
     reports = _rows(fake, sw.TAB_RIDGEWOOD)
@@ -577,7 +577,7 @@ def test_scan_only_report_with_exceedance_via_ocr_still_alerts_full_list(monkeyp
 
     ocrd_path = str(tmp_path / "ocrd-2026-09.pdf")
     make_report_pdf(ocrd_path, "2026-09", ["<1", "85", "3"], all_clear=True, text=True)
-    monkeypatch.setattr(ra.ocr_util, "ensure_searchable", lambda path, **kw: ocrd_path)
+    monkeypatch.setattr(ra.ocr_util, "ensure_searchable_with_stats", lambda path, **kw: (ocrd_path, None))
 
     assert ra.run() == 0
     reports = _rows(fake, sw.TAB_RIDGEWOOD)
@@ -598,7 +598,7 @@ def test_scan_only_report_ocr_extraction_failure_still_gets_review_row(monkeypat
         specs={"2026-11": {"values": [], "text": False}})
 
     broken_path = str(tmp_path / "broken-ocr-output.pdf")  # never created -- extract_text raises
-    monkeypatch.setattr(ra.ocr_util, "ensure_searchable", lambda path, **kw: broken_path)
+    monkeypatch.setattr(ra.ocr_util, "ensure_searchable_with_stats", lambda path, **kw: (broken_path, None))
 
     assert ra.run() == 0
     reports = _rows(fake, sw.TAB_RIDGEWOOD)

@@ -273,7 +273,7 @@ def test_success_uploads_records_and_returns_drive_link(monkeypatch, tmp_path):
     monkeypatch.setattr(av.ac, "oauth_drive_service", lambda: _FakeDrive())
     monkeypatch.setattr(av.ac, "folder_id", lambda: "FID")
     upload_calls = []
-    def _upload(drive, local_path, name, folder_id):
+    def _upload(drive, local_path, name, folder_id, **kw):
         upload_calls.append((local_path, name, folder_id))
         return "https://drive/new-mirror"
     monkeypatch.setattr(av.ac, "upload_pdf", _upload)
@@ -479,8 +479,8 @@ def test_upload_file_pdf_runs_ensure_searchable_and_cleans_up(monkeypatch, tmp_p
     open(searchable, "wb").write(b"%PDF-fake-searchable")
 
     calls = []
-    monkeypatch.setattr(ocr_util, "ensure_searchable",
-                        lambda path, **kw: calls.append(path) or searchable)
+    monkeypatch.setattr(ocr_util, "ensure_searchable_with_stats",
+                        lambda path, **kw: (calls.append(path) or searchable, None))
 
     service = FakeDriveService(create_result={"id": "fid1", "webViewLink": "http://drive/x"})
     link = ac.upload_file(service, local, "name.pdf", "application/pdf", "FOLDER")
@@ -496,7 +496,7 @@ def test_upload_file_non_pdf_never_calls_ensure_searchable(monkeypatch, tmp_path
     open(local, "wb").write(b"<html></html>")
 
     calls = []
-    monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: calls.append(path) or path)
+    monkeypatch.setattr(ocr_util, "ensure_searchable_with_stats", lambda path, **kw: (calls.append(path) or path, None))
 
     service = FakeDriveService(create_result={"id": "fid2", "webViewLink": "http://drive/y"})
     link = ac.upload_file(service, local, "snap.html", "text/html", "FOLDER")
@@ -512,7 +512,7 @@ def test_upload_file_already_mirrored_skips_ocr_entirely(monkeypatch, tmp_path):
     open(local, "wb").write(b"%PDF-fake-scan")
 
     calls = []
-    monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: calls.append(path) or path)
+    monkeypatch.setattr(ocr_util, "ensure_searchable_with_stats", lambda path, **kw: (calls.append(path) or path, None))
 
     service = FakeDriveService(existing={"id": "existing-id", "webViewLink": "http://drive/existing"})
     link = ac.upload_file(service, local, "name.pdf", "application/pdf", "FOLDER")
@@ -528,7 +528,7 @@ def test_upload_pdf_uses_searchable_path_and_deletes_it_afterward(monkeypatch, t
     searchable = str(tmp_path / "ocrd-temp.pdf")
     open(searchable, "wb").write(b"%PDF-ocrd")
 
-    monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: searchable)
+    monkeypatch.setattr(ocr_util, "ensure_searchable_with_stats", lambda path, **kw: (searchable, None))
     service = FakeDriveService(create_result={"id": "fid3", "webViewLink": "http://drive/z"})
 
     link = ac.upload_pdf(service, local, "n.pdf", "FOLDER")
@@ -554,3 +554,29 @@ def test_upload_file_already_searchable_passes_straight_through(monkeypatch, tmp
 
     assert link == "http://drive/w"
     assert os.path.exists(local)  # nothing removed -- upload_path == local_path throughout
+
+
+def test_upload_file_passes_ocr_stats_through_as_known(monkeypatch, tmp_path):
+    # CODER-PLAN step 2: the caller's page check reaches ensure_searchable.
+    local = str(tmp_path / "x.pdf")
+    open(local, "wb").write(b"%PDF-x")
+    seen = []
+    monkeypatch.setattr(ocr_util, "ensure_searchable_with_stats",
+                        lambda path, **kw: (seen.append(kw.get("known")) or path, None))
+    service = FakeDriveService(create_result={"id": "f", "webViewLink": "http://drive/s"})
+    sentinel = object()
+    ac.upload_pdf(service, local, "x.pdf", "FOLDER", ocr_stats=sentinel)
+    assert seen == [sentinel]
+
+
+def test_mirror_one_now_threads_ocr_stats_to_upload(monkeypatch, tmp_path):
+    monkeypatch.setattr(av.ac, "is_configured", lambda: True)
+    monkeypatch.setattr(av.ac, "oauth_drive_service", lambda: _FakeDrive())
+    monkeypatch.setattr(av.ac, "folder_id", lambda: "FID")
+    got = []
+    monkeypatch.setattr(av.ac, "upload_pdf",
+                        lambda *a, **kw: got.append(kw.get("ocr_stats")) or "https://drive/m")
+    sentinel = object()
+    av.mirror_one_now(object(), FakeSheets(), "SID", _doc(), {},
+                      local_path=str(tmp_path / "a.pdf"), ocr_stats=sentinel)
+    assert got == [sentinel]

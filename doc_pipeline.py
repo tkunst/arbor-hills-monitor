@@ -130,7 +130,7 @@ def _parse_and_resolve(ctx: RunContext, d: dict, local: str):
     # failure — see archiver.mirror_one_now()) so the Sheet row and any alert
     # link somewhere that survives a Google-referer click-through.
     link = av.mirror_one_now(ctx.session, ctx.sheets, ctx.sheet_id, d, ctx.drive_state,
-                             local_path=local)
+                             local_path=local, ocr_stats=getattr(parsed, "ocr_stats", None))
     return parsed, link
 
 

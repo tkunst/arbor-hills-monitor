@@ -68,7 +68,8 @@ MIRROR_RETRY_DELAY_SECONDS = 10
 def _mirror_and_record(session, drive, sheets, sheet_id: str, doc: dict,
                         document_name: str, date_filed: str, risks, nsite_link: str,
                         local_path: str | None = None,
-                        document_date: str = "", egle_title: str = "") -> str:
+                        document_date: str = "", egle_title: str = "",
+                        ocr_stats=None) -> str:
     """Upload doc to Drive and record the Archived PDFs index row, returning
     the Drive link. RAISES on any failure (download, upload, or Sheet write)
     — callers decide what "failure" means for them: run()'s batch loop logs
@@ -84,11 +85,16 @@ def _mirror_and_record(session, drive, sheets, sheet_id: str, doc: dict,
     avoid fetching the same document from nSITE twice — the file is left
     untouched afterward, since the caller owns its lifecycle. If omitted
     (run()'s own batch loop, which has no other reason to have the PDF
-    already), this downloads it to a temp path and cleans up after itself."""
+    already), this downloads it to a temp path and cleans up after itself.
+
+    `ocr_stats`: parse_document()'s page check for `local_path` (ParsedDoc.
+    ocr_stats), so the upload skips a second all-pages scan when the bytes
+    are unchanged (CODER-PLAN step 2). Ignored on the download path."""
     did = doc["doc_id"]
     srn = doc.get("facility_srn", "N2688")
     if local_path:
-        link = ac.upload_pdf(drive, local_path, f"{srn}_{did}.pdf", ac.folder_id())
+        link = ac.upload_pdf(drive, local_path, f"{srn}_{did}.pdf", ac.folder_id(),
+                             ocr_stats=ocr_stats)
         sw.append_archive_row(
             sheets, sheet_id, did, document_name, date_filed, risks, nsite_link, link, _now(),
             document_date=document_date, egle_title=egle_title or document_name)
@@ -110,7 +116,7 @@ def _mirror_and_record(session, drive, sheets, sheet_id: str, doc: dict,
 
 def mirror_one_now(session, sheets, sheet_id: str, doc: dict, drive_state: dict,
                     document_name: str = "", date_filed: str = "", risks=None,
-                    local_path: str | None = None) -> str:
+                    local_path: str | None = None, ocr_stats=None) -> str:
     """Best-effort, SYNCHRONOUS single-document Drive mirror — called inline
     from watcher.py/backfill.py at write time (not on the nightly archive.yml
     schedule), so a same-day Sheet row / alert email for a BRAND NEW document
@@ -152,7 +158,8 @@ def mirror_one_now(session, sheets, sheet_id: str, doc: dict, drive_state: dict,
     `local_path`: pass the PDF's already-downloaded path if the caller has
     one (watcher.py/backfill.py always do, to parse it) so this never
     re-fetches the same document from nSITE a second time — see
-    _mirror_and_record's own docstring."""
+    _mirror_and_record's own docstring. `ocr_stats` rides along with it
+    (see _mirror_and_record)."""
     nsite_link = doc["doc_url"]
     doc_id = doc["doc_id"]
 
@@ -206,6 +213,7 @@ def mirror_one_now(session, sheets, sheet_id: str, doc: dict, drive_state: dict,
                 local_path=local_path,
                 document_date=doc.get("document_date", ""),
                 egle_title=doc.get("egle_title", "") or doc.get("document_name", ""),
+                ocr_stats=ocr_stats,
             )
             drive_state["links"][doc_id] = link
             return link

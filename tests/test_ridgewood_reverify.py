@@ -219,7 +219,7 @@ def _wire(monkeypatch, cfg, *, page_months, sheet_rows, pdf_bytes_by_month,
     if drive:
         monkeypatch.setattr(rr.ac, "oauth_drive_service", lambda: object())
 
-        def fake_upload(service, local, name, folder):
+        def fake_upload(service, local, name, folder, **kw):
             uploads.append(name)
             return f"http://drive/{name}"
         monkeypatch.setattr(rr.ac, "upload_pdf", fake_upload)
@@ -575,9 +575,9 @@ def test_changed_report_scanned_ocrd_before_classification_and_noted(monkeypatch
 
     ocrd_path = str(tmp_path / "ocrd.pdf")
     _build_pdf_bytes(ocrd_path, "2026-06", ["<1"] * 30)   # simulates a successful OCR
-    monkeypatch.setattr(rr.ocr_util, "ensure_searchable", lambda path, **kw: ocrd_path)
+    monkeypatch.setattr(rr.ocr_util, "ensure_searchable_with_stats", lambda path, **kw: (ocrd_path, None))
     upload_paths = []
-    def fake_upload(service, local, name, folder):
+    def fake_upload(service, local, name, folder, **kw):
         upload_paths.append(local)
         return f"http://drive/{name}"
     monkeypatch.setattr(rr.ac, "upload_pdf", fake_upload)

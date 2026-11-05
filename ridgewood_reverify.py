@@ -585,8 +585,12 @@ def run(dry_run: bool = False) -> int:
                 # extraction too, same ordering fix as ridgewood_archiver.py). Never
                 # touches `local` itself — new_hash above is computed on the original
                 # bytes, and must stay that way.
+                ocr_stats = None
                 try:
-                    searchable_local = ocr_util.ensure_searchable(local)
+                    # Stats describe searchable_local (with its sha256) so
+                    # upload_pdf() skips a second page scan (CODER-PLAN step 2).
+                    searchable_local, ocr_stats = ocr_util.ensure_searchable_with_stats(
+                        local, fingerprint=True)
                 except Exception:  # noqa: BLE001 — ensure_searchable is fail-open already;
                     searchable_local = local  # this is just extra defense-in-depth here
 
@@ -594,7 +598,8 @@ def run(dry_run: bool = False) -> int:
                 if drive is not None:
                     try:
                         name = f"ridgewood-h2s-{month}-revised-{today.replace('-', '')}-{new_hash[:8]}.pdf"
-                        archive_link = ac.upload_pdf(drive, searchable_local, name, ac.folder_id(FOLDER_ENV))
+                        archive_link = ac.upload_pdf(drive, searchable_local, name, ac.folder_id(FOLDER_ENV),
+                                                     ocr_stats=ocr_stats)
                     except Exception as e:  # noqa: BLE001 — mirror best-effort, never blocks the record
                         print(f"      Drive mirror FAILED for revised {month}: {type(e).__name__}")
                 # `ocr_applied` must mean "this reading came from OCR'd text",

@@ -69,3 +69,18 @@ def test_local_file_removed_even_on_failure(monkeypatch, tmp_path):
     state = {"processed": {}, "errors": {}, "skipped": {}}
     assert dp.process_one_doc(_ctx(), state, _doc(), job, str(local)) == "retry"
     assert not local.exists() and state["errors"] == {}
+
+
+def test_parsed_ocr_stats_reach_the_inline_mirror(calls, monkeypatch, tmp_path):
+    # CODER-PLAN step 2: parse_document's page check rides to the upload, so
+    # the Drive mirror does not scan the same unchanged bytes a second time.
+    sentinel = object()
+    seen = []
+    monkeypatch.setattr(dp.av, "mirror_one_now",
+                        lambda *a, **k: seen.append(k.get("ocr_stats")) or "LINK")
+    ctx = _ctx()
+    ctx.parse = lambda *a, **k: SimpleNamespace(**vars(_parsed()), ocr_stats=sentinel)
+    job = dp.Job(name="backfill", feed_tab=sw.TAB_HISTORICAL, payload=lambda p, d: {})
+    state = {"processed": {}, "errors": {}, "skipped": {}}
+    assert dp.process_one_doc(ctx, state, _doc(), job, str(tmp_path / "x.pdf")) == "processed"
+    assert seen == [sentinel]
