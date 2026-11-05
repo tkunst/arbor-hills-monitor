@@ -211,6 +211,11 @@ def test_archived_doc_links_last_write_wins_on_duplicate_doc_id():
 # caller by design — every branch below asserts that explicitly, not just the
 # happy path, since a raise here would break the watcher's whole run. ---
 
+@pytest.fixture(autouse=True)
+def _no_retry_sleep(monkeypatch):
+    monkeypatch.setattr(av, "MIRROR_RETRY_DELAY_SECONDS", 0)
+
+
 def _doc(doc_id="doc-1", nsite_link="https://nsite/doc-1"):
     return {
         "doc_id": doc_id, "doc_url": nsite_link, "document_name": "A Letter",
@@ -373,9 +378,33 @@ def test_sheet_write_failure_after_a_successful_upload_still_falls_back(monkeypa
     svc = FakeSheets()
     link = av.mirror_one_now(object(), svc, "SID", _doc(), {}, local_path=local)
 
-    assert upload_calls == [1]  # the upload DID happen (the orphan)
+    assert upload_calls == [1, 1]  # tried, then retried once (same name: idempotent)
     assert link == "https://nsite/doc-1"  # but the caller still gets a safe fallback, not a raise
     assert sw.archived_doc_ids(svc, "SID") == set()  # the index row never landed
+
+
+def test_one_transient_failure_is_retried_and_the_drive_link_returned(monkeypatch, tmp_path):
+    """A single timeout (the 2026-11-04 case) must not leave the public link on
+    nSITE: the second attempt succeeds and its Drive link is returned."""
+    monkeypatch.setattr(av.ac, "is_configured", lambda: True)
+    monkeypatch.setattr(av.ac, "oauth_drive_service", lambda: _FakeDrive())
+    monkeypatch.setattr(av.ac, "folder_id", lambda: "FID")
+    attempts = []
+    def _flaky(*a, **kw):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise TimeoutError("The read operation timed out")
+        return "https://drive/after-retry"
+    monkeypatch.setattr(av.ac, "upload_pdf", _flaky)
+
+    local = str(tmp_path / "on-disk.pdf")
+    open(local, "wb").write(b"%PDF-fake")
+    svc = FakeSheets()
+    link = av.mirror_one_now(object(), svc, "SID", _doc(), {}, local_path=local)
+
+    assert link == "https://drive/after-retry"
+    assert attempts == [1, 1]
+    assert sw.archived_doc_ids(svc, "SID") == {"doc-1"}
 
 
 def test_drive_state_reused_across_calls_within_one_run(monkeypatch, tmp_path):
