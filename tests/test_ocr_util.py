@@ -657,3 +657,41 @@ def test_ensure_searchable_wrapper_still_returns_a_path(text_pdf):
 def test_ensure_searchable_with_stats_never_raises_on_a_non_stats_known(text_pdf):
     # Not an OcrStats -> ignored (re-scan), never an AttributeError.
     assert ocr_util.ensure_searchable_with_stats(text_pdf, known=object())[0] == text_pdf
+
+
+def test_trusted_stats_keep_the_already_ocrmypdf_skip(image_pdf, monkeypatch):
+    # A file already stamped by ocrmypdf that still has an image-only page:
+    # trusted stats must reach the same "don't rerun" decision as a scan.
+    import dataclasses
+    known = dataclasses.replace(ocr_util.page_stats(image_pdf), engine="OCRmyPDF 17.12.1 / x")
+    ran = []
+    monkeypatch.setattr(ocr_util, "_run_ocrmypdf", lambda cmd, **kw: ran.append(cmd))
+    path, st = ocr_util.ensure_searchable_with_stats(image_pdf, known=known)
+    assert path == image_pdf and ran == [] and st.ocr_ran is False
+
+
+def test_fingerprinted_ocr_output_is_trusted_by_the_next_call(image_pdf, monkeypatch):
+    def fake_run(cmd, **kw):
+        # Stand-in for ocrmypdf: a page with real text and an OCRmyPDF stamp.
+        d = fitz.open()
+        d.new_page().insert_text((72, 72), "recognized text")
+        d.set_metadata({"creator": "OCRmyPDF 17.12.1 / test"})
+        d.save(cmd[-1])
+        d.close()
+        return ocr_util.subprocess.CompletedProcess(cmd, 0, None, None)
+    monkeypatch.setattr(ocr_util, "_run_ocrmypdf", fake_run)
+    out, st = ocr_util.ensure_searchable_with_stats(image_pdf, fingerprint=True)
+    try:
+        assert st.ocr_ran is True and st.sha256 == ocr_util.file_sha256(out)
+        assert st.engine.startswith("OCRmyPDF") and st.image_only_pages == frozenset()
+        scans = _count_scans(monkeypatch)
+        out2, _ = ocr_util.ensure_searchable_with_stats(out, known=st)
+        assert out2 == out and scans == []
+    finally:
+        os.remove(out)
+
+
+def test_trusted_falls_back_when_the_file_is_gone(text_pdf, tmp_path):
+    known = ocr_util.page_stats(text_pdf)
+    missing = str(tmp_path / "gone.pdf")
+    assert ocr_util.ensure_searchable_with_stats(missing, known=known) == (missing, None)
