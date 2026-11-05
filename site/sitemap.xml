@@ -2,7 +2,6 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://arborhillsmonitor.org/</loc></url>
   <url><loc>https://arborhillsmonitor.org/2022-event/</loc></url>
-  <url><loc>https://arborhillsmonitor.org/methane-migration/</loc></url>
   <url><loc>https://arborhillsmonitor.org/corrections/</loc></url>
   <url><loc>https://arborhillsmonitor.org/data/</loc></url>
   <url><loc>https://arborhillsmonitor.org/data/flagged-wells/</loc></url>
@@ -14,6 +13,7 @@
   <url><loc>https://arborhillsmonitor.org/glossary/</loc></url>
   <url><loc>https://arborhillsmonitor.org/hydrogen-sulfide/</loc></url>
   <url><loc>https://arborhillsmonitor.org/ip-fair-use/</loc></url>
+  <url><loc>https://arborhillsmonitor.org/methane-migration/</loc></url>
   <url><loc>https://arborhillsmonitor.org/privacy-policy/</loc></url>
   <url><loc>https://arborhillsmonitor.org/public-comment/</loc></url>
   <url><loc>https://arborhillsmonitor.org/public-records/</loc></url>
