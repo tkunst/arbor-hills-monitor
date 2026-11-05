@@ -105,20 +105,34 @@ def test_vision_shortcut_needs_an_entry_with_pages():
     assert bmi.vision_shortcut(_meta(ID1), {"status": "skip_has_text", "at": "2026-10-14T17:00:00"}) is None
 
 
+def _v(status="done", pages=3, after=0, item=ID1):
+    return {"status": status, "pages": pages, "image_only_after": after, "item_id": item}
+
+
 def test_engine_with_vision_names_vision_only_when_the_fresh_check_matches():
-    v = {"status": "done_partial", "pages": 3, "image_only_after": 1}
-    got = bmi.engine_with_vision(_stats(pages=3, image_only={2}), v)
+    got = bmi.engine_with_vision(_stats(pages=3, image_only={2}), _v("done_partial", after=1), ID1)
     assert got.engine == "Apple Vision" and mi.text_status(got) == "ocr_partial"
-    full = bmi.engine_with_vision(_stats(), {"status": "done", "pages": 3, "image_only_after": 0})
+    full = bmi.engine_with_vision(_stats(), _v(), ID1)
     assert mi.text_status(full) == "ocr_full"  # not `native`
-    both = bmi.engine_with_vision(_stats(engine="OCRmyPDF 17"),
-                                  {"status": "done", "pages": 3, "image_only_after": 0})
+    assert bmi.engine_with_vision(_stats(), _v("done_id_unconfirmed"), ID1).engine == "Apple Vision"
+    both = bmi.engine_with_vision(_stats(engine="OCRmyPDF 17"), _v(), ID1)
     assert both.engine == "OCRmyPDF 17 + Apple Vision"
     # Page count differs: the file isn't what Vision wrote; leave it alone.
     s = _stats(pages=4)
-    assert bmi.engine_with_vision(s, {"status": "done", "pages": 3, "image_only_after": 0}) is s
-    assert bmi.engine_with_vision(s, {"status": "skip_has_text", "pages": 4}) is s
-    assert bmi.engine_with_vision(None, {"status": "done"}) is None
+    assert bmi.engine_with_vision(s, _v(), ID1) is s
+    assert bmi.engine_with_vision(s, {"status": "skip_has_text", "pages": 4}, ID1) is s
+    assert bmi.engine_with_vision(None, _v(), ID1) is None
+    # Same name, different Drive file (or no recorded id): not Vision's work.
+    s = _stats()
+    assert bmi.engine_with_vision(s, _v(item=ID2), ID1) is s
+    assert bmi.engine_with_vision(s, _v(item=None), ID1) is s
+
+
+@pytest.mark.parametrize("path,key", [
+    ("a.pdf", "a.pdf"), ("Sub/a.pdf", "Sub/a.pdf"), ("Top/Sub/a.pdf", "Sub/a.pdf"), ("", ""),
+])
+def test_vision_key_matches_the_vision_runs_keying(path, key):
+    assert bmi.vision_key(path) == key
 
 
 def test_build_plan_skips_only_on_a_live_sha_match():
@@ -133,15 +147,18 @@ def test_build_plan_skips_only_on_a_live_sha_match():
     act = {it.drive_id: it.action for it in plan.items}
     assert act[ID1] == "skip_indexed"           # case-insensitive equal sha
     assert act[ID2] == "reindex"                # row exists, sha differs
-    assert act[ID3] == "reindex"                # blank live sha is never skippable
+    assert act[ID3] == "no_drive_sha"           # blank live sha: never indexed
     assert act["1" + "d" * 32] == "not_pdf" and act["1" + "e" * 32] == "unreachable"
-    assert plan.counts["reindex"] == 2 and plan.counts["nsite:skip_indexed"] == 1
+    assert plan.counts["reindex"] == 1 and plan.counts["nsite:skip_indexed"] == 1
 
 
 def test_build_plan_matches_vision_by_first_root_path():
     refs = {ID1: ("nsite", "-1")}
     v = {"AHLI_1.pdf": {"status": "skip_has_text", "pages": 2, "at": "2026-10-14T17:00:00"}}
     plan = bmi.build_plan(refs, {ID1: _meta(ID1)}, {}, {}, v, {ID1: "AHLI_1.pdf"})
+    assert plan.items[0].vision == v["AHLI_1.pdf"] and plan.items[0].shortcut == "searchable"
+    plan = bmi.build_plan(refs, {ID1: _meta(ID1)}, {}, {}, {"Sub/AHLI_1.pdf": v["AHLI_1.pdf"]},
+                          {ID1: "Top/Sub/AHLI_1.pdf"})
     assert plan.items[0].vision == v["AHLI_1.pdf"] and plan.items[0].shortcut == "searchable"
     plan = bmi.build_plan(refs, {ID1: _meta(ID1)}, {}, {}, v, {})
     assert plan.items[0].vision is None and plan.items[0].shortcut is None
@@ -227,7 +244,7 @@ def test_apply_appends_rows_from_downloaded_stats_and_skips_failures(monkeypatch
     s = FakeSheets()
     outcomes = {ID1: (_stats(), "ok"), ID2: (None, "changed_mid_run"), ID3: (None, "unreadable")}
     monkeypatch.setattr(bmi, "stats_for", lambda drive, it, td, r: outcomes[it.drive_id])
-    plan = _plan((ID1, "index", {"status": "done", "pages": 3, "image_only_after": 0}),
+    plan = _plan((ID1, "index", _v()),
                  (ID2, "index", None), (ID3, "index", None), ("1" + "z" * 32, "skip_indexed", None))
     c = bmi.apply(None, s, "SID", plan, batch=1, limit=0, retries=0, log=lambda *a: None)
     idx = mi.read_index(s, "SID")
@@ -261,10 +278,24 @@ def test_apply_replaces_a_stale_row_in_place(monkeypatch):
                                mi.build_row(_meta(ID1, sha="o" * 64), None, source_kind="nsite",
                                             source_key="k-a", now="T")]
     monkeypatch.setattr(bmi, "stats_for", lambda drive, it, td, r: (_stats(), "ok"))
-    c = bmi.apply(None, s, "SID", _plan((ID1, "reindex", None)), batch=10, limit=0, retries=0,
-                  log=lambda *a: None)
+    plan = _plan((ID1, "reindex", None))
+    plan.items[0].planned_row_sha = "o" * 64
+    c = bmi.apply(None, s, "SID", plan, batch=10, limit=0, retries=0, log=lambda *a: None)
     rows = s._values._tabs[mi.TAB][1:]
     assert len(rows) == 1 and rows[0][3] == "s" * 64 and c["replaced"] == 1
+
+
+@pytest.mark.parametrize("action,planned", [("index", ""), ("reindex", "o" * 64)])
+def test_apply_never_overwrites_a_row_an_upload_wrote_after_the_plan(monkeypatch, action, planned):
+    s = FakeSheets()
+    newer = mi.build_row(_meta(ID1, sha="n" * 64), _stats(), source_kind="nsite",
+                         source_key="live", raw_revision_pinned="REV", now="T")
+    s._values._tabs[mi.TAB] = [list(mi.HEADERS), newer]
+    monkeypatch.setattr(bmi, "stats_for", lambda drive, it, td, r: (_stats(), "ok"))
+    plan = _plan((ID1, action, None))
+    plan.items[0].planned_row_sha = planned
+    c = bmi.apply(None, s, "SID", plan, batch=10, limit=0, retries=0, log=lambda *a: None)
+    assert s._values._tabs[mi.TAB][1:] == [newer] and c["raced_newer_row"] == 1
 
 
 def test_apply_stops_on_a_failed_index_read(monkeypatch):
@@ -306,3 +337,108 @@ def test_dry_run_writes_nothing(monkeypatch, tmp_path):
     assert bmi.main(["--root", "ROOT", "--detail-out", str(tmp_path / "d.tsv")]) == 0
     assert s._values._tabs == before
     assert "index" in (tmp_path / "d.tsv").read_text()
+
+
+# --- stats_for (real page check on a synthetic PDF, fake download) ----------------
+
+def _pdf(path, text=True):
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page()
+    if text:
+        page.insert_text((72, 72), "hello")
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def _fake_download(src):
+    import shutil
+
+    def dl(service, file_id, dest):
+        shutil.copyfile(src, dest)
+        return dest
+    return dl
+
+
+class _GetDrive:
+    def __init__(self, meta):
+        self.meta = meta
+
+    def files(self):
+        return self
+
+    def get(self, fileId, fields, supportsAllDrives=True):
+        return _Req(lambda: self.meta)
+
+
+def _item(sha):
+    return bmi.Item(ID1, "nsite", "k", _meta(ID1, sha=sha), action="index")
+
+
+def test_stats_for_ok_when_bytes_match_drive(monkeypatch, tmp_path):
+    import drive_client as dc
+    import ocr_util
+    src = _pdf(str(tmp_path / "a.pdf"))
+    monkeypatch.setattr(dc, "download_file", _fake_download(src))
+    stats, outcome = bmi.stats_for(None, _item(ocr_util.file_sha256(src)), str(tmp_path), 0)
+    assert outcome == "ok" and stats.pages == 1 and mi.text_status(stats) == "native"
+    assert not (tmp_path / "f.pdf").exists()      # download cleaned up
+
+
+def test_stats_for_refreshes_meta_when_drive_confirms_new_bytes(monkeypatch, tmp_path):
+    import drive_client as dc
+    import ocr_util
+    src = _pdf(str(tmp_path / "a.pdf"))
+    sha = ocr_util.file_sha256(src)
+    monkeypatch.setattr(dc, "download_file", _fake_download(src))
+    it = _item("0" * 64)
+    stats, outcome = bmi.stats_for(_GetDrive(_meta(ID1, sha=sha) | {"headRevisionId": "R2"}), it,
+                                   str(tmp_path), 0)
+    assert outcome == "ok" and it.meta["sha256Checksum"] == sha and it.meta["headRevisionId"] == "R2"
+
+
+def test_stats_for_refuses_bytes_drive_does_not_vouch_for(monkeypatch, tmp_path):
+    import drive_client as dc
+    src = _pdf(str(tmp_path / "a.pdf"))
+    monkeypatch.setattr(dc, "download_file", _fake_download(src))
+    stats, outcome = bmi.stats_for(_GetDrive(_meta(ID1, sha="9" * 64)), _item("0" * 64),
+                                   str(tmp_path), 0)
+    assert stats is None and outcome == "changed_mid_run"
+
+
+def test_stats_for_unreadable_pdf_is_indexed_unknown(monkeypatch, tmp_path):
+    import drive_client as dc
+    import ocr_util
+    src = tmp_path / "bad.pdf"
+    src.write_bytes(b"not a pdf at all")
+    monkeypatch.setattr(dc, "download_file", _fake_download(str(src)))
+    stats, outcome = bmi.stats_for(None, _item(ocr_util.file_sha256(str(src))), str(tmp_path), 0)
+    assert stats is None and outcome == "unreadable"
+
+
+def test_stats_for_download_error_records_class_only(monkeypatch, tmp_path):
+    import drive_client as dc
+
+    def boom(service, file_id, dest):
+        raise ConnectionError(f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media")
+    monkeypatch.setattr(dc, "download_file", boom)
+    stats, outcome = bmi.stats_for(None, _item("0" * 64), str(tmp_path), 0)
+    assert stats is None and outcome == "download_error:ConnectionError" and ID1 not in outcome
+
+
+def test_main_prints_error_class_only_and_refuses_detail_in_repo(monkeypatch, capsys, tmp_path):
+    import config_loader
+    import drive_client as dc
+    monkeypatch.setattr(config_loader, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setenv("GSHEET_ID", "SID")
+
+    def boom():
+        raise RuntimeError(f"https://sheets.googleapis.com/v4/spreadsheets/{ID2}")
+    monkeypatch.setattr(dc, "drive_service", boom)
+    assert bmi.main(["--root", "ROOT"]) == 1
+    out = capsys.readouterr()
+    assert "RuntimeError" in out.out and ID2 not in out.out + out.err
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with pytest.raises(SystemExit):
+        bmi.main(["--root", "ROOT", "--detail-out", os.path.join(repo, "x.tsv")])
