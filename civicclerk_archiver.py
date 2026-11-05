@@ -53,6 +53,7 @@ import drive_client as dc
 import sheet_writer as sw
 import mmpc_client as mc
 import archive_client as ac
+import mirror_index as mi
 from config_loader import load_config
 
 
@@ -165,7 +166,10 @@ def run() -> int:
             local = os.path.join(tmp, f"{file_id}.pdf")
             try:
                 mc.download_file(session, file_id, local)
-                link = ac.upload_pdf(drive, local, f"{file_id}.pdf", folder)
+                # ADR 073: None unless mirror_index.enabled; these bytes are exactly
+                # what CivicClerk served, so the index may record their sha.
+                index = mi.target(cfg, sheets, sheet_id, "civicclerk", file_id, local_is_source=True)
+                link = ac.upload_pdf(drive, local, f"{file_id}.pdf", folder, index=index)
                 sw.append_civicclerk_archive_row(
                     sheets, sheet_id, file_id, (f["event_date"] or "")[:10], f["type"],
                     f["name"], f["event_id"], group, link, _now(),
