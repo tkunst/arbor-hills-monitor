@@ -1,7 +1,7 @@
 # ADR 073 — `Mirror Index`: one metadata row per mirrored PDF
 
 Date: 2026-11-05
-Status: proposed (ships disabled; `mirror_index.enabled: false` until Trisha approves: Gate B)
+Status: accepted 2026-11-05 (Trisha approved; `mirror_index.enabled: true`)
 Builds on: ADR 007 (OAuth durable Drive archive), ADR 010/037 (MMPC and
 CivicClerk meeting archives), ADR 069 (OCR on upload), CODER-PLAN step 2
 (`ocr_util.OcrStats`). Source analysis: Lotext

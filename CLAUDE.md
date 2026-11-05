@@ -170,7 +170,7 @@ decision behind it; this table only answers "is it live right now."
 | `report_tracking.review_email_enabled` | no |
 | `egle_newsroom.enabled` | yes |
 | `fulltext_search.enabled` | yes |
-| `mirror_index.enabled` | no |
+| `mirror_index.enabled` | yes |
 <!-- stream-status:end -->
 
 ## Forbidden patterns (do not do these)
