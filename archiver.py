@@ -122,7 +122,8 @@ def _mirror_and_record(session, drive, sheets, sheet_id: str, doc: dict,
 
 def mirror_one_now(session, sheets, sheet_id: str, doc: dict, drive_state: dict,
                     document_name: str = "", date_filed: str = "", risks=None,
-                    local_path: str | None = None, ocr_stats=None) -> str:
+                    local_path: str | None = None, ocr_stats=None,
+                    index_cfg: dict | None = None) -> str:
     """Best-effort, SYNCHRONOUS single-document Drive mirror — called inline
     from watcher.py/backfill.py at write time (not on the nightly archive.yml
     schedule), so a same-day Sheet row / alert email for a BRAND NEW document
@@ -165,7 +166,8 @@ def mirror_one_now(session, sheets, sheet_id: str, doc: dict, drive_state: dict,
     one (watcher.py/backfill.py always do, to parse it) so this never
     re-fetches the same document from nSITE a second time — see
     _mirror_and_record's own docstring. `ocr_stats` rides along with it
-    (see _mirror_and_record)."""
+    (see _mirror_and_record), as does `index_cfg`: the caller's already-loaded
+    config, read only for `mirror_index.enabled` (ADR 073); None = never index."""
     nsite_link = doc["doc_url"]
     doc_id = doc["doc_id"]
 
@@ -187,12 +189,6 @@ def mirror_one_now(session, sheets, sheet_id: str, doc: dict, drive_state: dict,
         # distinguishing "empty" from "failed" would make splitting this
         # worthwhile, but isn't the case today.
         try:
-            # ADR 073: read the Mirror Index flag once per run, alongside the
-            # Drive handshake. A config read failure just means "don't index".
-            try:
-                drive_state["index_cfg"] = load_config()
-            except Exception:  # noqa: BLE001
-                drive_state["index_cfg"] = None
             drive_state["service"] = ac.oauth_drive_service()
             drive_state["links"] = sw.archived_doc_links(sheets, sheet_id)
         except Exception as e:  # noqa: BLE001 — best-effort for the whole run
@@ -226,7 +222,7 @@ def mirror_one_now(session, sheets, sheet_id: str, doc: dict, drive_state: dict,
                 document_date=doc.get("document_date", ""),
                 egle_title=doc.get("egle_title", "") or doc.get("document_name", ""),
                 ocr_stats=ocr_stats,
-                index_cfg=drive_state.get("index_cfg"),
+                index_cfg=index_cfg,
             )
             drive_state["links"][doc_id] = link
             return link

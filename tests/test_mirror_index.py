@@ -12,6 +12,13 @@ from ocr_util import OcrStats
 from test_pfas_watcher import FakeSheets
 
 ON = {"mirror_index": {"enabled": True}}
+
+
+@pytest.fixture(autouse=True)
+def _fresh_ensure_cache():
+    mi._ENSURED.clear()
+    yield
+    mi._ENSURED.clear()
 OFF = {"mirror_index": {"enabled": False}}
 
 
@@ -255,3 +262,61 @@ def test_archiver_builds_nsite_target_only_when_enabled(monkeypatch, tmp_path):
     assert seen[0] is None
     assert seen[1].source_kind == "nsite" and seen[1].source_key == "-42"
     assert seen[1].local_is_source is False
+
+
+def test_upsert_on_a_header_only_tab_appends():
+    s = FakeSheets()
+    s._values._tabs[mi.TAB] = [list(mi.HEADERS)]
+    mi.upsert_row(s, "SID", mi.build_row(META, None, source_kind="nsite", source_key="1", now="T"))
+    assert len(s._values._tabs[mi.TAB]) == 2
+
+
+def test_ensure_tab_runs_once_per_sheets_client(monkeypatch):
+    import sheet_writer as sw
+    calls = []
+    real = sw.ensure_tab
+    monkeypatch.setattr(sw, "ensure_tab", lambda *a, **k: calls.append(1) or real(*a, **k))
+    s = FakeSheets()
+    for i in range(3):
+        mi.upsert_row(s, "SID", mi.build_row(dict(META, id=f"D{i}"), None,
+                                             source_kind="nsite", source_key=str(i), now="T"))
+    assert calls == [1]
+
+
+def test_content_replacement_keeps_the_upload_time_original_sha(text_pdf):
+    s = FakeSheets()
+    t = mi.target(ON, s, "SID", "civicclerk", "5", local_is_source=True)
+    ac.upload_pdf(_Drive(META), text_pdf, "a.pdf", "F", index=t)
+    first = mi.read_index(s, "SID")["D1"]["original_sha256"]
+    assert first == ocr_util.file_sha256(text_pdf)
+    # The OCR backfill replaces the content with a DIFFERENT file; even with a
+    # local_is_source target, the replacement is never recorded as the source.
+    other = text_pdf + ".ocr.pdf"
+    import shutil
+    shutil.copyfile(text_pdf, other)
+    with open(other, "ab") as fh:
+        fh.write(b"%extra")
+    ac.update_file_content(_Drive(dict(META, sha256Checksum="c" * 64)), "D1", other, index=t,
+                           ocr_stats=_stats(pages=1, engine="OCRmyPDF 17"))
+    row = mi.read_index(s, "SID")["D1"]
+    assert row["mirror_sha256"] == "c" * 64 and row["original_sha256"] == first
+    assert len(s._values._tabs[mi.TAB]) == 2
+
+
+def test_mirror_one_now_passes_the_callers_cfg(monkeypatch):
+    import archiver as av
+    got = []
+    monkeypatch.setattr(av.ac, "is_configured", lambda: True)
+    monkeypatch.setattr(av.ac, "oauth_drive_service", lambda: object())
+    monkeypatch.setattr(av.sw, "archived_doc_links", lambda *a: {})
+    monkeypatch.setattr(av, "_mirror_and_record", lambda *a, **k: got.append(k.get("index_cfg")) or "L")
+    av.mirror_one_now(None, FakeSheets(), "SID", {"doc_id": "1", "doc_url": "u"}, {}, index_cfg=ON)
+    assert got == [ON]
+
+
+@pytest.mark.parametrize("modname,kind", [("mmpc_archiver", "mmpc"), ("civicclerk_archiver", "civicclerk")])
+def test_meeting_archivers_build_a_source_target(modname, kind):
+    import importlib
+    src = inspect.getsource(importlib.import_module(modname).run)
+    assert f'mi.target(cfg, sheets, sheet_id, "{kind}", file_id, local_is_source=True)' in src
+    assert "index=index" in src

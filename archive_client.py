@@ -186,11 +186,14 @@ def upload_file(service, local_path: str, name: str, mimetype: str, folder_id: s
                 pass
 
 
-def _record_index(index, drive_meta: dict, stats, local_path: str, raw_revision_pinned: str = "") -> None:
-    """ADR 073 index write after a successful upload. Never raises."""
+def _record_index(index, drive_meta: dict, stats, local_path: str, raw_revision_pinned: str = "",
+                  *, may_hash_source: bool = True) -> None:
+    """ADR 073 index write after a successful upload. Never raises.
+    `may_hash_source=False` (content REPLACEMENT): never record the local
+    file as the source's bytes; the row keeps its upload-time value."""
     import mirror_index
     original = ""
-    if getattr(index, "local_is_source", False):
+    if may_hash_source and getattr(index, "local_is_source", False):
         try:
             import ocr_util
             original = ocr_util.file_sha256(local_path)
@@ -277,5 +280,6 @@ def update_file_content(service, file_id: str, local_path: str,
         .execute(num_retries=GOOGLE_API_NUM_RETRIES)
     )
     if index is not None:
-        _record_index(index, f, ocr_stats, local_path, raw_revision_pinned)
+        _record_index(index, f, ocr_stats, local_path, raw_revision_pinned,
+                      may_hash_source=False)
     return f["id"]
