@@ -2643,7 +2643,7 @@ fulltext_search:
 # One row of file metadata (Drive sha256/md5/size/revision + page/OCR stats)
 # per PDF the monitor uploads to the public Drive mirror (nSITE, MMPC,
 # CivicClerk), on a new PUBLIC tab "Mirror Index", created on first write.
-# OFF until Trisha approves ADR 073 (Gate B). Off = upload_file() behaves
-# exactly as before (same Drive request, no hashing, no Sheets call).
+# ACTIVATED 2026-11-05 (Trisha approved ADR 073, Gate B). Off = upload_file()
+# behaves exactly as before (same Drive request, no hashing, no Sheets call).
 mirror_index:
-  enabled: false
+  enabled: true
