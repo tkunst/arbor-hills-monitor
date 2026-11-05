@@ -48,6 +48,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 from datetime import datetime
 
 import drive_client as dc
@@ -59,6 +60,9 @@ from config_loader import load_config
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+MIRROR_RETRY_DELAY_SECONDS = 10
 
 
 def _mirror_and_record(session, drive, sheets, sheet_id: str, doc: dict,
@@ -186,21 +190,32 @@ def mirror_one_now(session, sheets, sheet_id: str, doc: dict, drive_state: dict,
     if existing:
         return existing
 
-    try:
-        link = _mirror_and_record(
-            session, drive, sheets, sheet_id, doc,
-            document_name or doc.get("document_name", ""),
-            date_filed or doc.get("date_filed", ""),
-            risks or [], nsite_link,
-            local_path=local_path,
-            document_date=doc.get("document_date", ""),
-            egle_title=doc.get("egle_title", "") or doc.get("document_name", ""),
-        )
-        drive_state["links"][doc_id] = link
-        return link
-    except Exception as e:  # noqa: BLE001 — this doc keeps its nSITE link
-        print(f"  [mirror] {doc_id}: mirror failed, using nSITE link: {e}")
-        return nsite_link
+    # One retry (Trisha 2026-11-04): a single Drive/Sheets timeout used to
+    # leave a brand-new public link pointing at nSITE (browser-broken) until
+    # the nightly archive run AND the next feed regen, ~1-2 days. A retry is
+    # safe: upload_pdf is idempotent (find_in_folder); the only residue of a
+    # timed-out-but-landed Sheet append is a duplicate Archived PDFs row with
+    # the same doc_id and link, which every reader collapses into one dict key.
+    for attempt in (1, 2):
+        try:
+            link = _mirror_and_record(
+                session, drive, sheets, sheet_id, doc,
+                document_name or doc.get("document_name", ""),
+                date_filed or doc.get("date_filed", ""),
+                risks or [], nsite_link,
+                local_path=local_path,
+                document_date=doc.get("document_date", ""),
+                egle_title=doc.get("egle_title", "") or doc.get("document_name", ""),
+            )
+            drive_state["links"][doc_id] = link
+            return link
+        except Exception as e:  # noqa: BLE001 — this doc keeps its nSITE link
+            if attempt == 1:
+                print(f"  [mirror] {doc_id}: mirror failed, retrying once: {e}")
+                time.sleep(MIRROR_RETRY_DELAY_SECONDS)
+                continue
+            print(f"  [mirror] {doc_id}: mirror failed, using nSITE link: {e}")
+    return nsite_link
 
 
 def run() -> int:
