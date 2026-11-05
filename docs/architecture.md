@@ -42,6 +42,10 @@ behavior, update its entry here in the same PR.
   passes `title_is_generic=True`; still domain-agnostic — this module has no
   opinion on what makes a title generic). `classify()`/`ocr_in_place()` moved
   to `ocr_util.py` (ADR 069); both names stay importable here unchanged.
+  The OCR-or-not step is `_ocr_decision()`; when the file is left unchanged it
+  returns the page check as `ParsedDoc.ocr_stats`, which `doc_pipeline` hands to
+  `archiver.mirror_one_now()` → `upload_pdf(ocr_stats=)` so the upload skips a
+  second all-pages scan (CODER-PLAN step 2). `ocr_stats` is never serialized.
   **Untrusted input + urgency floor (PR #142, 2026-10-15):** document text goes
   to the model inside `<document>…</document>` and filer metadata (nSITE name,
   date, type) inside `<metadata>…</metadata>`, both run through
@@ -96,6 +100,14 @@ behavior, update its entry here in the same PR.
   so every PDF upload, across all
   seven call sites, either already has a text layer or gets one before
   landing in Drive. Never raises; SEC-001 count-only logging.
+  **Page stats computed once (CODER-PLAN step 2, 2026-11-04):**
+  `ensure_searchable_with_stats()` returns `(path, OcrStats)` (pages,
+  image-only set before/after, `ocr_ran`, engine from the file's own
+  `/Creator`); `ensure_searchable()` is now a path-only wrapper, same
+  signature (the Lotext wellfield staging job calls it). A caller that already
+  ran the all-pages check passes its stats as `known=`; they are trusted only
+  when their `sha256` equals the file's current bytes, else the old full scan
+  runs. `page_stats()` is the check plus the sha, for `parse_document()`.
 - `kdp_check.py` — **ADR 067**: a deterministic consistency check (pure
   logic; `default_reference()` below is its ONE I/O entry point) run on
   the classifier's free-text `key_data_point`/`summary` before they reach
@@ -242,7 +254,9 @@ behavior, update its entry here in the same PR.
   rather than this module hardcoding one, so every Mirror (B, D, and every
   later one listed above) shares this one client. Import-light: the google
   OAuth libs load lazily so the core monitor, which never archives, doesn't
-  need `google-auth-oauthlib`.
+  need `google-auth-oauthlib`. `upload_file()`/`upload_pdf()` take an optional
+  `ocr_stats=` (an `ocr_util.OcrStats` for `local_path`), passed on as `known`
+  so a PDF the caller already page-checked isn't scanned again (sha-verified).
 - `sheet_writer.py` — the four+1 sheet tabs; routing/fan-out is pure & tested.
   **ADR 065** appended `Document Date`/`EGLE Title` at the END of
   `FEED_HEADERS`/`EVIDENCE_HEADERS`/`ARCHIVE_HEADERS`/`ALL_EVIDENCE_HEADERS`
@@ -677,6 +691,9 @@ behavior, update its entry here in the same PR.
   **ADR 069** resolved its deferred-OCR note: `ocr_util.ensure_searchable()` now runs
   BEFORE text extraction, and any value extracted only via OCR is pinned to the
   review tier (never a plain "ok"), never suppressing a real `exceed_24h` alert.
+  Since CODER-PLAN step 2 it calls `ensure_searchable_with_stats(fingerprint=True)`
+  and hands the stats to `upload_pdf()`, so the month is page-checked once, not
+  twice (same in `ridgewood_reverify.py`'s revised-month path).
 - `ridgewood_reverify.py` — Stream G add-on (ADR 066, added 2026-10-12; the Ridge
   Wood slice of `coder:selfreport-provenance`): monthly re-download of EVERY month
   Stream G has archived (not just new ones) + a committed, tamper-evident

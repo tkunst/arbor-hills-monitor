@@ -36,8 +36,12 @@ def test_extract_text_survives_a_damaged_page():
 def test_needs_ocr_gate_fails_open_on_read_error(monkeypatch):
     def boom(path):
         raise RuntimeError("FzErrorFormat")
-    monkeypatch.setattr(e, "needs_ocr", boom)
-    assert e._needs_ocr_fail_open("x.pdf") is False
+    monkeypatch.setattr(e, "page_stats", boom)
+    # None, never an empty set: an unknown page set must not be handed to
+    # the upload as "no image-only pages" (CODER-PLAN step 2).
+    assert e._page_stats_fail_open("x.pdf") is None
+    monkeypatch.setattr(e, "classify", lambda path: ("has_text", 1, 500.0))
+    assert e._ocr_decision("x.pdf") == (False, None)
 
 
 def test_extract_document_date_survives_damaged_first_page():

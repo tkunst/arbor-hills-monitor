@@ -573,3 +573,82 @@ def test_ocr_in_place_passes_a_minimal_env_not_the_full_environment(image_pdf, m
     assert "GOAUTH_CLIENT_SECRET" not in instances[0].env
     assert "ANTHROPIC_API_KEY" not in instances[0].env
     assert "PATH" in instances[0].env
+
+
+# ---------------------------------------------------------------------------
+# CODER-PLAN step 2 (2026-11-04): page stats computed once and passed along.
+# ---------------------------------------------------------------------------
+
+
+def _count_scans(monkeypatch):
+    calls = []
+    real = ocr_util._scan
+    monkeypatch.setattr(ocr_util, "_scan", lambda path, *a: calls.append(path) or real(path, *a))
+    return calls
+
+
+def test_page_stats_matches_image_only_pages(mixed_pdf):
+    st = ocr_util.page_stats(mixed_pdf)
+    assert st.image_only_pages == frozenset(ocr_util.image_only_pages(mixed_pdf))
+    assert st.image_only_before == st.image_only_pages
+    assert st.sha256 == ocr_util.file_sha256(mixed_pdf)
+    assert st.pages == 2 and st.image_only_pages == frozenset({1})
+    assert st.ocr_ran is False and st.engine == "none"
+
+
+def test_ensure_searchable_with_stats_trusts_matching_known_stats(text_pdf, monkeypatch):
+    known = ocr_util.page_stats(text_pdf)
+    scans = _count_scans(monkeypatch)
+    path, st = ocr_util.ensure_searchable_with_stats(text_pdf, known=known)
+    assert path == text_pdf
+    assert scans == []                       # no second all-pages scan
+    assert st.image_only_pages == frozenset() and st.ocr_ran is False
+
+
+def test_ensure_searchable_with_stats_rescans_when_sha_differs(text_pdf, image_pdf, monkeypatch):
+    # Stats for a DIFFERENT file (text_pdf) must not be trusted for image_pdf:
+    # fail-safe, re-scan, and OCR it as before.
+    wrong = ocr_util.page_stats(text_pdf)
+    scans = _count_scans(monkeypatch)
+    ran = []
+
+    def fake_run(cmd, **kw):
+        ran.append(cmd)
+        import shutil as _sh
+        _sh.copyfile(cmd[-2], cmd[-1])
+        return ocr_util.subprocess.CompletedProcess(cmd, 0, None, None)
+    monkeypatch.setattr(ocr_util, "_run_ocrmypdf", fake_run)
+    path, st = ocr_util.ensure_searchable_with_stats(image_pdf, known=wrong)
+    assert scans and scans[0] == image_pdf
+    assert len(ran) == 1                     # same decision as without stats
+    assert path != image_pdf and st.ocr_ran is True
+    os.remove(path)
+
+
+@pytest.mark.parametrize("bad", ["no_sha", "no_pages"])
+def test_ensure_searchable_with_stats_ignores_incomplete_known(text_pdf, monkeypatch, bad):
+    import dataclasses
+    known = ocr_util.page_stats(text_pdf)
+    known = dataclasses.replace(known, sha256="") if bad == "no_sha" else \
+        dataclasses.replace(known, image_only_pages=None)
+    scans = _count_scans(monkeypatch)
+    path, _ = ocr_util.ensure_searchable_with_stats(text_pdf, known=known)
+    assert path == text_pdf and scans == [text_pdf]
+
+
+def test_ensure_searchable_with_stats_fingerprint_lets_upload_skip_rescan(text_pdf, monkeypatch):
+    path, st = ocr_util.ensure_searchable_with_stats(text_pdf, fingerprint=True)
+    assert st.sha256 == ocr_util.file_sha256(text_pdf)
+    scans = _count_scans(monkeypatch)
+    path2, _ = ocr_util.ensure_searchable_with_stats(path, known=st)
+    assert path2 == text_pdf and scans == []
+
+
+def test_ensure_searchable_with_stats_read_error_returns_none(tmp_path):
+    bad = str(tmp_path / "bad.pdf")
+    open(bad, "wb").write(b"not a pdf")
+    assert ocr_util.ensure_searchable_with_stats(bad) == (bad, None)
+
+
+def test_ensure_searchable_wrapper_still_returns_a_path(text_pdf):
+    assert ocr_util.ensure_searchable(text_pdf) == text_pdf

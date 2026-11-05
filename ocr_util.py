@@ -69,12 +69,14 @@ much slower than the nominal per-call timeout would suggest.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import shutil
 import signal
 import subprocess
 import tempfile
+from dataclasses import dataclass
 
 import fitz  # pymupdf
 
@@ -371,7 +373,101 @@ def _cleanup(path: str) -> None:
 _OCRMYPDF_CREATOR_PREFIX = "OCRmyPDF"
 
 
+@dataclass(frozen=True)
+class OcrStats:
+    """What one all-pages text-layer check found, for ONE exact file.
+
+    CODER-PLAN step 2 (2026-11-04): the page-by-page check (every page,
+    get_text + get_images) is the expensive part of the OCR path, and the
+    live nSITE path used to run it twice on the same unchanged bytes:
+    once in egle_doc_parser.parse_document() (needs_ocr()) and again in
+    archive_client.upload_file() (ensure_searchable()). A caller that already
+    ran the check hands its OcrStats on, and the next step trusts it only if
+    `sha256` still equals the file's current bytes (fail-safe: no sha, a
+    mismatch, or an unknown page set means "check again", the old way).
+
+    sha256          -- hex sha256 of the bytes these stats describe; "" when
+                       not computed (then nothing downstream may trust them).
+    pages           -- page count.
+    image_only_pages -- 0-indexed image-only pages (image_only_pages()'s exact
+                       rule), or None when unknown.
+    image_only_before -- the input's set when this call ran ocrmypdf (else
+                       equal to image_only_pages).
+    ocr_ran         -- this call ran ocrmypdf and returned its output.
+    engine          -- "none", or the file's own /Creator when ocrmypdf made
+                       it (e.g. "ocrmypdf 16.4.2 / Tesseract OCR-PDF 5.3.4").
+    Counts only, never text or filenames, so they are safe to log/publish."""
+    sha256: str
+    pages: int
+    image_only_pages: frozenset | None
+    image_only_before: frozenset | None
+    ocr_ran: bool
+    engine: str
+
+
+def file_sha256(path: str) -> str:
+    """Hex sha256 of a file's bytes (streamed, 1 MiB chunks)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _engine(creator: str) -> str:
+    return creator[:120] if creator.startswith(_OCRMYPDF_CREATOR_PREFIX) else "none"
+
+
+def _scan(path: str, char_threshold: int = 0) -> tuple[int, set[int], str]:
+    """(page count, image_only_pages() set, /Creator) from ONE open of the
+    file. Same per-page rule as image_only_pages(); raises on a read error
+    exactly as image_only_pages() does."""
+    doc = fitz.open(path)
+    try:
+        creator = (doc.metadata or {}).get("creator") or ""
+        pages = set()
+        for i, page in enumerate(doc):
+            text_len = len(page.get_text().strip())
+            has_image = len(page.get_images(full=False)) >= 1
+            if text_len <= char_threshold and has_image:
+                pages.add(i)
+        return len(doc), pages, creator
+    finally:
+        doc.close()
+
+
+def page_stats(path: str) -> OcrStats:
+    """Run the all-pages check once and return it as OcrStats (with the
+    file's sha256, so a later step can trust it). RAISES on a read error,
+    like image_only_pages(); callers that must not fail wrap it."""
+    sha = file_sha256(path)
+    n, pages, creator = _scan(path)
+    fz = frozenset(pages)
+    return OcrStats(sha256=sha, pages=n, image_only_pages=fz,
+                    image_only_before=fz, ocr_ran=False, engine=_engine(creator))
+
+
+def _trusted(known: "OcrStats | None", local_path: str) -> "OcrStats | None":
+    """`known` if it provably describes local_path's current bytes, else None."""
+    if known is None or not known.sha256 or known.image_only_pages is None:
+        return None
+    try:
+        return known if file_sha256(local_path) == known.sha256 else None
+    except OSError:
+        return None
+
+
 def ensure_searchable(local_path: str, *, timeout: int = 300, language: str = "eng") -> str:
+    """Return a path to a searchable PDF. Path-only wrapper over
+    ensure_searchable_with_stats() (kept for existing callers, incl. the
+    Lotext wellfield staging job); see that function for the contract."""
+    path, _stats = ensure_searchable_with_stats(local_path, timeout=timeout, language=language)
+    return path
+
+
+def ensure_searchable_with_stats(local_path: str, *, timeout: int = 300, language: str = "eng",
+                                 known: "OcrStats | None" = None,
+                                 fingerprint: bool = False) -> "tuple[str, OcrStats | None]":
     """Return a path to a searchable PDF, for the caller to upload to Drive.
 
     If every page already has text (needs_ocr() is False — the common case:
@@ -412,32 +508,56 @@ def ensure_searchable(local_path: str, *, timeout: int = 300, language: str = "e
     a filename, title, or exception string in the log line (this repo's
     Actions logs are public) — only a class name / exit code.
 
+    STATS (CODER-PLAN step 2): also returns an OcrStats describing the
+    RETURNED path (None only when the input could not be read at all).
+    `known`: stats a caller already computed for local_path (e.g.
+    parse_document()'s check, carried on ParsedDoc.ocr_stats); used instead
+    of re-scanning every page ONLY when its sha256 equals local_path's
+    current bytes. Anything else (None, no sha, a mismatch, unknown pages)
+    re-scans, exactly as before. The decision and the output are the same
+    either way; only the duplicate page scan is skipped.
+    `fingerprint=True` also fills the returned stats' sha256 (one streamed
+    hash of the returned file), so the caller can hand them to
+    archive_client.upload_pdf() and the upload skips its own page scan
+    (Ridge Wood). Off by default: nobody else needs the hash.
+
     `timeout` defaults to 300s (half of ocr_in_place()'s 600s) — this runs
     inline on every live upload, not as a dedicated backfill batch job, so a
     shorter per-document ceiling bounds how long one slow scan can hold up a
     workflow run. Still generous for a typical EGLE filing (the 2026-10-08
     OCR audit measured 2-10s for a 1-9pp doc, 60-120s for 200pp)."""
     tmp_out = None
-    try:
-        before_pages = image_only_pages(local_path)
-    except Exception:
-        log.warning("ocr_util.ensure_searchable: text-layer check failed (class=read_error)")
-        return local_path
+    trusted = _trusted(known, local_path)
+    if trusted is not None:
+        page_count, before_pages, engine = trusted.pages, set(trusted.image_only_pages), trusted.engine
+        creator_is_ocrmypdf = engine != "none"
+    else:
+        try:
+            page_count, before_pages, creator = _scan(local_path)
+        except Exception:
+            log.warning("ocr_util.ensure_searchable: text-layer check failed (class=read_error)")
+            return local_path, None
+        engine = _engine(creator)
+        creator_is_ocrmypdf = creator.startswith(_OCRMYPDF_CREATOR_PREFIX)
+    before = frozenset(before_pages)
+    sha_in = trusted.sha256 if trusted else ""
+    if fingerprint and not sha_in:
+        try:
+            sha_in = file_sha256(local_path)
+        except OSError:
+            sha_in = ""
+    unchanged = OcrStats(sha256=sha_in, pages=page_count,
+                         image_only_pages=before, image_only_before=before,
+                         ocr_ran=False, engine=engine)
     if not before_pages:
-        return local_path
+        return local_path, unchanged
 
     try:
-        doc = fitz.open(local_path)
-        try:
-            page_count = len(doc)
-            creator = (doc.metadata or {}).get("creator") or ""
-        finally:
-            doc.close()
-        if creator.startswith(_OCRMYPDF_CREATOR_PREFIX):
+        if creator_is_ocrmypdf:
             # Already ocrmypdf's own output and STILL flagged -- the
             # remaining image-only page(s) are unrecoverable; don't repeat
             # the same failed recognition attempt.
-            return local_path
+            return local_path, unchanged
 
         fd, tmp_out = tempfile.mkstemp(suffix=".pdf")
         os.close(fd)
@@ -450,14 +570,14 @@ def ensure_searchable(local_path: str, *, timeout: int = 300, language: str = "e
             )
         except subprocess.TimeoutExpired:
             log.warning("ocr_util.ensure_searchable: ocrmypdf timed out (class=timeout timeout_s=%s)", timeout)
-            return local_path
+            return local_path, unchanged
         except FileNotFoundError:
             log.warning("ocr_util.ensure_searchable: ocrmypdf binary not found (class=missing_binary)")
-            return local_path
+            return local_path, unchanged
 
         if r.returncode != 0:
             log.warning("ocr_util.ensure_searchable: ocrmypdf exited non-zero (class=nonzero_exit rc=%s)", r.returncode)
-            return local_path
+            return local_path, unchanged
 
         # ocrmypdf claimed success (rc=0) -- verify the output is actually
         # usable before trusting it over the original: non-empty, openable,
@@ -467,29 +587,27 @@ def ensure_searchable(local_path: str, *, timeout: int = 300, language: str = "e
         # the cheap re-check rather than trusting that invariant blindly).
         if not os.path.exists(tmp_out) or os.path.getsize(tmp_out) == 0:
             log.warning("ocr_util.ensure_searchable: ocrmypdf produced an empty output (class=empty_output)")
-            return local_path
+            return local_path, unchanged
         try:
-            out_doc = fitz.open(tmp_out)
-            try:
-                out_page_count = len(out_doc)
-            finally:
-                out_doc.close()
-            after_pages = image_only_pages(tmp_out)
+            out_page_count, after_pages, out_creator = _scan(tmp_out)
         except Exception:
             log.warning("ocr_util.ensure_searchable: ocrmypdf output is not a readable PDF (class=unreadable_output)")
-            return local_path
+            return local_path, unchanged
         if out_page_count != page_count:
             log.warning("ocr_util.ensure_searchable: ocrmypdf output page count changed (class=page_count_mismatch)")
-            return local_path
+            return local_path, unchanged
         if after_pages - before_pages:
             log.warning("ocr_util.ensure_searchable: a page that had text lost it (class=lost_text)")
-            return local_path
+            return local_path, unchanged
 
+        out_stats = OcrStats(sha256=file_sha256(tmp_out) if fingerprint else "", pages=out_page_count,
+                             image_only_pages=frozenset(after_pages), image_only_before=before,
+                             ocr_ran=True, engine=_engine(out_creator))
         result = tmp_out
         tmp_out = None  # ownership transfers to the caller; don't clean it up below
-        return result
+        return result, out_stats
     except Exception:
         log.warning("ocr_util.ensure_searchable: unexpected failure (class=unexpected_error)")
-        return local_path
+        return local_path, unchanged
     finally:
         _cleanup(tmp_out)

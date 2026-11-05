@@ -730,3 +730,30 @@ def test_permitted_ceiling_alone_does_not_trip_the_measured_temp_floor(monkeypat
         lambda *a, **k: _fake_classification(severity="routine"))
     parsed = p.parse_document(text_pdf, {}, RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
     assert parsed.severity == "routine"
+
+
+def test_ocr_decision_carries_stats_for_unchanged_text_pdf(text_pdf):
+    # CODER-PLAN step 2: a native PDF's page check rides along on ParsedDoc so
+    # the Drive upload trusts it instead of re-scanning every page.
+    import egle_doc_parser as p
+    import ocr_util
+    ocr_applied, stats = p._ocr_decision(text_pdf)
+    assert ocr_applied is False
+    assert stats is not None and stats.sha256 == ocr_util.file_sha256(text_pdf)
+    assert stats.image_only_pages == frozenset()
+
+
+def test_ocr_decision_drops_stats_when_ocr_rewrote_the_file(mixed_pdf, monkeypatch):
+    import egle_doc_parser as p
+    monkeypatch.setattr(p, "ocr_in_place", lambda path: True)
+    assert p._ocr_decision(mixed_pdf) == (True, None)
+
+
+def test_ocr_decision_keeps_before_stats_when_fail_open_ocr_fails(mixed_pdf, monkeypatch):
+    import egle_doc_parser as p
+
+    def boom(path):
+        raise RuntimeError("ocrmypdf failed")
+    monkeypatch.setattr(p, "ocr_in_place", boom)
+    applied, stats = p._ocr_decision(mixed_pdf)
+    assert applied is False and stats.image_only_pages == frozenset({1})

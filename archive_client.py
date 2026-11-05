@@ -107,7 +107,8 @@ def find_in_folder(service, name: str, folder_id: str) -> str | None:
     return files[0]["id"] if files else None
 
 
-def upload_file(service, local_path: str, name: str, mimetype: str, folder_id: str) -> str:
+def upload_file(service, local_path: str, name: str, mimetype: str, folder_id: str,
+                *, ocr_stats=None) -> str:
     """Upload (or reuse) one file in the given folder. Returns its webViewLink —
     the durable, shareable URL recorded in the Archived PDFs / WDS Page Snapshots
     / MMPC Archived Files tabs. Idempotent per find_in_folder()'s caveat above.
@@ -130,7 +131,14 @@ def upload_file(service, local_path: str, name: str, mimetype: str, folder_id: s
     uploads the original file, never raises, never drops the document.
     `ocr_util` is imported lazily (not at module top) so this module stays
     import-light for callers that never touch a PDF (wds_archiver.py's HTML
-    snapshots, the two watchers' non-PDF uploads)."""
+    snapshots, the two watchers' non-PDF uploads).
+
+    `ocr_stats` (CODER-PLAN step 2): an ocr_util.OcrStats the caller already
+    computed for local_path (parse_document() via ParsedDoc.ocr_stats, or
+    Ridge Wood's own ensure_searchable_with_stats() call). Passed on as
+    `known`; ensure_searchable trusts it only when its sha256 matches
+    local_path's bytes, so a stale or wrong value just means the old full
+    page scan."""
     from googleapiclient.http import MediaFileUpload
 
     existing = find_in_folder(service, name, folder_id)
@@ -142,7 +150,7 @@ def upload_file(service, local_path: str, name: str, mimetype: str, folder_id: s
     if mimetype == "application/pdf":
         import ocr_util
 
-        upload_path = ocr_util.ensure_searchable(local_path)
+        upload_path, _stats = ocr_util.ensure_searchable_with_stats(local_path, known=ocr_stats)
 
     try:
         media = MediaFileUpload(upload_path, mimetype=mimetype, resumable=True)
@@ -161,9 +169,9 @@ def upload_file(service, local_path: str, name: str, mimetype: str, folder_id: s
                 pass
 
 
-def upload_pdf(service, local_path: str, name: str, folder_id: str) -> str:
+def upload_pdf(service, local_path: str, name: str, folder_id: str, *, ocr_stats=None) -> str:
     """Thin wrapper over upload_file() for a PDF mirror (archiver.py, mmpc_archiver.py)."""
-    return upload_file(service, local_path, name, "application/pdf", folder_id)
+    return upload_file(service, local_path, name, "application/pdf", folder_id, ocr_stats=ocr_stats)
 
 
 # ---------------------------------------------------------------------------

@@ -266,7 +266,10 @@ def run() -> int:
             # COPY for a scanned month. Never raises; never touches `local` itself
             # (content_hash above and the ADR 066 manifest both need the original
             # bytes untouched).
-            searchable_local = ocr_util.ensure_searchable(local)
+            # One page check for both steps (CODER-PLAN step 2): the stats
+            # describe searchable_local and carry its sha256, so upload_pdf()
+            # below skips its own all-pages re-scan of the same bytes.
+            searchable_local, ocr_stats = ocr_util.ensure_searchable_with_stats(local, fingerprint=True)
             # `ocr_applied` must mean "this month's value came from OCR'd
             # text", not just "ensure_searchable() changed the file" — a born-
             # digital report with one unrelated image-only page (a logo, a
@@ -306,7 +309,8 @@ def run() -> int:
             if drive is not None:
                 try:
                     archive_link = ac.upload_pdf(
-                        drive, searchable_local, f"ridgewood-h2s-{month}.pdf", ac.folder_id(FOLDER_ENV))
+                        drive, searchable_local, f"ridgewood-h2s-{month}.pdf", ac.folder_id(FOLDER_ENV),
+                        ocr_stats=ocr_stats)
                 except Exception as e:  # noqa: BLE001 — mirror best-effort; never block the alert
                     print(f"      Drive mirror FAILED for {month} "
                           f"(recorded + alerted with no mirror link): {e}")

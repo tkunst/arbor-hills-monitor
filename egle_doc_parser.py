@@ -60,7 +60,7 @@ import fitz  # pymupdf
 # exact split) — it's just no longer the ONLY input to that decision.
 # `needs_ocr` (also from ocr_util) is the NEW page-by-page check that catches
 # what classify()'s 12-page sample can miss.
-from ocr_util import classify, ocr_in_place, needs_ocr  # noqa: F401
+from ocr_util import classify, ocr_in_place, needs_ocr, page_stats  # noqa: F401
 
 
 log = logging.getLogger(__name__)
@@ -245,6 +245,12 @@ class ParsedDoc:
     # fire. `severity_before_floor` is the severity the floor replaced.
     severity_floor: list[str] = field(default_factory=list)
     severity_before_floor: str = ""
+    # ocr_util.OcrStats for the file at pdf_path AFTER parsing, when the
+    # all-pages text-layer check ran on those exact bytes; None otherwise
+    # (OCR rewrote the file, or the check failed). Handed to the Drive
+    # upload so it skips a second scan of the same bytes (CODER-PLAN step 2).
+    # Carries its own sha256; never serialized into state.
+    ocr_stats: Optional[object] = None
 
 
 # ---------------------------------------------------------------------------
@@ -270,17 +276,46 @@ def _page_text(doc, i: int) -> str:
         return ""
 
 
-def _needs_ocr_fail_open(pdf_path: str) -> bool:
-    """needs_ocr(), but a read error on some page (a damaged page tree) means
-    "no OCR", not a parse failure: this check gates the NEW fail-open OCR
-    path (ADR 069), so it must never turn a document that classifies fine
-    into a poison strike either."""
+def _page_stats_fail_open(pdf_path: str):
+    """ocr_util.page_stats() (the needs_ocr() check, every page, plus the
+    file's sha256), but a read error on some page (a damaged page tree) means
+    None -> "no OCR", not a parse failure: this check gates the NEW fail-open
+    OCR path (ADR 069), so it must never turn a document that classifies fine
+    into a poison strike either. None also means "no stats" downstream, so the
+    upload re-checks the file itself (never an empty set standing in for an
+    unknown one)."""
     try:
-        return needs_ocr(pdf_path)
+        return page_stats(pdf_path)
     except Exception:  # noqa: BLE001 — class-only log, SEC-001 posture
         log.warning("parse_document: needs_ocr() could not read every page -- "
                     "proceeding without OCR (class=needs_ocr_read_error)")
-        return False
+        return None
+
+
+def _ocr_decision(pdf_path: str):
+    """The OCR-or-not step of parse_document(), on its own so it can be run
+    against a real file without the classifier. Returns (ocr_applied, stats):
+    `stats` is OcrStats for the file's bytes as they are AFTER this call, or
+    None when OCR rewrote the file or the page check failed. See the comment
+    block at the call site in parse_document() for the two failure
+    contracts (classify()-flagged OCR raises; needs_ocr()-only fails open)."""
+    verdict, _, _ = classify(pdf_path)
+    if verdict in ("needs_ocr", "likely"):
+        return ocr_in_place(pdf_path), None
+    stats = _page_stats_fail_open(pdf_path)
+    if stats is None or not stats.image_only_pages:
+        return False, stats
+    try:
+        return ocr_in_place(pdf_path), None
+    except Exception:
+        log.warning(
+            "parse_document: OCR failed for a needs_ocr()-only page "
+            "(classify() read this document as has_text/empty) -- "
+            "proceeding without OCR, same as a document with no "
+            "image-only pages at all (class=ocr_failed_fail_open)")
+        # ocr_in_place() writes to a temp file and only os.replace()s on
+        # success, so the bytes are untouched (the upload re-checks the sha).
+        return False, stats
 
 
 def extract_text_for_classification(
@@ -1046,21 +1081,10 @@ def parse_document(
     # that classify() ALSO flags can still hit that 600s ceiling and poison-
     # strike -- same as on `main` today; not a new risk, see the PR
     # description for this residual risk.
-    verdict, _, _ = classify(pdf_path)
-    classify_says_ocr = verdict in ("needs_ocr", "likely")
-    ocr_applied = False
-    if classify_says_ocr:
-        ocr_applied = ocr_in_place(pdf_path)
-    elif _needs_ocr_fail_open(pdf_path):
-        try:
-            ocr_applied = ocr_in_place(pdf_path)
-        except Exception:
-            log.warning(
-                "parse_document: OCR failed for a needs_ocr()-only page "
-                "(classify() read this document as has_text/empty) -- "
-                "proceeding without OCR, same as a document with no "
-                "image-only pages at all (class=ocr_failed_fail_open)")
-            ocr_applied = False
+    # The decision itself lives in _ocr_decision() (CODER-PLAN step 2), which
+    # also returns the page check's OcrStats so the Drive upload need not
+    # re-scan the same unchanged bytes.
+    ocr_applied, ocr_stats = _ocr_decision(pdf_path)
 
     doc = fitz.open(pdf_path)
     try:
@@ -1221,4 +1245,5 @@ def parse_document(
         display_title=display_title,
         severity_floor=severity_floor,
         severity_before_floor=severity_before_floor,
+        ocr_stats=ocr_stats,
     )
