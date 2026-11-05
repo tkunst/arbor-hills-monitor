@@ -152,7 +152,9 @@ existed. Dry run by default; `--apply` waits for Trisha (Gate C).
 - **Apple Vision attribution.** The Lotext Mac Vision pass replaced some
   Mirror files in place and kept the input's `/Creator`, so those files would
   read as `native`. When the Vision state says it wrote OCR output over that
-  Drive file (its recorded `item_id` equals the Drive id) and the fresh check
+  Drive file (its recorded `item_id` equals the Drive id), Drive's
+  `modifiedTime` shows no change since (within 60 s of Vision's own
+  timestamp; measured gap ≤ 1 s), and the fresh check
   matches what it recorded (same page count, same image-only count),
   `ocr_engine` is `Apple Vision` (or `<OCRmyPDF creator> + Apple
   Vision`), so `text_status` is `ocr_full`/`ocr_partial`, not `native`.
@@ -165,9 +167,9 @@ existed. Dry run by default; `--apply` waits for Trisha (Gate C).
   Gate C, not built.
 - **Writes.** Ids whose existing row already matches Drive's live sha are
   skipped. Rows are appended in batches; before each batch the index is read
-  again (strict) and ids an upload wrote meanwhile are dropped (an upload's
-  row is never overwritten by the backfill), so a rerun resumes. A row that
-  already existed with a different sha is replaced in place. A file Drive
+  again (strict) and ids an upload wrote meanwhile are dropped (a row written
+  or changed after the plan was made is never overwritten), so a rerun
+  resumes. A row the plan saw with a different sha is replaced in place. A file Drive
   gives no sha256 gets no row. One narrow race remains: an upload appending
   between that re-read and the append leaves two rows, and the reader takes
   the backfill's (last); its sha then differs from Drive's, so the file is

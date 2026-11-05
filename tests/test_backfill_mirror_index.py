@@ -106,26 +106,37 @@ def test_vision_shortcut_needs_an_entry_with_pages():
 
 
 def _v(status="done", pages=3, after=0, item=ID1):
-    return {"status": status, "pages": pages, "image_only_after": after, "item_id": item}
+    # 17:22:21 Detroit (EDT) = 21:22:21 UTC; _meta's default modifiedTime is
+    # replaced by M_VISION below (0.5 s after, like a real Vision write).
+    return {"status": status, "pages": pages, "image_only_after": after, "item_id": item,
+            "at": "2026-10-14T17:22:21"}
+
+
+M_VISION = _meta(ID1, mod="2026-10-14T21:22:21.500Z")
 
 
 def test_engine_with_vision_names_vision_only_when_the_fresh_check_matches():
-    got = bmi.engine_with_vision(_stats(pages=3, image_only={2}), _v("done_partial", after=1), ID1)
+    got = bmi.engine_with_vision(_stats(pages=3, image_only={2}), _v("done_partial", after=1), M_VISION)
     assert got.engine == "Apple Vision" and mi.text_status(got) == "ocr_partial"
-    full = bmi.engine_with_vision(_stats(), _v(), ID1)
+    full = bmi.engine_with_vision(_stats(), _v(), M_VISION)
     assert mi.text_status(full) == "ocr_full"  # not `native`
-    assert bmi.engine_with_vision(_stats(), _v("done_id_unconfirmed"), ID1).engine == "Apple Vision"
-    both = bmi.engine_with_vision(_stats(engine="OCRmyPDF 17"), _v(), ID1)
+    assert bmi.engine_with_vision(_stats(), _v("done_id_unconfirmed"), M_VISION).engine == "Apple Vision"
+    both = bmi.engine_with_vision(_stats(engine="OCRmyPDF 17"), _v(), M_VISION)
     assert both.engine == "OCRmyPDF 17 + Apple Vision"
     # Page count differs: the file isn't what Vision wrote; leave it alone.
     s = _stats(pages=4)
-    assert bmi.engine_with_vision(s, _v(), ID1) is s
-    assert bmi.engine_with_vision(s, {"status": "skip_has_text", "pages": 4}, ID1) is s
-    assert bmi.engine_with_vision(None, _v(), ID1) is None
+    assert bmi.engine_with_vision(s, _v(), M_VISION) is s
+    assert bmi.engine_with_vision(s, {"status": "skip_has_text", "pages": 4}, M_VISION) is s
+    assert bmi.engine_with_vision(None, _v(), M_VISION) is None
     # Same name, different Drive file (or no recorded id): not Vision's work.
     s = _stats()
-    assert bmi.engine_with_vision(s, _v(item=ID2), ID1) is s
-    assert bmi.engine_with_vision(s, _v(item=None), ID1) is s
+    assert bmi.engine_with_vision(s, _v(item=ID2), M_VISION) is s
+    assert bmi.engine_with_vision(s, _v(item=None), M_VISION) is s
+    # Modified on Drive after Vision wrote it (a re-upload, the OCR backfill):
+    # the current bytes aren't Vision's, even if the counts happen to match.
+    later = _meta(ID1, mod="2026-10-20T00:00:00Z")
+    assert bmi.engine_with_vision(s, _v(), later) is s
+    assert bmi.engine_with_vision(s, _v(), _meta(ID1, mod="2026-10-01T00:00:00Z")) is s
 
 
 @pytest.mark.parametrize("path,key", [
@@ -162,6 +173,13 @@ def test_build_plan_matches_vision_by_first_root_path():
     assert plan.items[0].vision == v["AHLI_1.pdf"] and plan.items[0].shortcut == "searchable"
     plan = bmi.build_plan(refs, {ID1: _meta(ID1)}, {}, {}, v, {})
     assert plan.items[0].vision is None and plan.items[0].shortcut is None
+
+
+def test_build_plan_finds_vision_by_drive_id_before_path():
+    refs = {ID1: ("nsite", "-1")}
+    v = {"Old Name.pdf": _v()}
+    plan = bmi.build_plan(refs, {ID1: _meta(ID1)}, {}, {}, v, {ID1: "Renamed.pdf"})
+    assert plan.items[0].vision == v["Old Name.pdf"]
 
 
 def test_unreferenced_pdfs_counts_only_unlinked_pdfs():
@@ -246,6 +264,7 @@ def test_apply_appends_rows_from_downloaded_stats_and_skips_failures(monkeypatch
     monkeypatch.setattr(bmi, "stats_for", lambda drive, it, td, r: outcomes[it.drive_id])
     plan = _plan((ID1, "index", _v()),
                  (ID2, "index", None), (ID3, "index", None), ("1" + "z" * 32, "skip_indexed", None))
+    plan.items[0].meta = dict(M_VISION)
     c = bmi.apply(None, s, "SID", plan, batch=1, limit=0, retries=0, log=lambda *a: None)
     idx = mi.read_index(s, "SID")
     assert set(idx) == {ID1, ID3}                       # changed-mid-run never written
