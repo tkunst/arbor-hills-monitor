@@ -206,14 +206,17 @@ def engine_with_vision(stats, ventry: dict | None, meta: dict):
         return stats
     if not meta.get("id") or ventry.get("item_id") != meta.get("id"):
         return stats
-    at, mod = vision_at_utc(ventry.get("at", "")), drive_time(meta.get("modifiedTime", ""))
-    if at is None or mod is None or abs((mod - at).total_seconds()) > VISION_WRITE_SLACK_S:
-        return stats
     if stats.image_only_pages is None:
         return stats
-    if (ventry.get("pages") != stats.pages
+    at, mod = vision_at_utc(ventry.get("at", "")), drive_time(meta.get("modifiedTime", ""))
+    if (at is None or mod is None or abs((mod - at).total_seconds()) > VISION_WRITE_SLACK_S
+            or ventry.get("pages") != stats.pages
             or ventry.get("image_only_after") != len(stats.image_only_pages)):
-        return stats
+        # Vision wrote over this exact Drive file but the current bytes don't
+        # check out as its output: who made the text is unknowable, so don't
+        # publish `native`. Unknown page set => text_status `unknown`
+        # (readers process the file the old way).
+        return replace(stats, image_only_pages=None)
     engine = VISION_ENGINE if stats.engine in ("", "none") else f"{stats.engine[:100]} + {VISION_ENGINE}"
     return replace(stats, engine=engine)
 
@@ -439,7 +442,11 @@ def apply(drive, sheets, sheet_id: str, plan: Plan, *, batch: int, limit: int,
                 continue
             # it.meta, not the plan's: stats_for refreshes it when Drive
             # reports newer bytes, and then Vision's record no longer applies.
+            before = stats
             stats = engine_with_vision(stats, it.vision, it.meta)
+            if stats is not before:
+                c["vision_credited" if stats.image_only_pages is not None
+                  else "vision_unverified_unknown"] += 1
             row = mi.build_row(it.meta, stats, source_kind=it.kind, source_key=it.key)
             c[f"status:{row[mi.HEADERS.index('text_status')]}"] += 1
             pending.append((it, row))
@@ -521,7 +528,8 @@ def main(argv=None) -> int:
     try:
         return _main(argv)
     except Exception as e:  # noqa: BLE001
-        print(f"backfill_mirror_index: stopped ({type(e).__name__}); nothing after this point was written.")
+        print(f"backfill_mirror_index: stopped ({type(e).__name__}). Rows of the batch in "
+              f"progress may be partly written; a rerun finishes them.")
         return 1
 
 

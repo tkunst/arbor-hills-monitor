@@ -320,3 +320,13 @@ def test_meeting_archivers_build_a_source_target(modname, kind):
     src = inspect.getsource(importlib.import_module(modname).run)
     assert f'mi.target(cfg, sheets, sheet_id, "{kind}", file_id, local_is_source=True)' in src
     assert "index=index" in src
+
+
+def test_upsert_keeps_pinned_raw_revision_when_a_later_write_leaves_it_blank():
+    s = FakeSheets()
+    mi.upsert_row(s, "SID", mi.build_row(META, None, source_kind="nsite", source_key="1",
+                                         raw_revision_pinned="RAW1", now="T1"))
+    mi.upsert_row(s, "SID", mi.build_row(dict(META, sha256Checksum="c" * 64), None,
+                                         source_kind="nsite", source_key="1", now="T2"))
+    row = mi.read_index(s, "SID")["D1"]
+    assert row["raw_revision_pinned"] == "RAW1" and row["mirror_sha256"] == "c" * 64
