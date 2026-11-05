@@ -106,6 +106,10 @@ VISION_DONE = ("done", "done_partial", "done_id_unconfirmed", "done_partial_id_u
 # The Vision backfill (Lotext scripts/mirror-vision-ocr/backfill.py) stamps
 # `at` with time.strftime(): naive LOCAL time on Trisha's Mac.
 VISION_TZ = "America/Detroit"
+# Drive's modifiedTime for a file Vision wrote is within ~1 s of its `at`
+# (Drive for desktop keeps the local mtime; measured on 527 done entries,
+# 2026-11-05, max 0.99 s). Anything later means the file changed since.
+VISION_WRITE_SLACK_S = 60
 
 _SHA_COL = mi.HEADERS.index("mirror_sha256")
 
@@ -190,15 +194,20 @@ def vision_key(path: str) -> str:
     return parts[-1] if len(parts) == 1 else f"{parts[-2]}/{parts[-1]}"
 
 
-def engine_with_vision(stats, ventry: dict | None, drive_id: str):
+def engine_with_vision(stats, ventry: dict | None, meta: dict):
     """`stats` with ocr_engine naming Apple Vision when the Vision state says
-    it wrote OCR output over THIS Drive file (its recorded item_id) AND the
-    fresh check matches what Vision recorded (same page count, same
-    image-only count after). Vision keeps the input's /Creator, so without
-    this a Vision-OCR'd scan reads as `native`."""
+    it wrote OCR output over THIS Drive file (its recorded item_id), the file
+    hasn't been modified since (Drive modifiedTime within
+    VISION_WRITE_SLACK_S of Vision's `at`, either side), AND the fresh check matches what
+    Vision recorded (same page count, same image-only count after). Vision
+    keeps the input's /Creator, so without this a Vision-OCR'd scan reads as
+    `native`."""
     if stats is None or not ventry or ventry.get("status") not in VISION_DONE:
         return stats
-    if not drive_id or ventry.get("item_id") != drive_id:
+    if not meta.get("id") or ventry.get("item_id") != meta.get("id"):
+        return stats
+    at, mod = vision_at_utc(ventry.get("at", "")), drive_time(meta.get("modifiedTime", ""))
+    if at is None or mod is None or abs((mod - at).total_seconds()) > VISION_WRITE_SLACK_S:
         return stats
     if stats.image_only_pages is None:
         return stats
@@ -239,6 +248,10 @@ def build_plan(refs: dict[str, tuple[str, str]], listed: dict[str, dict],
     vision  -- the Vision state ({path relative to the first root: entry})
     paths   -- {id: path relative to the first root}"""
     p = Plan()
+    # Vision recorded the Drive id of every file it wrote: an exact match,
+    # immune to renames and to which folder was passed first.
+    by_item = {v["item_id"]: v for v in vision.values()
+               if isinstance(v, dict) and v.get("item_id")}
     for did, (kind, key) in refs.items():
         meta = listed.get(did) or fetched.get(did)
         it = Item(did, kind, key, meta or {}, path=paths.get(did, ""))
@@ -258,7 +271,7 @@ def build_plan(refs: dict[str, tuple[str, str]], listed: dict[str, dict],
             else:
                 it.action = "reindex" if row else "index"
                 it.planned_row_sha = str((row or {}).get("mirror_sha256", "")).lower()
-                it.vision = vision.get(vision_key(it.path)) if it.path else None
+                it.vision = by_item.get(did) or (vision.get(vision_key(it.path)) if it.path else None)
                 it.shortcut = vision_shortcut(meta, it.vision)
         p.items.append(it)
         p.counts[f"{kind}:{it.action}"] += 1
@@ -424,7 +437,9 @@ def apply(drive, sheets, sheet_id: str, plan: Plan, *, batch: int, limit: int,
             c[outcome.split(":")[0]] += 1
             if outcome not in ("ok", "unreadable"):
                 continue
-            stats = engine_with_vision(stats, it.vision, it.drive_id)
+            # it.meta, not the plan's: stats_for refreshes it when Drive
+            # reports newer bytes, and then Vision's record no longer applies.
+            stats = engine_with_vision(stats, it.vision, it.meta)
             row = mi.build_row(it.meta, stats, source_kind=it.kind, source_key=it.key)
             c[f"status:{row[mi.HEADERS.index('text_status')]}"] += 1
             pending.append((it, row))
@@ -523,6 +538,10 @@ def _main(argv=None) -> int:
     ap.add_argument("--limit", type=int, default=0, help="--apply: at most N downloads")
     ap.add_argument("--batch", type=int, default=200)
     a = ap.parse_args(argv)
+    # googleapiclient logs retried requests with their full URI (Drive and
+    # Sheet ids); keep stdout/stderr to counts only.
+    import logging
+    logging.getLogger("googleapiclient").setLevel(logging.ERROR)
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if a.detail_out and _inside(a.detail_out, repo):
         ap.error("--detail-out must be outside the repo (it lists file ids and names)")
