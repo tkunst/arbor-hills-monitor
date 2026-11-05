@@ -971,8 +971,12 @@ def test_summary_line_ok_and_stale_and_shadow():
     assert shadow["line"].startswith("Missing/overdue reports [shadow]:")
 
 
-def test_summary_main_disabled_and_skipped(capsys, monkeypatch):
+def test_summary_main_disabled_and_skipped(capsys, monkeypatch, tmp_path):
     import json
+    # Hermetic: main() loads the repo's .env, so on a dev Mac with a real
+    # GSHEET_ID_PRIVATE it would hit the live Sheet and report "ok". Point it
+    # at an empty directory instead (no .env there).
+    monkeypatch.setattr(rts, "_REPO", str(tmp_path))
     import config_loader
     real = config_loader.load_config()
     monkeypatch.setattr(config_loader, "load_config",
