@@ -519,12 +519,15 @@ def test_scan_only_report_ocrd_before_extraction_forced_to_review(monkeypatch, t
 
     def fake_ensure_searchable(path, **kw):
         assert path.endswith("ridgewood-2026-08.pdf")   # the ORIGINAL scan-only download
-        return ocrd_path, None
+        assert kw.get("fingerprint") is True            # stats carry a sha the upload can verify
+        return ocrd_path, stats_sentinel
+    stats_sentinel = object()
     monkeypatch.setattr(ra.ocr_util, "ensure_searchable_with_stats", fake_ensure_searchable)
 
-    upload_paths = []
+    upload_paths, upload_stats = [], []
     def fake_upload(service, local, name, folder, **kw):
         upload_paths.append(local)
+        upload_stats.append(kw.get("ocr_stats"))
         return f"http://drive/{name}"
     monkeypatch.setattr(ra.ac, "upload_pdf", fake_upload)
 
@@ -539,6 +542,7 @@ def test_scan_only_report_ocrd_before_extraction_forced_to_review(monkeypatch, t
     assert len(measurements) == 1              # a value WAS written (OCR worked this time)
     assert "OCR" in measurements[0][8]          # Note carries the provenance caveat
     assert upload_paths == [ocrd_path]          # uploaded the OCR'd copy, never the raw scan
+    assert upload_stats == [stats_sentinel]     # one page check, handed to the upload (CODER-PLAN step 2)
     assert len(sent) == 1 and sent[0][2] == ["trisha@example.test"]  # review tier -> Trisha only
 
 
