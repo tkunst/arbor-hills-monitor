@@ -397,7 +397,8 @@ class OcrStats:
     engine          -- "none", or the file's own /Creator when ocrmypdf made
                        it (e.g. "OCRmyPDF 17.12.1 / OCRmyPDF fpdf2 + Tesseract ...", as seen on
                        real Mirror files 2026-11-04).
-    Counts only, never text or filenames, so they are safe to log/publish."""
+    `engine` is file-supplied text (its /Creator, only when it starts with
+    "OCRmyPDF"); log the counts, never `engine`, in public Actions logs."""
     sha256: str
     pages: int
     image_only_pages: frozenset | None
@@ -425,7 +426,10 @@ def _scan(path: str, char_threshold: int = 0) -> tuple[int, set[int], str]:
     exactly as image_only_pages() does."""
     doc = fitz.open(path)
     try:
-        creator = (doc.metadata or {}).get("creator") or ""
+        try:
+            creator = (doc.metadata or {}).get("creator") or ""
+        except Exception:  # noqa: BLE001 — unreadable metadata must not fail the page check
+            creator = ""
         pages = set()
         for i, page in enumerate(doc):
             text_len = len(page.get_text().strip())
@@ -455,7 +459,7 @@ def _trusted(known: "OcrStats | None", local_path: str) -> "OcrStats | None":
         return None
     try:
         return known if file_sha256(local_path) == known.sha256 else None
-    except OSError:
+    except Exception:  # noqa: BLE001 — unreadable/odd path: just re-scan
         return None
 
 
@@ -531,9 +535,12 @@ def ensure_searchable_with_stats(local_path: str, *, timeout: int = 300, languag
     tmp_out = None
     trusted = _trusted(known, local_path)
     if trusted is not None:
-        page_count, before_pages, engine = trusted.pages, set(trusted.image_only_pages), trusted.engine
-        creator_is_ocrmypdf = engine != "none"
-    else:
+        try:
+            page_count, before_pages, engine = int(trusted.pages), set(trusted.image_only_pages), str(trusted.engine)
+            creator_is_ocrmypdf = engine != "none"
+        except Exception:  # noqa: BLE001 — malformed stats: re-scan instead
+            trusted = None
+    if trusted is None:
         try:
             page_count, before_pages, creator = _scan(local_path)
         except Exception:
@@ -546,7 +553,7 @@ def ensure_searchable_with_stats(local_path: str, *, timeout: int = 300, languag
     if fingerprint and not sha_in:
         try:
             sha_in = file_sha256(local_path)
-        except OSError:
+        except Exception:  # noqa: BLE001 — no fingerprint; caller just re-scans later
             sha_in = ""
     unchanged = OcrStats(sha256=sha_in, pages=page_count,
                          image_only_pages=before, image_only_before=before,
