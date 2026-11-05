@@ -86,6 +86,7 @@ module, and update that entry in the same PR.
 - `findings_feed.py` / `public_comment_feed.py` — pure renderers for the public Findings and Public Comment pages.
 - `fulltext_search.py` + `scripts/build_fulltext_cache.py` / `build_fulltext_index.py` — full-text search over the Mirror PDFs (Pagefind bundle, built in CI, never committed; ADR 062 addendum).
 - `scripts/backfill_metric_taxonomy.py` — one-shot ADR 034 Measurements reclassify; dry run by default.
+- `scripts/backfill_mirror_index.py` — one-shot `Mirror Index` fill for already-mirrored PDFs (ADR 073 addendum); dry run by default.
 
 **County / meeting sources**
 
