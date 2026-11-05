@@ -123,9 +123,11 @@ def test_engine_with_vision_names_vision_only_when_the_fresh_check_matches():
     assert bmi.engine_with_vision(_stats(), _v("done_id_unconfirmed"), M_VISION).engine == "Apple Vision"
     both = bmi.engine_with_vision(_stats(engine="OCRmyPDF 17"), _v(), M_VISION)
     assert both.engine == "OCRmyPDF 17 + Apple Vision"
-    # Page count differs: the file isn't what Vision wrote; leave it alone.
+    # Vision wrote over this file but the bytes aren't its output (page count
+    # differs): never publish `native`; the row reads `unknown`.
     s = _stats(pages=4)
-    assert bmi.engine_with_vision(s, _v(), M_VISION) is s
+    got = bmi.engine_with_vision(s, _v(), M_VISION)
+    assert mi.text_status(got) == "unknown" and got.pages == 4
     assert bmi.engine_with_vision(s, {"status": "skip_has_text", "pages": 4}, M_VISION) is s
     assert bmi.engine_with_vision(None, _v(), M_VISION) is None
     # Same name, different Drive file (or no recorded id): not Vision's work.
@@ -135,8 +137,9 @@ def test_engine_with_vision_names_vision_only_when_the_fresh_check_matches():
     # Modified on Drive after Vision wrote it (a re-upload, the OCR backfill):
     # the current bytes aren't Vision's, even if the counts happen to match.
     later = _meta(ID1, mod="2026-10-20T00:00:00Z")
-    assert bmi.engine_with_vision(s, _v(), later) is s
-    assert bmi.engine_with_vision(s, _v(), _meta(ID1, mod="2026-10-01T00:00:00Z")) is s
+    assert mi.text_status(bmi.engine_with_vision(s, _v(), later)) == "unknown"
+    early = _meta(ID1, mod="2026-10-01T00:00:00Z")
+    assert mi.text_status(bmi.engine_with_vision(s, _v(), early)) == "unknown"
 
 
 @pytest.mark.parametrize("path,key", [
@@ -271,7 +274,7 @@ def test_apply_appends_rows_from_downloaded_stats_and_skips_failures(monkeypatch
     assert idx[ID1]["text_status"] == "ocr_full" and idx[ID1]["ocr_engine"] == "Apple Vision"
     assert idx[ID3]["text_status"] == "unknown"         # unreadable = process it later
     assert idx[ID1]["original_sha256"] == "" and idx[ID1]["source_kind"] == "nsite"
-    assert c["appended"] == 2 and c["changed_mid_run"] == 1
+    assert c["appended"] == 2 and c["changed_mid_run"] == 1 and c["vision_credited"] == 1
 
 
 def test_apply_drops_rows_a_racing_upload_already_wrote(monkeypatch):

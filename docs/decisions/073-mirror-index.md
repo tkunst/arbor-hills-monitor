@@ -42,7 +42,7 @@ One row per Drive file, upserted by `drive_id`. Columns:
 
 | Value | Rule |
 |---|---|
-| `native` | no image-only page, engine `none` |
+| `native` | no image-only page, engine `none`. Means only "no image-only page and no OCRmyPDF stamp": a scan OCR'd elsewhere (Acrobat, a scanner, ABBYY) also reads `native` |
 | `ocr_full` | no image-only page, engine `OCRmyPDF …` |
 | `ocr_partial` | some, not all, pages image-only |
 | `no_text` | every page image-only |
@@ -147,7 +147,9 @@ existed. Dry run by default; `--apply` waits for Trisha (Gate C).
 - **Where the values come from.** Checksums, size and head revision from
   Drive's own metadata. Page stats from downloading the file and running the
   upload path's own check (`ocr_util.page_stats()`); the download's sha256
-  must equal Drive's, else the file changed mid-run and gets no row.
+  must equal Drive's. If not, Drive is asked again: if it now reports the
+  downloaded sha, its fresh metadata is used; otherwise the file changed
+  mid-run and gets no row.
   `original_sha256` stays blank (the backfill can't know the source's bytes).
 - **Apple Vision attribution.** The Lotext Mac Vision pass replaced some
   Mirror files in place and kept the input's `/Creator`, so those files would
@@ -157,7 +159,11 @@ existed. Dry run by default; `--apply` waits for Trisha (Gate C).
   timestamp; measured gap ≤ 1 s), and the fresh check
   matches what it recorded (same page count, same image-only count),
   `ocr_engine` is `Apple Vision` (or `<OCRmyPDF creator> + Apple
-  Vision`), so `text_status` is `ocr_full`/`ocr_partial`, not `native`.
+  Vision`), so `text_status` is `ocr_full`/`ocr_partial`, not `native`. If
+  Vision wrote over that Drive id but either check fails, the row's
+  `text_status` is `unknown` (never `native`); the run counts both cases.
+  `head_revision` is the listing's, which can be hours old by write time;
+  nothing trusts it (the OCR backfill pins the live revision itself).
 - **No download shortcut from the Vision state.** That state has page counts
   for most files but no sha256, so it can't prove its numbers describe the
   current bytes, and its `skip_has_text` entries can't tell `native` from
