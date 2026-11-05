@@ -395,7 +395,8 @@ class OcrStats:
                        equal to image_only_pages).
     ocr_ran         -- this call ran ocrmypdf and returned its output.
     engine          -- "none", or the file's own /Creator when ocrmypdf made
-                       it (e.g. "ocrmypdf 16.4.2 / Tesseract OCR-PDF 5.3.4").
+                       it (e.g. "OCRmyPDF 17.12.1 / OCRmyPDF fpdf2 + Tesseract ...", as seen on
+                       real Mirror files 2026-11-04).
     Counts only, never text or filenames, so they are safe to log/publish."""
     sha256: str
     pages: int
@@ -449,7 +450,8 @@ def page_stats(path: str) -> OcrStats:
 
 def _trusted(known: "OcrStats | None", local_path: str) -> "OcrStats | None":
     """`known` if it provably describes local_path's current bytes, else None."""
-    if known is None or not known.sha256 or known.image_only_pages is None:
+    if (not isinstance(known, OcrStats) or not known.sha256
+            or known.image_only_pages is None):
         return None
     try:
         return known if file_sha256(local_path) == known.sha256 else None

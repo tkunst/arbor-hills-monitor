@@ -652,3 +652,8 @@ def test_ensure_searchable_with_stats_read_error_returns_none(tmp_path):
 
 def test_ensure_searchable_wrapper_still_returns_a_path(text_pdf):
     assert ocr_util.ensure_searchable(text_pdf) == text_pdf
+
+
+def test_ensure_searchable_with_stats_never_raises_on_a_non_stats_known(text_pdf):
+    # Not an OcrStats -> ignored (re-scan), never an AttributeError.
+    assert ocr_util.ensure_searchable_with_stats(text_pdf, known=object())[0] == text_pdf
