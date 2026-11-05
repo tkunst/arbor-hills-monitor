@@ -47,7 +47,9 @@ HEADERS = [
     "original_sha256", "head_revision", "pages", "image_only_pages", "text_status",
     "ocr_engine", "raw_revision_pinned", "indexed_at",
 ]
-SOURCE_KINDS = ("nsite", "mmpc", "civicclerk")
+# hand_curated rows come only from scripts/backfill_mirror_index.py (those
+# files have no monitor upload path).
+SOURCE_KINDS = ("nsite", "mmpc", "civicclerk", "hand_curated")
 TEXT_STATUSES = ("native", "ocr_full", "ocr_partial", "no_text", "unknown")
 
 # Fields asked of Drive's create/update response ONLY when indexing is on

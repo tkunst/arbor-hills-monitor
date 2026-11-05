@@ -252,6 +252,18 @@ behavior, update its entry here in the same PR.
   pass an `IndexTarget`, and `target()` returns None unless
   `mirror_index.enabled`. Tab created on first enabled write, not by
   `ensure_tabs()`. Readers skip work only on a live Drive sha256 match.
+  `source_kind` `hand_curated` comes only from the backfill below.
+- `scripts/backfill_mirror_index.py` — **ADR 073 addendum** (CODER-PLAN step
+  4, 2026-11-05): one-time `Mirror Index` fill for the PDFs linked from
+  `Archived PDFs`, `MMPC Archived Files`, `CivicClerk Archived Files` and
+  `Hand-Curated Files` (first tab in that order owns a shared Drive id).
+  Checksums from a recursive listing of the `--root` folders; page stats from
+  a download + `ocr_util.page_stats()` (download sha must equal Drive's).
+  Skips ids whose row already matches Drive's live sha; appends in batches,
+  re-reading the index (strict) before each. Uses the Lotext Vision state
+  only to name `Apple Vision` as the engine when the fresh check matches it.
+  Dry run by default (counts only on stdout; per-file TSV via
+  `--detail-out`, kept outside the repo); `--apply` is Gate C.
 - `archive_client.py` — **ADR 007**: Google Drive access for the durable PDF
   mirror, authenticated as Trisha via OAuth (`drive.file` scope only) rather
   than the service account `drive_client.py` above uses — a service account

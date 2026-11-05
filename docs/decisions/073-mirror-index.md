@@ -130,3 +130,40 @@ This also keeps `sheet_writer.py` out of this change.
   Uploads are a few a day, plus the nightly archive batch (up to 100).
 - Changes `archive_client.py`, a module pinned by the Lotext staging job; that
   job needs a re-pin after merge (Gate A).
+
+## Addendum (2026-11-05, CODER-PLAN step 4): backfilling existing files
+
+`scripts/backfill_mirror_index.py` fills rows for PDFs mirrored before the tab
+existed. Dry run by default; `--apply` waits for Trisha (Gate C).
+
+- **What it indexes.** Only the PDFs linked from the four public tabs that
+  index Mirror files: `Archived PDFs` (`nsite`), `MMPC Archived Files`
+  (`mmpc`), `CivicClerk Archived Files` (`civicclerk`) and `Hand-Curated
+  Files` (new kind `hand_curated`, `source_key` = `curated_filename`). One row
+  per Drive id: when two tabs link the same file (some Hand-Curated rows point
+  at an nSITE Mirror copy), the first of those kinds in that order owns the
+  row. Non-PDF files and Mirror PDFs no tab links (WDS records, Ridge Wood,
+  loose folders) are counted and left out.
+- **Where the values come from.** Checksums, size and head revision from
+  Drive's own metadata. Page stats from downloading the file and running the
+  upload path's own check (`ocr_util.page_stats()`); the download's sha256
+  must equal Drive's, else the file changed mid-run and gets no row.
+  `original_sha256` stays blank (the backfill can't know the source's bytes).
+- **Apple Vision attribution.** The Lotext Mac Vision pass replaced some
+  Mirror files in place and kept the input's `/Creator`, so those files would
+  read as `native`. When the Vision state says it OCR'd that path and the
+  fresh check matches what it recorded (same page count, same image-only
+  count), `ocr_engine` is `Apple Vision` (or `<OCRmyPDF creator> + Apple
+  Vision`), so `text_status` is `ocr_full`/`ocr_partial`, not `native`.
+- **No download shortcut from the Vision state.** That state has page counts
+  for most files but no sha256, so it can't prove its numbers describe the
+  current bytes, and its `skip_has_text` entries can't tell `native` from
+  `ocr_full`. The dry run reports what reusing it would save and, with
+  `--validate-sample N`, how often it agrees with a fresh check; using it would
+  need a change to the `text_status` values above, so it is Trisha's call at
+  Gate C, not built.
+- **Writes.** Ids whose existing row already matches Drive's live sha are
+  skipped. Rows are appended in batches; before each batch the index is read
+  again (strict) and ids an upload wrote meanwhile are dropped, so a rerun
+  resumes and a racing upload never gets a duplicate row from the backfill. A
+  row with a different sha is replaced in place.
