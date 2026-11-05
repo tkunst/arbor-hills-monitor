@@ -44,9 +44,13 @@ Writes (`--apply` only):
     sha (a row from the upload itself is better than one from here).
   - Appends in batches. Before each batch the index is read again (STRICT:
     a read failure raises and stops the run) and ids now present are dropped,
-    so a rerun resumes and a nightly upload racing the run never gets a
-    duplicate row from here. An existing row with a DIFFERENT sha is
-    replaced in place (mirror_index.upsert_row).
+    so a rerun resumes. A row an upload wrote after the plan was made is
+    left alone (it describes Drive's current bytes). A row that was already
+    there with a DIFFERENT sha is replaced in place (mirror_index.upsert_row).
+    A file Drive gives no sha256 gets no row (it could never be trusted).
+    One narrow race remains: an upload appending between the re-read and
+    the append leaves two rows, and the reader takes the last (ours); its
+    sha then differs from Drive's and the file is processed the old way.
 
 Output: stdout carries counts only. Per-file detail (ids, names) goes ONLY to
 `--detail-out` (TSV), which belongs outside this public repo.
@@ -96,7 +100,9 @@ TABS = [
 KIND_ORDER = [t[0] for t in TABS]
 
 VISION_ENGINE = "Apple Vision"
-VISION_DONE = ("done", "done_partial")
+# Every status the Vision backfill records AFTER writing its output over the
+# Drive file (Lotext scripts/mirror-vision-ocr/backfill.py).
+VISION_DONE = ("done", "done_partial", "done_id_unconfirmed", "done_partial_id_unconfirmed")
 # The Vision backfill (Lotext scripts/mirror-vision-ocr/backfill.py) stamps
 # `at` with time.strftime(): naive LOCAL time on Trisha's Mac.
 VISION_TZ = "America/Detroit"
@@ -174,12 +180,25 @@ def vision_shortcut(meta: dict, ventry: dict | None) -> str | None:
     return "searchable" if ventry["status"] == "skip_has_text" else "not_searchable"
 
 
-def engine_with_vision(stats, ventry: dict | None):
+def vision_key(path: str) -> str:
+    """The Vision state's key for a file at `path` (relative to the Case File
+    Mirror): the bare name at the top level, else `<parent folder>/<name>`
+    (Vision ran one folder at a time, keyed by that folder's basename)."""
+    parts = [p for p in (path or "").split("/") if p]
+    if not parts:
+        return ""
+    return parts[-1] if len(parts) == 1 else f"{parts[-2]}/{parts[-1]}"
+
+
+def engine_with_vision(stats, ventry: dict | None, drive_id: str):
     """`stats` with ocr_engine naming Apple Vision when the Vision state says
-    it OCR'd this path AND the fresh check matches what Vision recorded
-    (same page count, same image-only count after). Vision keeps the input's
-    /Creator, so without this a Vision-OCR'd scan reads as `native`."""
+    it wrote OCR output over THIS Drive file (its recorded item_id) AND the
+    fresh check matches what Vision recorded (same page count, same
+    image-only count after). Vision keeps the input's /Creator, so without
+    this a Vision-OCR'd scan reads as `native`."""
     if stats is None or not ventry or ventry.get("status") not in VISION_DONE:
+        return stats
+    if not drive_id or ventry.get("item_id") != drive_id:
         return stats
     if stats.image_only_pages is None:
         return stats
@@ -198,8 +217,9 @@ class Item:
     meta: dict
     path: str = ""
     vision: dict | None = None
-    action: str = ""          # index | skip_indexed | reindex | not_pdf | unreachable
+    action: str = ""  # index | skip_indexed | reindex | no_drive_sha | not_pdf | unreachable
     shortcut: str | None = None
+    planned_row_sha: str = ""  # sha of the existing index row at plan time (reindex)
 
 
 @dataclass
@@ -229,11 +249,16 @@ def build_plan(refs: dict[str, tuple[str, str]], listed: dict[str, dict],
         else:
             row = index.get(did)
             live = (meta.get("sha256Checksum") or "").lower()
-            if row and live and str(row.get("mirror_sha256", "")).lower() == live:
+            if not live:
+                # No Drive sha: a row could never be trusted (fail-safe), and
+                # the download could never be checked against it.
+                it.action = "no_drive_sha"
+            elif row and str(row.get("mirror_sha256", "")).lower() == live:
                 it.action = "skip_indexed"
             else:
                 it.action = "reindex" if row else "index"
-                it.vision = vision.get(it.path) if it.path else None
+                it.planned_row_sha = str((row or {}).get("mirror_sha256", "")).lower()
+                it.vision = vision.get(vision_key(it.path)) if it.path else None
                 it.shortcut = vision_shortcut(meta, it.vision)
         p.items.append(it)
         p.counts[f"{kind}:{it.action}"] += 1
@@ -377,6 +402,11 @@ def apply(drive, sheets, sheet_id: str, plan: Plan, *, batch: int, limit: int,
             sha = row[_SHA_COL].lower()
             if have and sha and str(have.get("mirror_sha256", "")).lower() == sha:
                 c["raced_already_indexed"] += 1
+            elif have and (it.action != "reindex"
+                           or str(have.get("mirror_sha256", "")).lower() != it.planned_row_sha):
+                # Written since the plan was made: an upload's row describes
+                # Drive's current bytes better than this download. Leave it.
+                c["raced_newer_row"] += 1
             elif have:
                 mi.upsert_row(sheets, sheet_id, row)
                 c["replaced"] += 1
@@ -394,7 +424,7 @@ def apply(drive, sheets, sheet_id: str, plan: Plan, *, batch: int, limit: int,
             c[outcome.split(":")[0]] += 1
             if outcome not in ("ok", "unreadable"):
                 continue
-            stats = engine_with_vision(stats, it.vision)
+            stats = engine_with_vision(stats, it.vision, it.drive_id)
             row = mi.build_row(it.meta, stats, source_kind=it.kind, source_key=it.key)
             c[f"status:{row[mi.HEADERS.index('text_status')]}"] += 1
             pending.append((it, row))
@@ -424,7 +454,7 @@ def render_summary(plan: Plan, ref_counts: Counter, unref: int, sample: Counter 
                "skip_indexed = row already matches Drive):")
     for kind in KIND_ORDER:
         parts = [f"{a} {plan.counts[f'{kind}:{a}']}" for a in
-                 ("index", "reindex", "skip_indexed", "not_pdf", "unreachable")
+                 ("index", "reindex", "skip_indexed", "no_drive_sha", "not_pdf", "unreachable")
                  if plan.counts[f"{kind}:{a}"]]
         out.append(f"  {kind}: " + (", ".join(parts) or "nothing"))
     out.append(f"Mirror PDFs no tab links (not indexed): {unref}")
@@ -465,7 +495,22 @@ def write_detail(path: str, plan: Plan) -> None:
                                it.path]) + "\n")
 
 
+def _inside(path: str, root: str) -> bool:
+    p, r = os.path.realpath(path), os.path.realpath(root)
+    return p == r or p.startswith(r + os.sep)
+
+
 def main(argv=None) -> int:
+    """Errors print their class only: a traceback would carry request URIs
+    (Drive/Sheet ids), and stdout is promised to be counts only."""
+    try:
+        return _main(argv)
+    except Exception as e:  # noqa: BLE001
+        print(f"backfill_mirror_index: stopped ({type(e).__name__}); nothing after this point was written.")
+        return 1
+
+
+def _main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Backfill the Mirror Index tab (ADR 073).")
     ap.add_argument("--root", action="append", required=True,
                     help="Drive folder id to list (repeatable). Vision-state paths are "
@@ -478,6 +523,9 @@ def main(argv=None) -> int:
     ap.add_argument("--limit", type=int, default=0, help="--apply: at most N downloads")
     ap.add_argument("--batch", type=int, default=200)
     a = ap.parse_args(argv)
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if a.detail_out and _inside(a.detail_out, repo):
+        ap.error("--detail-out must be outside the repo (it lists file ids and names)")
 
     import json
 
