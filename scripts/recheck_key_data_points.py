@@ -187,11 +187,12 @@ def _download(url: str, dest: str, downloader=None, mirror_ids: set | None = Non
         fh.write(data)
 
 
-# Stop starting new documents this long after the PROCESS started (setup in
-# kdp-recheck.yml's 30-min job comes before it), and the proposals file is
-# rewritten after every document, so even a run cut off mid-document leaves
-# what it finished for the artifact upload. Items not reached show "n/a".
-DEFAULT_MAX_MINUTES = 18
+# Stop starting new documents this long after the PROCESS started, and the
+# proposals file is rewritten after every document. kdp-recheck.yml kills
+# this step at 20 min (leaving room for one slow last document) and uploads
+# the file with if: always(), so even a cut-off run keeps what it finished.
+# Items not reached show "n/a".
+DEFAULT_MAX_MINUTES = 14
 _PROCESS_START = time.monotonic()
 
 
@@ -310,7 +311,12 @@ def main() -> int:
             os.replace(tmp, path)
 
     if a.run_llm and items:
-        left = run_llm(items, cfg, mirror_ids=mirror_file_ids(service, sheet_id),
+        try:
+            mirror_ids = mirror_file_ids(service, sheet_id)
+        except Exception as e:  # noqa: BLE001 — strict read failed: stop, class only (public log)
+            print(f"could not read Archived PDFs ({type(e).__name__}); nothing checked")
+            return 1
+        left = run_llm(items, cfg, mirror_ids=mirror_ids,
                        max_minutes=a.max_minutes, on_item=save)
         if left:
             print(f"time budget reached: {left} document(s) not checked this run")
