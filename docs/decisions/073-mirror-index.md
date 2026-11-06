@@ -254,9 +254,10 @@ those ids absent, which every caller treats as "process the old way".
   can't expose anything private. Its proposals are reviewed by a person
   before `--apply`; the proposals artifact records error classes only (its
   `link` field holds the same public Mirror links the public records page
-  shows). A run stops starting documents 18 minutes after the process
-  starts and rewrites the proposals file after each document, so the 30-min
-  job always leaves what it finished. Accepted: any Archived PDFs id is
+  shows). A run stops starting documents 14 minutes after the process
+  starts and rewrites the proposals file after each document;
+  `kdp-recheck.yml` kills that step at 20 minutes and uploads the file with
+  `if: always()`, so the 30-min job always leaves what it finished. Accepted: any Archived PDFs id is
   accepted for any row (a wrong link already in the Sheet would propose the
   other document's text, which the reviewer sees before `--apply`).
 - `archive.yml` no longer fails on a night when nSITE returns an empty

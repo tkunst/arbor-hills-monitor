@@ -29,6 +29,12 @@ def FAKE(fid, dest):
 FAKE.got, FAKE.body = [], b"%PDF-1.7"
 
 
+@pytest.fixture(autouse=True)
+def _fresh_fake():
+    FAKE.got, FAKE.body = [], b"%PDF-1.7"
+    yield
+
+
 def test_drive_mirror_link_is_read_by_id(tmp_path):
     rk = _mod()
     FAKE.got, FAKE.body = [], b"%PDF-1.7"
@@ -268,3 +274,30 @@ def test_pdf_header_after_leading_junk_is_accepted(tmp_path):
     FAKE.body = b"\r\n junk \n%PDF-1.4 rest"
     rk._download("https://drive.google.com/file/d/F/view", str(tmp_path / "a.pdf"),
                  downloader=FAKE, mirror_ids={"F"})
+
+
+def test_archive_index_read_failure_stops_with_class_only(monkeypatch, capsys):
+    rk = _mod()
+    item = {"tab": "New Documents", "row": 2, "date_filed": "", "link": "x", "document_name": "d",
+            "old_kdp_sha256": "", "old": {}, "problems": {"x": ["p"]}}
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.setattr(rk, "load_config", lambda: {})
+    monkeypatch.setattr(rk.kdp_check, "reference_from_config", lambda c: None)
+    monkeypatch.setattr(rk.dc, "sheets_service", lambda: object())
+    monkeypatch.setattr(rk, "scan", lambda *a: [item])
+    monkeypatch.setattr(rk, "mirror_file_ids", lambda *a: (_ for _ in ()).throw(
+        OSError("https://sheets.googleapis.com/v4/spreadsheets/SECRETSHEET 429")))
+    monkeypatch.setattr(rk, "run_llm", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no run")))
+    monkeypatch.setattr("sys.argv", ["x", "--run-llm", "--counts-only"])
+    assert rk.main() == 1 and "SECRETSHEET" not in capsys.readouterr().out
+
+
+def test_kdp_recheck_workflow_uploads_even_after_a_cut_off_step():
+    import yaml
+    wf = yaml.safe_load(open(os.path.join(_REPO, ".github", "workflows", "kdp-recheck.yml")))
+    steps = wf["jobs"]["recheck"]["steps"]
+    run = next(s for s in steps if "recheck_key_data_points.py" in s.get("run", ""))
+    up = next(s for s in steps if str(s.get("uses", "")).startswith("actions/upload-artifact"))
+    assert up.get("if") == "always()"
+    job_min = wf["jobs"]["recheck"]["timeout-minutes"]
+    assert _mod().DEFAULT_MAX_MINUTES < run["timeout-minutes"] < job_min
