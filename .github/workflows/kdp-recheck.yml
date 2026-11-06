@@ -47,10 +47,10 @@ jobs:
           printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
           echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
       - name: Scan + propose (no Sheet writes)
-        # Killed before the job's 30 min so the upload below still runs; the
+        # Killed at 18 min (setup is capped at 10) so the upload below still runs; the
         # script starts no new document after its own 14-min budget and saves
         # the proposals after every document, so a cut-off run keeps its work.
-        timeout-minutes: 20
+        timeout-minutes: 18
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GSHEET_ID: ${{ secrets.GSHEET_ID }}

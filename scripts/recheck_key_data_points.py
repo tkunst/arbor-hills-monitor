@@ -189,7 +189,7 @@ def _download(url: str, dest: str, downloader=None, mirror_ids: set | None = Non
 
 # Stop starting new documents this long after the PROCESS started, and the
 # proposals file is rewritten after every document. kdp-recheck.yml kills
-# this step at 20 min (leaving room for one slow last document) and uploads
+# this step at 18 min (leaving room for one slow last document) and uploads
 # the file with if: always(), so even a cut-off run keeps what it finished.
 # Items not reached show "n/a".
 DEFAULT_MAX_MINUTES = 14
