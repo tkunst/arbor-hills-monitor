@@ -333,7 +333,8 @@ class _FakeBatch:
 
     def execute(self):
         self.svc.batches.append([rid for _, rid in self.calls])
-        if self.svc.fail_batch is not None and len(self.svc.batches) - 1 == self.svc.fail_batch:
+        if (self.svc.fail_ids & {rid for _, rid in self.calls}
+                or self.svc._maybe_flake([rid for _, rid in self.calls])):
             raise RuntimeError("batch failed")
         for req, rid in self.calls:
             if rid in self.svc.errors:
@@ -343,8 +344,14 @@ class _FakeBatch:
 
 
 class _FakeDrive:
-    def __init__(self, shas, errors=(), fail_batch=None):
-        self.shas, self.errors, self.fail_batch, self.batches = shas, set(errors), fail_batch, []
+    def __init__(self, shas, errors=(), fail_ids=(), flaky_once=()):
+        self.shas, self.errors, self.batches = shas, set(errors), []
+        self.fail_ids, self.flaky = set(fail_ids), set(flaky_once)
+
+    def _maybe_flake(self, ids):
+        hit = self.flaky & set(ids)
+        self.flaky -= hit
+        return bool(hit)
 
     def new_batch_http_request(self, callback):
         return _FakeBatch(self, callback)
@@ -365,9 +372,11 @@ def test_live_sha256_batches_and_drops_failed_or_blank_lookups():
 
 
 def test_live_sha256_stops_after_a_failed_batch_and_never_raises():
-    drive = _FakeDrive({"a": "SA", "b": "SB", "c": "SC"}, fail_batch=1)
+    drive = _FakeDrive({"a": "SA", "b": "SB", "c": "SC"}, fail_ids={"b"})
     assert mi.live_sha256(drive, ["a", "b", "c"], batch_size=1) == {"a": "SA"}
-    assert len(drive.batches) == 2
+    assert drive.batches == [["a"], ["b"], ["b"]]          # one retry, then stop
+    flaky = _FakeDrive({"a": "SA", "b": "SB"}, flaky_once={"a"})
+    assert mi.live_sha256(flaky, ["a", "b"], batch_size=1) == {"a": "SA", "b": "SB"}
     assert mi.live_sha256(None, ["a"]) == {} and mi.live_sha256(drive, []) == {}
 
 

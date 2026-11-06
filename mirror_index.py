@@ -257,8 +257,9 @@ def live_sha256(service, file_ids, *, batch_size: int = _BATCH) -> dict[str, str
     asked in batches of `batch_size` (files.get, one metadata call each, no
     download). NEVER RAISES: an id whose lookup fails, or that comes back with
     no sha, is simply absent, and every caller treats absent as "process the
-    file the old way" (ADR 073). A failed batch stops the lookups (the rest
-    are absent too) rather than retrying into an outage or a dead token."""
+    file the old way" (ADR 073). A batch that fails twice stops the lookups
+    (the rest are absent too) rather than retrying into an outage or a dead
+    token."""
     out: dict[str, str] = {}
     ids = [str(i) for i in dict.fromkeys(file_ids) if i]
     if service is None or not ids:
@@ -271,15 +272,20 @@ def live_sha256(service, file_ids, *, batch_size: int = _BATCH) -> dict[str, str
                 out[request_id] = sha
 
     for start in range(0, len(ids), batch_size):
-        try:
-            batch = service.new_batch_http_request(callback=_cb)
-            for fid in ids[start:start + batch_size]:
-                batch.add(service.files().get(fileId=fid, fields="id, sha256Checksum"),
-                          request_id=fid)
-            batch.execute()
-        except Exception as e:  # noqa: BLE001 — absent = old path; never fail the caller
-            log.warning("mirror_index: live sha lookup stopped (class=%s)", type(e).__name__)
-            break
+        chunk = ids[start:start + batch_size]
+        for attempt in (1, 2):  # one retry of a failed batch, then stop
+            try:
+                batch = service.new_batch_http_request(callback=_cb)
+                for fid in chunk:
+                    batch.add(service.files().get(fileId=fid, fields="id, sha256Checksum"),
+                              request_id=fid)
+                batch.execute()
+                break
+            except Exception as e:  # noqa: BLE001 — absent = old path; never fail the caller
+                if attempt == 2:
+                    log.warning("mirror_index: live sha lookup stopped (class=%s)",
+                                type(e).__name__)
+                    return out
     return out
 
 

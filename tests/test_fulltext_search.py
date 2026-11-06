@@ -665,7 +665,7 @@ def test_a_changed_drive_copy_is_refetched_and_an_unchanged_one_is_not():
         k[2]: {"status": "no_text", "pages": 3, "text_pages": 0, "fetched": old},               # no recorded sha: timer
         k[3]: {"status": "no_text", "pages": 3, "text_pages": 0, "fetched": old, "sha256": "S3"},  # no live sha: timer
         k[4]: {"status": "ok", "pages": 4, "text_pages": 4, "fetched": old, "sha256": "S4",
-               "change_errors": cache.MAX_CHANGE_ERRORS},                                       # changed, struck out
+               "change_errors": cache.MAX_CHANGE_ERRORS, "change_errors_sha": "NEW"},           # changed, struck out
     }
     live = {k[0]: "NEW", k[1]: "S1", k[2]: "X", k[4]: "NEW"}
     got = [key for key, _ in cache.pending(entries, manifest, today=date(2026, 11, 6), live=live)]
@@ -739,7 +739,7 @@ def test_a_failed_refetch_after_a_change_strikes_change_errors_not_refreshes(tmp
     cache.run(str(index), str(c), 10, fetcher=Boom())
     m = json.loads((c / "manifest.json").read_text())[fts.doc_key(DRIVE)]
     assert m["status"] == "ok" and m["sha256"] == "OLD"        # good copy kept, still due
-    assert m["change_errors"] == 1 and m["refreshes"] == 1
+    assert m["change_errors"] == 1 and m["refreshes"] == 1 and m["change_errors_sha"] == "NEW"
 
 
 def test_a_failing_live_lookup_falls_back_to_the_timer_rule(tmp_path):
@@ -810,7 +810,7 @@ def test_a_struck_out_change_failing_on_the_timer_counts_as_a_refresh(tmp_path):
     cache = _script("build_fulltext_cache")
     index, c = _cached(tmp_path, {"status": "no_text", "pages": 3, "text_pages": 0, "chars": 0,
                                   "fetched": "2026-09-01", "sha256": "OLD", "refreshes": 0,
-                                  "change_errors": cache.MAX_CHANGE_ERRORS})
+                                  "change_errors": cache.MAX_CHANGE_ERRORS, "change_errors_sha": "NEW"})
 
     class Boom:
         def live_sha256(self, keys):
@@ -843,3 +843,27 @@ def test_a_fetch_that_never_matches_drive_strikes_instead_of_looping(tmp_path):
     for _ in range(cache.MAX_CHANGE_ERRORS + 2):
         cache.run(index, str(c), 10, fetcher=Odd())
     assert len(fetched) == cache.MAX_CHANGE_ERRORS
+
+
+def test_transient_failures_on_a_change_strike_too_and_a_newer_change_resets(tmp_path):
+    cache = _script("build_fulltext_cache")
+    index, c = _cached(tmp_path, {"status": "ok", "pages": 1, "text_pages": 1, "chars": 9,
+                                  "fetched": "2026-11-01", "sha256": "OLD"})
+    tries = []
+
+    class Slow:
+        live = "NEW1"
+
+        def live_sha256(self, keys):
+            return {key: Slow.live for key in keys}
+
+        def fetch(self, key, entry, dest):
+            tries.append(Slow.live)
+            raise TimeoutError("big file")
+
+    for _ in range(cache.MAX_CHANGE_ERRORS + 2):
+        cache.run(index, str(c), 10, fetcher=Slow())
+    assert tries == ["NEW1"] * cache.MAX_CHANGE_ERRORS        # bounded although transient
+    Slow.live = "NEW2"                                        # Drive changed again
+    cache.run(index, str(c), 10, fetcher=Slow())
+    assert tries[-1] == "NEW2"
