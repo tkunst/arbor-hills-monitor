@@ -1,6 +1,8 @@
 """scripts/recheck_key_data_points.py _download (CODER-PLAN step 6): a Drive
-Mirror link is read through the service account; MiEnviro stays allowed;
-anything else is refused."""
+Mirror link listed in Archived PDFs is fetched from its PUBLIC link with NO
+credentials (never through the service account: a planted link must not be
+able to read a private file); MiEnviro stays allowed; anything else is
+refused."""
 import importlib.util
 import os
 
@@ -82,9 +84,10 @@ def test_main_counts_only_passes_mirror_ids_and_prints_no_link(monkeypatch, caps
     monkeypatch.setattr(rk, "mirror_file_ids", lambda *a: {"SECRETID"})
     got = {}
 
-    def fake_run_llm(items, cfg, mirror_ids=None):
+    def fake_run_llm(items, cfg, mirror_ids=None, max_minutes=None):
         got["ids"] = mirror_ids
         items[0]["error"] = "HttpError"
+        return 0
     monkeypatch.setattr(rk, "run_llm", fake_run_llm)
     monkeypatch.setattr("sys.argv", ["x", "--run-llm", "--counts-only"])
     assert rk.main() == 0
@@ -113,6 +116,8 @@ def test_default_drive_fetch_uses_no_credentials(monkeypatch, tmp_path):
         def __exit__(self, *a):
             return False
 
+        headers = {"Content-Type": "application/pdf"}
+
         def raise_for_status(self):
             pass
 
@@ -122,7 +127,92 @@ def test_default_drive_fetch_uses_no_credentials(monkeypatch, tmp_path):
     def fake_get(url, params=None, stream=None, timeout=None, **kw):
         seen.update(url=url, params=params, kw=kw)
         return R()
-    monkeypatch.setattr(requests, "get", fake_get)
+    class S:
+        trust_env = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url, **kw):
+            seen["trust_env"] = self.trust_env
+            return fake_get(url, **kw)
+    monkeypatch.setattr(requests, "Session", S)
     rk._download("https://drive.google.com/file/d/F1/view", str(tmp_path / "a.pdf"), mirror_ids={"F1"})
     assert seen["url"] == "https://drive.usercontent.google.com/download" and seen["params"]["id"] == "F1"
-    assert seen["kw"] == {}          # no auth header / session: nothing private is readable
+    assert seen["kw"] == {} and seen["trust_env"] is False   # no auth, no ~/.netrc
+
+
+class _Resp:
+    def __init__(self, ctype="application/pdf", chunks=(b"%PDF-1.7",), status_error=None):
+        self.headers = {"Content-Type": ctype}
+        self._chunks, self._err = chunks, status_error
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def raise_for_status(self):
+        if self._err:
+            raise self._err
+
+    def iter_content(self, n):
+        yield from self._chunks
+
+
+def _session(monkeypatch, resp):
+    import requests
+
+    class S:
+        trust_env = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url, **kw):
+            return resp
+    monkeypatch.setattr(requests, "Session", S)
+
+
+def test_public_download_html_page_is_throttled_not_a_pdf(monkeypatch, tmp_path):
+    rk = _mod()
+    _session(monkeypatch, _Resp(ctype="text/html; charset=utf-8", chunks=(b"<html>sign in",)))
+    with pytest.raises(rk.MirrorThrottled):
+        rk._public_drive_download("F", str(tmp_path / "a.pdf"))
+
+
+def test_public_download_size_and_time_caps(monkeypatch, tmp_path):
+    rk = _mod()
+    monkeypatch.setattr(rk, "_MAX_PDF_BYTES", 10)
+    _session(monkeypatch, _Resp(chunks=(b"%PDF-1.7", b"0123456789")))
+    with pytest.raises(rk.MirrorTooLarge):
+        rk._public_drive_download("F", str(tmp_path / "a.pdf"))
+    monkeypatch.setattr(rk, "_MAX_PDF_BYTES", 10**9)
+    ticks = iter([0, 0, rk._MAX_DOWNLOAD_S + 1])
+    _session(monkeypatch, _Resp(chunks=(b"%PDF", b"-1.7")))
+    with pytest.raises(rk.MirrorTooLarge):
+        rk._public_drive_download("F", str(tmp_path / "b.pdf"), clock=lambda: next(ticks))
+
+
+def test_public_download_http_error_propagates(monkeypatch, tmp_path):
+    rk = _mod()
+    _session(monkeypatch, _Resp(status_error=OSError("403")))
+    with pytest.raises(OSError):
+        rk._public_drive_download("F", str(tmp_path / "a.pdf"))
+
+
+def test_run_llm_stops_starting_documents_after_the_time_budget(monkeypatch):
+    rk = _mod()
+    calls = []
+    monkeypatch.setattr(rk, "_download", lambda *a, **k: calls.append(1) or (_ for _ in ()).throw(OSError()))
+    ticks = iter([0, 0, 5 * 60, 30 * 60])
+    items = [{"link": "x", "document_name": "d", "date_filed": ""} for _ in range(3)]
+    left = rk.run_llm(items, {}, max_minutes=22, clock=lambda: next(ticks))
+    assert left == 1 and len(calls) == 2 and "error" not in items[2]

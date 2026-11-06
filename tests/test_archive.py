@@ -608,3 +608,11 @@ def test_run_skips_the_nsite_listing_when_everything_is_archived(monkeypatch):
 def test_run_still_lists_nsite_when_a_doc_needs_mirroring(monkeypatch):
     av, listed = _run_setup(monkeypatch, {"1": {}, "2": {}}, ["1"])
     assert av.run() == 1 and listed == [1]   # the listing came back empty: old abort
+
+
+
+def test_run_dead_oauth_token_still_fails_loudly_with_nothing_to_mirror(monkeypatch):
+    av, listed = _run_setup(monkeypatch, {"1": {}}, ["1"])
+    monkeypatch.setattr(av.ac, "oauth_drive_service",
+                        lambda: (_ for _ in ()).throw(RuntimeError("invalid_grant")))
+    assert av.run() == 1 and listed == []

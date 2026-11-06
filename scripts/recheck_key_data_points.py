@@ -96,27 +96,55 @@ _DRIVE_LINK = re.compile(r"^https://drive\.google\.com/file/d/([A-Za-z0-9_-]+)(?
 
 _PUBLIC_DRIVE_DOWNLOAD = "https://drive.usercontent.google.com/download"
 _MAX_PDF_BYTES = 200 * 1024 * 1024
+# Whole-download ceiling (requests' timeout is per connect/read, not total).
+_MAX_DOWNLOAD_S = 300
 
 
-def _public_drive_download(file_id: str, dest: str) -> None:
+class MirrorLinkRefused(RuntimeError):
+    """A Drive link whose file id is not an Archived PDFs Mirror copy."""
+
+
+class MirrorThrottled(RuntimeError):
+    """Drive answered with an HTML page (a sign-in, quota or interstitial
+    page), not the file: usually throttling, or a file that isn't public."""
+
+
+class MirrorTooLarge(RuntimeError):
+    """Over the size cap or the whole-download time ceiling."""
+
+
+class NotAPdf(RuntimeError):
+    """The fetched bytes are not a PDF."""
+
+
+def _public_drive_download(file_id: str, dest: str, clock=None) -> None:
     """Fetch a PUBLIC ("anyone with the link") Drive file with NO credentials.
     The Mirror copies feed rows link to are public by design, so this needs
     no secret, and a non-public file simply fails: the service account can't
-    be used to read anything private (no confused deputy). Fixed https host,
-    size cap, and the body must be a PDF."""
+    be used to read anything private (no confused deputy). A session that
+    ignores the environment (no ~/.netrc, no proxy credentials), a fixed https
+    host, a size cap and a total-time ceiling."""
+    import time
+
     import requests
 
-    with requests.get(_PUBLIC_DRIVE_DOWNLOAD,
+    clock = clock or time.monotonic
+    started = clock()
+    with requests.Session() as sess:
+        sess.trust_env = False
+        with sess.get(_PUBLIC_DRIVE_DOWNLOAD,
                       params={"id": file_id, "export": "download", "confirm": "t"},
                       stream=True, timeout=120) as r:
-        r.raise_for_status()
-        size = 0
-        with open(dest, "wb") as f:
-            for chunk in r.iter_content(1 << 16):
-                size += len(chunk)
-                if size > _MAX_PDF_BYTES:
-                    raise RuntimeError("file over size cap")
-                f.write(chunk)
+            r.raise_for_status()
+            if "text/html" in (r.headers.get("Content-Type") or "").lower():
+                raise MirrorThrottled("Drive returned an HTML page")
+            size = 0
+            with open(dest, "wb") as f:
+                for chunk in r.iter_content(1 << 16):
+                    size += len(chunk)
+                    if size > _MAX_PDF_BYTES or clock() - started > _MAX_DOWNLOAD_S:
+                        raise MirrorTooLarge("over the size or time cap")
+                    f.write(chunk)
 
 
 def mirror_file_ids(service, sheet_id: str) -> set:
@@ -139,11 +167,11 @@ def _download(url: str, dest: str, downloader=None, mirror_ids: set | None = Non
     m = _DRIVE_LINK.match(url or "")
     if m:
         if m.group(1) not in (mirror_ids or set()):
-            raise RuntimeError("Drive link is not an Archived PDFs Mirror copy")
+            raise MirrorLinkRefused("Drive link is not an Archived PDFs Mirror copy")
         (downloader or _public_drive_download)(m.group(1), dest)
         with open(dest, "rb") as fh:
             if not fh.read(4).startswith(b"%PDF"):
-                raise RuntimeError("Mirror copy is not a PDF")
+                raise NotAPdf("Mirror copy is not a PDF")
         return
     if not (url or "").startswith(_ALLOWED_DOWNLOAD_PREFIX):
         raise RuntimeError(f"refusing to download non-MiEnviro link: {(url or '')[:80]}")
@@ -158,10 +186,24 @@ def _download(url: str, dest: str, downloader=None, mirror_ids: set | None = Non
         fh.write(data)
 
 
-def run_llm(items: list[dict], cfg: dict, mirror_ids: set | None = None) -> None:
+# Stop starting new documents after this long, so kdp-recheck.yml (30-min
+# job timeout) always reaches the proposals write and the artifact upload;
+# items not reached get no proposal and show "n/a" (rerun for the rest).
+DEFAULT_MAX_MINUTES = 22
+
+
+def run_llm(items: list[dict], cfg: dict, mirror_ids: set | None = None,
+            max_minutes: float = DEFAULT_MAX_MINUTES, clock=None) -> int:
+    """Returns how many items were not reached because of the time budget."""
+    import time
+
     from egle_doc_parser import parse_document
     from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS
-    for it in items:
+    clock = clock or time.monotonic
+    started = clock()
+    for n, it in enumerate(items):
+        if (clock() - started) / 60 >= max_minutes:
+            return len(items) - n
         with tempfile.TemporaryDirectory() as tmp:
             local = os.path.join(tmp, "doc.pdf")
             try:
@@ -181,6 +223,7 @@ def run_llm(items: list[dict], cfg: dict, mirror_ids: set | None = None) -> None
                 # Class only: the proposals file is a public-repo artifact, and
                 # a Drive error's text carries the file id / request URL.
                 it["error"] = type(e).__name__
+    return 0
 
 
 def apply(service, sheet_id: str, items: list[dict], update_severity: bool,
@@ -233,6 +276,8 @@ def main() -> int:
     ap.add_argument("--write", action="store_true", help="with --apply: actually write")
     ap.add_argument("--counts-only", action="store_true",
                     help="log rows/links/problem counts only (for public CI logs)")
+    ap.add_argument("--max-minutes", type=float, default=DEFAULT_MAX_MINUTES,
+                    help="with --run-llm: start no new document after this long")
     a = ap.parse_args()
     cfg = load_config()
     ref = kdp_check.reference_from_config(cfg)
@@ -247,7 +292,10 @@ def main() -> int:
     items = scan(service, sheet_id, ref)
     print(f"{len(items)} document row(s) fail kdp_check")
     if a.run_llm:
-        run_llm(items, cfg, mirror_ids=mirror_file_ids(service, sheet_id))
+        left = run_llm(items, cfg, mirror_ids=mirror_file_ids(service, sheet_id),
+                       max_minutes=a.max_minutes)
+        if left:
+            print(f"time budget reached: {left} document(s) not checked this run")
     for it in items:
         if a.counts_only:
             # Public CI log: no link (a Drive file id is not printed there).
