@@ -174,8 +174,6 @@ def read_index(sheets, sheet_id: str, tab: str = TAB) -> dict[str, dict]:
 _ENSURED: set = set()
 
 _ORIGINAL_COL = HEADERS.index("original_sha256")
-# Provenance columns a later write with them blank must not erase.
-_KEEP_IF_BLANK = (_ORIGINAL_COL, HEADERS.index("raw_revision_pinned"))
 
 
 def upsert_row(sheets, sheet_id: str, row: list, tab: str = TAB) -> None:
@@ -186,8 +184,7 @@ def upsert_row(sheets, sheet_id: str, row: list, tab: str = TAB) -> None:
 
     `original_sha256` is provenance of the bytes the SOURCE served, recorded
     once at upload: a later write with it blank (e.g. the OCR backfill
-    replacing the file's content) keeps the existing value. Same for
-    `raw_revision_pinned` (the pinned raw-scan revision id)."""
+    replacing the file's content) keeps the existing value."""
     import sheet_writer as sw
     from drive_client import GOOGLE_API_NUM_RETRIES
 
@@ -211,10 +208,9 @@ def upsert_row(sheets, sheet_id: str, row: list, tab: str = TAB) -> None:
         sw.append_rows(sheets, sheet_id, tab, [row])
         return
     old = data[hit]
-    row = list(row)
-    for col in _KEEP_IF_BLANK:
-        if not row[col] and len(old) > col and old[col]:
-            row[col] = old[col]
+    if not row[_ORIGINAL_COL] and len(old) > _ORIGINAL_COL and old[_ORIGINAL_COL]:
+        row = list(row)
+        row[_ORIGINAL_COL] = old[_ORIGINAL_COL]
     sheet_row = hit + 1  # values index 0 = sheet row 1 (the header)
     sheets.spreadsheets().values().update(
         spreadsheetId=sheet_id, range=f"'{tab}'!A{sheet_row}",

@@ -48,9 +48,15 @@ Writes (`--apply` only):
     left alone (it describes Drive's current bytes). A row that was already
     there with a DIFFERENT sha is replaced in place (mirror_index.upsert_row).
     A file Drive gives no sha256 gets no row (it could never be trusted).
-    One narrow race remains: an upload appending between the re-read and
-    the append leaves two rows, and the reader takes the last (ours); its
-    sha then differs from Drive's and the file is processed the old way.
+    Two narrow races remain, both in the moment between a batch's re-read
+    and its write: an upload appending a row there leaves two rows and the
+    reader takes the last (ours); an upload rewriting a row we are about to
+    replace is overwritten by ours. Either way our row's sha differs from
+    Drive's live sha, so readers process the file the old way (fail-safe)
+    and a rerun reindexes it.
+  - `--apply` needs `--vision-state PATH` or an explicit `--no-vision-state`:
+    without the Vision state, Vision-OCR'd files are indexed with engine
+    `none`, and since their sha matches Drive's a rerun would never fix them.
 
 Output: stdout carries counts only. Per-file detail (ids, names) goes ONLY to
 `--detail-out` (TSV), which belongs outside this public repo.
@@ -507,6 +513,16 @@ def render_summary(plan: Plan, ref_counts: Counter, unref: int, sample: Counter 
     return "\n".join(out)
 
 
+def vision_summary(vision: dict) -> str:
+    """One line: how much Vision state was loaded and how recent it is, so a
+    missing or stale file is visible before --apply writes anything."""
+    if not vision:
+        return "Vision state: none loaded (Vision-OCR'd files would read as engine `none`)."
+    done = sum(1 for v in vision.values() if isinstance(v, dict) and v.get("status") in VISION_DONE)
+    latest = max((str(v.get("at", "")) for v in vision.values() if isinstance(v, dict)), default="")
+    return f"Vision state: {len(vision)} entries, {done} Vision-written, latest {latest[:10] or 'unknown'}."
+
+
 def write_detail(path: str, plan: Plan) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write("drive_id\tkind\tsource_key\taction\tsize\tvision_status\tshortcut\tpath\n")
@@ -538,7 +554,10 @@ def _main(argv=None) -> int:
     ap.add_argument("--root", action="append", required=True,
                     help="Drive folder id to list (repeatable). Vision-state paths are "
                          "relative to the FIRST root (the Case File Mirror).")
-    ap.add_argument("--vision-state", help="Lotext mirror-vision-ocr-state.json (optional)")
+    ap.add_argument("--vision-state", help="Lotext mirror-vision-ocr-state.json")
+    ap.add_argument("--no-vision-state", action="store_true",
+                    help="--apply without the Vision state (Vision-OCR'd files then "
+                         "read as engine `none`, permanently)")
     ap.add_argument("--validate-sample", type=int, default=0,
                     help="dry run: download N shortcut-eligible files and compare")
     ap.add_argument("--detail-out", help="per-file TSV (keep it out of the repo)")
@@ -550,6 +569,10 @@ def _main(argv=None) -> int:
     # Sheet ids); keep stdout/stderr to counts only.
     import logging
     logging.getLogger("googleapiclient").setLevel(logging.ERROR)
+    if a.vision_state and a.no_vision_state:
+        ap.error("--vision-state and --no-vision-state are exclusive")
+    if a.apply and not (a.vision_state or a.no_vision_state):
+        ap.error("--apply needs --vision-state PATH (or an explicit --no-vision-state)")
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if a.detail_out and _inside(a.detail_out, repo):
         ap.error("--detail-out must be outside the repo (it lists file ids and names)")
@@ -580,6 +603,7 @@ def _main(argv=None) -> int:
     plan = build_plan(refs, listed, fetched, index, vision, paths)
     sample = validate_sample(drive, plan, a.validate_sample, retries) if a.validate_sample else None
     print(render_summary(plan, ref_counts, unreferenced_pdfs(listed, refs), sample))
+    print(vision_summary(vision))
     if a.detail_out:
         write_detail(a.detail_out, plan)
     if not a.apply:

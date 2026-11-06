@@ -173,10 +173,16 @@ existed. Dry run by default; `--apply` waits for Trisha (Gate C).
   Gate C, not built.
 - **Writes.** Ids whose existing row already matches Drive's live sha are
   skipped. Rows are appended in batches; before each batch the index is read
-  again (strict) and ids an upload wrote meanwhile are dropped (a row written
-  or changed after the plan was made is never overwritten), so a rerun
-  resumes. A row the plan saw with a different sha is replaced in place. A file Drive
-  gives no sha256 gets no row. One narrow race remains: an upload appending
-  between that re-read and the append leaves two rows, and the reader takes
-  the backfill's (last); its sha then differs from Drive's, so the file is
-  processed the old way (fail-safe).
+  again (strict) and ids an upload wrote meanwhile are dropped, so a rerun
+  resumes. A row the plan saw with a different sha is replaced in place. A
+  file Drive gives no sha256 gets no row. Two narrow races remain, both in
+  the moment between a batch's re-read and its write: an upload appending
+  there leaves two rows and the reader takes the backfill's (last), and an
+  upload rewriting a row the backfill is replacing gets overwritten. Either
+  way the backfill's row has an older sha than Drive's, so readers process
+  the file the old way (fail-safe) and a rerun reindexes it.
+- **Vision state is required for `--apply`** (`--vision-state PATH`, or an
+  explicit `--no-vision-state`). Without it, Vision-OCR'd files are indexed
+  with engine `none`; their sha matches Drive's, so no rerun would correct
+  them. The dry run prints how many Vision entries were loaded and the
+  latest date.
