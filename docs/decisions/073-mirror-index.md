@@ -246,12 +246,18 @@ those ids absent, which every caller treats as "process the old way".
   full listing was fetched for nothing. It does not build URLs from the
   Sheet: `_state` holds neither the doc URL nor the facility SRN, and a
   guessed SRN would name a second Drive copy of the same document.
-- `scripts/recheck_key_data_points.py --run-llm` reads a feed row's Drive
-  Mirror copy through the service account (read-only) instead of refusing
-  it; it used to accept only MiEnviro links, so every Drive-linked row
-  failed. Only file ids listed in Archived PDFs are read, so a link planted
-  in a feed cell can't make the service account read some other file. Its
-  proposals are reviewed by a person before `--apply`.
+- `scripts/recheck_key_data_points.py --run-llm` fetches a feed row's Drive
+  Mirror copy from its PUBLIC link with no credentials, instead of refusing
+  it; it used to accept only MiEnviro links, so all 156 Drive-linked feed
+  rows failed. Only file ids listed in Archived PDFs are fetched, and with
+  no credentials a non-public file can't be read at all, so a planted link
+  can't expose anything private. Its proposals are reviewed by a person
+  before `--apply`; the proposals artifact records error classes only (its
+  `link` field holds the same public Mirror links the public records page
+  shows).
+- `archive.yml` no longer fails on a night when nSITE returns an empty
+  listing but nothing needed mirroring; the watcher and backfill still list
+  nSITE every run.
 - Backfill's `FORCE_REPROCESS` keeps downloading from nSITE (built, then
   removed after review): it exists to re-extract after the parser or the
   `.msg`/`.docx`/zip converters change, and the Mirror holds the PDF those

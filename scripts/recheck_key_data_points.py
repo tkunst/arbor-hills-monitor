@@ -8,8 +8,9 @@ Three steps, each opt-in:
   1. (default) SCAN, free: read the New/Historical Documents tabs, run
      kdp_check on every Summary + Key Data Point, list the failing documents.
   2. --run-llm: for each failing document, get the PDF its row links to (a
-     Drive Mirror link is read through the service account, read-only; a
-     MiEnviro link is downloaded from nSITE, CODER-PLAN step 6)
+     Drive Mirror link listed in Archived PDFs is fetched from its public
+     link with no credentials; a MiEnviro link is downloaded from nSITE,
+     CODER-PLAN step 6)
      and run the SAME egle_doc_parser.parse_document() the live pipeline uses
      (new prompt + check + retry/withhold). Writes the proposals to
      <out-dir>/kdp-recheck-proposals.json. Still NO Sheet writes.
@@ -93,17 +94,29 @@ _ALLOWED_DOWNLOAD_PREFIX = "https://mienviro.michigan.gov/ncore/downloadpdf/"
 _DRIVE_LINK = re.compile(r"^https://drive\.google\.com/file/d/([A-Za-z0-9_-]+)(?:/|$|\?)")
 
 
-def _readonly_drive():
-    """Service-account Drive client with the drive.readonly scope: this
-    script can read a Mirror copy and can never write Drive."""
-    import os as _os
+_PUBLIC_DRIVE_DOWNLOAD = "https://drive.usercontent.google.com/download"
+_MAX_PDF_BYTES = 200 * 1024 * 1024
 
-    from google.oauth2 import service_account
-    from googleapiclient.discovery import build
 
-    creds = service_account.Credentials.from_service_account_file(
-        _os.environ["GDRIVE_SA_KEY"], scopes=["https://www.googleapis.com/auth/drive.readonly"])
-    return build("drive", "v3", http=dc.authorized_http(creds), cache_discovery=False)
+def _public_drive_download(file_id: str, dest: str) -> None:
+    """Fetch a PUBLIC ("anyone with the link") Drive file with NO credentials.
+    The Mirror copies feed rows link to are public by design, so this needs
+    no secret, and a non-public file simply fails: the service account can't
+    be used to read anything private (no confused deputy). Fixed https host,
+    size cap, and the body must be a PDF."""
+    import requests
+
+    with requests.get(_PUBLIC_DRIVE_DOWNLOAD,
+                      params={"id": file_id, "export": "download", "confirm": "t"},
+                      stream=True, timeout=120) as r:
+        r.raise_for_status()
+        size = 0
+        with open(dest, "wb") as f:
+            for chunk in r.iter_content(1 << 16):
+                size += len(chunk)
+                if size > _MAX_PDF_BYTES:
+                    raise RuntimeError("file over size cap")
+                f.write(chunk)
 
 
 def mirror_file_ids(service, sheet_id: str) -> set:
@@ -117,17 +130,17 @@ def mirror_file_ids(service, sheet_id: str) -> set:
     return ids
 
 
-def _download(url: str, dest: str, drive_factory=None, mirror_ids: set | None = None) -> None:
+def _download(url: str, dest: str, downloader=None, mirror_ids: set | None = None) -> None:
     # Feed rows link to the Drive Mirror copy (most rows since ADR 007's
-    # inline mirror) or to MiEnviro. A Mirror copy is read by id through the
-    # service account (no nSITE download, never a Drive write), and only if
-    # that id is in Archived PDFs; nothing else is fetched: never file:/ or
-    # another scheme/host taken from Sheet text.
+    # inline mirror) or to MiEnviro. A Mirror copy is fetched by id from its
+    # PUBLIC link, with no credentials (no nSITE download, never a Drive
+    # write), and only if that id is in Archived PDFs; nothing else is
+    # fetched: never file:/ or another scheme/host taken from Sheet text.
     m = _DRIVE_LINK.match(url or "")
     if m:
         if m.group(1) not in (mirror_ids or set()):
             raise RuntimeError("Drive link is not an Archived PDFs Mirror copy")
-        dc.download_file((drive_factory or _readonly_drive)(), m.group(1), dest)
+        (downloader or _public_drive_download)(m.group(1), dest)
         with open(dest, "rb") as fh:
             if not fh.read(4).startswith(b"%PDF"):
                 raise RuntimeError("Mirror copy is not a PDF")
