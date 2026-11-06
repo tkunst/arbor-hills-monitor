@@ -93,6 +93,19 @@ _ALLOWED_DOWNLOAD_PREFIX = "https://mienviro.michigan.gov/ncore/downloadpdf/"
 _DRIVE_LINK = re.compile(r"^https://drive\.google\.com/file/d/([A-Za-z0-9_-]+)(?:/|$|\?)")
 
 
+def _readonly_drive():
+    """Service-account Drive client with the drive.readonly scope: this
+    script can read a Mirror copy and can never write Drive."""
+    import os as _os
+
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+
+    creds = service_account.Credentials.from_service_account_file(
+        _os.environ["GDRIVE_SA_KEY"], scopes=["https://www.googleapis.com/auth/drive.readonly"])
+    return build("drive", "v3", http=dc.authorized_http(creds), cache_discovery=False)
+
+
 def mirror_file_ids(service, sheet_id: str) -> set:
     """Drive file ids of the nSITE Mirror copies (Archived PDFs): the only
     Drive files _download() will read."""
@@ -114,7 +127,7 @@ def _download(url: str, dest: str, drive_factory=None, mirror_ids: set | None = 
     if m:
         if m.group(1) not in (mirror_ids or set()):
             raise RuntimeError("Drive link is not an Archived PDFs Mirror copy")
-        dc.download_file((drive_factory or dc.drive_service)(), m.group(1), dest)
+        dc.download_file((drive_factory or _readonly_drive)(), m.group(1), dest)
         with open(dest, "rb") as fh:
             if not fh.read(4).startswith(b"%PDF"):
                 raise RuntimeError("Mirror copy is not a PDF")
@@ -152,7 +165,9 @@ def run_llm(items: list[dict], cfg: dict, mirror_ids: set | None = None) -> None
                 it["new"] = {"severity": parsed.severity, "summary": _redact(parsed.summary),
                              "key_data_point": _redact(parsed.key_data_point)}
             except Exception as e:  # noqa: BLE001 — report and keep going
-                it["error"] = str(e)
+                # Class only: the proposals file is a public-repo artifact, and
+                # a Drive error's text carries the file id / request URL.
+                it["error"] = type(e).__name__
 
 
 def apply(service, sheet_id: str, items: list[dict], update_severity: bool,
