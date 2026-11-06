@@ -11,6 +11,17 @@ resumable: at most --max-downloads new documents per run, so the first fill
 spreads over several days instead of one long job. A document that fails is
 retried on later runs, up to MAX_ATTEMPTS.
 
+Content changes (CODER-PLAN step 5, 2026-11-06): every fetch records the
+sha256 of the downloaded bytes in the manifest. When Drive's LIVE
+sha256Checksum for a cached Mirror copy can be read (the archiver's OAuth
+client), a document is fetched again exactly when that live sha differs from
+the recorded one, and the 30-day timer no longer applies to it. A document
+with no recorded sha (everything cached before this change), an nSITE link,
+or a lookup that failed keeps the old timer rule: skip work only on a live
+sha match (ADR 073's fail-safe rule). This job has no Sheet credentials, so it
+does not read the Mirror Index tab; the live Drive check is what the rule
+requires anyway.
+
 The cache is NOT committed (data files never are). In CI it lives in the
 Actions cache (fulltext-index.yml); locally it is any directory you pass.
 
@@ -24,6 +35,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -76,6 +88,31 @@ REFRESH_SCANNED_AFTER_DAYS = 30
 
 
 MAX_REFRESHES = 3
+# A cached copy whose Drive content changed is fetched again on every run until
+# it succeeds, but a NON-transient failure counts a strike, and after this many
+# the document goes back to the old timer rule (so one broken file can never be
+# retried forever).
+MAX_CHANGE_ERRORS = 3
+
+
+def _file_sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def content_changed(m: dict | None, live_sha: str | None) -> bool | None:
+    """True / False when both the recorded sha (of the cached bytes) and
+    Drive's live sha are known; None when either is missing (then the old
+    timer rule decides). Pure."""
+    if not m or m.get("status") not in ("ok", "no_text"):
+        return None
+    recorded = m.get("sha256") or ""
+    if not recorded or not live_sha:
+        return None
+    return recorded != live_sha
 
 
 def _needs_refresh(m: dict, today: date) -> bool:
@@ -97,13 +134,18 @@ def _needs_refresh(m: dict, today: date) -> bool:
     return (today - fetched).days >= REFRESH_SCANNED_AFTER_DAYS
 
 
-def pending(entries: list[dict], manifest: dict, today: date | None = None) -> list[tuple[str, dict]]:
+def pending(entries: list[dict], manifest: dict, today: date | None = None,
+            live: dict[str, str] | None = None) -> list[tuple[str, dict]]:
     """(key, entry) for every eligible entry that needs a fetch, NEW work first:
-    never tried, or failed fewer than MAX_ATTEMPTS times; then documents cached
-    with textless pages that are due a refresh (_needs_refresh). Deduplicated by
-    key (two feed rows can share one Mirror copy). Pure, for the tests."""
+    never tried, or failed fewer than MAX_ATTEMPTS times; then cached Mirror
+    copies whose Drive content changed (`live`: {key: Drive's live sha256});
+    then documents cached with textless pages that are due a refresh
+    (_needs_refresh) -- the timer applies only when the live-sha comparison
+    can't be made. Deduplicated by key (two feed rows can share one Mirror
+    copy). Pure, for the tests."""
     today = today or date.today()
-    new, refresh, seen = [], [], set()
+    live = live or {}
+    new, changed, refresh, seen = [], [], [], set()
     for e in entries:
         if not fts.is_eligible(e):
             continue
@@ -114,9 +156,32 @@ def pending(entries: list[dict], manifest: dict, today: date | None = None) -> l
         m = manifest.get(key)
         if m is None or (m.get("status", "").startswith("error") and m.get("attempts", 0) < MAX_ATTEMPTS):
             new.append((key, e))
+            continue
+        verdict = content_changed(m, live.get(key))
+        if verdict is True and m.get("change_errors", 0) < MAX_CHANGE_ERRORS:
+            changed.append((key, e))
+        elif verdict is False:
+            continue  # live sha equals the cached bytes' sha: nothing to refetch
         elif _needs_refresh(m, today):
             refresh.append((key, e))
-    return new + refresh
+    return new + changed + refresh
+
+
+def live_lookup_keys(entries: list[dict], manifest: dict) -> list[str]:
+    """Cached Mirror copies (drive_ keys) with a recorded sha: the only ones a
+    live Drive sha can decide for. Pure."""
+    out, seen = [], set()
+    for e in entries:
+        if not fts.is_eligible(e):
+            continue
+        key = fts.doc_key(e["link"])
+        if key in seen or not key.startswith("drive_"):
+            continue
+        seen.add(key)
+        m = manifest.get(key) or {}
+        if m.get("status") in ("ok", "no_text") and m.get("sha256"):
+            out.append(key)
+    return out
 
 
 # Stop reading a document's pages once this much raw text is in hand: the cache
@@ -229,19 +294,41 @@ class Fetcher:
         self._drive_ok = None
         self._nsite = None
 
+    def _oauth(self):
+        """The archiver's OAuth Drive client, or None (not configured, or it
+        already failed this run)."""
+        if self._drive_ok is False:
+            return None
+        if self._drive is None:
+            import archive_client as ac
+
+            try:
+                if not ac.is_configured():
+                    raise RuntimeError("archive OAuth not configured")
+                self._drive = ac.oauth_drive_service()
+            except Exception:  # noqa: BLE001 -- no usable creds: public link all run
+                self._drive_ok = False
+        return self._drive
+
+    def live_sha256(self, keys: list[str]) -> dict[str, str]:
+        """{key: Drive's live sha256Checksum} for drive_ keys, through the
+        OAuth client (metadata only, batched). {} when there is no usable
+        client; a key whose lookup failed is absent (old rule). Never raises."""
+        ids = [k[len("drive_"):] for k in keys if k.startswith("drive_")]
+        service = self._oauth() if ids else None
+        if service is None:
+            return {}
+        import mirror_index
+
+        return {"drive_" + fid: sha for fid, sha in mirror_index.live_sha256(service, ids).items()}
+
     def fetch(self, key: str, entry: dict, dest: str) -> None:
         if key.startswith("drive_"):
             file_id = key[len("drive_"):]
             if self._drive_ok is not False:
                 import archive_client as ac
 
-                if self._drive is None:
-                    try:
-                        if not ac.is_configured():
-                            raise RuntimeError("archive OAuth not configured")
-                        self._drive = ac.oauth_drive_service()
-                    except Exception:  # noqa: BLE001 -- no usable creds: public link all run
-                        self._drive_ok = False
+                self._oauth()
                 if self._drive is not None:
                     try:
                         ac.download_file(self._drive, file_id, dest)
@@ -275,11 +362,21 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
     with open(index_path, encoding="utf-8") as f:
         entries = json.load(f)
     manifest = load_manifest(cache_dir)
-    todo = pending(entries, manifest)
     fetcher = fetcher or Fetcher()
+    lookup = live_lookup_keys(entries, manifest)
+    live_fn = getattr(fetcher, "live_sha256", None)
+    live = {}
+    if lookup and live_fn is not None:
+        try:
+            live = live_fn(lookup) or {}
+        except Exception:  # noqa: BLE001 -- no live shas: the old timer rule decides
+            live = {}
+    todo = pending(entries, manifest, live=live)
     counts = {"eligible": sum(1 for e in entries if fts.is_eligible(e)), "pending": len(todo),
               "fetched": 0, "no_text": 0, "errors": 0, "redactions": 0, "stopped_on_time": 0,
-              "transient": 0, "stopped_transient": 0}
+              "transient": 0, "stopped_transient": 0,
+              "live_lookups": len(lookup), "live_found": len(live),
+              "live_changed": sum(1 for k, v in live.items() if content_changed(manifest.get(k), v))}
     consecutive_transient = 0
     throttled_docs = 0
     today = date.today().isoformat()
@@ -288,10 +385,12 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
             counts["stopped_on_time"] = 1
             break
         prior = manifest.get(key, {})
+        changed = content_changed(prior, live.get(key)) is True
         try:
             with tempfile.TemporaryDirectory() as td:
                 pdf = os.path.join(td, "doc.pdf")
                 fetcher.fetch(key, entry, pdf)
+                sha = _file_sha256(pdf)
                 pages = extract(pdf)
             text_pages = sum(1 for p in pages if p is None or p.strip())
             raw = "\n".join(p for p in pages if p)
@@ -300,9 +399,12 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
             with open(os.path.join(cache_dir, key + ".txt"), "w", encoding="utf-8") as f:
                 f.write(content)
             status = "ok" if content else "no_text"
+            # A fetch because the content changed is new content, not a retry of
+            # the old one: it starts the textless-page refresh count over.
+            was_cached = prior.get("status") in ("ok", "no_text")
             manifest[key] = {"status": status, "pages": len(pages), "text_pages": text_pages,
-                             "chars": len(content), "fetched": today,
-                             "refreshes": prior.get("refreshes", 0) + 1 if prior.get("status") in ("ok", "no_text") else 0}
+                             "chars": len(content), "fetched": today, "sha256": sha,
+                             "refreshes": prior.get("refreshes", 0) + 1 if was_cached and not changed else 0}
             counts["fetched"] += 1
             counts["redactions"] += n_red
             if status == "no_text":
@@ -325,8 +427,14 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
             if prior.get("status") in ("ok", "no_text"):
                 # A failed REFRESH keeps the good cached copy and its counts; the
                 # new fetched date puts the next refresh 30 days out.
-                manifest[key] = {**prior, "fetched": today, "last_refresh_error": type(e).__name__,
-                                 "refreshes": prior.get("refreshes", 0) + (0 if transient else 1)}
+                # A failed refetch after a CONTENT CHANGE strikes change_errors
+                # instead (the recorded sha stays the old one, so it is retried
+                # next run until MAX_CHANGE_ERRORS).
+                manifest[key] = {**prior, "fetched": today, "last_refresh_error": type(e).__name__}
+                if changed:
+                    manifest[key]["change_errors"] = prior.get("change_errors", 0) + (0 if transient else 1)
+                else:
+                    manifest[key]["refreshes"] = prior.get("refreshes", 0) + (0 if transient else 1)
             else:
                 manifest[key] = {"status": f"error:{type(e).__name__}", "fetched": today,
                                  "attempts": prior.get("attempts", 0) + (0 if transient else 1)}

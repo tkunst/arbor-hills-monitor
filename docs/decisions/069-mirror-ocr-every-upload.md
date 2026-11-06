@@ -630,3 +630,11 @@ and reap both get a finite timeout, and a real end-to-end test with a
 grandchild that calls `setsid()` and holds the pipes for 30 s
 (`capture=True`); mutation-checked: restoring the unbounded
 `communicate()` makes that test take 30.2 s and fail.
+
+## Addendum (2026-11-06) — the backfill reads the Mirror Index
+
+With `mirror_index.enabled` on, `scripts/backfill_mirror_ocr.py` works on the
+files ADR 073's index marks `ocr_partial`/`no_text` first, skips a file the
+index calls searchable only when Drive's live sha matches the index, and
+updates the file's index row after each in-place replacement. Details: ADR 073,
+addendum of 2026-11-06.

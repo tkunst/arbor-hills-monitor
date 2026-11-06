@@ -227,3 +227,10 @@ operator staff, `REDACT_NAMES`, and the full-text-only `FULLTEXT_REDACT_NAMES`)
 are withheld; every other name in a document's text
 is published as written (for example a correspondent's first name in an email).
 The heuristic name detector is not applied to whole documents.
+
+## Addendum 2026-11-06 — refetch on a content change, not a timer
+
+`scripts/build_fulltext_cache.py` records each fetched document's sha256 and
+refetches a cached Mirror copy when Drive's live sha differs from it; the
+30-day refresh of textless documents now applies only when either sha is
+unknown. Details: ADR 073, addendum of 2026-11-06.

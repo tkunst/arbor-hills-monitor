@@ -643,3 +643,133 @@ def test_fulltext_only_names_are_withheld_in_full_text_but_never_touch_the_feed(
 def test_workflow_passes_the_fulltext_only_secret_to_both_steps():
     with open(os.path.join(_REPO, ".github", "workflows", "fulltext-index.yml"), encoding="utf-8") as f:
         assert f.read().count("FULLTEXT_REDACT_NAMES: ${{ secrets.FULLTEXT_REDACT_NAMES }}") == 2
+
+
+# --- content-change refetch (CODER-PLAN step 5, 2026-11-06) ----------------------
+
+def _links(n):
+    return [f"https://drive.google.com/file/d/{c * 26}/view" for c in "abcdefgh"[:n]]
+
+
+def test_a_changed_drive_copy_is_refetched_and_an_unchanged_one_is_not():
+    from datetime import date
+
+    cache = _script("build_fulltext_cache")
+    links = _links(5)
+    entries = [_entry(link=l) for l in links]
+    k = [fts.doc_key(l) for l in links]
+    old = "2026-09-01"   # past the 30-day timer
+    manifest = {
+        k[0]: {"status": "ok", "pages": 4, "text_pages": 4, "fetched": old, "sha256": "S0"},    # changed
+        k[1]: {"status": "no_text", "pages": 3, "text_pages": 0, "fetched": old, "sha256": "S1"},  # same sha: no timer
+        k[2]: {"status": "no_text", "pages": 3, "text_pages": 0, "fetched": old},               # no recorded sha: timer
+        k[3]: {"status": "no_text", "pages": 3, "text_pages": 0, "fetched": old, "sha256": "S3"},  # no live sha: timer
+        k[4]: {"status": "ok", "pages": 4, "text_pages": 4, "fetched": old, "sha256": "S4",
+               "change_errors": cache.MAX_CHANGE_ERRORS},                                       # changed, struck out
+    }
+    live = {k[0]: "NEW", k[1]: "S1", k[2]: "X", k[4]: "NEW"}
+    got = [key for key, _ in cache.pending(entries, manifest, today=date(2026, 11, 6), live=live)]
+    assert got == [k[0], k[2], k[3]]
+
+
+def test_live_lookup_asks_only_for_cached_drive_copies_with_a_recorded_sha():
+    cache = _script("build_fulltext_cache")
+    links = _links(3)
+    entries = [_entry(link=l) for l in links] + [_entry(link=NSITE)]
+    k = [fts.doc_key(l) for l in links]
+    manifest = {k[0]: {"status": "ok", "sha256": "S"}, k[1]: {"status": "ok"},
+                k[2]: {"status": "error:X", "sha256": "S"},
+                fts.doc_key(NSITE): {"status": "ok", "sha256": "S"}}
+    assert cache.live_lookup_keys(entries, manifest) == [k[0]]
+
+
+def test_run_records_sha_and_refetches_only_on_a_live_change(tmp_path):
+    import hashlib
+
+    cache = _script("build_fulltext_cache")
+    links = _links(2)
+    index = tmp_path / "search-index.json"
+    index.write_text(json.dumps([_entry(link=l) for l in links]))
+    k = [fts.doc_key(l) for l in links]
+    pdf_bytes = _make_text_pdf("AHWW312R 158.3 F")
+
+    class F:
+        def __init__(self, live):
+            self.live, self.fetched, self.asked = live, [], None
+
+        def live_sha256(self, keys):
+            self.asked = list(keys)
+            return {key: self.live[key] for key in keys if key in self.live}
+
+        def fetch(self, key, entry, dest):
+            self.fetched.append(key)
+            with open(dest, "wb") as f:
+                f.write(pdf_bytes)
+
+    c = str(tmp_path / "c")
+    first = F({})
+    cache.run(str(index), c, 10, fetcher=first)
+    m = json.loads((tmp_path / "c" / "manifest.json").read_text())
+    sha = hashlib.sha256(pdf_bytes).hexdigest()
+    assert first.fetched == k and all(m[key]["sha256"] == sha for key in k)
+
+    second = F({k[0]: sha, k[1]: "changed-on-drive"})
+    counts = cache.run(str(index), c, 10, fetcher=second)
+    assert second.asked == k and second.fetched == [k[1]]
+    assert counts["live_lookups"] == 2 and counts["live_found"] == 2 and counts["live_changed"] == 1
+
+
+def test_a_failed_refetch_after_a_change_strikes_change_errors_not_refreshes(tmp_path):
+    cache = _script("build_fulltext_cache")
+    index = tmp_path / "search-index.json"
+    index.write_text(json.dumps([_entry()]))
+    c = tmp_path / "c"
+    c.mkdir()
+    prior = {"status": "ok", "pages": 2, "text_pages": 2, "chars": 9, "fetched": "2026-11-01",
+             "sha256": "OLD", "refreshes": 1}
+    (c / "manifest.json").write_text(json.dumps({fts.doc_key(DRIVE): prior}))
+
+    class Boom:
+        def live_sha256(self, keys):
+            return {key: "NEW" for key in keys}
+
+        def fetch(self, key, entry, dest):
+            raise ValueError("not a PDF")
+
+    cache.run(str(index), str(c), 10, fetcher=Boom())
+    m = json.loads((c / "manifest.json").read_text())[fts.doc_key(DRIVE)]
+    assert m["status"] == "ok" and m["sha256"] == "OLD"        # good copy kept, still due
+    assert m["change_errors"] == 1 and m["refreshes"] == 1
+
+
+def test_a_failing_live_lookup_falls_back_to_the_timer_rule(tmp_path):
+    cache = _script("build_fulltext_cache")
+    index = tmp_path / "search-index.json"
+    index.write_text(json.dumps([_entry()]))
+    c = tmp_path / "c"
+    c.mkdir()
+    prior = {"status": "no_text", "pages": 3, "text_pages": 0, "chars": 0, "fetched": "2026-09-01",
+             "sha256": "S"}
+    (c / "manifest.json").write_text(json.dumps({fts.doc_key(DRIVE): prior}))
+    fetched = []
+
+    class F:
+        def live_sha256(self, keys):
+            raise RuntimeError("drive down")
+
+        def fetch(self, key, entry, dest):
+            fetched.append(key)
+            with open(dest, "wb") as f:
+                f.write(_make_text_pdf("now searchable"))
+
+    counts = cache.run(str(index), str(c), 10, fetcher=F())
+    assert fetched == [fts.doc_key(DRIVE)] and counts["live_found"] == 0   # timer said due
+
+
+def test_fetcher_live_sha_without_oauth_is_empty(monkeypatch):
+    cache = _script("build_fulltext_cache")
+    import archive_client as ac
+
+    monkeypatch.setattr(ac, "is_configured", lambda *a, **k: False)
+    f = cache.Fetcher()
+    assert f.live_sha256(["drive_" + "a" * 26]) == {} and f._drive_ok is False
