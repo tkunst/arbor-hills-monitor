@@ -65,10 +65,6 @@ class RunContext:
     # The well registry (ADR 068 addendum 2026-10-22), loaded once at run start
     # like the alias map. None = no probes known (tests, scripts).
     well_registry: object = None
-    # (d, local) -> True when it put the document's PDF at `local` itself
-    # (backfill's FORCE_REPROCESS reads the Drive Mirror copy, CODER-PLAN
-    # step 6); False / None = download from nSITE as always.
-    fetch_source: Optional[Callable] = None
 
 
 @dataclass
@@ -107,8 +103,7 @@ def _parse_and_resolve(ctx: RunContext, d: dict, local: str):
     name_check; if it can't be made clean it is "" and the plain nSITE title
     is used."""
     did = d["doc_id"]
-    if ctx.fetch_source is None or not ctx.fetch_source(d, local):
-        nc.download_pdf(ctx.session, d, local)
+    nc.download_pdf(ctx.session, d, local)
     is_generic = dt.title_is_generic(d["document_name"], ctx.generic_exact, ctx.generic_prefixes)
     parsed = ctx.parse(
         local, d, RISK_REGISTER, model=ctx.model,
