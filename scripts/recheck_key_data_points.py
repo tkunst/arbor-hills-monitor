@@ -7,7 +7,9 @@ Three steps, each opt-in:
 
   1. (default) SCAN, free: read the New/Historical Documents tabs, run
      kdp_check on every Summary + Key Data Point, list the failing documents.
-  2. --run-llm: for each failing document, download the PDF from its row link
+  2. --run-llm: for each failing document, get the PDF its row links to (a
+     Drive Mirror link is read through the service account, read-only; a
+     MiEnviro link is downloaded from nSITE, CODER-PLAN step 6)
      and run the SAME egle_doc_parser.parse_document() the live pipeline uses
      (new prompt + check + retry/withhold). Writes the proposals to
      <out-dir>/kdp-recheck-proposals.json. Still NO Sheet writes.
@@ -28,6 +30,7 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import urllib.request
@@ -87,9 +90,21 @@ def _redact(text: str) -> str:
 _ALLOWED_DOWNLOAD_PREFIX = "https://mienviro.michigan.gov/ncore/downloadpdf/"
 
 
-def _download(url: str, dest: str) -> None:
-    # Only the MiEnviro document endpoint the feed rows link to; never file:/ or
-    # another scheme/host taken from Sheet text.
+_DRIVE_LINK = re.compile(r"^https://drive\.google\.com/file/d/([A-Za-z0-9_-]+)(?:/|$|\?)")
+
+
+def _download(url: str, dest: str, drive_factory=None) -> None:
+    # Feed rows link to the Drive Mirror copy (most rows since ADR 007's
+    # inline mirror) or to MiEnviro. A Mirror copy is read by id through the
+    # service account (no nSITE download, never a Drive write); nothing else
+    # is fetched: never file:/ or another scheme/host taken from Sheet text.
+    m = _DRIVE_LINK.match(url or "")
+    if m:
+        dc.download_file((drive_factory or dc.drive_service)(), m.group(1), dest)
+        with open(dest, "rb") as fh:
+            if not fh.read(4).startswith(b"%PDF"):
+                raise RuntimeError("Mirror copy is not a PDF")
+        return
     if not url.startswith(_ALLOWED_DOWNLOAD_PREFIX):
         raise RuntimeError(f"refusing to download non-MiEnviro link: {url[:80]}")
     req = urllib.request.Request(url, headers={"User-Agent": "arbor-hills-monitor"})

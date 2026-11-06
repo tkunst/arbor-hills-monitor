@@ -238,3 +238,26 @@ those ids absent, which every caller treats as "process the old way".
   rule. Verified on real Mirror files: the sha of the public-link download
   equals Drive's `sha256Checksum`, and after editing one recorded sha only that
   document was fetched again.
+
+## Addendum (2026-11-06, CODER-PLAN step 6): fewer nSITE re-downloads
+
+- `archiver.run()` lists nSITE only when a processed document still needs
+  mirroring; most nights nothing does (the inline mirror got it), and the
+  full listing was fetched for nothing. It does not build URLs from the
+  Sheet: `_state` holds neither the doc URL nor the facility SRN, and a
+  guessed SRN would name a second Drive copy of the same document.
+- Backfill's `FORCE_REPROCESS` (apply) and
+  `scripts/recheck_key_data_points.py --run-llm` read a document's Drive
+  Mirror copy through the service account instead of downloading it from
+  nSITE again; no Mirror link, a non-PDF copy or any error falls back to
+  nSITE (FORCE) or is reported (recheck, which already refused non-MiEnviro
+  links and so failed on every Drive-linked row). Neither writes Drive.
+- Not built: recording "the Mirror's OCR is worse than a fresh OCR" in this
+  index from those two paths. The index already holds the page stats of the
+  exact Mirror bytes (Gate C backfill, live uploads, the OCR backfill), so a
+  re-check there adds nothing a reader can use; the OCR backfill's
+  `ocr_partial`/`no_text` queue is the place those files get fixed.
+- Real data, 2026-11-06: three random archived documents read from the
+  Mirror matched nSITE's page counts; one 1,638-page report had 68 image-only
+  pages in nSITE's copy and 0 in the Mirror's. A live Drive-linked feed row
+  now downloads for the recheck script.
