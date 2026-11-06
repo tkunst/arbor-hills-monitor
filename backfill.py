@@ -134,52 +134,6 @@ def _force_reprocess_doc_ids() -> set:
     return {x.strip() for x in raw.split(",") if x.strip()}
 
 
-def mirror_source(sheets, sheet_id: str, doc_ids: set, drive_factory=None):
-    """CODER-PLAN step 6: a doc_pipeline fetch_source for FORCE_REPROCESS that
-    reads a document's Drive Mirror copy (service account, read-only) instead
-    of downloading it from nSITE again. Only for `doc_ids`, and only when the
-    Archived PDFs tab has a Drive link for the doc and the copy is a PDF;
-    anything else (no link, a non-PDF native copy, any error) returns False and
-    the pipeline downloads from nSITE as before. Never writes Drive. Logs the
-    doc id (public nSITE id) and an exception class only."""
-    import drive_client as dc
-
-    cache: dict = {}
-
-    def fetch(d: dict, local: str) -> bool:
-        did = d["doc_id"]
-        if did not in doc_ids:
-            return False
-        try:
-            if "links" not in cache:
-                cache["links"] = sw.archived_doc_links(sheets, sheet_id)
-                cache["drive"] = (drive_factory or dc.drive_service)()
-            file_id = _drive_file_id(cache["links"].get(did, ""))
-            if not file_id:
-                return False
-            dc.download_file(cache["drive"], file_id, local)
-            with open(local, "rb") as fh:
-                if fh.read(5) != b"%PDF-":
-                    raise ValueError("mirror copy is not a PDF")
-            print(f"  [FORCE] {did}: read the Drive Mirror copy (no nSITE download)")
-            return True
-        except Exception as e:  # noqa: BLE001 — fall back to nSITE, the old path
-            print(f"  [FORCE] {did}: Mirror copy unavailable ({type(e).__name__}); "
-                  f"downloading from nSITE")
-            if os.path.exists(local):
-                os.remove(local)
-            return False
-
-    return fetch
-
-
-def _drive_file_id(link: str) -> str:
-    import re
-
-    m = re.search(r"/file/d/([A-Za-z0-9_-]+)", link or "") or re.search(r"[?&]id=([A-Za-z0-9_-]+)", link or "")
-    return m.group(1) if m else ""
-
-
 def _force_reprocess_apply() -> bool:
     """Whether a FORCE_REPROCESS_DOC_IDS run actually mutates the Sheet (purge +
     re-extract), vs. the safe default of a DRY RUN that only previews. A
@@ -322,9 +276,7 @@ def run() -> int:
         well_alias_map=well_alias_map, well_registry=well_registry, parse=parse_document,
         now=_now,
         generic_exact=generic_exact, generic_prefixes=generic_prefixes,
-        title_overrides=title_overrides,
-        fetch_source=(mirror_source(sheets, sheet_id, force_ids)
-                      if force_ids and force_apply else None))
+        title_overrides=title_overrides)
     # The backfill's half of the shared per-document pipeline (doc_pipeline.py):
     # Historical Documents feed, no alerts (backfill never calls is_urgent, so
     # re-extracting history fires nothing stale), error count cleared on success.

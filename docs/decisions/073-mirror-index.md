@@ -246,18 +246,23 @@ those ids absent, which every caller treats as "process the old way".
   full listing was fetched for nothing. It does not build URLs from the
   Sheet: `_state` holds neither the doc URL nor the facility SRN, and a
   guessed SRN would name a second Drive copy of the same document.
-- Backfill's `FORCE_REPROCESS` (apply) and
-  `scripts/recheck_key_data_points.py --run-llm` read a document's Drive
-  Mirror copy through the service account instead of downloading it from
-  nSITE again; no Mirror link, a non-PDF copy or any error falls back to
-  nSITE (FORCE) or is reported (recheck, which already refused non-MiEnviro
-  links and so failed on every Drive-linked row). Neither writes Drive.
+- `scripts/recheck_key_data_points.py --run-llm` reads a feed row's Drive
+  Mirror copy through the service account (read-only) instead of refusing
+  it; it used to accept only MiEnviro links, so every Drive-linked row
+  failed. Only file ids listed in Archived PDFs are read, so a link planted
+  in a feed cell can't make the service account read some other file. Its
+  proposals are reviewed by a person before `--apply`.
+- Backfill's `FORCE_REPROCESS` keeps downloading from nSITE (built, then
+  removed after review): it exists to re-extract after the parser or the
+  `.msg`/`.docx`/zip converters change, and the Mirror holds the PDF those
+  converters produced at first mirroring, so reading it would skip exactly
+  the code a forced re-run is meant to exercise, and a bad Mirror copy would
+  strike a good document instead of falling back.
 - Not built: recording "the Mirror's OCR is worse than a fresh OCR" in this
-  index from those two paths. The index already holds the page stats of the
+  index from these paths. The index already holds the page stats of the
   exact Mirror bytes (Gate C backfill, live uploads, the OCR backfill), so a
   re-check there adds nothing a reader can use; the OCR backfill's
   `ocr_partial`/`no_text` queue is the place those files get fixed.
-- Real data, 2026-11-06: three random archived documents read from the
-  Mirror matched nSITE's page counts; one 1,638-page report had 68 image-only
-  pages in nSITE's copy and 0 in the Mirror's. A live Drive-linked feed row
-  now downloads for the recheck script.
+- Real data, 2026-11-06: no document was waiting to be mirrored, so that
+  night's archive run skips the listing; a live Drive-linked feed row now
+  downloads for the recheck script.

@@ -84,28 +84,3 @@ def test_parsed_ocr_stats_reach_the_inline_mirror(calls, monkeypatch, tmp_path):
     state = {"processed": {}, "errors": {}, "skipped": {}}
     assert dp.process_one_doc(ctx, state, _doc(), job, str(tmp_path / "x.pdf")) == "processed"
     assert seen == [sentinel]
-
-
-# --- CODER-PLAN step 6: a fetch_source can supply the PDF (FORCE_REPROCESS) ----
-
-def test_fetch_source_supplies_the_pdf_and_skips_nsite(calls, monkeypatch, tmp_path):
-    monkeypatch.setattr(dp.nc, "download_pdf",
-                        lambda *a: (_ for _ in ()).throw(AssertionError("no nSITE download")))
-    ctx = _ctx()
-    got = []
-    ctx.fetch_source = lambda d, local: got.append(d["doc_id"]) or True
-    job = dp.Job(name="backfill", feed_tab=sw.TAB_HISTORICAL, payload=lambda p, d: {})
-    state = {"processed": {}, "errors": {}, "skipped": {}}
-    assert dp.process_one_doc(ctx, state, _doc(), job, str(tmp_path / "x.pdf")) == "processed"
-    assert got == ["1"]
-
-
-def test_fetch_source_false_falls_back_to_nsite(calls, monkeypatch, tmp_path):
-    nsite = []
-    monkeypatch.setattr(dp.nc, "download_pdf", lambda *a: nsite.append(1))
-    ctx = _ctx()
-    ctx.fetch_source = lambda d, local: False
-    job = dp.Job(name="backfill", feed_tab=sw.TAB_HISTORICAL, payload=lambda p, d: {})
-    state = {"processed": {}, "errors": {}, "skipped": {}}
-    assert dp.process_one_doc(ctx, state, _doc(), job, str(tmp_path / "x.pdf")) == "processed"
-    assert nsite == [1]

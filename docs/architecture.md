@@ -452,12 +452,6 @@ behavior, update its entry here in the same PR.
   window too, retry once, then fail); `process_one_doc` is deliberately not
   wrapped (its own per-doc handling already treats a 429 as a no-strike
   transient).
-  **FORCE_REPROCESS reads the Mirror (CODER-PLAN step 6, 2026-11-06):** on
-  apply, `mirror_source()` is the pipeline's `fetch_source`: a force doc with a
-  Drive link in Archived PDFs is read from that Mirror copy through the
-  service account (read-only; must be a PDF), else downloaded from nSITE as
-  before. The Mirror copy is the OCR'd one, so `ocr_applied` in the new
-  `_state` payload can read False where the first pass ran OCR.
 - **Facility scope (ADR 064, 2026-10-07):** each `facilities:` entry is `core`
   (default — Arbor Hills/GFL) or `scope: related` (a neighboring/watershed site,
   e.g. the Johnson Creek drain restoration). Related docs go ONLY to the
@@ -498,9 +492,7 @@ behavior, update its entry here in the same PR.
   well_watch / urgent-digest / owner review-flag email, the backfill's
   error-count clearing); the backfill's FORCE purge is the `purge_first=`
   argument to `process_one_doc()`, not a `Job` field. A cross-cutting change
-  is wired ONCE, here. `RunContext.fetch_source` (optional, `(d, local) ->
-  bool`) can supply the PDF instead of the nSITE download; only backfill's
-  FORCE_REPROCESS apply sets it.
+  is wired ONCE, here.
 - `watcher.py` — daily new-doc check + alerts (+ WDS Stream C when enabled).
   Stream C (`wds_watcher.py` + `wds_client.py`) polls eight WDS collections for
   site 475946: applications/qmr/annual/evaluations/compliance_actions plus

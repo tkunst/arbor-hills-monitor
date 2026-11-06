@@ -93,20 +93,34 @@ _ALLOWED_DOWNLOAD_PREFIX = "https://mienviro.michigan.gov/ncore/downloadpdf/"
 _DRIVE_LINK = re.compile(r"^https://drive\.google\.com/file/d/([A-Za-z0-9_-]+)(?:/|$|\?)")
 
 
-def _download(url: str, dest: str, drive_factory=None) -> None:
+def mirror_file_ids(service, sheet_id: str) -> set:
+    """Drive file ids of the nSITE Mirror copies (Archived PDFs): the only
+    Drive files _download() will read."""
+    ids = set()
+    for link in sw.archived_doc_links(service, sheet_id, strict=True).values():
+        m = _DRIVE_LINK.match(link or "")
+        if m:
+            ids.add(m.group(1))
+    return ids
+
+
+def _download(url: str, dest: str, drive_factory=None, mirror_ids: set | None = None) -> None:
     # Feed rows link to the Drive Mirror copy (most rows since ADR 007's
     # inline mirror) or to MiEnviro. A Mirror copy is read by id through the
-    # service account (no nSITE download, never a Drive write); nothing else
-    # is fetched: never file:/ or another scheme/host taken from Sheet text.
+    # service account (no nSITE download, never a Drive write), and only if
+    # that id is in Archived PDFs; nothing else is fetched: never file:/ or
+    # another scheme/host taken from Sheet text.
     m = _DRIVE_LINK.match(url or "")
     if m:
+        if m.group(1) not in (mirror_ids or set()):
+            raise RuntimeError("Drive link is not an Archived PDFs Mirror copy")
         dc.download_file((drive_factory or dc.drive_service)(), m.group(1), dest)
         with open(dest, "rb") as fh:
             if not fh.read(4).startswith(b"%PDF"):
                 raise RuntimeError("Mirror copy is not a PDF")
         return
-    if not url.startswith(_ALLOWED_DOWNLOAD_PREFIX):
-        raise RuntimeError(f"refusing to download non-MiEnviro link: {url[:80]}")
+    if not (url or "").startswith(_ALLOWED_DOWNLOAD_PREFIX):
+        raise RuntimeError(f"refusing to download non-MiEnviro link: {(url or '')[:80]}")
     req = urllib.request.Request(url, headers={"User-Agent": "arbor-hills-monitor"})
     with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310  # nosec B310 — https MiEnviro prefix enforced above
         data = resp.read()
@@ -118,14 +132,14 @@ def _download(url: str, dest: str, drive_factory=None) -> None:
         fh.write(data)
 
 
-def run_llm(items: list[dict], cfg: dict) -> None:
+def run_llm(items: list[dict], cfg: dict, mirror_ids: set | None = None) -> None:
     from egle_doc_parser import parse_document
     from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS
     for it in items:
         with tempfile.TemporaryDirectory() as tmp:
             local = os.path.join(tmp, "doc.pdf")
             try:
-                _download(it["link"], local)
+                _download(it["link"], local, mirror_ids=mirror_ids)
                 parsed = parse_document(
                     local, {"document_name": it["document_name"], "date_filed": it["date_filed"]},
                     RISK_REGISTER, model=cfg["anthropic_model"],
@@ -205,13 +219,15 @@ def main() -> int:
     items = scan(service, sheet_id, ref)
     print(f"{len(items)} document row(s) fail kdp_check")
     if a.run_llm:
-        run_llm(items, cfg)
+        run_llm(items, cfg, mirror_ids=mirror_file_ids(service, sheet_id))
     for it in items:
-        print(f"\n{it['tab']} row {it['row']}  {it['date_filed']}  {it['link']}")
         if a.counts_only:
+            # Public CI log: no link (a Drive file id is not printed there).
+            print(f"\n{it['tab']} row {it['row']}  {it['date_filed']}")
             print(f"  problems: {sum(len(v) for v in it['problems'].values())}"
                   f"  proposal: {'yes' if 'new' in it else 'ERROR' if 'error' in it else 'n/a'}")
             continue
+        print(f"\n{it['tab']} row {it['row']}  {it['date_filed']}  {it['link']}")
         print(f"  problems: {it['problems']}")
         print(f"  OLD [{it['old']['severity']}] KDP: {it['old']['key_data_point']}")
         if "new" in it:
