@@ -773,3 +773,73 @@ def test_fetcher_live_sha_without_oauth_is_empty(monkeypatch):
     monkeypatch.setattr(ac, "is_configured", lambda *a, **k: False)
     f = cache.Fetcher()
     assert f.live_sha256(["drive_" + "a" * 26]) == {} and f._drive_ok is False
+
+
+def _cached(tmp_path, prior):
+    index = tmp_path / "search-index.json"
+    index.write_text(json.dumps([_entry()]))
+    c = tmp_path / "c"
+    c.mkdir(exist_ok=True)
+    (c / "manifest.json").write_text(json.dumps({fts.doc_key(DRIVE): prior}))
+    return str(index), c
+
+
+def test_a_changed_copy_that_keeps_getting_html_strikes_out(tmp_path):
+    cache = _script("build_fulltext_cache")
+    index, c = _cached(tmp_path, {"status": "ok", "pages": 2, "text_pages": 2, "chars": 9,
+                                  "fetched": "2026-11-01", "sha256": "OLD"})
+
+    class Html:
+        n = 0
+
+        def live_sha256(self, keys):
+            return {key: "NEW" for key in keys}
+
+        def fetch(self, key, entry, dest):
+            Html.n += 1
+            raise cache.ThrottledError("html")
+
+    for _ in range(cache.MAX_THROTTLED_PER_DOC + cache.MAX_CHANGE_ERRORS + 3):
+        cache.run(index, str(c), 10, fetcher=Html())
+    m = json.loads((c / "manifest.json").read_text())[fts.doc_key(DRIVE)]
+    assert m["change_errors"] >= cache.MAX_CHANGE_ERRORS
+    assert Html.n < cache.MAX_THROTTLED_PER_DOC + cache.MAX_CHANGE_ERRORS + 3   # stopped refetching
+
+
+def test_a_struck_out_change_failing_on_the_timer_counts_as_a_refresh(tmp_path):
+    cache = _script("build_fulltext_cache")
+    index, c = _cached(tmp_path, {"status": "no_text", "pages": 3, "text_pages": 0, "chars": 0,
+                                  "fetched": "2026-09-01", "sha256": "OLD", "refreshes": 0,
+                                  "change_errors": cache.MAX_CHANGE_ERRORS})
+
+    class Boom:
+        def live_sha256(self, keys):
+            return {key: "NEW" for key in keys}
+
+        def fetch(self, key, entry, dest):
+            raise ValueError("bad")
+
+    cache.run(index, str(c), 10, fetcher=Boom())   # queued by the 30-day timer
+    m = json.loads((c / "manifest.json").read_text())[fts.doc_key(DRIVE)]
+    assert m["refreshes"] == 1 and m["change_errors"] == cache.MAX_CHANGE_ERRORS
+
+
+def test_a_fetch_that_never_matches_drive_strikes_instead_of_looping(tmp_path):
+    cache = _script("build_fulltext_cache")
+    index, c = _cached(tmp_path, {"status": "ok", "pages": 1, "text_pages": 1, "chars": 9,
+                                  "fetched": "2026-11-01", "sha256": "OLD"})
+    pdf = _make_text_pdf("text")
+    fetched = []
+
+    class Odd:
+        def live_sha256(self, keys):
+            return {key: "DRIVE-SAYS-SOMETHING-ELSE" for key in keys}
+
+        def fetch(self, key, entry, dest):
+            fetched.append(key)
+            with open(dest, "wb") as f:
+                f.write(pdf)
+
+    for _ in range(cache.MAX_CHANGE_ERRORS + 2):
+        cache.run(index, str(c), 10, fetcher=Odd())
+    assert len(fetched) == cache.MAX_CHANGE_ERRORS

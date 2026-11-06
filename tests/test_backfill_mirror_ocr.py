@@ -158,8 +158,11 @@ def test_dry_run_report_signature_has_no_drive_parameter():
 def test_main_dry_run_never_touches_drive_end_to_end(monkeypatch, tmp_path, capsys):
     # End-to-end proof (not just a signature check): running main() with no
     # --apply flag must never call ANY Drive function, even indirectly.
+    import config_loader
     import mirror_index as mi
     tabs = {sw.TAB_ARCHIVE: [sw.ARCHIVE_HEADERS], mi.TAB: [mi.HEADERS]}
+    # Flag ON explicitly, so the index read is always part of this proof.
+    monkeypatch.setattr(config_loader, "load_config", lambda *a, **k: {"mirror_index": {"enabled": True}})
     monkeypatch.setenv("GSHEET_ID", "SID")
     monkeypatch.chdir(tmp_path)   # so a stray local-state/ write (bug) can't land in the repo
 
@@ -772,7 +775,7 @@ def test_index_target_rules():
     assert bm._index_target(cand, sw.TAB_ARCHIVE, {}, {"mirror_index": {"enabled": False}}, s, "SID") is None
 
 
-def test_process_candidate_with_index_updates_the_row_with_stats_and_pinned_revision(monkeypatch, tmp_path):
+def _scan_then_fixed(monkeypatch):
     def fake_download(drive, fid, dest):
         import fitz
         doc = fitz.open()
@@ -787,10 +790,18 @@ def test_process_candidate_with_index_updates_the_row_with_stats_and_pinned_revi
         n["i"] += 1
         return {0} if n["i"] == 1 else set()
     monkeypatch.setattr(ocr_util, "image_only_pages", pages)
-    # ensure_searchable returning the SAME path means "OCR failed"; give it a new one.
-    monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: path + ".s")
-    stats = object()
-    monkeypatch.setattr(ocr_util, "page_stats", lambda path: stats)
+
+    def searchable(path, **kw):   # a real, different file ("OCR ran")
+        import shutil
+        shutil.copy(path, path + ".s")
+        return path + ".s"
+    monkeypatch.setattr(ocr_util, "ensure_searchable", searchable)
+    monkeypatch.setattr(ocr_util, "page_stats",
+                        lambda p: (_ for _ in ()).throw(AssertionError("no second page scan")))
+
+
+def test_process_candidate_with_index_returns_stats_and_pinned_revision_for_later(monkeypatch, tmp_path):
+    _scan_then_fixed(monkeypatch)
     monkeypatch.setattr(ac, "pin_head_revision", lambda drive, fid: "REV7")
     calls = []
     monkeypatch.setattr(ac, "update_file_content",
@@ -798,27 +809,66 @@ def test_process_candidate_with_index_updates_the_row_with_stats_and_pinned_revi
     target = mi.IndexTarget(object(), "SID", "nsite", "doc-1")
     result = bm.process_candidate(_fake_drive(), {"link": "https://drive.google.com/file/d/F1/view"},
                                   str(tmp_path), index=target)
-    assert result["status"] == "done"
-    assert calls == [{"index": target, "ocr_stats": stats, "raw_revision_pinned": "REV7"}]
+    assert result["status"] == "done" and calls == [{}]   # the upload itself never writes the Sheet
+    info = result[bm._INDEX_KEY]
+    assert info["target"] is target and info["pinned"] == "REV7"
+    assert info["stats"].pages == 1 and info["stats"].image_only_pages == frozenset()
+    assert mi.text_status(info["stats"]) == "native"   # test file has no OCRmyPDF /Creator
 
 
-def test_process_candidate_stats_failure_still_updates_with_unknown_stats(monkeypatch, tmp_path):
-    monkeypatch.setattr(ac, "download_file", lambda d, f, dest: open(dest, "wb").close() or dest)
-    n = {"i": 0}
+def test_process_candidate_without_index_carries_no_payload(monkeypatch, tmp_path):
+    _scan_then_fixed(monkeypatch)
+    monkeypatch.setattr(ac, "pin_head_revision", lambda drive, fid: "REV7")
+    monkeypatch.setattr(ac, "update_file_content", lambda drive, fid, path, **kw: fid)
+    result = bm.process_candidate(_fake_drive(), {"link": "https://drive.google.com/file/d/F1/view"},
+                                  str(tmp_path))
+    assert bm._INDEX_KEY not in result
 
-    def pages(path):
-        n["i"] += 1
-        return {0} if n["i"] == 1 else set()
-    monkeypatch.setattr(ocr_util, "image_only_pages", pages)
-    monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: path + ".s")
-    monkeypatch.setattr(ocr_util, "page_stats", lambda path: (_ for _ in ()).throw(OSError("x")))
-    monkeypatch.setattr(ac, "pin_head_revision", lambda drive, fid: "REV1")
-    calls = []
-    monkeypatch.setattr(ac, "update_file_content", lambda drive, fid, path, **kw: calls.append(kw) or fid)
+
+def test_run_apply_writes_the_index_row_after_the_watchdog_and_never_saves_the_payload(
+        monkeypatch, tmp_path):
+    import signal
     target = mi.IndexTarget(object(), "SID", "nsite", "doc-1")
-    bm.process_candidate(_fake_drive(), {"link": "https://drive.google.com/file/d/F1/view"},
-                         str(tmp_path), index=target)
-    assert calls[0]["ocr_stats"] is None and calls[0]["raw_revision_pinned"] == "REV1"
+    monkeypatch.setattr(bm.mi, "live_sha256", lambda drive, ids: {})
+    monkeypatch.setattr(bm, "process_candidate",
+                        lambda drive, cand, tmp, phase=None, index=None:
+                        {"status": "done", bm._INDEX_KEY: {"target": target, "stats": None, "pinned": "R"}})
+    written = []
+
+    def fake_write(drive, fid, info):
+        written.append((fid, info["pinned"], signal.alarm(0)))   # alarm(0) returns seconds left
+        return True
+    monkeypatch.setattr(bm, "_write_index_row", fake_write)
+    state = {}
+    bm.run_apply(FakeSheets(_archive_tabs(1)), "SID", _fake_drive(), state, limit=10,
+                 state_path=str(tmp_path / "s.json"), index={}, cfg=ON_CFG)
+    assert written == [("F1", "R", 0)]                     # watchdog already off
+    assert bm._INDEX_KEY not in state[f"{sw.TAB_ARCHIVE}:doc-1"]
+    assert bm._INDEX_KEY not in (tmp_path / "s.json").read_text()
+
+
+def test_write_index_row_reads_drive_checksums_and_never_raises(monkeypatch):
+    class Drive:
+        def __init__(self, fail):
+            self.fail = fail
+
+        def files(self):
+            return self
+
+        def get(self, fileId, fields):
+            assert "sha256Checksum" in fields and "webViewLink" not in fields
+            return self
+
+        def execute(self, num_retries=0):
+            if self.fail:
+                raise RuntimeError("x")
+            return {"id": "F1", "sha256Checksum": "NEW"}
+    got = []
+    monkeypatch.setattr(bm.mi, "record", lambda t, meta, stats, **kw: got.append((meta, kw)) or True)
+    info = {"target": object(), "stats": None, "pinned": "R9"}
+    assert bm._write_index_row(Drive(False), "F1", info) is True
+    assert got == [({"id": "F1", "sha256Checksum": "NEW"}, {"raw_revision_pinned": "R9"})]
+    assert bm._write_index_row(Drive(True), "F1", info) is False
 
 
 def test_dry_run_report_adds_index_counts_without_drive():

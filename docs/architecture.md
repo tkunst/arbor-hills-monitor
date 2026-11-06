@@ -259,7 +259,7 @@ behavior, update its entry here in the same PR.
   `scripts/backfill_mirror_ocr.py` (ADR 069; reads the index STRICTLY, does
   `ocr_partial`/`no_text` rows first, skips a `native`/`ocr_full` row with no
   download only on a live sha match, and rewrites the row after an in-place
-  replacement with the new checksums, page stats and pinned raw revision) and
+  replacement, after the per-file watchdog, with the new checksums, page stats and pinned raw revision) and
   `scripts/build_fulltext_cache.py` (no Sheet access: it compares Drive's live
   sha with the sha it recorded for the cached bytes, see `fulltext_search.py`).
 - `scripts/backfill_mirror_index.py` — **ADR 073 addendum** (CODER-PLAN step

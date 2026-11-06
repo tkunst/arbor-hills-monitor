@@ -385,7 +385,10 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
             counts["stopped_on_time"] = 1
             break
         prior = manifest.get(key, {})
-        changed = content_changed(prior, live.get(key)) is True
+        # A change refetch only while it has strikes left (else the timer
+        # queued it, and its failures count as ordinary refreshes).
+        changed = (content_changed(prior, live.get(key)) is True
+                   and prior.get("change_errors", 0) < MAX_CHANGE_ERRORS)
         try:
             with tempfile.TemporaryDirectory() as td:
                 pdf = os.path.join(td, "doc.pdf")
@@ -405,6 +408,10 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
             manifest[key] = {"status": status, "pages": len(pages), "text_pages": text_pages,
                              "chars": len(content), "fetched": today, "sha256": sha,
                              "refreshes": prior.get("refreshes", 0) + 1 if was_cached and not changed else 0}
+            if live.get(key) and sha != live[key]:
+                # The bytes we got still differ from Drive's live sha: a strike,
+                # so a copy that never matches can't be refetched every run.
+                manifest[key]["change_errors"] = prior.get("change_errors", 0) + 1
             counts["fetched"] += 1
             counts["redactions"] += n_red
             if status == "no_text":
@@ -431,6 +438,8 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
                 # instead (the recorded sha stays the old one, so it is retried
                 # next run until MAX_CHANGE_ERRORS).
                 manifest[key] = {**prior, "fetched": today, "last_refresh_error": type(e).__name__}
+                if throttled:
+                    manifest[key]["throttled"] = prior.get("throttled", 0) + 1
                 if changed:
                     manifest[key]["change_errors"] = prior.get("change_errors", 0) + (0 if transient else 1)
                 else:

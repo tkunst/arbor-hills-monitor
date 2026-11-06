@@ -342,6 +342,49 @@ def _index_target(cand: dict, tab: str, index: dict | None, cfg: dict | None,
     return mi.target(cfg, sheets_svc, sheet_id, kind, key)
 
 
+# Key of the in-memory index payload process_candidate() hands run_apply();
+# popped before the state entry is written (never saved, never printed).
+_INDEX_KEY = "_index"
+
+
+def _replacement_stats(path: str, image_only: set):
+    """ocr_util.OcrStats for the OCR'd replacement, from the image-only page
+    set already computed for it plus one cheap open (page count, /Creator)
+    and its sha. None on any failure (= text_status "unknown", fail-safe)."""
+    try:
+        import fitz
+
+        with fitz.open(path) as doc:
+            n = len(doc)
+            creator = (doc.metadata or {}).get("creator") or ""
+        fz = frozenset(image_only)
+        return ocr_util.OcrStats(sha256=ocr_util.file_sha256(path), pages=n,
+                                 image_only_pages=fz, image_only_before=fz, ocr_ran=True,
+                                 engine=ocr_util._engine(creator))
+    except Exception:  # noqa: BLE001 — no stats is safe
+        return None
+
+
+def _with_index(result: dict, index, stats, pinned) -> dict:
+    if index is not None:
+        result[_INDEX_KEY] = {"target": index, "stats": stats, "pinned": str(pinned or "")}
+    return result
+
+
+def _write_index_row(drive, file_id: str, info: dict) -> bool:
+    """After a replacement, with the watchdog OFF: read Drive's new checksums
+    and upsert the file's Mirror Index row. Never raises (a missing or stale
+    row only means "process it the old way" later)."""
+    try:
+        meta = (drive.files()
+                .get(fileId=file_id, fields=mi.DRIVE_FIELDS.replace("webViewLink, ", ""))
+                .execute(num_retries=ac.GOOGLE_API_NUM_RETRIES))
+    except Exception as e:  # noqa: BLE001
+        print(f"[backfill] index row not written (class={type(e).__name__})", flush=True)
+        return False
+    return mi.record(info["target"], meta, info["stats"], raw_revision_pinned=info["pinned"])
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -473,10 +516,12 @@ def process_candidate(drive, cand: dict, tmp_dir: str,
     diagnostic only — `phase` is never read by this function, only written.
 
     ADDENDUM (2026-11-06, ADR 073): `index`, a mirror_index.IndexTarget or
-    None. When given, the in-place update also rewrites this file's Mirror
-    Index row (new Drive checksums, the replacement's page stats, and the
-    revision pinned before the overwrite); a failed index write never fails
-    the update (mirror_index.record never raises)."""
+    None. When given, a replaced file's result carries an in-memory `_index`
+    payload (target, the replacement's stats built from `after_pages` with no
+    second page scan, and the revision pinned before the overwrite);
+    run_apply() pops it and writes the row AFTER the watchdog is cleared, so a
+    slow Sheets write can never turn a landed replacement into
+    error_timeout."""
     def _set_phase(name: str) -> None:
         if phase is not None:
             phase[0] = name
@@ -539,19 +584,14 @@ def process_candidate(drive, cand: dict, tmp_dir: str,
             # Drive for zero benefit.
             return {"status": "ocr_incomplete"}
 
+        # Index stats for the replacement, from the page check just done (no
+        # second page scan); written by run_apply() after the watchdog is off.
+        stats = _replacement_stats(searchable, after_pages) if index is not None else None
+
         _set_phase("upload")
         try:
             pinned = ac.pin_head_revision(drive, file_id)
-            if index is None:
-                new_id = ac.update_file_content(drive, file_id, searchable)
-            else:
-                try:
-                    stats = ocr_util.page_stats(searchable)
-                except Exception:  # noqa: BLE001 — no stats = text_status "unknown" (fail-safe)
-                    stats = None
-                new_id = ac.update_file_content(drive, file_id, searchable, index=index,
-                                                ocr_stats=stats,
-                                                raw_revision_pinned=str(pinned or ""))
+            new_id = ac.update_file_content(drive, file_id, searchable)
         except Exception as e:  # noqa: BLE001 — recorded, not raised
             return {"status": "error_upload", "note": type(e).__name__}
         if new_id != file_id:
@@ -565,11 +605,13 @@ def process_candidate(drive, cand: dict, tmp_dir: str,
             ac.download_file(drive, file_id, verify_path)
             verify_pages = ocr_util.image_only_pages(verify_path)
         except Exception as e:  # noqa: BLE001 — the UPDATE already succeeded; see docstring
-            return {"status": "done_unverified", "note": type(e).__name__}
+            return _with_index({"status": "done_unverified", "note": type(e).__name__},
+                               index, stats, pinned)
         finally:
             _cleanup(verify_path)
 
-        return {"status": "done_partial" if verify_pages else "done"}
+        return _with_index({"status": "done_partial" if verify_pages else "done"},
+                           index, stats, pinned)
     finally:
         _cleanup(local, searchable)
 
@@ -639,6 +681,9 @@ def run_apply(sheets_svc, sheet_id: str, drive, state: dict, limit: int,
                 finally:
                     signal.alarm(0)
                 elapsed = time.monotonic() - t0
+                index_info = result.pop(_INDEX_KEY, None)
+                if index_info is not None:
+                    _write_index_row(drive, extract_file_id(cand["link"]) or "", index_info)
                 status = result["status"]
                 extra = {k: v for k, v in result.items() if k != "status"}
 
