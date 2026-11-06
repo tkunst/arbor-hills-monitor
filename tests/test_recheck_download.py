@@ -84,7 +84,7 @@ def test_main_counts_only_passes_mirror_ids_and_prints_no_link(monkeypatch, caps
     monkeypatch.setattr(rk, "mirror_file_ids", lambda *a: {"SECRETID"})
     got = {}
 
-    def fake_run_llm(items, cfg, mirror_ids=None, max_minutes=None):
+    def fake_run_llm(items, cfg, mirror_ids=None, max_minutes=None, on_item=None):
         got["ids"] = mirror_ids
         items[0]["error"] = "HttpError"
         return 0
@@ -214,5 +214,57 @@ def test_run_llm_stops_starting_documents_after_the_time_budget(monkeypatch):
     monkeypatch.setattr(rk, "_download", lambda *a, **k: calls.append(1) or (_ for _ in ()).throw(OSError()))
     ticks = iter([0, 0, 5 * 60, 30 * 60])
     items = [{"link": "x", "document_name": "d", "date_filed": ""} for _ in range(3)]
-    left = rk.run_llm(items, {}, max_minutes=22, clock=lambda: next(ticks))
-    assert left == 1 and len(calls) == 2 and "error" not in items[2]
+    saved = []
+    left = rk.run_llm(items, {}, max_minutes=22, clock=lambda: next(ticks), on_item=lambda: saved.append(1))
+    assert left == 1 and len(calls) == 2 and "error" not in items[2] and len(saved) == 2
+
+
+def test_budget_counts_from_process_start_by_default(monkeypatch):
+    rk = _mod()
+    monkeypatch.setattr(rk, "_PROCESS_START", rk.time.monotonic() - 60 * 60)   # setup took an hour
+    monkeypatch.setattr(rk, "_download", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no start")))
+    assert rk.run_llm([{"link": "x", "document_name": "d", "date_filed": ""}], {}) == 1
+
+
+def test_main_saves_proposals_after_each_document(monkeypatch, tmp_path):
+    import json as _json
+    rk = _mod()
+    item = {"tab": "New Documents", "row": 2, "date_filed": "", "link": "x", "document_name": "d",
+            "old_kdp_sha256": "", "old": {}, "problems": {"x": ["p"]}}
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.setattr(rk, "load_config", lambda: {})
+    monkeypatch.setattr(rk.kdp_check, "reference_from_config", lambda c: None)
+    monkeypatch.setattr(rk.dc, "sheets_service", lambda: object())
+    monkeypatch.setattr(rk, "scan", lambda *a: [item])
+    monkeypatch.setattr(rk, "mirror_file_ids", lambda *a: set())
+    out = tmp_path / "o"
+
+    def fake_run_llm(items, cfg, mirror_ids=None, max_minutes=None, on_item=None):
+        items[0]["error"] = "X"
+        on_item()
+        assert _json.loads((out / "kdp-recheck-proposals.json").read_text())[0]["error"] == "X"
+        raise SystemExit(3)   # killed mid-run: the saved file must already exist
+    monkeypatch.setattr(rk, "run_llm", fake_run_llm)
+    monkeypatch.setattr("sys.argv", ["x", "--run-llm", "--counts-only", "--out-dir", str(out)])
+    with pytest.raises(SystemExit):
+        rk.main()
+    assert (out / "kdp-recheck-proposals.json").exists()
+
+
+def test_no_failing_rows_reads_no_archive_index(monkeypatch):
+    rk = _mod()
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.setattr(rk, "load_config", lambda: {})
+    monkeypatch.setattr(rk.kdp_check, "reference_from_config", lambda c: None)
+    monkeypatch.setattr(rk.dc, "sheets_service", lambda: object())
+    monkeypatch.setattr(rk, "scan", lambda *a: [])
+    monkeypatch.setattr(rk, "mirror_file_ids", lambda *a: (_ for _ in ()).throw(AssertionError("no read")))
+    monkeypatch.setattr("sys.argv", ["x", "--run-llm", "--counts-only"])
+    assert rk.main() == 0
+
+
+def test_pdf_header_after_leading_junk_is_accepted(tmp_path):
+    rk = _mod()
+    FAKE.body = b"\r\n junk \n%PDF-1.4 rest"
+    rk._download("https://drive.google.com/file/d/F/view", str(tmp_path / "a.pdf"),
+                 downloader=FAKE, mirror_ids={"F"})
