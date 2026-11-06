@@ -888,5 +888,29 @@ def test_main_index_read_failure_stops_the_run(monkeypatch, tmp_path):
     import drive_client
     monkeypatch.setattr(config_loader, "load_config", lambda *a, **k: ON_CFG)
     monkeypatch.setattr(drive_client, "sheets_service", lambda: FakeSheets(_archive_tabs(1)))
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="Mirror Index"):
         bm.main([])
+
+
+def test_run_apply_a_duplicate_key_is_processed_once(monkeypatch, tmp_path):
+    tabs = {sw.TAB_ARCHIVE: [sw.ARCHIVE_HEADERS,
+                             ["doc-1", "n", "d", "", "s", "https://drive.google.com/file/d/F1/view", "ts"],
+                             ["doc-1", "n", "d", "", "s", "https://drive.google.com/file/d/F1/view", "ts"]]}
+    seen = []
+    monkeypatch.setattr(bm, "process_candidate",
+                        lambda drive, cand, tmp, phase=None, index=None: seen.append(1) or {"status": "done"})
+    bm.run_apply(FakeSheets(tabs), "SID", _fake_drive(), {}, limit=10, state_path=str(tmp_path / "s.json"))
+    assert seen == [1]
+
+
+def test_main_flag_off_never_reads_the_index(monkeypatch, tmp_path):
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.chdir(tmp_path)
+    import config_loader
+    import drive_client
+    monkeypatch.setattr(config_loader, "load_config", lambda *a, **k: {"mirror_index": {"enabled": False}})
+    # No Mirror Index tab: a read would raise (FakeSheets), so passing proves no read.
+    monkeypatch.setattr(drive_client, "sheets_service", lambda: FakeSheets(_archive_tabs(1)))
+    got = {}
+    monkeypatch.setattr(bm, "dry_run_report", lambda s, sid, st, idx=None: got.setdefault("idx", idx) or "ok")
+    assert bm.main([]) == 0 and got["idx"] is None

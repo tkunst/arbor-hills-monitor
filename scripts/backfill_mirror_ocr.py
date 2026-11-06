@@ -660,9 +660,16 @@ def run_apply(sheets_svc, sheet_id: str, drive, state: dict, limit: int,
     previous_handler = signal.signal(signal.SIGALRM, _alarm_handler)
     try:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            for tab, cand, already_status in queue:
+            for tab, cand, _queued_status in queue:
                 if aborted or scanned >= _MAX_SCAN_PER_RUN or fixed >= limit:
                     break
+                # Re-read state here, not only when queueing: a tab can list the
+                # same {tab}:{id} twice, and the first row's fresh entry must
+                # stop the second (as the old per-row check did).
+                already = state.get(cand["key"])
+                already_status = already.get("status") if already else None
+                if already is not None and already_status not in _RETRYABLE_STATUSES:
+                    continue
                 if provably_searchable(cand, index, live):
                     # Free and stateless: a later content change is re-checked.
                     by_status["skip_index_searchable"] += 1
