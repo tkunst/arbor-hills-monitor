@@ -34,6 +34,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -170,7 +171,7 @@ def _download(url: str, dest: str, downloader=None, mirror_ids: set | None = Non
             raise MirrorLinkRefused("Drive link is not an Archived PDFs Mirror copy")
         (downloader or _public_drive_download)(m.group(1), dest)
         with open(dest, "rb") as fh:
-            if not fh.read(4).startswith(b"%PDF"):
+            if b"%PDF" not in fh.read(1024):   # readers accept leading junk
                 raise NotAPdf("Mirror copy is not a PDF")
         return
     if not (url or "").startswith(_ALLOWED_DOWNLOAD_PREFIX):
@@ -186,21 +187,24 @@ def _download(url: str, dest: str, downloader=None, mirror_ids: set | None = Non
         fh.write(data)
 
 
-# Stop starting new documents after this long, so kdp-recheck.yml (30-min
-# job timeout) always reaches the proposals write and the artifact upload;
-# items not reached get no proposal and show "n/a" (rerun for the rest).
-DEFAULT_MAX_MINUTES = 22
+# Stop starting new documents this long after the PROCESS started (setup in
+# kdp-recheck.yml's 30-min job comes before it), and the proposals file is
+# rewritten after every document, so even a run cut off mid-document leaves
+# what it finished for the artifact upload. Items not reached show "n/a".
+DEFAULT_MAX_MINUTES = 18
+_PROCESS_START = time.monotonic()
 
 
 def run_llm(items: list[dict], cfg: dict, mirror_ids: set | None = None,
-            max_minutes: float = DEFAULT_MAX_MINUTES, clock=None) -> int:
-    """Returns how many items were not reached because of the time budget."""
-    import time
-
+            max_minutes: float = DEFAULT_MAX_MINUTES, clock=None, started=None,
+            on_item=None) -> int:
+    """Returns how many items were not reached because of the time budget.
+    `on_item()` runs after each document (main() saves the proposals there)."""
     from egle_doc_parser import parse_document
     from risk_register import RISK_REGISTER, SIGNAL_KEYWORDS
     clock = clock or time.monotonic
-    started = clock()
+    started = _PROCESS_START if started is None and clock is time.monotonic else (
+        clock() if started is None else started)
     for n, it in enumerate(items):
         if (clock() - started) / 60 >= max_minutes:
             return len(items) - n
@@ -223,6 +227,8 @@ def run_llm(items: list[dict], cfg: dict, mirror_ids: set | None = None,
                 # Class only: the proposals file is a public-repo artifact, and
                 # a Drive error's text carries the file id / request URL.
                 it["error"] = type(e).__name__
+        if on_item is not None:
+            on_item()
     return 0
 
 
@@ -291,9 +297,21 @@ def main() -> int:
 
     items = scan(service, sheet_id, ref)
     print(f"{len(items)} document row(s) fail kdp_check")
-    if a.run_llm:
+    path = None
+    if a.out_dir:
+        os.makedirs(a.out_dir, exist_ok=True)
+        path = os.path.join(a.out_dir, "kdp-recheck-proposals.json")
+
+    def save():
+        if path:
+            tmp = path + ".tmp"
+            with open(tmp, "w") as fh:
+                json.dump(items, fh, indent=1, ensure_ascii=False)
+            os.replace(tmp, path)
+
+    if a.run_llm and items:
         left = run_llm(items, cfg, mirror_ids=mirror_file_ids(service, sheet_id),
-                       max_minutes=a.max_minutes)
+                       max_minutes=a.max_minutes, on_item=save)
         if left:
             print(f"time budget reached: {left} document(s) not checked this run")
     for it in items:
@@ -312,10 +330,8 @@ def main() -> int:
             print(f"  NEW summary: {n['summary']}")
         if "error" in it:
             print(f"  ERROR: {it['error']}")
-    if a.out_dir:
-        os.makedirs(a.out_dir, exist_ok=True)
-        path = os.path.join(a.out_dir, "kdp-recheck-proposals.json")
-        json.dump(items, open(path, "w"), indent=1, ensure_ascii=False)
+    if path:
+        save()
         print(f"\nproposals: {path}")
     return 0
 
