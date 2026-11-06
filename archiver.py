@@ -261,21 +261,27 @@ def run() -> int:
     processed = state["processed"]
     already = sw.archived_doc_ids(sheets, sheet_id)
 
-    # Join processed doc IDs to the live nSITE list for the download URL + names.
-    # (_state stores classification metadata but not doc_url — ADR 007.)
+    todo = [did for did in processed if did not in already]
+    print(f"[archive] {len(processed)} processed, {len(already)} archived, "
+          f"{len(todo)} to mirror.")
+    if not todo:
+        # CODER-PLAN step 6 (2026-11-06): decided BEFORE listing nSITE. Most
+        # nights mirror_one_now() has already mirrored everything, and the
+        # full nSITE listing below was fetched only to be thrown away.
+        print("[archive] Archive complete — nothing to mirror.")
+        return 0
+
+    # Join the docs still to mirror to the live nSITE list for the download
+    # URL, facility SRN (it names the Drive copy) and names. _state stores
+    # classification metadata but not doc_url or the SRN (ADR 007), so a
+    # guessed URL/SRN could name a second Drive copy; the listing is the one
+    # source for both.
     session = nc.make_session()
     docs = nc.fetch_all_documents(session, cfg)
     if not docs:
         print("[archive] nSITE returned 0 documents — aborting (transient?).")
         return 1
     by_id = {d["doc_id"]: d for d in docs}
-
-    todo = [did for did in processed if did not in already]
-    print(f"[archive] {len(processed)} processed, {len(already)} archived, "
-          f"{len(todo)} to mirror.")
-    if not todo:
-        print("[archive] Archive complete — nothing to mirror.")
-        return 0
 
     mirrored = 0
     missing = 0

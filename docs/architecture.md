@@ -328,7 +328,11 @@ behavior, update its entry here in the same PR.
   global sequence, not per-category. Gated on `civicclerk_archive.enabled`
   (shipped `false`; activated 2026-09-06 (Trisha) — DPW + BOC Drive folders
   created, `GOAUTH_DPW_FOLDER_ID`/`GOAUTH_BOC_FOLDER_ID` set).
-- `archiver.py` — the durable nSITE PDF → Drive mirror (ADR 007). Two entry
+- `archiver.py` — the durable nSITE PDF → Drive mirror (ADR 007). Since
+  2026-11-06 (CODER-PLAN step 6) `run()` decides whether anything is left to
+  mirror BEFORE listing nSITE, and lists nSITE only when something is (it
+  needs the listing's doc URL and facility SRN, which `_state` doesn't carry
+  and which name the Drive copy). Two entry
   points: `mirror_one_now()`, called INLINE from watcher.py/backfill.py at
   write time (ADR 007 addendum, 2026-08-23) so a same-day Sheet row/alert can
   link to the durable Drive copy instead of the referer-fragile nSITE link
@@ -448,6 +452,12 @@ behavior, update its entry here in the same PR.
   window too, retry once, then fail); `process_one_doc` is deliberately not
   wrapped (its own per-doc handling already treats a 429 as a no-strike
   transient).
+  **FORCE_REPROCESS reads the Mirror (CODER-PLAN step 6, 2026-11-06):** on
+  apply, `mirror_source()` is the pipeline's `fetch_source`: a force doc with a
+  Drive link in Archived PDFs is read from that Mirror copy through the
+  service account (read-only; must be a PDF), else downloaded from nSITE as
+  before. The Mirror copy is the OCR'd one, so `ocr_applied` in the new
+  `_state` payload can read False where the first pass ran OCR.
 - **Facility scope (ADR 064, 2026-10-07):** each `facilities:` entry is `core`
   (default — Arbor Hills/GFL) or `scope: related` (a neighboring/watershed site,
   e.g. the Johnson Creek drain restoration). Related docs go ONLY to the
@@ -488,7 +498,9 @@ behavior, update its entry here in the same PR.
   well_watch / urgent-digest / owner review-flag email, the backfill's
   error-count clearing); the backfill's FORCE purge is the `purge_first=`
   argument to `process_one_doc()`, not a `Job` field. A cross-cutting change
-  is wired ONCE, here.
+  is wired ONCE, here. `RunContext.fetch_source` (optional, `(d, local) ->
+  bool`) can supply the PDF instead of the nSITE download; only backfill's
+  FORCE_REPROCESS apply sets it.
 - `watcher.py` — daily new-doc check + alerts (+ WDS Stream C when enabled).
   Stream C (`wds_watcher.py` + `wds_client.py`) polls eight WDS collections for
   site 475946: applications/qmr/annual/evaluations/compliance_actions plus

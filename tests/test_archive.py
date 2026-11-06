@@ -580,3 +580,31 @@ def test_mirror_one_now_threads_ocr_stats_to_upload(monkeypatch, tmp_path):
     av.mirror_one_now(object(), FakeSheets(), "SID", _doc(), {},
                       local_path=str(tmp_path / "a.pdf"), ocr_stats=sentinel)
     assert got == [sentinel]
+
+
+# --- CODER-PLAN step 6: no nSITE listing when nothing is left to mirror ------------
+
+def _run_setup(monkeypatch, processed, archived):
+    import archiver as av
+    monkeypatch.setattr(av.ac, "is_configured", lambda *a, **k: True)
+    monkeypatch.setattr(av.ac, "oauth_drive_service", lambda: object())
+    monkeypatch.setattr(av, "load_config", lambda: {"archive": {"batch_size": 10}})
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.setattr(av.dc, "sheets_service", lambda: object())
+    monkeypatch.setattr(av.sw, "ensure_tabs", lambda *a, **k: None)
+    monkeypatch.setattr(av.sw, "read_state", lambda *a, **k: {"processed": processed})
+    monkeypatch.setattr(av.sw, "archived_doc_ids", lambda *a, **k: set(archived))
+    listed = []
+    monkeypatch.setattr(av.nc, "make_session", lambda: object())
+    monkeypatch.setattr(av.nc, "fetch_all_documents", lambda s, c: listed.append(1) or [])
+    return av, listed
+
+
+def test_run_skips_the_nsite_listing_when_everything_is_archived(monkeypatch):
+    av, listed = _run_setup(monkeypatch, {"1": {}, "2": {}}, ["1", "2"])
+    assert av.run() == 0 and listed == []
+
+
+def test_run_still_lists_nsite_when_a_doc_needs_mirroring(monkeypatch):
+    av, listed = _run_setup(monkeypatch, {"1": {}, "2": {}}, ["1"])
+    assert av.run() == 1 and listed == [1]   # the listing came back empty: old abort
