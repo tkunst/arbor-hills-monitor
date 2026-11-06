@@ -121,6 +121,27 @@ Two fixes:
     interrupt a pure CPU-bound loop inside PyMuPDF's C extension (e.g. a
     pathological `image_only_pages()` call), so this is a strong
     mitigation, not an absolute guarantee, against every conceivable hang.
+
+ADDENDUM (2026-11-06, CODER-PLAN step 5 / ADR 073): the `Mirror Index` tab
+now steers --apply, when `mirror_index.enabled` is on:
+  - Candidates are still the archive tabs' rows (same `{tab}:{id}` state keys),
+    but rows the index marks `ocr_partial` / `no_text` go FIRST.
+  - A row the index marks `native` / `ocr_full` is skipped WITHOUT a download
+    only when Drive's LIVE sha256Checksum (one batched metadata lookup through
+    the OAuth client) equals the row's `mirror_sha256` (ADR 073's fail-safe
+    rule). Such a skip writes no state entry (a later change is re-checked) and
+    does not count against `_MAX_SCAN_PER_RUN`. No row, a `hand_curated` row,
+    `unknown`, a blank or different sha, or a failed lookup: the old download
+    check, unchanged. The index is read STRICTLY: a failed read stops the run,
+    it never reads as "empty".
+  - After a successful in-place replacement (`done` / `done_partial` /
+    `done_unverified`) the row is updated through `update_file_content(index=)`:
+    Drive's new sha/md5/size/revision, the replacement's page stats
+    (`text_status`, `ocr_engine`) and the revision pinned before the overwrite
+    (`raw_revision_pinned`).
+  - The dry run still makes ZERO Drive calls; with the flag on it adds the
+    index's own counts, labelled as not checked against Drive.
+With the flag off (or an empty index) every path is exactly the old one.
 """
 from __future__ import annotations
 
@@ -138,6 +159,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import archive_client as ac  # noqa: E402
+import mirror_index as mi  # noqa: E402
 import ocr_util  # noqa: E402
 import sheet_writer as sw  # noqa: E402
 
@@ -237,6 +259,13 @@ SOURCE_TABS = [
     (sw.TAB_CIVICCLERK_ARCHIVE, "File ID", "Archive Link"),
 ]
 
+# Mirror Index source_kind for each archive tab (ADR 073).
+_TAB_KIND = {
+    sw.TAB_ARCHIVE: "nsite",
+    sw.TAB_MMPC_ARCHIVE: "mmpc",
+    sw.TAB_CIVICCLERK_ARCHIVE: "civicclerk",
+}
+
 _FILE_ID_PATTERNS = (
     re.compile(r"/file/d/([a-zA-Z0-9_-]+)"),   # https://drive.google.com/file/d/<id>/view...
     re.compile(r"[?&]id=([a-zA-Z0-9_-]+)"),     # https://drive.google.com/open?id=<id> / uc?id=<id>
@@ -258,6 +287,59 @@ def extract_file_id(link: str) -> str | None:
         if m:
             return m.group(1)
     return None
+
+
+def index_row(cand: dict, index: dict | None) -> dict | None:
+    """The Mirror Index row for this candidate's Drive file, or None. A
+    `hand_curated` row is ignored (not this app's file to judge or rewrite)."""
+    if not index:
+        return None
+    fid = extract_file_id(cand.get("link", ""))
+    row = index.get(fid) if fid else None
+    if not row or row.get("source_kind") == "hand_curated":
+        return None
+    return row
+
+
+def order_candidates(queue: list[tuple], index: dict | None) -> list[tuple]:
+    """(tab, cand, ...) tuples with the rows the index marks ocr_partial /
+    no_text first, everything else after, each group in its old (tab) order.
+    Pure."""
+    if not index:
+        return list(queue)
+    flagged, rest = [], []
+    for item in queue:
+        row = index_row(item[1], index)
+        (flagged if row and row.get("text_status") in mi.NEEDS_OCR_STATUSES else rest).append(item)
+    return flagged + rest
+
+
+def provably_searchable(cand: dict, index: dict | None, live: dict) -> bool:
+    """True only when the index says native/ocr_full AND Drive's live sha
+    equals the row's mirror_sha256 (ADR 073's fail-safe rule). Pure."""
+    row = index_row(cand, index)
+    if not row or row.get("text_status") not in mi.SEARCHABLE_STATUSES:
+        return False
+    return mi.matches_live(row, live.get(extract_file_id(cand["link"]) or ""))
+
+
+def _index_target(cand: dict, tab: str, index: dict | None, cfg: dict | None,
+                  sheets_svc, sheet_id: str):
+    """mirror_index.IndexTarget for this candidate's replacement, or None
+    (flag off, no index read, or a hand_curated row we must not rewrite).
+    Source kind/key come from the file's own row when it has one, else from
+    its archive tab and Sheet id."""
+    if index is None or cfg is None:
+        return None
+    fid = extract_file_id(cand.get("link", ""))
+    raw = index.get(fid) if fid else None
+    if raw and raw.get("source_kind") == "hand_curated":
+        return None
+    kind = (raw or {}).get("source_kind") or _TAB_KIND.get(tab)
+    key = (raw or {}).get("source_key") or cand.get("id", "")
+    if kind not in mi.SOURCE_KINDS:
+        return None
+    return mi.target(cfg, sheets_svc, sheet_id, kind, key)
 
 
 def _now_iso() -> str:
@@ -352,7 +434,7 @@ def enumerate_tab(sheets_svc, sheet_id: str, tab: str, id_header: str,
 
 
 def process_candidate(drive, cand: dict, tmp_dir: str,
-                      phase: list[str] | None = None) -> dict:
+                      phase: list[str] | None = None, index=None) -> dict:
     """Download, check, and (if needed) OCR + re-upload-in-place ONE
     candidate. Returns a state-entry dict (at least {"status": ...}) — NEVER
     RAISES (for ITS OWN failure modes — see the ADDENDUM below for the one
@@ -388,7 +470,13 @@ def process_candidate(drive, cand: dict, tmp_dir: str,
     why it is deliberately NOT caught by the broad `except Exception` blocks
     below), the LAST phase written before the interrupt tells a human
     reviewing the state file afterward roughly where it got stuck. This is
-    diagnostic only — `phase` is never read by this function, only written."""
+    diagnostic only — `phase` is never read by this function, only written.
+
+    ADDENDUM (2026-11-06, ADR 073): `index`, a mirror_index.IndexTarget or
+    None. When given, the in-place update also rewrites this file's Mirror
+    Index row (new Drive checksums, the replacement's page stats, and the
+    revision pinned before the overwrite); a failed index write never fails
+    the update (mirror_index.record never raises)."""
     def _set_phase(name: str) -> None:
         if phase is not None:
             phase[0] = name
@@ -453,8 +541,17 @@ def process_candidate(drive, cand: dict, tmp_dir: str,
 
         _set_phase("upload")
         try:
-            ac.pin_head_revision(drive, file_id)
-            new_id = ac.update_file_content(drive, file_id, searchable)
+            pinned = ac.pin_head_revision(drive, file_id)
+            if index is None:
+                new_id = ac.update_file_content(drive, file_id, searchable)
+            else:
+                try:
+                    stats = ocr_util.page_stats(searchable)
+                except Exception:  # noqa: BLE001 — no stats = text_status "unknown" (fail-safe)
+                    stats = None
+                new_id = ac.update_file_content(drive, file_id, searchable, index=index,
+                                                ocr_stats=stats,
+                                                raw_revision_pinned=str(pinned or ""))
         except Exception as e:  # noqa: BLE001 — recorded, not raised
             return {"status": "error_upload", "note": type(e).__name__}
         if new_id != file_id:
@@ -478,7 +575,8 @@ def process_candidate(drive, cand: dict, tmp_dir: str,
 
 
 def run_apply(sheets_svc, sheet_id: str, drive, state: dict, limit: int,
-              state_path: str = STATE_PATH) -> dict:
+              state_path: str = STATE_PATH, index: dict | None = None,
+              cfg: dict | None = None) -> dict:
     """Mutates `state` in place, saving it incrementally after EVERY
     candidate (a crash or Ctrl-C mid-run must never lose the record of a
     file whose Drive content was already overwritten). Returns
@@ -489,72 +587,92 @@ def run_apply(sheets_svc, sheet_id: str, drive, state: dict, limit: int,
     for the duration of this call (restored in `finally`, never left armed
     process-wide after this function returns) and prints a before/after
     progress line for every candidate -- see _CANDIDATE_TIMEOUT_S and
-    _alarm_handler above."""
+    _alarm_handler above.
+
+    ADDENDUM (2026-11-06, ADR 073): `index` is mirror_index.read_index()'s
+    result (None = flag off: the old path exactly) and `cfg` the loaded
+    config (for mirror_index.target()). See the module docstring's ADDENDUM:
+    index-flagged rows go first, and a row is skipped without a download only
+    on a live Drive sha match."""
     scanned = 0
     fixed = 0
     by_status: Counter = Counter()
     aborted = False
+    # Every unresolved candidate, in the old tab order (state keys unchanged).
+    queue = []
+    for tab, id_header, link_header in SOURCE_TABS:
+        for cand in enumerate_tab(sheets_svc, sheet_id, tab, id_header, link_header):
+            already = state.get(cand["key"])
+            already_status = already.get("status") if already else None
+            if already is not None and already_status not in _RETRYABLE_STATUSES:
+                continue  # resolved by a prior run (and not a retryable transient failure)
+            queue.append((tab, cand, already_status))
+    live: dict = {}
+    if index:
+        ask = [extract_file_id(c["link"]) for _t, c, _s in queue
+               if (index_row(c, index) or {}).get("text_status") in mi.SEARCHABLE_STATUSES]
+        live = mi.live_sha256(drive, [a for a in ask if a])
+        print(f"[backfill] index: {len(ask)} row(s) marked searchable, "
+              f"{len(live)} live sha(s) read", flush=True)
+        queue = order_candidates(queue, index)
     previous_handler = signal.signal(signal.SIGALRM, _alarm_handler)
     try:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            for tab, id_header, link_header in SOURCE_TABS:
+            for tab, cand, already_status in queue:
                 if aborted or scanned >= _MAX_SCAN_PER_RUN or fixed >= limit:
                     break
-                for cand in enumerate_tab(sheets_svc, sheet_id, tab, id_header, link_header):
-                    already = state.get(cand["key"])
-                    already_status = already.get("status") if already else None
-                    if already is not None and already_status not in _RETRYABLE_STATUSES:
-                        continue  # resolved by a prior run (and not a retryable transient failure)
-                    if scanned >= _MAX_SCAN_PER_RUN or fixed >= limit:
+                if provably_searchable(cand, index, live):
+                    # Free and stateless: a later content change is re-checked.
+                    by_status["skip_index_searchable"] += 1
+                    continue
+                scanned += 1
+                print(f"[backfill] {scanned} {cand['key']} starting", flush=True)
+                phase = ["start"]
+                t0 = time.monotonic()
+                signal.alarm(_CANDIDATE_TIMEOUT_S)
+                try:
+                    result = process_candidate(drive, cand, tmp_dir, phase=phase,
+                                               index=_index_target(cand, tab, index, cfg,
+                                                                   sheets_svc, sheet_id))
+                except _CandidateTimedOut:
+                    result = {"status": "error_timeout", "note": f"phase={phase[0]}"}
+                finally:
+                    signal.alarm(0)
+                elapsed = time.monotonic() - t0
+                status = result["status"]
+                extra = {k: v for k, v in result.items() if k != "status"}
+
+                # If this exact failure already happened once before for this
+                # SAME file (a retryable status, retried, and failed the
+                # SAME way again), it's file-specific, not systemic -- make
+                # it terminal so the run can move past it, instead of
+                # aborting a second time over the same file every run.
+                is_repeat_failure = status in _ABORT_RUN_STATUSES and already_status == status
+                recorded_status = f"{status}_persistent" if is_repeat_failure else status
+
+                _record(state, cand["key"], recorded_status, link=cand["link"], tab=tab, **extra)
+                save_state(state, state_path)
+                by_status[recorded_status] += 1
+                # NEVER print `extra`/`note` here -- error_id_changed's note
+                # carries a Drive file id pair, error_download/error_upload's
+                # carries an exception class name. Key + status + seconds
+                # only; this is the public Actions log.
+                print(f"[backfill] {scanned} {cand['key']} {recorded_status} "
+                      f"{elapsed:.1f}s", flush=True)
+                if status in _COUNTS_AGAINST_LIMIT:
+                    fixed += 1
+                if status in _ABORT_RUN_STATUSES:
+                    if is_repeat_failure:
+                        print(f"[backfill] {status} on {cand['key']} failed the SAME way "
+                              f"twice -- treating it as file-specific, not systemic. "
+                              f"Recorded {recorded_status} (terminal); continuing this run.")
+                    else:
+                        print(f"[backfill] {status} on {cand['key']} looks SYSTEMIC "
+                              f"(credentials/scope/token), not a one-off bad file -- "
+                              f"aborting the rest of this run rather than repeating the "
+                              f"same failure. This file will retry on the next run.")
+                        aborted = True
                         break
-                    scanned += 1
-                    print(f"[backfill] {scanned} {cand['key']} starting", flush=True)
-                    phase = ["start"]
-                    t0 = time.monotonic()
-                    signal.alarm(_CANDIDATE_TIMEOUT_S)
-                    try:
-                        result = process_candidate(drive, cand, tmp_dir, phase=phase)
-                    except _CandidateTimedOut:
-                        result = {"status": "error_timeout", "note": f"phase={phase[0]}"}
-                    finally:
-                        signal.alarm(0)
-                    elapsed = time.monotonic() - t0
-                    status = result["status"]
-                    extra = {k: v for k, v in result.items() if k != "status"}
-
-                    # If this exact failure already happened once before for this
-                    # SAME file (a retryable status, retried, and failed the
-                    # SAME way again), it's file-specific, not systemic -- make
-                    # it terminal so the run can move past it, instead of
-                    # aborting a second time over the same file every run.
-                    is_repeat_failure = status in _ABORT_RUN_STATUSES and already_status == status
-                    recorded_status = f"{status}_persistent" if is_repeat_failure else status
-
-                    _record(state, cand["key"], recorded_status, link=cand["link"], tab=tab, **extra)
-                    save_state(state, state_path)
-                    by_status[recorded_status] += 1
-                    # NEVER print `extra`/`note` here -- error_id_changed's note
-                    # carries a Drive file id pair, error_download/error_upload's
-                    # carries an exception class name. Key + status + seconds
-                    # only; this is the public Actions log.
-                    print(f"[backfill] {scanned} {cand['key']} {recorded_status} "
-                          f"{elapsed:.1f}s", flush=True)
-                    if status in _COUNTS_AGAINST_LIMIT:
-                        fixed += 1
-                    if status in _ABORT_RUN_STATUSES:
-                        if is_repeat_failure:
-                            print(f"[backfill] {status} on {cand['key']} failed the SAME way "
-                                  f"twice -- treating it as file-specific, not systemic. "
-                                  f"Recorded {recorded_status} (terminal); continuing this run.")
-                        else:
-                            print(f"[backfill] {status} on {cand['key']} looks SYSTEMIC "
-                                  f"(credentials/scope/token), not a one-off bad file -- "
-                                  f"aborting the rest of this run rather than repeating the "
-                                  f"same failure. This file will retry on the next run.")
-                            aborted = True
-                            break
-                if aborted:
-                    break
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, previous_handler)
@@ -566,16 +684,24 @@ def run_apply(sheets_svc, sheet_id: str, drive, state: dict, limit: int,
 # ---------------------------------------------------------------------------
 
 
-def dry_run_report(sheets_svc, sheet_id: str, state: dict) -> str:
+def dry_run_report(sheets_svc, sheet_id: str, state: dict, index: dict | None = None) -> str:
     lines = ["DRY-RUN -- this makes ZERO Drive API calls. Sheet-tab candidate "
              "counts only (see the module docstring for why this can't say how "
              "many files actually need OCR):", ""]
     total = resolved_total = 0
+    says: Counter = Counter()
     for tab, id_header, link_header in SOURCE_TABS:
         candidates = enumerate_tab(sheets_svc, sheet_id, tab, id_header, link_header)
         resolved = sum(1 for c in candidates
                       if c["key"] in state
                       and state[c["key"]].get("status") not in _RETRYABLE_STATUSES)
+        if index is not None:
+            for c in candidates:
+                if c["key"] in state and state[c["key"]].get("status") not in _RETRYABLE_STATUSES:
+                    continue
+                st = (index_row(c, index) or {}).get("text_status")
+                says["needs_ocr" if st in mi.NEEDS_OCR_STATUSES
+                     else "searchable" if st in mi.SEARCHABLE_STATUSES else "other"] += 1
         lines.append(f"  {tab:<28} {len(candidates):>5} candidate row(s), "
                      f"{resolved:>5} already resolved by a prior --apply run")
         total += len(candidates)
@@ -583,6 +709,13 @@ def dry_run_report(sheets_svc, sheet_id: str, state: dict) -> str:
     lines.append("")
     lines.append(f"  TOTAL: {total} candidate row(s) across {len(SOURCE_TABS)} tab(s), "
                  f"{resolved_total} already resolved, {total - resolved_total} not yet checked.")
+    if index is not None:
+        lines.append("")
+        lines.append("  Mirror Index says (NOT checked against Drive; --apply checks each "
+                     "'searchable' row's live sha before skipping it):")
+        lines.append(f"    ocr_partial/no_text (done first): {says['needs_ocr']}")
+        lines.append(f"    native/ocr_full (skipped if the live sha matches): {says['searchable']}")
+        lines.append(f"    no row / unknown / hand_curated (old download check): {says['other']}")
     lines.append("")
     lines.append("Re-run with --apply to actually download, check, and (if needed) OCR + "
                  "re-upload in place, up to --limit (default 100) per run.")
@@ -659,12 +792,19 @@ def main(argv=None) -> int:
     _load_dotenv()
     import drive_client
 
+    import config_loader
+
     sheet_id = os.environ["GSHEET_ID"]
     sheets_svc = drive_client.sheets_service()
     state = load_state()
+    cfg = config_loader.load_config()
+    # ADR 073: a STRICT read (a state tab): a transport failure raises and
+    # stops the run here, it never reads as "empty". Flag off = None = the
+    # old path exactly.
+    index = mi.read_index(sheets_svc, sheet_id) if mi.enabled(cfg) else None
 
     if not args.apply:
-        print(dry_run_report(sheets_svc, sheet_id, state))
+        print(dry_run_report(sheets_svc, sheet_id, state, index))
         return 0
 
     if not all(os.environ.get(k) for k in ac.CREDENTIAL_ENV):
@@ -689,7 +829,7 @@ def main(argv=None) -> int:
         return 1
     drive = ac.oauth_drive_service()
 
-    result = run_apply(sheets_svc, sheet_id, drive, state, args.limit)
+    result = run_apply(sheets_svc, sheet_id, drive, state, args.limit, index=index, cfg=cfg)
     save_state(state)
     print(render_apply_summary(result))
     return 0

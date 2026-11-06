@@ -52,6 +52,11 @@ HEADERS = [
 SOURCE_KINDS = ("nsite", "mmpc", "civicclerk", "hand_curated")
 TEXT_STATUSES = ("native", "ocr_full", "ocr_partial", "no_text", "unknown")
 
+# ADR 073: the only two statuses a reader may treat as already searchable,
+# and the two the OCR backfill works on first (CODER-PLAN step 5).
+SEARCHABLE_STATUSES = ("native", "ocr_full")
+NEEDS_OCR_STATUSES = ("ocr_partial", "no_text")
+
 # Fields asked of Drive's create/update response ONLY when indexing is on
 # (flag off keeps upload_file()'s original "id, webViewLink" request).
 DRIVE_FIELDS = "id, webViewLink, sha256Checksum, md5Checksum, size, headRevisionId"
@@ -237,3 +242,51 @@ def record(index: IndexTarget | None, drive_meta: dict, stats, *,
     except Exception as e:  # noqa: BLE001 — the upload already succeeded; never fail it
         log.warning("mirror_index: index write skipped (class=%s)", type(e).__name__)
         return False
+
+
+# ---------------------------------------------------------------------------
+# Readers' half of the fail-safe rule (CODER-PLAN step 5)
+# ---------------------------------------------------------------------------
+
+# Drive's batch endpoint takes at most 100 calls per batch request.
+_BATCH = 100
+
+
+def live_sha256(service, file_ids, *, batch_size: int = _BATCH) -> dict[str, str]:
+    """{file_id: Drive's LIVE sha256Checksum} for the ids `service` can see,
+    asked in batches of `batch_size` (files.get, one metadata call each, no
+    download). NEVER RAISES: an id whose lookup fails, or that comes back with
+    no sha, is simply absent, and every caller treats absent as "process the
+    file the old way" (ADR 073). A failed batch stops the lookups (the rest
+    are absent too) rather than retrying into an outage or a dead token."""
+    out: dict[str, str] = {}
+    ids = [str(i) for i in dict.fromkeys(file_ids) if i]
+    if service is None or not ids:
+        return out
+
+    def _cb(request_id, response, exception):
+        if exception is None and response:
+            sha = str(response.get("sha256Checksum") or "")
+            if sha:
+                out[request_id] = sha
+
+    for start in range(0, len(ids), batch_size):
+        try:
+            batch = service.new_batch_http_request(callback=_cb)
+            for fid in ids[start:start + batch_size]:
+                batch.add(service.files().get(fileId=fid, fields="id, sha256Checksum"),
+                          request_id=fid)
+            batch.execute()
+        except Exception as e:  # noqa: BLE001 — absent = old path; never fail the caller
+            log.warning("mirror_index: live sha lookup stopped (class=%s)", type(e).__name__)
+            break
+    return out
+
+
+def matches_live(row: dict | None, live_sha: str | None) -> bool:
+    """True only when the index row's `mirror_sha256` is non-blank and equals
+    Drive's live sha: the ONE case a reader may skip work on (ADR 073)."""
+    if not row or not live_sha:
+        return False
+    recorded = str(row.get("mirror_sha256") or "").strip()
+    return bool(recorded) and recorded == str(live_sha).strip()

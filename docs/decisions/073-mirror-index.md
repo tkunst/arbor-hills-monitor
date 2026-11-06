@@ -189,3 +189,45 @@ existed. Dry run by default; `--apply` waits for Trisha (Gate C).
   with engine `none`; their sha matches Drive's, so no rerun would correct
   them. The dry run prints how many Vision entries were loaded and the
   latest date.
+
+## Addendum (2026-11-06, CODER-PLAN step 5): the first readers
+
+Two scripts now read what this ADR records, both under the fail-safe rule
+(skip work only when Drive's live `sha256Checksum` equals a recorded sha).
+`mirror_index.live_sha256()` asks Drive for live shas in batches of 100
+`files.get` metadata calls (no download); a failed call or batch leaves
+those ids absent, which every caller treats as "process the old way".
+
+- **`scripts/backfill_mirror_ocr.py` (ADR 069).** With `mirror_index.enabled`
+  on, `main()` reads the index STRICTLY (a transport failure stops the run).
+  Candidates are still the three archive tabs' rows with the same
+  `{tab}:{id}` state keys. Rows whose index `text_status` is `ocr_partial` or
+  `no_text` go first. A row the index calls `native` or `ocr_full` is skipped
+  without a download only when its live sha (one lookup through the OAuth
+  client for all such rows) equals `mirror_sha256`. Such a skip writes no
+  state entry, so a later content change is checked again, and it does not
+  count against the per-run scan cap. No row, `unknown`, a `hand_curated`
+  row, a blank or different sha, or a failed lookup gets the old download
+  check. After an in-place replacement (`done`, `done_partial`,
+  `done_unverified`), `update_file_content(index=...)` rewrites the row:
+  Drive's new checksums, the replacement's `page_stats()` (failure = no stats
+  = `unknown`), and the revision `pin_head_revision()` kept (`raw_revision_pinned`).
+  A `hand_curated` row is never rewritten. The dry run still makes no Drive
+  call and prints the index's counts as "not checked against Drive".
+  Real data, 2026-11-06 (service account, read-only): 3,971 archive-tab rows;
+  the index calls 3,851 searchable, 106 `ocr_partial`/`no_text`, 14
+  `unknown`; all 3,851 live shas matched (22 s of batched lookups), so an
+  `--apply` run would download-check 120 files instead of 3,971.
+- **`scripts/build_fulltext_cache.py` (ADR 062 addendum).** Its workflow has
+  no Sheet credentials, so it does not read this tab; the live Drive check the
+  rule requires is enough on its own. Each fetch records the sha256 of the
+  downloaded bytes in the cache manifest. For a cached Mirror copy with a
+  recorded sha, the archiver's OAuth client asks Drive for the live sha:
+  different = fetch again (new content: the textless-page refresh count
+  restarts; a non-transient failure counts a `change_errors` strike, 3 and it
+  goes back to the old rule), equal = never refetched (the 30-day timer no
+  longer applies). No recorded sha (everything cached before 2026-11-06), an
+  nSITE link, or no live sha (lookup failed, no OAuth) keeps the old timer
+  rule. Verified on real Mirror files: the sha of the public-link download
+  equals Drive's `sha256Checksum`, and after editing one recorded sha only that
+  document was fetched again.

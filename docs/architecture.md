@@ -253,6 +253,15 @@ behavior, update its entry here in the same PR.
   `mirror_index.enabled`. Tab created on first enabled write, not by
   `ensure_tabs()`. Readers skip work only on a live Drive sha256 match.
   `source_kind` `hand_curated` comes only from the backfill below.
+  Readers' helpers (CODER-PLAN step 5, 2026-11-06): `live_sha256()` (batched
+  `files.get` metadata lookups, never raises; a failed lookup is absent) and
+  `matches_live()` (the one skip condition). Readers today:
+  `scripts/backfill_mirror_ocr.py` (ADR 069; reads the index STRICTLY, does
+  `ocr_partial`/`no_text` rows first, skips a `native`/`ocr_full` row with no
+  download only on a live sha match, and rewrites the row after an in-place
+  replacement with the new checksums, page stats and pinned raw revision) and
+  `scripts/build_fulltext_cache.py` (no Sheet access: it compares Drive's live
+  sha with the sha it recorded for the cached bytes, see `fulltext_search.py`).
 - `scripts/backfill_mirror_index.py` — **ADR 073 addendum** (CODER-PLAN step
   4, 2026-11-05): one-time `Mirror Index` fill for the PDFs linked from
   `Archived PDFs`, `MMPC Archived Files`, `CivicClerk Archived Files` and
@@ -1237,7 +1246,10 @@ behavior, update its entry here in the same PR.
   `check_publish_safety` cannot read Pagefind's compressed shards.
   `scripts/build_fulltext_cache.py` fills an incremental text cache (Drive OAuth
   with a public-link fallback; at most `max_downloads_per_run` per run; 3 retries;
-  raw extraction stops at 3M chars a document) and `scripts/build_fulltext_index.py`
+  raw extraction stops at 3M chars a document; since 2026-11-06 it records each
+  fetch's sha256 and refetches a cached Mirror copy exactly when Drive's live
+  sha differs, through batched OAuth metadata lookups, keeping the old 30-day
+  textless-page timer only when either sha is unknown: ADR 073 addendum) and `scripts/build_fulltext_index.py`
   writes the Pagefind bundle (`pagefind[extended]`, own hashed
   `requirements-fulltext.txt`) plus `coverage.json`, refusing one over
   `max_bundle_mb`. `.github/workflows/fulltext-index.yml` runs both after

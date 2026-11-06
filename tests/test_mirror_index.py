@@ -320,3 +320,64 @@ def test_meeting_archivers_build_a_source_target(modname, kind):
     src = inspect.getsource(importlib.import_module(modname).run)
     assert f'mi.target(cfg, sheets, sheet_id, "{kind}", file_id, local_is_source=True)' in src
     assert "index=index" in src
+
+
+# --- readers' half of the fail-safe rule (CODER-PLAN step 5) -------------------
+
+class _FakeBatch:
+    def __init__(self, svc, callback):
+        self.svc, self.cb, self.calls = svc, callback, []
+
+    def add(self, req, request_id):
+        self.calls.append((req, request_id))
+
+    def execute(self):
+        self.svc.batches.append([rid for _, rid in self.calls])
+        if self.svc.fail_batch is not None and len(self.svc.batches) - 1 == self.svc.fail_batch:
+            raise RuntimeError("batch failed")
+        for req, rid in self.calls:
+            if rid in self.svc.errors:
+                self.cb(rid, None, RuntimeError("404"))
+            else:
+                self.cb(rid, {"id": rid, "sha256Checksum": self.svc.shas.get(rid, "")}, None)
+
+
+class _FakeDrive:
+    def __init__(self, shas, errors=(), fail_batch=None):
+        self.shas, self.errors, self.fail_batch, self.batches = shas, set(errors), fail_batch, []
+
+    def new_batch_http_request(self, callback):
+        return _FakeBatch(self, callback)
+
+    def files(self):
+        return self
+
+    def get(self, fileId, fields):
+        assert "sha256Checksum" in fields
+        return ("get", fileId)
+
+
+def test_live_sha256_batches_and_drops_failed_or_blank_lookups():
+    drive = _FakeDrive({"a": "SA", "b": "SB", "c": "", "d": "SD"}, errors={"b"})
+    got = mi.live_sha256(drive, ["a", "b", "c", "d", "a", ""], batch_size=2)
+    assert got == {"a": "SA", "d": "SD"}             # b failed, c had no sha
+    assert drive.batches == [["a", "b"], ["c", "d"]]  # deduplicated, blank id dropped
+
+
+def test_live_sha256_stops_after_a_failed_batch_and_never_raises():
+    drive = _FakeDrive({"a": "SA", "b": "SB", "c": "SC"}, fail_batch=1)
+    assert mi.live_sha256(drive, ["a", "b", "c"], batch_size=1) == {"a": "SA"}
+    assert len(drive.batches) == 2
+    assert mi.live_sha256(None, ["a"]) == {} and mi.live_sha256(drive, []) == {}
+
+
+@pytest.mark.parametrize("row,live,expected", [
+    ({"mirror_sha256": "S"}, "S", True),
+    ({"mirror_sha256": "S"}, "T", False),
+    ({"mirror_sha256": ""}, "", False),
+    ({"mirror_sha256": ""}, "S", False),
+    ({"mirror_sha256": "S"}, None, False),
+    (None, "S", False),
+])
+def test_matches_live_is_the_only_skip(row, live, expected):
+    assert mi.matches_live(row, live) is expected

@@ -158,7 +158,8 @@ def test_dry_run_report_signature_has_no_drive_parameter():
 def test_main_dry_run_never_touches_drive_end_to_end(monkeypatch, tmp_path, capsys):
     # End-to-end proof (not just a signature check): running main() with no
     # --apply flag must never call ANY Drive function, even indirectly.
-    tabs = {sw.TAB_ARCHIVE: [sw.ARCHIVE_HEADERS]}
+    import mirror_index as mi
+    tabs = {sw.TAB_ARCHIVE: [sw.ARCHIVE_HEADERS], mi.TAB: [mi.HEADERS]}
     monkeypatch.setenv("GSHEET_ID", "SID")
     monkeypatch.chdir(tmp_path)   # so a stray local-state/ write (bug) can't land in the repo
 
@@ -641,7 +642,7 @@ def test_run_apply_watchdog_times_out_a_hung_candidate_and_continues(monkeypatch
     }
     state = {}
 
-    def fake_process(drive, cand, tmp_dir, phase=None):
+    def fake_process(drive, cand, tmp_dir, phase=None, **_kw):
         if cand["id"] == "doc-1":
             if phase is not None:
                 phase[0] = "ocr"
@@ -682,3 +683,160 @@ def test_run_apply_restores_the_previous_sigalrm_handler_on_exit(tmp_path):
         assert signal.getsignal(signal.SIGALRM) is someone_elses_handler
     finally:
         signal.signal(signal.SIGALRM, previous)
+
+
+# ---------------------------------------------------------------------------
+# Mirror Index (ADR 073, CODER-PLAN step 5)
+# ---------------------------------------------------------------------------
+
+import mirror_index as mi  # noqa: E402
+
+ON_CFG = {"mirror_index": {"enabled": True}}
+
+
+def _row(fid, status, sha="S", kind="nsite", key="k"):
+    return {"drive_id": fid, "source_kind": kind, "source_key": key, "mirror_sha256": sha,
+            "text_status": status}
+
+
+def _archive_tabs(n):
+    return {sw.TAB_ARCHIVE: [sw.ARCHIVE_HEADERS] + [
+        [f"doc-{i}", "n", "d", "", "s", f"https://drive.google.com/file/d/F{i}/view", "ts"]
+        for i in range(1, n + 1)]}
+
+
+def test_run_apply_index_orders_flagged_first_and_skips_only_on_a_live_sha_match(monkeypatch, tmp_path):
+    index = {
+        "F1": _row("F1", "native", sha="S1"),              # live matches: skipped, no download
+        "F2": _row("F2", "native", sha="S2"),              # live differs: old check
+        "F3": _row("F3", "ocr_full", sha="S3"),            # no live sha: old check
+        "F4": _row("F4", "no_text"),                       # flagged: first
+        "F5": _row("F5", "native", sha="S5", kind="hand_curated"),  # ignored: old check
+        # F6: no row: old check
+    }
+    asked = []
+
+    def live(drive, ids):
+        asked.extend(ids)
+        return {"F1": "S1", "F2": "CHANGED", "F5": "S5"}
+
+    monkeypatch.setattr(bm.mi, "live_sha256", live)
+    seen = []
+    monkeypatch.setattr(bm, "process_candidate",
+                        lambda drive, cand, tmp, phase=None, index=None: seen.append(cand["id"])
+                        or {"status": "skip_has_text"})
+    state = {}
+    result = bm.run_apply(FakeSheets(_archive_tabs(6)), "SID", _fake_drive(), state, limit=100,
+                          state_path=str(tmp_path / "s.json"), index=index, cfg=ON_CFG)
+    assert sorted(asked) == ["F1", "F2", "F3"]            # only rows the index calls searchable
+    assert seen == ["doc-4", "doc-2", "doc-3", "doc-5", "doc-6"]
+    assert f"{sw.TAB_ARCHIVE}:doc-1" not in state          # a skip writes no state
+    assert result["scanned"] == 5 and result["by_status"]["skip_index_searchable"] == 1
+
+
+def test_run_apply_without_an_index_never_asks_drive_for_live_shas(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm.mi, "live_sha256",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no lookup")))
+    seen = []
+    monkeypatch.setattr(bm, "process_candidate",
+                        lambda drive, cand, tmp, phase=None, index=None: seen.append((cand["id"], index))
+                        or {"status": "skip_has_text"})
+    bm.run_apply(FakeSheets(_archive_tabs(2)), "SID", _fake_drive(), {}, limit=100,
+                 state_path=str(tmp_path / "s.json"))
+    assert seen == [("doc-1", None), ("doc-2", None)]
+
+
+def test_run_apply_passes_an_index_target_for_each_candidate(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm.mi, "live_sha256", lambda drive, ids: {})
+    got = []
+    monkeypatch.setattr(bm, "process_candidate",
+                        lambda drive, cand, tmp, phase=None, index=None: got.append(index)
+                        or {"status": "skip_has_text"})
+    sheets = FakeSheets(_archive_tabs(1))
+    bm.run_apply(sheets, "SID", _fake_drive(), {}, limit=100, state_path=str(tmp_path / "s.json"),
+                 index={}, cfg=ON_CFG)
+    assert got[0].source_kind == "nsite" and got[0].source_key == "doc-1" and got[0].sheet_id == "SID"
+
+
+def test_index_target_rules():
+    cand = {"id": "doc-1", "link": "https://drive.google.com/file/d/F1/view"}
+    s = object()
+    t = bm._index_target(cand, sw.TAB_MMPC_ARCHIVE, {"F1": _row("F1", "native", kind="mmpc", key="M9")},
+                         ON_CFG, s, "SID")
+    assert (t.source_kind, t.source_key) == ("mmpc", "M9")              # the row's own kind/key
+    t = bm._index_target(cand, sw.TAB_CIVICCLERK_ARCHIVE, {}, ON_CFG, s, "SID")
+    assert (t.source_kind, t.source_key) == ("civicclerk", "doc-1")     # no row: from the tab
+    assert bm._index_target(cand, sw.TAB_ARCHIVE, {"F1": _row("F1", "native", kind="hand_curated")},
+                            ON_CFG, s, "SID") is None                   # never rewrite a hand-curated row
+    assert bm._index_target(cand, sw.TAB_ARCHIVE, None, ON_CFG, s, "SID") is None
+    assert bm._index_target(cand, sw.TAB_ARCHIVE, {}, {"mirror_index": {"enabled": False}}, s, "SID") is None
+
+
+def test_process_candidate_with_index_updates_the_row_with_stats_and_pinned_revision(monkeypatch, tmp_path):
+    def fake_download(drive, fid, dest):
+        import fitz
+        doc = fitz.open()
+        doc.new_page().insert_text((72, 72), "text")
+        doc.save(dest)
+        doc.close()
+        return dest
+    monkeypatch.setattr(ac, "download_file", fake_download)
+    n = {"i": 0}
+
+    def pages(path):
+        n["i"] += 1
+        return {0} if n["i"] == 1 else set()
+    monkeypatch.setattr(ocr_util, "image_only_pages", pages)
+    # ensure_searchable returning the SAME path means "OCR failed"; give it a new one.
+    monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: path + ".s")
+    stats = object()
+    monkeypatch.setattr(ocr_util, "page_stats", lambda path: stats)
+    monkeypatch.setattr(ac, "pin_head_revision", lambda drive, fid: "REV7")
+    calls = []
+    monkeypatch.setattr(ac, "update_file_content",
+                        lambda drive, fid, path, **kw: calls.append(kw) or fid)
+    target = mi.IndexTarget(object(), "SID", "nsite", "doc-1")
+    result = bm.process_candidate(_fake_drive(), {"link": "https://drive.google.com/file/d/F1/view"},
+                                  str(tmp_path), index=target)
+    assert result["status"] == "done"
+    assert calls == [{"index": target, "ocr_stats": stats, "raw_revision_pinned": "REV7"}]
+
+
+def test_process_candidate_stats_failure_still_updates_with_unknown_stats(monkeypatch, tmp_path):
+    monkeypatch.setattr(ac, "download_file", lambda d, f, dest: open(dest, "wb").close() or dest)
+    n = {"i": 0}
+
+    def pages(path):
+        n["i"] += 1
+        return {0} if n["i"] == 1 else set()
+    monkeypatch.setattr(ocr_util, "image_only_pages", pages)
+    monkeypatch.setattr(ocr_util, "ensure_searchable", lambda path, **kw: path + ".s")
+    monkeypatch.setattr(ocr_util, "page_stats", lambda path: (_ for _ in ()).throw(OSError("x")))
+    monkeypatch.setattr(ac, "pin_head_revision", lambda drive, fid: "REV1")
+    calls = []
+    monkeypatch.setattr(ac, "update_file_content", lambda drive, fid, path, **kw: calls.append(kw) or fid)
+    target = mi.IndexTarget(object(), "SID", "nsite", "doc-1")
+    bm.process_candidate(_fake_drive(), {"link": "https://drive.google.com/file/d/F1/view"},
+                         str(tmp_path), index=target)
+    assert calls[0]["ocr_stats"] is None and calls[0]["raw_revision_pinned"] == "REV1"
+
+
+def test_dry_run_report_adds_index_counts_without_drive():
+    index = {"F1": _row("F1", "no_text"), "F2": _row("F2", "native")}
+    report = bm.dry_run_report(FakeSheets(_archive_tabs(3)), "SID", {}, index)
+    assert "NOT checked against Drive" in report
+    assert "(done first): 1" in report and "matches): 1" in report and "download check): 1" in report
+    assert "Mirror Index" not in bm.dry_run_report(FakeSheets(_archive_tabs(1)), "SID", {})
+
+
+def test_main_index_read_failure_stops_the_run(monkeypatch, tmp_path):
+    # FakeSheets raises a plain RuntimeError for an unknown tab: a STRICT read
+    # must propagate it, never read the index as empty.
+    monkeypatch.setenv("GSHEET_ID", "SID")
+    monkeypatch.chdir(tmp_path)
+    import config_loader
+    import drive_client
+    monkeypatch.setattr(config_loader, "load_config", lambda *a, **k: ON_CFG)
+    monkeypatch.setattr(drive_client, "sheets_service", lambda: FakeSheets(_archive_tabs(1)))
+    with pytest.raises(RuntimeError):
+        bm.main([])
