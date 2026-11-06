@@ -464,3 +464,41 @@ def test_main_prints_error_class_only_and_refuses_detail_in_repo(monkeypatch, ca
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     with pytest.raises(SystemExit):
         bmi.main(["--root", "ROOT", "--detail-out", os.path.join(repo, "x.tsv")])
+
+
+def test_apply_requires_an_explicit_vision_choice(monkeypatch):
+    with pytest.raises(SystemExit):
+        bmi.main(["--root", "ROOT", "--apply"])
+    with pytest.raises(SystemExit):
+        bmi.main(["--root", "ROOT", "--apply", "--vision-state", "v.json", "--no-vision-state"])
+
+
+def test_vision_summary_shows_missing_or_loaded_state():
+    assert "none loaded" in bmi.vision_summary({})
+    line = bmi.vision_summary({"a.pdf": _v(), "b.pdf": {"status": "skip_has_text",
+                                                         "at": "2026-10-23T19:29:47"}})
+    assert "2 entries, 1 Vision-written, latest 2026-10-23" in line
+
+
+def test_apply_reindex_race_with_an_upload_fails_safe(monkeypatch):
+    """An upload rewrites the row between flush()'s re-read and upsert_row():
+    the backfill's (older) row lands, but its sha is not Drive's live sha, so
+    no reader can skip work on it."""
+    s = FakeSheets()
+    s._values._tabs[mi.TAB] = [list(mi.HEADERS),
+                               mi.build_row(_meta(ID1, sha="o" * 64), None, source_kind="nsite",
+                                            source_key="k-a", now="T")]
+    monkeypatch.setattr(bmi, "stats_for", lambda drive, it, td, r: (_stats(), "ok"))
+    real_upsert = mi.upsert_row
+
+    def racing_upsert(sheets, sheet_id, row, tab=mi.TAB):
+        s._values._tabs[mi.TAB][1] = mi.build_row(_meta(ID1, sha="n" * 64), _stats(),
+                                                  source_kind="nsite", source_key="live", now="T")
+        real_upsert(sheets, sheet_id, row, tab)
+    monkeypatch.setattr(mi, "upsert_row", racing_upsert)
+    plan = _plan((ID1, "reindex", None))
+    plan.items[0].planned_row_sha = "o" * 64
+    bmi.apply(None, s, "SID", plan, batch=10, limit=0, retries=0, log=lambda *a: None)
+    row = mi.read_index(s, "SID")[ID1]
+    live_drive_sha = "n" * 64
+    assert row["mirror_sha256"] != live_drive_sha   # never skippable: processed the old way
