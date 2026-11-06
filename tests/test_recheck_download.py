@@ -301,3 +301,8 @@ def test_kdp_recheck_workflow_uploads_even_after_a_cut_off_step():
     assert up.get("if") == "always()"
     job_min = wf["jobs"]["recheck"]["timeout-minutes"]
     assert _mod().DEFAULT_MAX_MINUTES < run["timeout-minutes"] < job_min
+    # every step before the upload is bounded, and together they leave the
+    # job time for the upload itself
+    before = steps[:steps.index(up)]
+    bounded = [s["timeout-minutes"] for s in before if "timeout-minutes" in s]
+    assert sum(bounded) < job_min
