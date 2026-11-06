@@ -161,7 +161,10 @@ existed. Dry run by default; `--apply` waits for Trisha (Gate C).
   `ocr_engine` is `Apple Vision` (or `<OCRmyPDF creator> + Apple
   Vision`), so `text_status` is `ocr_full`/`ocr_partial`, not `native`. If
   Vision wrote over that Drive id but either check fails, the row's
-  `text_status` is `unknown` (never `native`); the run counts both cases.
+  `text_status` is `unknown` and `ocr_engine` blank (never `native`/`none`);
+  the run counts both cases. The 10 `.msg` files the Vision tooling rebuilt
+  as PDFs (`converted_msg`, no timestamp or page outcome recorded) are always
+  `unknown` with a blank engine.
   `head_revision` is the listing's, which can be hours old by write time;
   nothing trusts it (the OCR backfill pins the live revision itself).
 - **No download shortcut from the Vision state.** That state has page counts

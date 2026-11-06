@@ -127,7 +127,7 @@ def test_engine_with_vision_names_vision_only_when_the_fresh_check_matches():
     # differs): never publish `native`; the row reads `unknown`.
     s = _stats(pages=4)
     got = bmi.engine_with_vision(s, _v(), M_VISION)
-    assert mi.text_status(got) == "unknown" and got.pages == 4
+    assert mi.text_status(got) == "unknown" and got.pages == 4 and got.engine == ""
     assert bmi.engine_with_vision(s, {"status": "skip_has_text", "pages": 4}, M_VISION) is s
     assert bmi.engine_with_vision(None, _v(), M_VISION) is None
     # Same name, different Drive file (or no recorded id): not Vision's work.
@@ -502,3 +502,11 @@ def test_apply_reindex_race_with_an_upload_fails_safe(monkeypatch):
     row = mi.read_index(s, "SID")[ID1]
     live_drive_sha = "n" * 64
     assert row["mirror_sha256"] != live_drive_sha   # never skippable: processed the old way
+
+
+def test_converted_msg_files_are_never_published_native():
+    v = {"status": "converted_msg", "pages": 3, "item_id": ID1}
+    got = bmi.engine_with_vision(_stats(), v, M_VISION)
+    assert mi.text_status(got) == "unknown" and got.engine == ""
+    other = _stats()
+    assert bmi.engine_with_vision(other, dict(v, item_id=ID2), M_VISION) is other

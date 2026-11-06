@@ -208,11 +208,16 @@ def engine_with_vision(stats, ventry: dict | None, meta: dict):
     Vision recorded (same page count, same image-only count after). Vision
     keeps the input's /Creator, so without this a Vision-OCR'd scan reads as
     `native`."""
-    if stats is None or not ventry or ventry.get("status") not in VISION_DONE:
+    if stats is None or not ventry:
         return stats
     if not meta.get("id") or ventry.get("item_id") != meta.get("id"):
         return stats
-    if stats.image_only_pages is None:
+    if ventry.get("status") == "converted_msg":
+        # fix_msg_files.py rebuilt this file from an email (OCRmyPDF, then
+        # Vision on leftover pages) and recorded no time and no page outcome:
+        # who made which text is unknowable, so never publish `native`.
+        return replace(stats, image_only_pages=None, engine="")
+    if ventry.get("status") not in VISION_DONE or stats.image_only_pages is None:
         return stats
     at, mod = vision_at_utc(ventry.get("at", "")), drive_time(meta.get("modifiedTime", ""))
     if (at is None or mod is None or abs((mod - at).total_seconds()) > VISION_WRITE_SLACK_S
@@ -222,7 +227,7 @@ def engine_with_vision(stats, ventry: dict | None, meta: dict):
         # check out as its output: who made the text is unknowable, so don't
         # publish `native`. Unknown page set => text_status `unknown`
         # (readers process the file the old way).
-        return replace(stats, image_only_pages=None)
+        return replace(stats, image_only_pages=None, engine="")
     engine = VISION_ENGINE if stats.engine in ("", "none") else f"{stats.engine[:100]} + {VISION_ENGINE}"
     return replace(stats, engine=engine)
 
