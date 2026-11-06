@@ -914,3 +914,36 @@ def test_main_flag_off_never_reads_the_index(monkeypatch, tmp_path):
     got = {}
     monkeypatch.setattr(bm, "dry_run_report", lambda s, sid, st, idx=None: got.setdefault("idx", idx) or "ok")
     assert bm.main([]) == 0 and got["idx"] is None
+
+
+def test_run_apply_saves_state_before_writing_the_index_row(monkeypatch, tmp_path):
+    target = mi.IndexTarget(object(), "SID", "nsite", "doc-1")
+    monkeypatch.setattr(bm.mi, "live_sha256", lambda drive, ids: {})
+    monkeypatch.setattr(bm, "process_candidate",
+                        lambda drive, cand, tmp, phase=None, index=None:
+                        {"status": "done", bm._INDEX_KEY: {"target": target, "stats": None, "pinned": "R"}})
+    path = tmp_path / "s.json"
+    seen = []
+    monkeypatch.setattr(bm, "_write_index_row",
+                        lambda drive, fid, info: seen.append(path.read_text()) or True)
+    bm.run_apply(FakeSheets(_archive_tabs(1)), "SID", _fake_drive(), {}, limit=10,
+                 state_path=str(path), index={}, cfg=ON_CFG)
+    assert '"done"' in seen[0]   # the state entry was on disk before the index write
+
+
+def test_write_index_row_records_no_stats_when_drive_holds_other_bytes(monkeypatch):
+    class Drive:
+        def files(self):
+            return self
+
+        def get(self, fileId, fields):
+            return self
+
+        def execute(self, num_retries=0):
+            return {"id": "F1", "sha256Checksum": "SOMEONE-ELSES"}
+    got = []
+    monkeypatch.setattr(bm.mi, "record", lambda t, meta, stats, **kw: got.append(stats) or True)
+    stats = ocr_util.OcrStats(sha256="OURS", pages=1, image_only_pages=frozenset(),
+                              image_only_before=frozenset(), ocr_ran=True, engine="none")
+    bm._write_index_row(Drive(), "F1", {"target": object(), "stats": stats, "pinned": "R"})
+    assert got == [None]

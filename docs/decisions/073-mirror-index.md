@@ -210,10 +210,11 @@ those ids absent, which every caller treats as "process the old way".
   row, a blank or different sha, or a failed lookup gets the old download
   check. After an in-place replacement (`done`, `done_partial`,
   `done_unverified`), the row is rewritten AFTER the per-file watchdog is
-  cleared (so a slow Sheets write can't turn a landed replacement into
-  `error_timeout`): Drive's new checksums (one `files.get`), the
+  cleared and the state entry is saved (so neither a slow Sheets write nor a
+  kill mid-write can lose the record of a landed replacement): Drive's new checksums (one `files.get`), the
   replacement's stats built from the page check already done (no second
-  scan; failure = no stats = `unknown`), and the revision
+  scan; failure, or Drive now holding bytes with a different sha, = no stats
+  = `unknown`), and the revision
   `pin_head_revision()` kept (`raw_revision_pinned`).
   A `hand_curated` row is never rewritten. The dry run still makes no Drive
   call and prints the index's counts as "not checked against Drive".
@@ -227,9 +228,10 @@ those ids absent, which every caller treats as "process the old way".
   downloaded bytes in the cache manifest. For a cached Mirror copy with a
   recorded sha, the archiver's OAuth client asks Drive for the live sha:
   different = fetch again (new content: the textless-page refresh count
-  restarts; a non-transient failure counts a `change_errors` strike, 3 and it
-  goes back to the old rule; so does a cached copy that keeps getting Drive's
-  HTML page, and a fetch whose bytes still differ from the live sha),
+  restarts; every failed refetch, transient or not, and every fetch whose
+  bytes still differ from the live sha counts a `change_errors` strike
+  against that live sha; after 3 it goes back to the old rule until Drive's
+  sha changes again),
   equal = never refetched (the 30-day timer no
   longer applies). No recorded sha (everything cached before 2026-11-06), an
   nSITE link, or no live sha (lookup failed, no OAuth) keeps the old timer

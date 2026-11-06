@@ -103,6 +103,19 @@ def _file_sha256(path: str) -> str:
     return h.hexdigest()
 
 
+def change_strikes(m: dict, live_sha: str | None) -> int:
+    """Strikes counted against THIS live sha: a newer change on Drive starts
+    the count over (so one bad stretch can't block every later change)."""
+    if not live_sha or m.get("change_errors_sha") != live_sha:
+        return 0
+    return m.get("change_errors", 0)
+
+
+def _strike(entry: dict, prior: dict, live_sha: str) -> None:
+    entry["change_errors"] = change_strikes(prior, live_sha) + 1
+    entry["change_errors_sha"] = live_sha
+
+
 def content_changed(m: dict | None, live_sha: str | None) -> bool | None:
     """True / False when both the recorded sha (of the cached bytes) and
     Drive's live sha are known; None when either is missing (then the old
@@ -158,7 +171,7 @@ def pending(entries: list[dict], manifest: dict, today: date | None = None,
             new.append((key, e))
             continue
         verdict = content_changed(m, live.get(key))
-        if verdict is True and m.get("change_errors", 0) < MAX_CHANGE_ERRORS:
+        if verdict is True and change_strikes(m, live.get(key)) < MAX_CHANGE_ERRORS:
             changed.append((key, e))
         elif verdict is False:
             continue  # live sha equals the cached bytes' sha: nothing to refetch
@@ -388,7 +401,7 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
         # A change refetch only while it has strikes left (else the timer
         # queued it, and its failures count as ordinary refreshes).
         changed = (content_changed(prior, live.get(key)) is True
-                   and prior.get("change_errors", 0) < MAX_CHANGE_ERRORS)
+                   and change_strikes(prior, live.get(key)) < MAX_CHANGE_ERRORS)
         try:
             with tempfile.TemporaryDirectory() as td:
                 pdf = os.path.join(td, "doc.pdf")
@@ -411,7 +424,7 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
             if live.get(key) and sha != live[key]:
                 # The bytes we got still differ from Drive's live sha: a strike,
                 # so a copy that never matches can't be refetched every run.
-                manifest[key]["change_errors"] = prior.get("change_errors", 0) + 1
+                _strike(manifest[key], prior, live[key])
             counts["fetched"] += 1
             counts["redactions"] += n_red
             if status == "no_text":
@@ -441,7 +454,10 @@ def run(index_path: str, cache_dir: str, max_downloads: int, fetcher=None,
                 if throttled:
                     manifest[key]["throttled"] = prior.get("throttled", 0) + 1
                 if changed:
-                    manifest[key]["change_errors"] = prior.get("change_errors", 0) + (0 if transient else 1)
+                    # Every failure is a strike here, transient ones too: a
+                    # change refetch has no timer spacing it out, so this is
+                    # what bounds it (3, then the old timer rule).
+                    _strike(manifest[key], prior, live[key])
                 else:
                     manifest[key]["refreshes"] = prior.get("refreshes", 0) + (0 if transient else 1)
             else:

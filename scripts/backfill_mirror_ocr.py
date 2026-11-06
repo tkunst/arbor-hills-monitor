@@ -141,7 +141,9 @@ now steers --apply, when `mirror_index.enabled` is on:
     (`raw_revision_pinned`).
   - The dry run still makes ZERO Drive calls; with the flag on it adds the
     index's own counts, labelled as not checked against Drive.
-With the flag off (or an empty index) every path is exactly the old one.
+With the flag off every path is exactly the old one. With the flag on and an
+empty index nothing is skipped or reordered, but each replacement still
+writes its row (that is how the index fills).
 """
 from __future__ import annotations
 
@@ -382,7 +384,12 @@ def _write_index_row(drive, file_id: str, info: dict) -> bool:
     except Exception as e:  # noqa: BLE001
         print(f"[backfill] index row not written (class={type(e).__name__})", flush=True)
         return False
-    return mi.record(info["target"], meta, info["stats"], raw_revision_pinned=info["pinned"])
+    stats = info["stats"]
+    if stats is not None and stats.sha256 != str(meta.get("sha256Checksum") or ""):
+        # Drive now holds bytes we did not scan: record no stats ("unknown"),
+        # never a searchable status for an unchecked sha.
+        stats = None
+    return mi.record(info["target"], meta, stats, raw_revision_pinned=info["pinned"])
 
 
 def _now_iso() -> str:
@@ -689,8 +696,6 @@ def run_apply(sheets_svc, sheet_id: str, drive, state: dict, limit: int,
                     signal.alarm(0)
                 elapsed = time.monotonic() - t0
                 index_info = result.pop(_INDEX_KEY, None)
-                if index_info is not None:
-                    _write_index_row(drive, extract_file_id(cand["link"]) or "", index_info)
                 status = result["status"]
                 extra = {k: v for k, v in result.items() if k != "status"}
 
@@ -704,6 +709,10 @@ def run_apply(sheets_svc, sheet_id: str, drive, state: dict, limit: int,
 
                 _record(state, cand["key"], recorded_status, link=cand["link"], tab=tab, **extra)
                 save_state(state, state_path)
+                # Index row only AFTER the state entry is saved (a kill during a
+                # slow Sheets write must never lose the record of an overwrite).
+                if index_info is not None:
+                    _write_index_row(drive, extract_file_id(cand["link"]) or "", index_info)
                 by_status[recorded_status] += 1
                 # NEVER print `extra`/`note` here -- error_id_changed's note
                 # carries a Drive file id pair, error_download/error_upload's
