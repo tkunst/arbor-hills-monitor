@@ -106,7 +106,12 @@ def test_pages_cleanup_is_its_own_job_after_deploy_and_targets_only_github_pages
     assert '--jq \'.artifacts[] | select(.name == "github-pages" and .expired == false) | .id\'' in run
     assert run.count("gh api -X DELETE") == 1 and 'for id in $ids' in run
     assert "failed=$((failed+1))" in run and "exit 1" in run       # a failed delete is visible
-    assert 'elif gh api "repos/$REPO/actions/artifacts/$id"' in run  # one that vanished meanwhile is not
+    assert '*"HTTP 404"*) ;;' in run and "[ \"$state\" = \"true\" ] || failed" in run   # only a 404/expired is not
+    for line in run.splitlines():                               # gh error text (ids) never reaches the log
+        if "gh api -X DELETE" in line:
+            assert ">/dev/null 2>&1" in line
+        elif "state=$(gh api" in line:
+            assert "2>&1)" in line
     assert "checkout" not in str(clean["steps"])             # no repo code runs with actions: write
 
 
@@ -157,7 +162,9 @@ def test_daily_runs_the_storage_check_with_read_only_actions_permission():
     wf = _wf("daily.yml")
     assert wf["permissions"]["actions"] == "read"
     step = next(s for s in wf["jobs"]["watch"]["steps"] if "artifact_storage_check.py" in s.get("run", ""))
-    assert step["continue-on-error"] is True
+    assert step["continue-on-error"] is True and step["if"] == "${{ !cancelled() }}"
+    for var in ("MONITOR_OWNER_EMAILS", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM"):
+        assert step["env"][var] == "${{ secrets.%s }}" % var    # the alert can actually send
     steps = wf["jobs"]["watch"]["steps"]
     watcher = next(i for i, s in enumerate(steps) if s.get("run", "").strip() == "python watcher.py")
     assert steps.index(step) < watcher            # a watcher timeout can't skip the check

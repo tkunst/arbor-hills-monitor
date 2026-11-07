@@ -71,10 +71,11 @@ def alert_email(n: int, total_bytes: int, by_name: dict, repo: str) -> tuple[str
         "Largest by name:",
         *lines,
         "",
-        "To free space now: delete unexpired github-pages artifacts (only used during a "
-        "deploy), e.g.",
-        f"  gh api 'repos/{repo}/actions/artifacts?name=github-pages' --jq '.artifacts[].id'",
-        "then gh api -X DELETE repos/<repo>/actions/artifacts/<id> for each.",
+        "To free space now: delete the unexpired github-pages artifacts (only used during a "
+        "deploy):",
+        f"  gh api 'repos/{repo}/actions/artifacts?name=github-pages&per_page=100' --paginate \\",
+        "    --jq '.artifacts[] | select(.expired == false) | .id' |",
+        f"    while read -r id; do gh api -X DELETE repos/{repo}/actions/artifacts/$id; done",
     ])
     return subject, body
 

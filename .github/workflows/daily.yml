@@ -77,7 +77,9 @@ jobs:
         # coder:pages-artifact-cleanup: owner-only alert when unexpired artifacts
         # pass 350 MB of the free plan's 0.5 GB (past it, GitHub locks every
         # workflow, as on 2026-11-06). Runs BEFORE the watcher (seconds; a watcher
-        # timeout can't skip it); never fails the job. Logs counts and sizes only.
+        # timeout can't skip it), and after a failed earlier step too; never fails
+        # the job. Logs counts and sizes only.
+        if: ${{ !cancelled() }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
