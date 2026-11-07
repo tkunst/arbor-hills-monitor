@@ -70,7 +70,8 @@ def test_a_failed_send_never_fails_the_job():
 def test_main_without_token_or_on_api_error_exits_zero(monkeypatch, capsys):
     m = _mod()
     monkeypatch.delenv("GH_TOKEN", raising=False)
-    assert m.main() == 0
+    monkeypatch.setattr(m, "fetch_artifacts", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no call")))
+    assert m.main() == 0 and "GH_TOKEN not set; check skipped" in capsys.readouterr().out
     monkeypatch.setenv("GH_TOKEN", "t")
     monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
     monkeypatch.setattr(m, "fetch_artifacts", lambda *a, **k: (_ for _ in ()).throw(OSError("x")))
@@ -106,7 +107,8 @@ def test_pages_cleanup_is_its_own_job_after_deploy_and_targets_only_github_pages
     assert '--jq \'.artifacts[] | select(.name == "github-pages" and .expired == false) | .id\'' in run
     assert run.count("gh api -X DELETE") == 1 and 'for id in $ids' in run
     assert "failed=$((failed+1))" in run and "exit 1" in run       # a failed delete is visible
-    assert '*"HTTP 404"*) ;;' in run and "[ \"$state\" = \"true\" ] || failed" in run   # only a 404/expired is not
+    # (the 404 / expired / API-error branches are exercised for real in
+    # test_cleanup_script_behaviour_under_bash_e below)
     for line in run.splitlines():                               # gh error text (ids) never reaches the log
         if "gh api -X DELETE" in line:
             assert ">/dev/null 2>&1" in line
@@ -169,3 +171,45 @@ def test_daily_runs_the_storage_check_with_read_only_actions_permission():
     watcher = next(i for i, s in enumerate(steps) if s.get("run", "").strip() == "python watcher.py")
     assert steps.index(step) < watcher            # a watcher timeout can't skip the check
     assert step["env"]["GH_TOKEN"] == "${{ github.token }}"
+
+
+def _run_cleanup(tmp_path, delete_fails, get_result):
+    """Run pages.yml's cleanup script under bash -e with a stub `gh` on PATH.
+    Artifacts 11, 22, 33 are listed; DELETE fails for ids in delete_fails; the
+    follow-up GET for those prints/returns get_result = (stdout, stderr, rc)."""
+    import shutil
+    import subprocess
+    if not shutil.which("bash"):
+        import pytest
+        pytest.skip("bash not available")
+    run = _wf("pages.yml")["jobs"]["cleanup"]["steps"][0]["run"]
+    out, err, rc = get_result
+    stub = tmp_path / "gh"
+    stub.write_text(f"""#!/bin/bash
+if [ "$2" = "-X" ]; then
+  case "$4" in {"|".join(f"*/{i}" for i in delete_fails) or "NONE"}) echo "gh: boom id $4" >&2; exit 1;; esac
+  exit 0
+fi
+case "$2" in
+  *"?name="*) printf '11\n22\n33\n'; exit 0;;
+  *) printf '%s' '{out}'; printf '%s' '{err}' >&2; exit {rc};;
+esac
+""")
+    stub.chmod(0o755)
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "REPO": "o/r"}
+    p = subprocess.run(["bash", "-e", "-c", run], env=env, capture_output=True, text=True, timeout=30)
+    return p.returncode, p.stdout + p.stderr
+
+
+def test_cleanup_script_behaviour_under_bash_e(tmp_path):
+    rc, out = _run_cleanup(tmp_path, [], ("", "", 0))
+    assert rc == 0 and "deleted 3 github-pages artifact(s); 0 delete(s) failed" in out
+    rc, out = _run_cleanup(tmp_path, [22], ("", "gh: Not Found (HTTP 404)", 1))      # gone meanwhile
+    assert rc == 0 and "deleted 3" in out and "0 delete(s) failed" in out
+    rc, out = _run_cleanup(tmp_path, [22], ("true", "", 0))                          # expired meanwhile
+    assert rc == 0 and "deleted 2" in out and "0 delete(s) failed" in out
+    rc, out = _run_cleanup(tmp_path, [22], ("false", "", 0))                         # still there
+    assert rc == 1 and "1 delete(s) failed" in out and "::error::" in out
+    rc, out = _run_cleanup(tmp_path, [22], ("", "gh: Server Error (HTTP 502)", 1))   # API down: not hidden
+    assert rc == 1 and "1 delete(s) failed" in out
+    assert "boom" not in out and "Server Error" not in out                           # gh errors never logged

@@ -81,8 +81,11 @@ def alert_email(n: int, total_bytes: int, by_name: dict, repo: str) -> tuple[str
 
 
 def fetch_artifacts(repo: str, token: str, timeout: int = 30) -> list[dict]:
-    """Every artifact of the repo (all pages)."""
+    """Every artifact of the repo (all pages), de-duplicated by id (the list
+    can shift between pages while pages.yml's cleanup deletes; a shift can still
+    skip one, which only undercounts for that day)."""
     out: list[dict] = []
+    seen: set = set()
     page = 1
     while True:
         req = urllib.request.Request(
@@ -92,7 +95,10 @@ def fetch_artifacts(repo: str, token: str, timeout: int = 30) -> list[dict]:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 — fixed https API host
             data = json.load(resp)
         batch = data.get("artifacts", [])
-        out.extend(batch)
+        for a in batch:
+            if a.get("id") is None or a.get("id") not in seen:
+                seen.add(a.get("id"))
+                out.append(a)
         total = data.get("total_count")
         if len(batch) < 100 or (total is not None and len(out) >= int(total)):
             return out
