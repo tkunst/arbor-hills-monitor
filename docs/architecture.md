@@ -1271,7 +1271,11 @@ behavior, update its entry here in the same PR.
   `pages.yml` now deletes its own `github-pages` artifact, plus any earlier
   unexpired one, right after a successful `deploy-pages` (only that name; the step
   can't fail the deploy), and `daily.yml` runs `artifact_storage_check.py`, which
-  sends the owner-only alert (ADR 070) when unexpired artifacts pass 350 MB.
+  sends the owner-only alert (ADR 070) when unexpired artifacts pass 350 MB. The
+  cleanup is its own job (`needs: deploy`, runs after a failed deploy too), so
+  only it holds `actions: write`. The daily check is a backstop: the 0.5 GB is
+  account-wide and shared with Packages, it sees only this repo, and GitHub's
+  usage figure lags by hours.
   Caches are a separate 10 GB per-repo allowance and aren't counted.
 - `public_comment_feed.py` — **ADR 035**: pure render logic (no I/O, same
   shape as `findings_feed.py`) for the public "Public Comment Periods" page
