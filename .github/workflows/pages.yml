@@ -106,12 +106,13 @@ jobs:
     # artifact is no longer needed: delete this run's and any earlier run's
     # still-unexpired leftover. Runs after a FAILED deploy too (a failed upload or
     # deploy would otherwise leave 65 MB behind for a day; re-running the failed
-    # job uploads again). A separate job so only it holds `actions: write`. The
-    # workflow-level `concurrency: pages` covers this job, so no other run is
-    # between its upload and deploy while this deletes. Only the name
-    # "github-pages" is ever touched; this job can't affect the deploy's result.
+    # job uploads again) and after a cancelled one (always()). A separate job so
+    # only it holds `actions: write`. The workflow-level `concurrency: pages`
+    # covers this job, so no other run is between its upload and deploy while
+    # this deletes. Only the name "github-pages" is ever touched. A failed list
+    # or delete turns the run red (so it's seen) but never undoes the deploy.
     needs: deploy
-    if: ${{ !cancelled() }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -123,8 +124,16 @@ jobs:
         run: |
           ids=$(gh api "repos/$REPO/actions/artifacts?name=github-pages&per_page=100" --paginate \
                   --jq '.artifacts[] | select(.name == "github-pages" and .expired == false) | .id')
-          n=0
+          n=0; failed=0
           for id in $ids; do
-            gh api -X DELETE "repos/$REPO/actions/artifacts/$id" && n=$((n+1))
+            if gh api -X DELETE "repos/$REPO/actions/artifacts/$id" >/dev/null; then
+              n=$((n+1))
+            else
+              failed=$((failed+1))
+            fi
           done
-          echo "deleted $n github-pages artifact(s)"
+          echo "deleted $n github-pages artifact(s); $failed delete(s) failed"
+          if [ "$failed" -gt 0 ]; then
+            echo "::error::$failed github-pages artifact(s) could not be deleted; Actions storage may fill up"
+            exit 1
+          fi

@@ -90,7 +90,8 @@ def fetch_artifacts(repo: str, token: str, timeout: int = 30) -> list[dict]:
             data = json.load(resp)
         batch = data.get("artifacts", [])
         out.extend(batch)
-        if len(batch) < 100 or len(out) >= int(data.get("total_count", 0)):
+        total = data.get("total_count")
+        if len(batch) < 100 or (total is not None and len(out) >= int(total)):
             return out
         page += 1
 
@@ -134,7 +135,10 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001 — config unreadable: still report, send with defaults
         print(f"artifact storage: config unreadable ({type(e).__name__})")
         cfg = {}
-    run(artifacts, repo, cfg)
+    try:
+        run(artifacts, repo, cfg)
+    except Exception as e:  # noqa: BLE001 — never fail the daily job; class only
+        print(f"artifact storage: check failed ({type(e).__name__})")
     return 0
 
 

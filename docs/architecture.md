@@ -1269,10 +1269,11 @@ behavior, update its entry here in the same PR.
   GitHub blocks every workflow: on 2026-11-05 eight deploys in three hours stored
   539 MB and nothing ran on 11/6 ("account is locked due to a billing issue").
   `pages.yml` now deletes its own `github-pages` artifact, plus any earlier
-  unexpired one, right after a successful `deploy-pages` (only that name; the step
-  can't fail the deploy), and `daily.yml` runs `artifact_storage_check.py`, which
+  unexpired one, once the deploy job is over (only that name; a failed delete turns
+  the run red but never undoes the deploy), and `daily.yml` runs `artifact_storage_check.py`, which
   sends the owner-only alert (ADR 070) when unexpired artifacts pass 350 MB. The
-  cleanup is its own job (`needs: deploy`, runs after a failed deploy too), so
+  cleanup is its own job (`needs: deploy`, `if: always()`: after a failed or
+  cancelled deploy too), so
   only it holds `actions: write`. The daily check is a backstop: the 0.5 GB is
   account-wide and shared with Packages, it sees only this repo, and GitHub's
   usage figure lags by hours.
