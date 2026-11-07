@@ -126,11 +126,11 @@ jobs:
                   --jq '.artifacts[] | select(.name == "github-pages" and .expired == false) | .id')
           n=0; failed=0
           for id in $ids; do
-            if gh api -X DELETE "repos/$REPO/actions/artifacts/$id" >/dev/null; then
+            if gh api -X DELETE "repos/$REPO/actions/artifacts/$id" >/dev/null 2>&1; then
               n=$((n+1))
-            else
-              failed=$((failed+1))
-            fi
+            elif gh api "repos/$REPO/actions/artifacts/$id" >/dev/null 2>&1; then
+              failed=$((failed+1))   # still there: a real failure
+            fi                       # else it expired/vanished meanwhile: nothing to do
           done
           echo "deleted $n github-pages artifact(s); $failed delete(s) failed"
           if [ "$failed" -gt 0 ]; then
