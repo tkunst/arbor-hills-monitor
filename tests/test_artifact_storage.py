@@ -1,5 +1,5 @@
 """coder:pages-artifact-cleanup: pages.yml deletes its github-pages artifacts
-after a successful deploy, and the daily check warns the owner before Actions
+once the deploy job is over (success, failure or cancel), and the daily check warns the owner before Actions
 artifact storage reaches the free plan's 0.5 GB (the 2026-11-06 account lock)."""
 import importlib.util
 import os
@@ -98,13 +98,14 @@ def test_pages_cleanup_is_its_own_job_after_deploy_and_targets_only_github_pages
     jobs = wf["jobs"]
     assert any(str(s.get("uses", "")).startswith("actions/deploy-pages") for s in jobs["deploy"]["steps"])
     clean = jobs["cleanup"]
-    assert clean["needs"] == "deploy" and clean["if"] == "${{ !cancelled() }}"   # after a failed deploy too
+    assert clean["needs"] == "deploy" and clean["if"] == "${{ always() }}"   # after a failed/cancelled deploy too
     assert clean["permissions"] == {"actions": "write"}
     run = clean["steps"][0]["run"]
     # the list is filtered to the name twice (query + jq) and only those ids are deleted
     assert "actions/artifacts?name=github-pages" in run
     assert '--jq \'.artifacts[] | select(.name == "github-pages" and .expired == false) | .id\'' in run
     assert run.count("gh api -X DELETE") == 1 and 'for id in $ids' in run
+    assert "failed=$((failed+1))" in run and "exit 1" in run       # a failed delete is visible
     assert "checkout" not in str(clean["steps"])             # no repo code runs with actions: write
 
 
