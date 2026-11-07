@@ -11,6 +11,13 @@ repository's unexpired artifact bytes and sends the owner-only alert
 (ADR 070, owner_notices.send_owner_email) when they pass ALERT_MB (70% of
 the allowance).
 
+Limits (a backstop, not an exact meter): the 0.5 GB is ACCOUNT-wide and shared
+with GitHub Packages, while this sees only this repository's artifacts, and
+GitHub's billing usage lags by hours. On 2026-11-07 the account's other 17
+repositories held about 1 MB of artifacts (Packages usage was not checked: the
+local token lacks read:packages); if either grows, lower ALERT_MB. A burst
+inside one day is handled by pages.yml's own cleanup, not by this daily check.
+
 Run from daily.yml with GH_TOKEN (actions: read) and GITHUB_REPOSITORY.
 Public-log rule: only counts and sizes are printed, never an artifact URL,
 id or signed link. Never fails the job: an API error prints its class and
@@ -96,16 +103,17 @@ def run(artifacts: list[dict], repo: str, cfg: dict, send=None) -> str:
           f"(alert above {ALERT_MB} MB, allowance {ALLOWANCE_MB} MB)")
     if not over_threshold(total):
         return "ok"
-    if send is None:
-        import owner_notices
-        send = owner_notices.send_owner_email
     subject, body = alert_email(n, total, by_name, repo)
     try:
+        if send is None:
+            import owner_notices
+            send = owner_notices.send_owner_email
         sent = send(subject, body, cfg)
     except Exception as e:  # noqa: BLE001 — never fail the daily job
         print(f"artifact storage: owner alert failed ({type(e).__name__})")
         return "alert_not_sent"
-    print("artifact storage: owner alert sent" if sent else "artifact storage: no owner address")
+    print("artifact storage: owner alert sent" if sent
+          else "artifact storage: owner alert not sent (no owner address or SMTP not set)")
     return "alerted" if sent else "alert_not_sent"
 
 
@@ -120,8 +128,13 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001 — class only (public log)
         print(f"artifact storage: GitHub API read failed ({type(e).__name__}); check skipped")
         return 0
-    from config_loader import load_config
-    run(artifacts, repo, load_config())
+    try:
+        from config_loader import load_config
+        cfg = load_config()
+    except Exception as e:  # noqa: BLE001 — config unreadable: still report, send with defaults
+        print(f"artifact storage: config unreadable ({type(e).__name__})")
+        cfg = {}
+    run(artifacts, repo, cfg)
     return 0
 
 

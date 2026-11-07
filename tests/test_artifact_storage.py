@@ -92,17 +92,60 @@ def test_fetch_artifacts_pages_through(monkeypatch):
     assert len(m.fetch_artifacts("o/r", "t")) == 150
 
 
-def test_pages_cleanup_step_runs_after_deploy_and_targets_only_github_pages():
+def test_pages_cleanup_is_its_own_job_after_deploy_and_targets_only_github_pages():
     wf = _wf("pages.yml")
-    perms = wf["permissions"]
-    assert perms["actions"] == "write" and perms["pages"] == "write" and perms["contents"] == "read"
-    steps = wf["jobs"]["deploy"]["steps"]
-    deploy = next(i for i, s in enumerate(steps) if str(s.get("uses", "")).startswith("actions/deploy-pages"))
-    clean = next(i for i, s in enumerate(steps) if "artifacts" in s.get("run", "") and "DELETE" in s.get("run", ""))
-    assert clean > deploy
-    step = steps[clean]
-    assert step["if"].startswith("success()") and step.get("continue-on-error") is True
-    assert 'select(.name == "github-pages"' in step["run"] and "name=github-pages" in step["run"]
+    assert "actions" not in wf["permissions"]                  # the deploy job keeps its old token scope
+    jobs = wf["jobs"]
+    assert any(str(s.get("uses", "")).startswith("actions/deploy-pages") for s in jobs["deploy"]["steps"])
+    clean = jobs["cleanup"]
+    assert clean["needs"] == "deploy" and clean["if"] == "${{ !cancelled() }}"   # after a failed deploy too
+    assert clean["permissions"] == {"actions": "write"}
+    run = clean["steps"][0]["run"]
+    # the list is filtered to the name twice (query + jq) and only those ids are deleted
+    assert "actions/artifacts?name=github-pages" in run
+    assert '--jq \'.artifacts[] | select(.name == "github-pages" and .expired == false) | .id\'' in run
+    assert run.count("gh api -X DELETE") == 1 and 'for id in $ids' in run
+    assert "checkout" not in str(clean["steps"])             # no repo code runs with actions: write
+
+
+def test_fetch_stops_on_total_count_and_on_an_empty_page(monkeypatch):
+    import io
+    import json
+    m = _mod()
+    calls = []
+
+    def serve(pages):
+        def fake_urlopen(req, timeout=0):
+            page = int(req.full_url.split("page=")[-1])
+            calls.append(page)
+            return io.BytesIO(json.dumps(pages[page]).encode())
+        return fake_urlopen
+    monkeypatch.setattr(m.urllib.request, "urlopen",
+                        serve({1: {"total_count": 100, "artifacts": [_art("a", 1)] * 100}}))
+    assert len(m.fetch_artifacts("o/r", "t")) == 100 and calls == [1]
+    calls.clear()
+    monkeypatch.setattr(m.urllib.request, "urlopen", serve({1: {"total_count": 0, "artifacts": []}}))
+    assert m.fetch_artifacts("o/r", "t") == [] and calls == [1]
+
+
+def test_config_or_import_failure_still_exits_zero(monkeypatch, capsys):
+    m = _mod()
+    monkeypatch.setenv("GH_TOKEN", "t")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setattr(m, "fetch_artifacts", lambda *a, **k: [_art("github-pages", 400)])
+    import config_loader
+    monkeypatch.setattr(config_loader, "load_config", lambda *a, **k: (_ for _ in ()).throw(ValueError("yaml")))
+    import builtins
+    real_import = builtins.__import__
+
+    def no_owner_notices(name, *a, **k):
+        if name == "owner_notices":
+            raise ImportError("broken install")
+        return real_import(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_owner_notices)
+    assert m.main() == 0
+    out = capsys.readouterr().out
+    assert "config unreadable (ValueError)" in out and "owner alert failed (ImportError)" in out
 
 
 def test_daily_runs_the_storage_check_with_read_only_actions_permission():

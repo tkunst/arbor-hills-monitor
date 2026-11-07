@@ -31,8 +31,6 @@ permissions:
   contents: read
   pages: write
   id-token: write
-  # Only for the artifact cleanup step at the end (deletes github-pages artifacts).
-  actions: write
 
 concurrency:
   group: pages
@@ -99,17 +97,26 @@ jobs:
         if: github.event.workflow_run.name != 'fulltext-index' || steps.fulltext.outputs.enabled == 'true'
         id: deployment
         uses: actions/deploy-pages@v5
-      - name: Delete the github-pages artifacts once deployed
-        # Each upload above stores the whole site/ (~65 MB with the full-text
-        # bundle) as a "github-pages" artifact kept for 1 day. On 2026-11-05 eight
-        # deploys in 3 hours stored 539 MB, past the free plan's 0.5 GB Actions
-        # storage, and the account was locked (no Actions ran on 11/6). Once
-        # deploy-pages has succeeded the artifact is no longer needed, so delete
-        # this run's, plus any earlier run's still-unexpired leftover. Only the
-        # name "github-pages" is ever touched. A failure here never fails the
-        # deploy (continue-on-error); the daily storage check (daily.yml) warns.
-        if: success() && (github.event.workflow_run.name != 'fulltext-index' || steps.fulltext.outputs.enabled == 'true')
-        continue-on-error: true
+
+  cleanup:
+    # Each upload above stores the whole site/ (~65 MB with the full-text bundle)
+    # as a "github-pages" artifact kept for 1 day. On 2026-11-05 eight deploys in 3
+    # hours stored 539 MB, past the free plan's 0.5 GB Actions storage, and the
+    # account was locked (no Actions ran on 11/6). Once the deploy job is over the
+    # artifact is no longer needed: delete this run's and any earlier run's
+    # still-unexpired leftover. Runs after a FAILED deploy too (a failed upload or
+    # deploy would otherwise leave 65 MB behind for a day; re-running the failed
+    # job uploads again). A separate job so only it holds `actions: write`. The
+    # workflow-level `concurrency: pages` covers this job, so no other run is
+    # between its upload and deploy while this deletes. Only the name
+    # "github-pages" is ever touched; this job can't affect the deploy's result.
+    needs: deploy
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Delete the github-pages artifacts
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
