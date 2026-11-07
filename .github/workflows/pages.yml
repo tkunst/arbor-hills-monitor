@@ -126,11 +126,16 @@ jobs:
                   --jq '.artifacts[] | select(.name == "github-pages" and .expired == false) | .id')
           n=0; failed=0
           for id in $ids; do
+            # Output is never printed: gh's error text names the artifact id.
             if gh api -X DELETE "repos/$REPO/actions/artifacts/$id" >/dev/null 2>&1; then
               n=$((n+1))
-            elif gh api "repos/$REPO/actions/artifacts/$id" >/dev/null 2>&1; then
-              failed=$((failed+1))   # still there: a real failure
-            fi                       # else it expired/vanished meanwhile: nothing to do
+            elif state=$(gh api "repos/$REPO/actions/artifacts/$id" --jq '.expired' 2>&1); then
+              # still listed: a failure unless it expired meanwhile
+              [ "$state" = "true" ] || failed=$((failed+1))
+            else
+              # only a real 404 means it vanished; any other error is a failure
+              case "$state" in *"HTTP 404"*) ;; *) failed=$((failed+1)) ;; esac
+            fi
           done
           echo "deleted $n github-pages artifact(s); $failed delete(s) failed"
           if [ "$failed" -gt 0 ]; then
