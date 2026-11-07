@@ -1261,6 +1261,18 @@ behavior, update its entry here in the same PR.
   restores the newest bundle into `site/public-records/fulltext/` at deploy. The
   page's checkbox appears only when `fulltext/coverage.json` exists. Flags are read
   by the stdlib `scripts/fulltext_flag.py` (fails closed). Logs: counts only.
+- `.github/workflows/pages.yml` + `scripts/artifact_storage_check.py` —
+  **Actions artifact storage (coder:pages-artifact-cleanup, 2026-11-07).** Each
+  Pages deploy uploads the whole `site/` (~65 MB with the full-text bundle) as a
+  `github-pages` artifact kept for a day. The account is on the free plan with no
+  payment method, so its Actions artifact storage allowance is 0.5 GB, and past it
+  GitHub blocks every workflow: on 2026-11-05 eight deploys in three hours stored
+  539 MB and nothing ran on 11/6 ("account is locked due to a billing issue").
+  `pages.yml` now deletes its own `github-pages` artifact, plus any earlier
+  unexpired one, right after a successful `deploy-pages` (only that name; the step
+  can't fail the deploy), and `daily.yml` runs `artifact_storage_check.py`, which
+  sends the owner-only alert (ADR 070) when unexpired artifacts pass 350 MB.
+  Caches are a separate 10 GB per-repo allowance and aren't counted.
 - `public_comment_feed.py` — **ADR 035**: pure render logic (no I/O, same
   shape as `findings_feed.py`) for the public "Public Comment Periods" page
   (`site/public-comment/`) — an Open table and a Closed table, sourced from

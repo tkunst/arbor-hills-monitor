@@ -31,6 +31,8 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  # Only for the artifact cleanup step at the end (deletes github-pages artifacts).
+  actions: write
 
 concurrency:
   group: pages
@@ -97,3 +99,25 @@ jobs:
         if: github.event.workflow_run.name != 'fulltext-index' || steps.fulltext.outputs.enabled == 'true'
         id: deployment
         uses: actions/deploy-pages@v5
+      - name: Delete the github-pages artifacts once deployed
+        # Each upload above stores the whole site/ (~65 MB with the full-text
+        # bundle) as a "github-pages" artifact kept for 1 day. On 2026-11-05 eight
+        # deploys in 3 hours stored 539 MB, past the free plan's 0.5 GB Actions
+        # storage, and the account was locked (no Actions ran on 11/6). Once
+        # deploy-pages has succeeded the artifact is no longer needed, so delete
+        # this run's, plus any earlier run's still-unexpired leftover. Only the
+        # name "github-pages" is ever touched. A failure here never fails the
+        # deploy (continue-on-error); the daily storage check (daily.yml) warns.
+        if: success() && (github.event.workflow_run.name != 'fulltext-index' || steps.fulltext.outputs.enabled == 'true')
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          ids=$(gh api "repos/$REPO/actions/artifacts?name=github-pages&per_page=100" --paginate \
+                  --jq '.artifacts[] | select(.name == "github-pages" and .expired == false) | .id')
+          n=0
+          for id in $ids; do
+            gh api -X DELETE "repos/$REPO/actions/artifacts/$id" && n=$((n+1))
+          done
+          echo "deleted $n github-pages artifact(s)"

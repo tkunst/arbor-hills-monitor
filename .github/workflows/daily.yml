@@ -18,6 +18,8 @@ on:
 
 permissions:
   contents: read
+  # Read-only, for the artifact storage check (scripts/artifact_storage_check.py).
+  actions: read
 
 concurrency:
   group: daily
@@ -104,3 +106,19 @@ jobs:
           GOAUTH_REFRESH_TOKEN: ${{ secrets.GOAUTH_REFRESH_TOKEN_KUNST }}
           GOAUTH_ARCHIVE_FOLDER_ID: ${{ secrets.GOAUTH_ARCHIVE_FOLDER_ID }}
         run: python watcher.py
+      - name: Actions artifact storage check
+        # coder:pages-artifact-cleanup: owner-only alert when unexpired artifacts
+        # pass 350 MB of the free plan's 0.5 GB (past it, GitHub locks every
+        # workflow, as on 2026-11-06). Runs even if the watcher failed; never
+        # fails the job. Logs counts and sizes only.
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          MONITOR_OWNER_EMAILS: ${{ secrets.MONITOR_OWNER_EMAILS }}
+        run: python scripts/artifact_storage_check.py
