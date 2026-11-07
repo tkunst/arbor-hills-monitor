@@ -133,8 +133,9 @@ jobs:
               # still listed: a failure unless it expired meanwhile
               [ "$state" = "true" ] || failed=$((failed+1))
             else
-              # only a real 404 means it vanished; any other error is a failure
-              case "$state" in *"HTTP 404"*) ;; *) failed=$((failed+1)) ;; esac
+              # only a real 404 means it's gone (the DELETE may have landed before
+              # gh saw an error): counted as deleted; any other error is a failure
+              case "$state" in *"HTTP 404"*) n=$((n+1)) ;; *) failed=$((failed+1)) ;; esac
             fi
           done
           echo "deleted $n github-pages artifact(s); $failed delete(s) failed"
