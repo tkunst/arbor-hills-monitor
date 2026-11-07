@@ -34,7 +34,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 ALLOWANCE_MB = 500
 ALERT_MB = 350
-MB = 1024 * 1024
+# Decimal MB (10^6 bytes): if GitHub's "0.5 GB" is 500,000,000 bytes this is exact,
+# and if it is binary the alert just fires a little early (the safe direction).
+MB = 1000 * 1000
 _API = "https://api.github.com"
 
 

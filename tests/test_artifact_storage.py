@@ -7,7 +7,7 @@ import os
 import yaml
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MB = 1024 * 1024
+MB = 1000 * 1000
 
 
 def _mod():
@@ -106,6 +106,7 @@ def test_pages_cleanup_is_its_own_job_after_deploy_and_targets_only_github_pages
     assert '--jq \'.artifacts[] | select(.name == "github-pages" and .expired == false) | .id\'' in run
     assert run.count("gh api -X DELETE") == 1 and 'for id in $ids' in run
     assert "failed=$((failed+1))" in run and "exit 1" in run       # a failed delete is visible
+    assert 'elif gh api "repos/$REPO/actions/artifacts/$id"' in run  # one that vanished meanwhile is not
     assert "checkout" not in str(clean["steps"])             # no repo code runs with actions: write
 
 
@@ -127,6 +128,9 @@ def test_fetch_stops_on_total_count_and_on_an_empty_page(monkeypatch):
     calls.clear()
     monkeypatch.setattr(m.urllib.request, "urlopen", serve({1: {"total_count": 0, "artifacts": []}}))
     assert m.fetch_artifacts("o/r", "t") == [] and calls == [1]
+    calls.clear()                                    # no total_count: a short page ends it
+    monkeypatch.setattr(m.urllib.request, "urlopen", serve({1: {"artifacts": [_art("a", 1)] * 3}}))
+    assert len(m.fetch_artifacts("o/r", "t")) == 3 and calls == [1]
 
 
 def test_config_or_import_failure_still_exits_zero(monkeypatch, capsys):
@@ -153,5 +157,8 @@ def test_daily_runs_the_storage_check_with_read_only_actions_permission():
     wf = _wf("daily.yml")
     assert wf["permissions"]["actions"] == "read"
     step = next(s for s in wf["jobs"]["watch"]["steps"] if "artifact_storage_check.py" in s.get("run", ""))
-    assert step["if"] == "always()" and step["continue-on-error"] is True
+    assert step["continue-on-error"] is True
+    steps = wf["jobs"]["watch"]["steps"]
+    watcher = next(i for i, s in enumerate(steps) if s.get("run", "").strip() == "python watcher.py")
+    assert steps.index(step) < watcher            # a watcher timeout can't skip the check
     assert step["env"]["GH_TOKEN"] == "${{ github.token }}"
