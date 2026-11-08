@@ -732,6 +732,25 @@ wds:
   # first-enable-without-seed or a data anomaly and silently re-baseline instead
   # of blasting the list (mirrors watcher.max_new_docs_per_run).
   max_new_wds_alerts_per_run: 20
+  # Other landfills' WDS records (ADR 074). NOT Arbor Hills evidence: their
+  # events never reach the Arbor Hills Sheet tabs, the risk register or the
+  # coalition digest. Urgent -> immediate email to the site's `recipients`;
+  # everything else -> one summary email per run to the same list. EMPTY
+  # `recipients` = log only (never the shared alert list). Only `applications`
+  # and `annual` have related-site rules today:
+  #   applications  NEW Construction Permit application, or a Construction
+  #                 Permit's Closure Type -> Issued = URGENT; any other change and
+  #                 every Operating License row = watch
+  #   annual        new or changed report-year = watch
+  # State: _meta.wds_seen under "<site_id>:<collection>" keys. First run
+  # baselines silently (Rule B). Remove an entry to stop polling it.
+  extra_sites:
+    - site_id: "398972"            # Pine Tree Acres (WM, Lenox Twp, Macomb Co.)
+      name: "Pine Tree Acres (WM, Macomb)"
+      alert_label: "Pine Tree Acres expansion"
+      collections: [applications, annual]
+      recipients:                   # Trisha only (new-stream precedent)
+        - arbor-hills@trishakunst.com
 
 # --- MMPC minutes reminder — RETIRED 2026-07-12 (ADR 013) ---
 # The old `mmpc:` block (2nd-Wednesday meeting-date math + a "minutes likely
@@ -2621,6 +2640,25 @@ egle_newsroom:
             "consent judgment", "violation notice", "odor", "landfill gas",
             "renewable natural gas", "methane", "Part 303", "Part 201", "dewatering"]
     topic_min_body_hits: 2
+
+# EGLE county solid-waste plans page watch (ADR 074, egle_county_plans_watcher.py).
+# Runs inside the daily watcher. Reads each listed county's row in EGLE's
+# "Currently Approved County Plans and Plan Amendments" table and emails when it
+# changes (Macomb: EGLE's approval of the plan amendment that sites the Pine Tree
+# Acres expansion would appear here as a starred year). First read baselines
+# silently; a fetch failure or a missing row is a failed check, never a change;
+# ONE stale email after failed checks on `stale_alert_after_days` days in a row.
+# State: the append-only "EGLE County Plans Watch" tab. EMPTY `recipients` =
+# log only (never the shared alert list).
+# Ships DISABLED (new external page). To activate: flip `enabled` (the page
+# answers a browser User-Agent; the first run baselines).
+egle_county_plans:
+  enabled: false
+  url: "https://www.michigan.gov/egle/about/organization/materials-management/solid-waste/planning/solid-waste-management-plans"
+  counties: [Macomb]
+  stale_alert_after_days: 3
+  recipients:
+    - arbor-hills@trishakunst.com          # Trisha (scoped; never the shared list)
 
 # Full-text search over the Mirror PDFs on the public records page (ADR 062
 # addendum, 2026-11-02). Shipped OFF; activated 2026-11-02 (Trisha). scripts/build_fulltext_cache.py fills the text cache incrementally

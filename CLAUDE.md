@@ -97,7 +97,7 @@ module, and update that entry in the same PR.
 
 **Other watched sources (Streams C–V)**
 
-- `wds_watcher.py` / `wds_client.py` / `wds_archiver.py` — Stream C: EGLE WDS collections (ADR 043).
+- `wds_watcher.py` / `wds_client.py` / `wds_archiver.py` — Stream C: EGLE WDS collections (ADR 043); `wds.extra_sites` watches other landfills (Pine Tree Acres 398972) with scoped alerts only (ADR 074).
 - `pfas_client.py` / `pfas_watcher.py` — EGLE PFAS page-watch (ADR 012).
 - `gfl_air_client.py` / `gfl_air_watcher.py` — Stream E: GFL perimeter-air feed, alerts, screening episodes (ADR 014, 039).
 - `gfl_air_episodes.py` / `gfl_air_emails.py` / `gfl_air_liveness.py` — Stream E's pure halves; station roster.
@@ -122,6 +122,7 @@ module, and update that entry in the same PR.
 - `govqa_client.py` / `govqa_watcher.py` — Stream U: EGLE's public FOIA archive, private only (ADR 059).
 - `mpart_client.py` / `mpart_watcher.py` — Stream V: MPART PFAS open-data layers (ADR 060).
 - `egle_newsroom_watcher.py` — EGLE newsroom watch.
+- `egle_county_plans_watcher.py` — named counties' rows on EGLE's approved county solid-waste plans page (Macomb, for the Pine Tree Acres expansion); runs in the daily watcher, ships disabled (ADR 074).
 
 ## Activation status (generated — do not hand-edit the table)
 
@@ -170,6 +171,7 @@ decision behind it; this table only answers "is it live right now."
 | `report_tracking.enabled` | yes |
 | `report_tracking.review_email_enabled` | no |
 | `egle_newsroom.enabled` | yes |
+| `egle_county_plans.enabled` | no |
 | `fulltext_search.enabled` | yes |
 | `mirror_index.enabled` | yes |
 <!-- stream-status:end -->
@@ -252,7 +254,7 @@ decision behind it; this table only answers "is it live right now."
   — and every other `<X> Watch` snapshot tab: ROP/MMD/RIDE/PFAS/Public Water
   Supply PFAS/GFL Info Site/Meeting/MPART Data/Submissions/Violations/
   Compliance Actions/Evaluations/Permits/Complaints/Public Notices/
-  EGLE Newsroom, plus the private-Sheet `GovQA Archive Watch`/
+  EGLE Newsroom/EGLE County Plans, plus the private-Sheet `GovQA Archive Watch`/
   `RRD Documents`) must RAISE on a genuine TRANSPORT read failure, never
   swallow it to `[]` — a swallowed transient error misreads as "nothing seen
   yet" and silently re-baselines over real state (the ADR 018/023 "spurious

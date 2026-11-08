@@ -471,6 +471,17 @@ def run() -> int:
         except Exception as e:  # noqa: BLE001 — Stream C must never break the watcher
             print(f"[watcher] WDS (Stream C) step skipped: {e}")
 
+    # --- EGLE county solid-waste plans page (ADR 074), only when enabled ---
+    # Watches named counties' rows (Macomb, for the Pine Tree Acres expansion)
+    # in EGLE's approved-plans table. Its own append-only state tab, scoped
+    # recipients; isolated so it can never break the watcher (class only).
+    if (cfg.get("egle_county_plans") or {}).get("enabled"):
+        try:
+            import egle_county_plans_watcher as ecp
+            ecp.check(sheets, sheet_id, cfg, ea.send_email)
+        except Exception as e:  # noqa: BLE001
+            print(f"[watcher] EGLE county plans step skipped: {type(e).__name__}")
+
     # --- Sunday digest ---
     if today.weekday() == 6:
         # (1) Document digest — the coalition email to the full alert_recipients
