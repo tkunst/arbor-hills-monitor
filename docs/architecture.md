@@ -504,6 +504,18 @@ behavior, update its entry here in the same PR.
   All notable/watch → weekly digest. `wds_archiver.py` de-dups snapshots by page
   URL so penalties/compliance_actions and the two composting grids don't
   double-snapshot their shared pages. See ADR 043.
+  **Extra sites (ADR 074, 2026-11-07):** `wds.extra_sites` lists other
+  landfills (today Pine Tree Acres, 398972: `applications` + `annual`).
+  `check_extra_sites()` runs at the end of `check_wds()`, isolated, with its own
+  classifiers (`RELATED_CLASSIFIERS`: a NEW Construction Permit application or a
+  CP whose Closure Type reads Issued = urgent; everything else watch; no risk
+  codes). Their events never reach `on_row` (Arbor Hills Sheet tabs / risk
+  register) or `pending_digest`: urgent → immediate email to the site's
+  `recipients`, the rest → one summary email per run; a failed send reverts the
+  seen-state so the next run re-sends; empty `recipients` = log only. State is
+  `_meta.wds_seen["<site_id>:<collection>"]` (Arbor Hills keys have no colon),
+  so the ADR 024 backup log covers it. Rules A/B unchanged (same
+  `diff_collection`, which takes an optional `classify=`).
   Same inline-mirror-before-write as backfill.py.
   **Stall guard (stall-hardening, 2026-10-23):** `run()` now counts each
   run's unprocessed / processed / struck / deferred documents and hands them
@@ -1194,6 +1206,20 @@ behavior, update its entry here in the same PR.
   `alert_recipients` list. Gated on `egle_newsroom.enabled` (shipped `true` at
   build, 2026-10-01, on Trisha's explicit request — not the overnight-coder
   new-source `false` default).
+- `egle_county_plans_watcher.py` — **ADR 074** (coder:pta-expansion-watch,
+  2026-11-07): reads each `egle_county_plans.counties` row (Macomb) in the
+  "Currently Approved County Plans and Plan Amendments" table on EGLE's
+  solid-waste planning page and emails the scoped `egle_county_plans.recipients`
+  when the row's text or its link file names change (a `?rev=` re-upload alone is
+  not a change). Runs inside `watcher.run()` after the WDS block, isolated, gated
+  on `egle_county_plans.enabled` (ships `false`). The append-only `EGLE County
+  Plans Watch` tab is the state, read strictly (`read_county_plans_rows`). First
+  read baselines silently. A fetch error or a missing row is a `fetch_failed`
+  row, never a change; failures on `stale_alert_after_days` (3) distinct days in
+  a row send ONE stale email; the next good read writes `recovered`. For a
+  change the email goes BEFORE the row (a crash re-sends, never loses; a failed
+  send writes nothing so the next run retries). Fetch: `pfas_client.fetch_page`
+  (browser UA; a bare client gets 403).
 - `report_tracker.py` — **ADR 071** (coder:report-expectations-tracker,
   2026-10-23): expected reports vs. arrivals, for any number of landfills.
   Seven PRIVATE-Sheet tabs (`sheet_writer.REPORT_TRACKER_TABS`; never in

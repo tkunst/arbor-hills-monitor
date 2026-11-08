@@ -1,6 +1,8 @@
 """
 wds_watcher.py — Stream C: poll EGLE WDS (solid waste) for site 475946, diff
-against stored state, classify NEW / CHANGED records, and emit alerts.
+against stored state, classify NEW / CHANGED records, and emit alerts. Also
+polls `wds.extra_sites` (other landfills, ADR 074) with their own rules and
+scoped recipients; see check_extra_sites() at the bottom.
 
 Runs from watcher.py ONLY when `wds.enabled` is true (default false). See
 docs/decisions/009-wds-stream-c.md. The four safety rules (each learned the hard
@@ -315,13 +317,18 @@ def _content_hash(spec, r) -> str:
     return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 
-def _event_from_row(name: str, r: dict, kind: str, cfg_wds: dict, prev_hash=None) -> dict:
+def _event_from_row(name: str, r: dict, kind: str, cfg_wds: dict, prev_hash=None,
+                    classify=None) -> dict:
     """Build one event dict for a single row, shared by diff_collection() (live
     new/changed path) and historical_events() (one-off bulk-dump path) — the
-    ONLY place classification happens, so the two paths can never drift."""
+    ONLY place classification happens, so the two paths can never drift.
+    `classify` overrides the Arbor Hills classifier; only the extra-site path
+    (ADR 074) passes one."""
     spec = COLLECTIONS[name]
     floor = float(cfg_wds.get("years_remaining_floor", 3.0))
-    if name == "annual":
+    if classify is not None:
+        sev, dtype, risks = classify(r, kind == "changed")
+    elif name == "annual":
         sev, dtype, risks = _classify_annual(r, kind == "changed", floor)
     else:
         sev, dtype, risks = spec["classify"](r, kind == "changed")
@@ -352,7 +359,8 @@ def historical_events(name: str, rows: list[dict], cfg_wds: dict) -> list[dict]:
 # Pure diff engine (no network, no email — unit-tested directly)
 # ---------------------------------------------------------------------------
 
-def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict):
+def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict,
+                    classify=None):
     """Diff freshly-fetched `rows` for one collection against `seen_entry`
     ({"records": {idkey: hash}, "last_count": N}).
 
@@ -363,7 +371,8 @@ def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict
     run rather than being silently buried). Enforces rules A (bad-fetch guard)
     and B (silent baseline / over-cap) here so the orchestrator stays simple. A
     baseline/guard result yields events=[] and a fully-updated seen entry (records
-    everything, alerts nothing)."""
+    everything, alerts nothing). `classify` is passed through to
+    _event_from_row (None = the Arbor Hills classifiers)."""
     spec = COLLECTIONS[name]
     records = dict(seen_entry.get("records") or {})
     last_count = int(seen_entry.get("last_count") or 0)
@@ -401,7 +410,8 @@ def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict
         else:
             continue
         records[k] = h
-        events.append(_event_from_row(name, r, kind, cfg_wds, prev_hash=prev))
+        events.append(_event_from_row(name, r, kind, cfg_wds, prev_hash=prev,
+                                      classify=classify))
 
     # Rule B(ii) — over-cap defense. If a single run produced more alert events
     # than the cap, this is almost certainly a first-enable-without-seed or a WDS
@@ -509,3 +519,169 @@ def check_wds(state: dict, cfg: dict, send_email, fetchers=None, on_row=None) ->
                     print(f"[wds]   URGENT send FAILED — reverted seen-state to re-alert next run: {ae}")
             else:
                 state.setdefault("pending_digest", []).append(digest_record(ev))
+
+    # Extra (related) sites, ADR 074 — AFTER the Arbor Hills loop, so nothing
+    # above changes when `wds.extra_sites` is absent or empty, and isolated so a
+    # fault on another landfill's pages can never cost an Arbor Hills alert.
+    try:
+        check_extra_sites(state, cfg, send_email, fetchers=fetchers)
+    except Exception as e:  # noqa: BLE001 — extra sites must never break Stream C
+        print(f"[wds] extra sites step skipped: {type(e).__name__}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Extra (related) WDS sites — ADR 074. Another landfill whose solid-waste record
+# matters to Arbor Hills (today: Pine Tree Acres, 398972, whose 75M CY
+# expansion is the biggest single input to the regional capacity model). These
+# sites are NOT Arbor Hills evidence, so their events never touch the Arbor
+# Hills Sheet tabs, the risk register, or the coalition Sunday digest: urgent
+# events email the site's scoped `recipients` at once, everything else goes out
+# as one scoped summary email per run. Empty `recipients` = log only (never the
+# shared alert list). State lives in the SAME `_meta.wds_seen` dict under
+# "<site_id>:<collection>" keys — an Arbor Hills key never contains a colon, so
+# the two can't collide, and the ADR 024 `_wds_seen` backup/recovery log covers
+# these keys with no extra plumbing. Rules A and B apply unchanged (same
+# diff_collection), so the first run baselines silently.
+# ---------------------------------------------------------------------------
+
+def _classify_related_application(r, changed):
+    """Another landfill's Part 115 application. URGENT only on the two expansion
+    milestones: a NEW Construction Permit application, or a Construction Permit
+    whose Closure Type now reads Issued (content = Closure Type + Closure Date,
+    so a change landing on Issued is the pending -> Issued transition). Any other
+    change, and every Operating License row, is watch."""
+    typ = _g(r, "Application Type").lower()
+    if "construction permit" in typ:
+        if not changed:
+            return "urgent", "related", []
+        if _g(r, "Closure Type").strip().lower() == "issued":
+            return "urgent", "related", []
+    return "watch", "related", []
+
+
+def _classify_related_annual(r, changed):
+    """Another landfill's annual report-year: watch (refreshes its remaining-space
+    figure for the capacity model). No years-remaining floor: that floor is an
+    Arbor Hills R1 rule."""
+    return "watch", "related", []
+
+
+RELATED_CLASSIFIERS = {
+    "applications": _classify_related_application,
+    "annual": _classify_related_annual,
+}
+
+
+def _extra_key(site_id: str, name: str) -> str:
+    return f"{site_id}:{name}"
+
+
+def related_urgent_subject(ev: dict, alert_label: str) -> str:
+    """Subject for an extra site's urgent event (pure). The two milestones get
+    their fixed wording; anything else urgent falls back to the event label."""
+    if ev["name"] == "applications" and "construction permit" in ev["label"].lower():
+        if ev["kind"] == "new":
+            return f"[URGENT] {alert_label}: construction permit application received"
+        return f"[URGENT] {alert_label}: construction permit issued"
+    return f"[URGENT] {alert_label}: {ev['label']}"
+
+
+def format_related_urgent_body(ev: dict, site_name: str, site_id: str) -> str:
+    changed = " (UPDATED)" if ev["kind"] == "changed" else " (NEW)"
+    return (
+        f"URGENT — WDS (solid waste) change at {site_name}, WDS site {site_id}.\n\n"
+        f"{ev['label']}{changed}\n"
+        f"{ev['detail']}\n\n"
+        "WDS lists an application's type and dates, not what it is for. Open the "
+        "record to confirm which project it covers.\n\n"
+        f"Source (EGLE Waste Data System):\n  {ev.get('link') or wds_link(site_id)}\n"
+    )
+
+
+def format_related_summary_body(events: list[dict], site_name: str, site_id: str) -> str:
+    lines = [f"WDS (solid waste) changes at {site_name}, WDS site {site_id}:", ""]
+    for ev in events:
+        tag = "UPDATED" if ev["kind"] == "changed" else "NEW"
+        lines.append(f"- {ev['label']} ({tag}): {ev['detail']}")
+    lines += ["", f"Source (EGLE Waste Data System):\n  {wds_link(site_id)}"]
+    return "\n".join(lines) + "\n"
+
+
+def _revert(recs_entry: dict, ev: dict) -> None:
+    """Undo one event's seen-state so the next run re-alerts (same rule as the
+    Arbor Hills urgent path: a brand-new record is dropped, a changed one gets
+    its previous hash back)."""
+    recs = recs_entry["records"]
+    if ev.get("prev_hash") is None:
+        recs.pop(ev["idkey"], None)
+    else:
+        recs[ev["idkey"]] = ev["prev_hash"]
+    recs_entry["last_count"] = len(recs)
+
+
+def check_extra_sites(state: dict, cfg: dict, send_email, fetchers=None) -> None:
+    """Poll each `wds.extra_sites` entry's collections. Never raises on one
+    site's or one collection's failure."""
+    wds_cfg = cfg.get("wds") or {}
+    primary = str(wds_cfg.get("site_id", _SITE))
+    fetchers = fetchers or wc.FETCHERS
+    seen = state.setdefault("wds_seen", {})
+    for site in wds_cfg.get("extra_sites") or []:
+        sid = str((site or {}).get("site_id") or "").strip()
+        if not sid.isdigit() or sid == primary:
+            print(f"[wds] extra site {sid!r}: missing, non-numeric or the primary site — skipping")
+            continue
+        name = site.get("name") or f"WDS site {sid}"
+        label = site.get("alert_label") or name
+        recipients = list(site.get("recipients") or [])
+        summary = []  # (entry, ev) for this site's non-urgent events
+        for coll in site.get("collections") or []:
+            classify = RELATED_CLASSIFIERS.get(coll)
+            if classify is None or coll not in fetchers:
+                print(f"[wds] {sid}: collection {coll!r} has no related-site rules — skipping")
+                continue
+            try:
+                rows = fetchers[coll](sid)
+            except Exception as e:  # noqa: BLE001 — transient: skip, warn
+                print(f"[wds] {sid}:{coll}: fetch failed, skipping this run: {e}")
+                continue
+            key = _extra_key(sid, coll)
+            entry = seen.get(key) or {"records": {}, "last_count": 0}
+            events, new_entry, note = diff_collection(coll, rows, entry, wds_cfg,
+                                                      classify=classify)
+            seen[key] = new_entry
+            print(f"[wds] {sid}:{note}")
+            link = wc.page_url(coll, sid)
+            for ev in events:
+                ev["link"] = link
+                if ev["severity"] != "urgent":
+                    summary.append((new_entry, ev))
+                    continue
+                if not recipients:
+                    print(f"[wds]   {sid}: URGENT (no recipients, log only): {ev['label']}")
+                    continue
+                try:
+                    send_email(related_urgent_subject(ev, label),
+                               format_related_urgent_body(ev, name, sid), cfg,
+                               recipients=recipients)
+                    print(f"[wds]   {sid}: URGENT emailed: {ev['label']}")
+                except Exception as ae:  # noqa: BLE001 — re-alert next run
+                    _revert(new_entry, ev)
+                    print(f"[wds]   {sid}: URGENT send FAILED — reverted to re-alert next run: "
+                          f"{type(ae).__name__}")
+        if not summary:
+            continue
+        if not recipients:
+            print(f"[wds]   {sid}: {len(summary)} watch event(s) (no recipients, log only)")
+            continue
+        evs = [ev for _, ev in summary]
+        try:
+            send_email(f"[WDS watch] {name}: {len(evs)} change(s)",
+                       format_related_summary_body(evs, name, sid), cfg,
+                       recipients=recipients)
+            print(f"[wds]   {sid}: watch summary emailed ({len(evs)} event(s))")
+        except Exception as ae:  # noqa: BLE001 — re-send next run
+            for entry, ev in summary:
+                _revert(entry, ev)
+            print(f"[wds]   {sid}: watch summary send FAILED — reverted to re-send next run: "
+                  f"{type(ae).__name__}")

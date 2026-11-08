@@ -261,6 +261,11 @@ TAB_PFAS_PWS = "Public Water Supply PFAS Watch"
 # seen. Same tab-is-the-state, append-only policy as TAB_PFAS: no tab until the
 # watcher first runs.
 TAB_EGLE_NEWS = "EGLE Newsroom Watch"
+# EGLE county solid-waste plans watch (egle_county_plans_watcher.py, ADR 074):
+# one row per baseline / change / failed check / recovery of a watched county's
+# row on EGLE's approved-plans page. The tab IS the state (append-only; the last
+# baseline/changed/recovered row per county is the reference), read STRICTLY.
+TAB_COUNTY_PLANS = "EGLE County Plans Watch"
 # MPART PFAS open-data layers watch (Stream V, ADR 060) — same on-demand,
 # append-only, Sheet-derived-state idiom as the RIDE / PFAS PWS Watch tabs: no tab
 # until mpart_watcher runs; keyed by Item (`mpart:sw` / `mpart:fish` / `mpart:sites`)
@@ -1915,6 +1920,29 @@ def append_egle_news_rows(service, sheet_id: str, rows: list[list]) -> None:
     """Append EGLE Newsroom Watch rows (EGLE_NEWS_HEADERS order). Written BEFORE
     any alert email, same crash-safe ordering as the PFAS watch."""
     append_rows(service, sheet_id, TAB_EGLE_NEWS, rows)
+
+
+COUNTY_PLANS_HEADERS = [
+    "Date Checked", "County", "Status", "Row Text", "Row Files", "Alerted",
+    "Note", "Checked At",
+]
+
+
+def ensure_county_plans_tab(service, sheet_id: str) -> None:
+    """Create/heal the EGLE County Plans Watch tab. See ensure_tab()."""
+    ensure_tab(service, sheet_id, TAB_COUNTY_PLANS, COUNTY_PLANS_HEADERS)
+
+
+def read_county_plans_rows(service, sheet_id: str) -> list[list]:
+    """Every EGLE County Plans Watch row, in append order. STRICT: a transport
+    failure raises, so a failed read can never look like a first run and
+    re-baseline over a real change (the ADR 018/023 failure)."""
+    return _tab_rows_strict(service, sheet_id, TAB_COUNTY_PLANS, "A2:H")
+
+
+def append_county_plans_rows(service, sheet_id: str, rows: list[list]) -> None:
+    """Append EGLE County Plans Watch rows (COUNTY_PLANS_HEADERS order)."""
+    append_rows(service, sheet_id, TAB_COUNTY_PLANS, rows)
 
 
 # ---------------------------------------------------------------------------
