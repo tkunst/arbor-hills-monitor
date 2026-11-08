@@ -394,3 +394,62 @@ def test_a_raising_collection_keeps_its_state_and_the_others_still_alert(monkeyp
     ww.check_wds(state, cfg, mail, fetchers=_fetchers(terminated, annual))
     assert len(mail.sent) == 1 and "1 change(s)" in mail.sent[0]["subject"]
     assert state["wds_seen"][f"{PTA}:annual"] == before_annual
+
+
+# --- review round 3: previous status stored as text ---------------------------
+
+def test_stored_value_is_the_normalized_closure_text():
+    state = _baselined_state(_cfg())
+    recs = state["wds_seen"][f"{PTA}:applications"]["records"]
+    assert recs["Construction Permit|10/31/2019"] == "issued"
+    assert recs["Construction Permit|10/6/2006"] == "terminated - admin. incomplete"
+
+
+def test_issued_to_issued_modified_is_not_the_milestone():
+    cfg = _cfg()
+    state = _baselined_state(cfg)
+    rows = [dict(r) for r in PTA_APPS_2026_11_07]
+    rows[0]["Closure Type"] = "Issued - Modified"
+    mail = Mailer()
+    ww.check_wds(state, cfg, mail, fetchers=_fetchers(rows))
+    assert [m["subject"] for m in mail.sent] == [
+        "[WDS watch] Pine Tree Acres (WM, Macomb): 1 change(s)"]
+
+
+def test_capitalisation_change_is_no_event():
+    cfg = _cfg()
+    state = _baselined_state(cfg)
+    rows = [dict(r, **{"Closure Type": r["Closure Type"].upper()}) for r in PTA_APPS_2026_11_07]
+    mail = Mailer()
+    ww.check_wds(state, cfg, mail, fetchers=_fetchers(rows))
+    assert mail.sent == []
+
+
+def test_receipt_date_fix_on_old_permit_is_watch_not_urgent():
+    cfg = _cfg()
+    state = _baselined_state(cfg)
+    rows = [dict(r) for r in PTA_APPS_2026_11_07]
+    rows[0]["Receipt Date"] = "10/30/2019"   # re-keys the 2019 permit as "new"
+    mail = Mailer()
+    ww.check_wds(state, cfg, mail, fetchers=_fetchers(rows))
+    assert len(mail.sent) == 1
+    assert mail.sent[0]["subject"].startswith("[WDS watch]")
+    assert "likely a corrected old record" in mail.sent[0]["body"]
+
+
+def test_genuinely_new_application_after_newest_permit_stays_urgent():
+    cfg = _cfg()
+    state = _baselined_state(cfg)
+    mail = Mailer()
+    ww.check_wds(state, cfg, mail, fetchers=_fetchers([NEW_CP] + PTA_APPS_2026_11_07))
+    assert mail.sent[0]["subject"].startswith("[URGENT]")
+
+
+def test_revert_keeps_the_fetched_row_count():
+    cfg = _cfg()
+    state = _baselined_state(cfg)
+    # Leave a stale key behind (as a re-keying would), then fail a send.
+    state["wds_seen"][f"{PTA}:applications"]["records"]["Construction Permit|1/1/1990"] = "issued"
+    ww.check_wds(state, cfg, Mailer(fail=True),
+                 fetchers=_fetchers([NEW_CP] + PTA_APPS_2026_11_07))
+    assert state["wds_seen"][f"{PTA}:applications"]["last_count"] == 11

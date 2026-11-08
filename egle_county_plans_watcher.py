@@ -31,7 +31,9 @@ FAILURES. A fetch error, or a page where the county's row can't be found, is a
 FAILED CHECK, never a change: it appends a `fetch_failed` row. When failed
 checks span `stale_alert_after_days` distinct days in a row (default 3), ONE
 stale email goes out; the next successful read appends `recovered` and resets
-the streak. First successful read for a county baselines silently.
+the streak. First successful read for a county baselines silently. A failure
+of the whole STEP (no private Sheet, tab unreadable, a row write failing) is
+counted outside the private Sheet by record_step_failure() — see watcher.py.
 
 STATE lives on the PRIVATE Sheet (GSHEET_ID_PRIVATE), the home of the owner's
 working tabs, rather than the operator-visible case file. That the monitor
@@ -224,12 +226,48 @@ def check(sheets, sheet_id: str, cfg: dict, send_email, fetch_page=None) -> None
     sw.ensure_county_plans_tab(sheets, sheet_id)
     rows = sw.read_county_plans_rows(sheets, sheet_id)  # raises on read error
     today, now = _today(), _now()
+    failed = []
     for county in counties:
         try:
             _check_county(sheets, sheet_id, cfg, send_email, rows, county, page, error,
                           url, recipients, stale_after, today, now)
         except Exception as e:  # noqa: BLE001 — one county never stops the next
+            failed.append(type(e).__name__)
             print(f"[county-plans] {county}: failed ({type(e).__name__})")
+    if failed:
+        # Surface it to the caller's step-health counter (record_step_failure):
+        # a county whose row can't be written leaves no trace on the tab.
+        raise RuntimeError(f"{len(failed)} county check(s) failed: {', '.join(failed)}")
+
+
+def record_step_failure(health: dict, error: str, today: str, cfg: dict, send_email) -> dict:
+    """Count a day on which the whole county-plans step couldn't run (pure apart
+    from the one email). Returns the new health dict
+    {"fail_days": [...], "warned": bool, "last_error": str}. ONE email per outage
+    once failures span stale_alert_after_days distinct days; the caller resets
+    the dict to {} on the next successful step. Empty recipients = log only."""
+    pc_cfg = cfg.get("egle_county_plans") or {}
+    stale_after = int(pc_cfg.get("stale_alert_after_days", 3))
+    recipients = list(pc_cfg.get("recipients") or [])
+    days = sorted(set(health.get("fail_days") or []) | {today})
+    out = {"fail_days": days, "warned": bool(health.get("warned")), "last_error": error[:120]}
+    if len(days) >= stale_after and not out["warned"]:
+        if not recipients:
+            print("[county-plans] step failing (no recipients, log only)")
+            return out
+        body = (f"The monitor's check of EGLE's county plans page has not been able to "
+                f"run on {len(days)} days ({days[0]} to {days[-1]}), so a change to a "
+                f"watched county's row would go unseen.\n\nLast error: {error}\n\n"
+                "Usual causes: GSHEET_ID_PRIVATE missing in the workflow, or the private "
+                "Sheet no longer shared with the service account.\n"
+                f"Check the page by hand meanwhile: {pc_cfg.get('url') or DEFAULT_URL}\n")
+        try:
+            if send_email("[EGLE county plans] watch not running", body, cfg,
+                          recipients=recipients) is not False:
+                out["warned"] = True
+        except Exception as e:  # noqa: BLE001 — retried on the next failed day
+            print(f"[county-plans] step-failure email failed ({type(e).__name__})")
+    return out
 
 
 def _check_county(sheets, sheet_id, cfg, send_email, rows, county, page, error,

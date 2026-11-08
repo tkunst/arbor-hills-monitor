@@ -313,6 +313,8 @@ def _idkey(spec, r) -> str:
 
 
 def _content_hash(spec, r) -> str:
+    if "hash" in spec:  # extra-site override (ADR 074): a readable value, not a digest
+        return spec["hash"](r)
     raw = "|".join(str(x) for x in spec["content"](r))
     return hashlib.sha1(raw.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
@@ -327,7 +329,9 @@ def _event_from_row(name: str, r: dict, kind: str, cfg_wds: dict, prev_hash=None
     spec = spec or COLLECTIONS[name]
     floor = float(cfg_wds.get("years_remaining_floor", 3.0))
     if classify is not None:
-        sev, dtype, risks = classify(r, kind == "changed")
+        # Extra-site classifiers also get the record's previous stored value
+        # (None for a new record), see RELATED_HASH.
+        sev, dtype, risks = classify(r, kind == "changed", prev_hash)
     elif name == "annual":
         sev, dtype, risks = _classify_annual(r, kind == "changed", floor)
     else:
@@ -360,7 +364,7 @@ def historical_events(name: str, rows: list[dict], cfg_wds: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict,
-                    classify=None, content=None):
+                    classify=None, content=None, hasher=None):
     """Diff freshly-fetched `rows` for one collection against `seen_entry`
     ({"records": {idkey: hash}, "last_count": N}).
 
@@ -373,11 +377,14 @@ def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict
     baseline/guard result yields events=[] and a fully-updated seen entry (records
     everything, alerts nothing). `classify` is passed through to
     _event_from_row (None = the Arbor Hills classifiers); `content` replaces the
-    collection's mutable-field tuple (None = the Arbor Hills one). Both are used
-    only by the extra-site path (ADR 074)."""
+    collection's mutable-field tuple (None = the Arbor Hills one) and `hasher`
+    the stored per-record value (None = the 12-char content digest). All three
+    are used only by the extra-site path (ADR 074)."""
     spec = COLLECTIONS[name]
     if content is not None:
         spec = {**spec, "content": content}
+    if hasher is not None:
+        spec = {**spec, "hash": hasher}
     records = dict(seen_entry.get("records") or {})
     last_count = int(seen_entry.get("last_count") or 0)
     # Drop rows with an empty identity — WDS grids carry a trailing blank
@@ -544,28 +551,44 @@ def check_wds(state: dict, cfg: dict, send_email, fetchers=None, on_row=None) ->
 # shared alert list). State lives in the SAME `_meta.wds_seen` dict under
 # "<site_id>:<collection>" keys — an Arbor Hills key never contains a colon, so
 # the two can't collide, and the ADR 024 `_wds_seen` backup/recovery log covers
-# these keys with no extra plumbing. Rules A and B apply unchanged (same
-# diff_collection), so the first run baselines silently.
+# these keys with no extra plumbing. Rule A (bad-fetch guard) and Rule B(i)
+# (silent first baseline) apply unchanged (same diff_collection). Rule B(ii)'s
+# over-cap re-baseline is switched OFF here: over `max_alerts_per_run` events
+# are bundled into one email instead (see _send_bundle). For applications the
+# stored per-record value is the normalized Closure Type text (RELATED_HASH),
+# not a digest, so a status change can be judged against the previous status.
 # ---------------------------------------------------------------------------
 
-def _classify_related_application(r, changed):
+def _closure_norm(r) -> str:
+    """An application's Closure Type, lower-cased with whitespace collapsed:
+    the value an extra site STORES per record (RELATED_HASH), so the previous
+    status is readable on the next run and a capitalisation/spacing change in
+    how WDS prints it is no change at all."""
+    return " ".join(_g(r, "Closure Type").lower().split())
+
+
+def _classify_related_application(r, changed, prev=None):
     """Another landfill's Part 115 application. URGENT only on the two expansion
     milestones: a NEW Construction Permit application, or a Construction Permit
-    whose Closure Type now reads Issued. The related-site content is Closure
-    Type ALONE (RELATED_CONTENT), so a `changed` event always means the Closure
-    Type itself changed, and a change landing on Issued is a transition from
-    something else (a Closure Date correction on an already-Issued permit is no
-    event at all). Any other change, and every Operating License row, is watch."""
+    whose status really moved to Issued — `prev` is the record's previously
+    stored Closure Type (RELATED_HASH stores the text itself, not a digest), so
+    "issued" -> "issued - modified" is NOT the milestone, only a status that
+    did not say issued before and does now. A Closure Date correction is no
+    event at all (the stored value is the Closure Type alone). Any other change,
+    and every Operating License row, is watch. (A NEW Construction Permit row is
+    further checked against the site's newest known permit in
+    _check_one_extra_site, so a corrected Receipt Date that re-keys an old
+    permit is not reported as a new application.)"""
     typ = _g(r, "Application Type").lower()
     if "construction permit" in typ:
         if not changed:
             return "urgent", "related", []
-        if "issued" in _g(r, "Closure Type").lower():
+        if "issued" in _closure_norm(r) and "issued" not in (prev or ""):
             return "urgent", "related", []
     return "watch", "related", []
 
 
-def _classify_related_annual(r, changed):
+def _classify_related_annual(r, changed, prev=None):
     """Another landfill's annual report-year: watch (refreshes its remaining-space
     figure for the capacity model). No years-remaining floor: that floor is an
     Arbor Hills R1 rule."""
@@ -582,6 +605,25 @@ RELATED_CLASSIFIERS = {
 RELATED_CONTENT = {
     "applications": lambda r: (_g(r, "Closure Type"),),
 }
+
+# Stored per-record values that differ from the Arbor Hills digest. For
+# applications the normalized Closure Type TEXT is stored, so the next run can
+# read the previous status (a digest can't say whether it was already Issued).
+# The ADR 024 backup log persists `records` as-is, so this survives a recovery.
+RELATED_HASH = {
+    "applications": _closure_norm,
+}
+
+_MDY_FULL = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
+
+
+def _receipt_key(idkey: str):
+    """(yyyy, mm, dd) from an applications idkey "<Type>|<M/D/YYYY>", or None."""
+    m = _MDY_FULL.match(idkey.rsplit("|", 1)[-1].strip())
+    if not m:
+        return None
+    mm, dd, yyyy = (int(x) for x in m.groups())
+    return (yyyy, mm, dd)
 
 # Per-collection bundling threshold for extra sites. Above it, a collection's
 # events go out as ONE email listing them all (URGENT if any is urgent) instead
@@ -636,7 +678,9 @@ def _revert(recs_entry: dict, ev: dict) -> None:
         recs.pop(ev["idkey"], None)
     else:
         recs[ev["idkey"]] = ev["prev_hash"]
-    recs_entry["last_count"] = len(recs)
+    # last_count stays the fetched row count diff_collection set: recomputing it
+    # from the stored keys could inflate it with keys a re-keying left behind,
+    # and Rule A would then read every normal fetch as a collapse.
 
 
 def _send_ok(send_email, subject, body, cfg, recipients) -> bool:
@@ -649,6 +693,28 @@ def _send_ok(send_email, subject, body, cfg, recipients) -> bool:
     except Exception as e:  # noqa: BLE001
         print(f"[wds]   send raised {type(e).__name__}")
         return False
+
+
+def _downgrade_backdated(events: list[dict], old_entry: dict) -> None:
+    """A NEW Construction Permit row whose Receipt Date is not later than the
+    newest Construction Permit already on record is almost certainly an old
+    permit re-keyed by a Receipt Date correction (or a WDS date-format change),
+    not a new application: downgrade it to watch (still reported, not URGENT).
+    Fail-safe: no prior permit, or an unparseable date, keeps it urgent."""
+    known = [_receipt_key(k) for k in (old_entry.get("records") or {})
+             if k.lower().startswith("construction permit|")]
+    known = [k for k in known if k]
+    if not known:
+        return
+    newest = max(known)
+    for ev in events:
+        if ev["kind"] != "new" or ev["severity"] != "urgent":
+            continue
+        rk = _receipt_key(ev["idkey"])
+        if rk is not None and rk <= newest:
+            ev["severity"] = "watch"
+            ev["detail"] += (" (received on or before the newest construction permit "
+                             "already on record, so likely a corrected old record)")
 
 
 def _send_bundle(events, entry, sid, name, label, recipients, cfg, send_email) -> None:
@@ -719,7 +785,9 @@ def _check_one_extra_site(site, primary, seen, wds_cfg, cfg, send_email, fetcher
             entry = seen.get(key) or {"records": {}, "last_count": 0}
             events, new_entry, note = diff_collection(
                 coll, rows, entry, site_cfg, classify=classify,
-                content=RELATED_CONTENT.get(coll))
+                content=RELATED_CONTENT.get(coll), hasher=RELATED_HASH.get(coll))
+            if coll == "applications":
+                _downgrade_backdated(events, entry)
             link = wc.page_url(coll, sid)
             for ev in events:
                 ev["link"] = link

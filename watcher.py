@@ -310,15 +310,26 @@ def _check_liveness(sheets, sheet_id: str, cfg: dict, state: dict, *, unprocesse
               f"{type(e).__name__}")
 
 
-def _run_county_plans(cfg: dict) -> str:
+def _run_county_plans(cfg: dict, state: dict, today_iso: str) -> str:
     """EGLE county plans watch (ADR 074) on the PRIVATE Sheet only. With no
-    GSHEET_ID_PRIVATE it skips; it never falls back to the public GSHEET_ID."""
+    GSHEET_ID_PRIVATE it skips; it never falls back to the public GSHEET_ID.
+    A step that can't run (no private Sheet, tab unreadable, a county's row
+    write failing) is counted in state['county_plans_health'] (persisted in
+    _meta by the caller's write_meta); failures on stale_alert_after_days
+    distinct days send ONE email, so the watch never goes quiet unseen."""
     import egle_county_plans_watcher as ecp
     priv_id = os.environ.get("GSHEET_ID_PRIVATE")
-    if not priv_id:
-        print("[watcher] EGLE county plans: GSHEET_ID_PRIVATE not set — skipped")
-        return "skipped"
-    ecp.check(dc.sheets_service(), priv_id, cfg, ea.send_email)
+    try:
+        if not priv_id:
+            raise RuntimeError("GSHEET_ID_PRIVATE not set")
+        ecp.check(dc.sheets_service(), priv_id, cfg, ea.send_email)
+    except Exception as e:  # noqa: BLE001 — counted, never breaks the watcher
+        health = state.get("county_plans_health") or {}
+        state["county_plans_health"] = ecp.record_step_failure(
+            health, type(e).__name__, today_iso, cfg, ea.send_email)
+        print(f"[watcher] EGLE county plans step failed: {type(e).__name__}")
+        return "failed"
+    state["county_plans_health"] = {}
     return "ran"
 
 
@@ -489,7 +500,7 @@ def run() -> int:
     # recipients; isolated so it can never break the watcher (class only).
     if (cfg.get("egle_county_plans") or {}).get("enabled"):
         try:
-            _run_county_plans(cfg)
+            _run_county_plans(cfg, state, today.isoformat())
         except Exception as e:  # noqa: BLE001
             print(f"[watcher] EGLE county plans step skipped: {type(e).__name__}")
 

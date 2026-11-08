@@ -720,6 +720,11 @@ _META_DEFAULTS = {
     # pipeline's health singleton — last_activity_at, consecutive_deferrals
     # and the two once-per-episode warned markers. Written by watcher.run.
     "doc_pipeline_health": {},
+    # egle_county_plans_watcher.py (ADR 074): days the county-plans STEP itself
+    # failed (no private Sheet / its tab unreadable), kept here because those
+    # failures can't be recorded on the private Sheet they're about. Dates and
+    # an error class only. Written by watcher.run.
+    "county_plans_health": {},
 }
 
 # write_meta overwrites this many _meta rows every time (live keys first, blanks

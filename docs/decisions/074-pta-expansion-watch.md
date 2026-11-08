@@ -30,9 +30,21 @@ Stream C keeps polling Arbor Hills (475946) exactly as before. After that loop,
 - **State** lives in the same `_meta.wds_seen` dict under
   `"<site_id>:<collection>"` keys. Arbor Hills keys are bare collection names
   (never a colon), so the two cannot collide, and the ADR 024 `_wds_seen` backup
-  and recovery log covers the new keys with no code change. Rules A (bad-fetch
-  guard) and B (silent first baseline, over-cap re-baseline) apply unchanged:
-  the same `diff_collection()` runs, with an optional `classify=` override.
+  and recovery log covers the new keys with no code change. Rule A (bad-fetch
+  guard) and Rule B(i) (silent first baseline) apply unchanged: the same
+  `diff_collection()` runs, with optional `classify=` / `content=` / `hasher=`
+  overrides. Rule B(ii)'s over-cap re-baseline is OFF for extra sites (see
+  "Anti-stampede without dropping" below).
+- **Previous status is stored as text.** For applications the per-record value
+  in the seen-state is the Closure Type itself, lower-cased with spacing
+  collapsed (e.g. `issued`), not a digest. So the next run knows the previous
+  status: "construction permit issued" fires only when the status did not say
+  "issued" before and does now. `Issued` → `Issued - Modified`, and `Issued` →
+  `ISSUED` (no change at all after normalizing), never fire it.
+- **Back-dated "new" permits.** A new Construction Permit row whose Receipt
+  Date is not later than the newest permit already on record is treated as a
+  corrected old record (watch, with a note), not a new application. No prior
+  permit, or an unparseable date, keeps it urgent (fail-safe).
 - **Classification** (`RELATED_CLASSIFIERS`; only `applications` and `annual`
   have rules): a NEW Construction Permit application = urgent, subject
   "[URGENT] Pine Tree Acres expansion: construction permit application
@@ -89,6 +101,12 @@ outage. For a change the email goes out before the row is written, so a crash
 re-sends rather than loses (the event may happen once in years; a duplicate is
 the cheaper failure). A send that returns False (no SMTP) counts as not sent. The fetch uses `pfas_client.fetch_page` (browser
 User-Agent): the page returns 403 to a bare client and 200 to a browser UA.
+
+A failure of the step itself (no private Sheet configured, its tab unreadable,
+a county's row write failing) can't be recorded on the private Sheet, so it is
+counted in `_meta.county_plans_health` on the main Sheet (dates + error class
+only); failures on 3 distinct days send one "watch not running" email, and the
+next successful run resets the count.
 
 Row matching accepts the county name with an optional "County", plan year and
 stars ("Washtenaw 2019**", "Macomb*"), so an approval marked on the name itself
