@@ -319,12 +319,14 @@ def _run_county_plans(cfg: dict, state: dict, today_iso: str) -> str:
     distinct days send ONE email, so the watch never goes quiet unseen."""
     import egle_county_plans_watcher as ecp
     priv_id = os.environ.get("GSHEET_ID_PRIVATE")
+    health = state.get("county_plans_health") or {}
+    memo = dict(health.get("sent") or {})
     try:
         if not priv_id:
             raise RuntimeError("GSHEET_ID_PRIVATE not set")
-        ecp.check(dc.sheets_service(), priv_id, cfg, ea.send_email)
+        ecp.check(dc.sheets_service(), priv_id, cfg, ea.send_email, sent_memo=memo)
     except Exception as e:  # noqa: BLE001 — counted, never breaks the watcher
-        health = state.get("county_plans_health") or {}
+        health = {**health, "sent": memo}
         state["county_plans_health"] = ecp.record_step_failure(
             health, type(e).__name__, today_iso, cfg, ea.send_email)
         print(f"[watcher] EGLE county plans step failed: {type(e).__name__}")

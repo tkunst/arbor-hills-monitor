@@ -147,18 +147,20 @@ def test_any_field_edit_is_reported_without_judgement():
     assert "Now:    Closure Type: Issued; Closure Date: 5/9/2015" in m["body"]
 
 
-def test_corrected_receipt_date_shows_as_gone_plus_new_in_one_email():
+def test_corrected_receipt_date_shows_as_new_then_gone():
     state = _baselined_state()
     rows = [dict(r) for r in PTA_APPS_2026_11_07]
     rows[0]["Receipt Date"] = "11/1/2019"   # forward correction re-keys the 2019 permit
     (m,) = _run(state, rows).sent
-    assert m["subject"].endswith("2 record change(s)")
+    assert m["subject"].endswith("1 record change(s)")
     assert ("Construction Permit (received 11/1/2019)\n  Before: (not listed)\n"
             "  Now:    Closure Type: Issued; Closure Date: 3/18/2020\n") in m["body"]
+    # The old key is reported gone only after a second run without it.
+    (m,) = _run(state, rows).sent
     assert ("Construction Permit (received 10/31/2019)\n"
             "  Before: Closure Type: Issued; Closure Date: 3/18/2020\n"
             "  Now:    (no longer listed)\n") in m["body"]
-    # The vanished key is dropped, so it is reported once.
+    # Dropped once reported, so it is reported once.
     assert "Construction Permit|10/31/2019" not in state["wds_seen"][f"{PTA}:applications"]["records"]
     assert _run(state, rows).sent == []
 
@@ -178,7 +180,9 @@ def test_many_changes_are_one_email_never_a_silent_rebaseline():
     rekeyed = [dict(r, **{"Receipt Date": "0" + r["Receipt Date"]}) if r["Receipt Date"] else r
                for r in PTA_APPS_2026_11_07]
     (m,) = _run(state, rekeyed).sent
-    assert m["subject"].endswith("20 record change(s)")   # 10 new + 10 no longer listed
+    assert m["subject"].endswith("10 record change(s)")   # the 10 old keys go next run
+    (m,) = _run(state, rekeyed).sent
+    assert m["subject"].endswith("10 record change(s)")
 
 
 # --- guards ---------------------------------------------------------------------------
@@ -189,18 +193,45 @@ def test_bad_fetch_reports_nothing_gone():
     assert state["wds_seen"][f"{PTA}:applications"]["last_count"] == 10
 
 
+def test_one_short_page_is_not_reported_as_deleted_then_re_added():
+    """A partial fetch above Rule A's floor (7 of 10) must not send "no longer
+    listed", and the next good fetch must not send "(not listed) -> ..."."""
+    state = _baselined_state()
+    assert _run(state, PTA_APPS_2026_11_07[:7]).sent == []
+    assert _run(state, PTA_APPS_2026_11_07).sent == []
+    assert "missing" not in state["wds_seen"][f"{PTA}:applications"]
+
+
+def test_duplicate_keys_in_one_fetch_do_not_flap():
+    state = _baselined_state()
+    dup = _app("Construction Permit", "10/31/2019", "Withdrawn", "1/1/2020")
+    rows = PTA_APPS_2026_11_07 + [dup]
+    (m,) = _run(state, rows).sent
+    assert m["subject"].endswith("1 record change(s)")
+    assert "Construction Permit (received 10/31/2019 #2)" in m["body"]
+    assert _run(state, rows).sent == []
+    assert _run(state, rows).sent == []
+
+
 def test_send_failure_or_false_reverts_and_resends():
     for bad in (Mailer(fail=True), Mailer(result=False)):
         state = _baselined_state()
+        before = copy.deepcopy(state["wds_seen"])
         rows = [dict(r) for r in PTA_APPS_2026_11_07]
         rows[0]["Receipt Date"] = "11/1/2019"
         _run(state, [NEW_CP] + rows, mail=bad)
-        recs = state["wds_seen"][f"{PTA}:applications"]["records"]
-        assert "Construction Permit|12/1/2026" not in recs
-        assert "Construction Permit|10/31/2019" in recs        # the vanished row is back
-        assert "Construction Permit|11/1/2019" not in recs
+        assert state["wds_seen"] == before          # whole collection restored
         (m,) = _run(state, [NEW_CP] + rows).sent
-        assert m["subject"].endswith("3 record change(s)")
+        assert m["subject"].endswith("2 record change(s)")
+
+
+def test_unsent_gone_report_is_resent():
+    state = _baselined_state()
+    rows = PTA_APPS_2026_11_07[1:]
+    assert _run(state, rows).sent == []              # first miss: nothing yet
+    _run(state, rows, mail=Mailer(fail=True))        # second miss: report fails
+    (m,) = _run(state, rows).sent                    # re-sent next run
+    assert "Now:    (no longer listed)" in m["body"]
 
 
 def test_empty_recipients_logs_only_never_the_shared_list():

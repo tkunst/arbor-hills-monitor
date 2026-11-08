@@ -40,8 +40,9 @@ Stream C keeps polling Arbor Hills (475946) exactly as before. After that loop,
   change, a Receipt Date corrected backward or forward re-keying an old Issued
   permit as "new"). These records change a few times a year at most (Pine Tree
   Acres has 10 applications since 2002), so reporting every change is cheap and
-  cannot cry wolf: a corrected Receipt Date shows up as one row "no longer
-  listed" and a near-identical one "not listed → …" in the same email.
+  makes no claim: a corrected Receipt Date shows up as a near-identical row
+  "(not listed) → …", and the next run reports the old one "(no longer
+  listed)".
 - **State** lives in the same `_meta.wds_seen` dict under
   `"<site_id>:<collection>"` keys. Arbor Hills keys are bare collection names
   (never a colon), so the two cannot collide. The stored per-record value is the
@@ -52,7 +53,12 @@ Stream C keeps polling Arbor Hills (475946) exactly as before. After that loop,
   apply unchanged (`diff_collection()` with optional `classify=` / `hasher=`).
   Rule B(ii)'s over-cap re-baseline is off for extra sites: however many
   changes, it is one email, so nothing is silently dropped. A first run or a
-  Rule A skip never reports rows as "no longer listed".
+  Rule A skip never reports rows as "no longer listed", and a row is reported
+  gone only after it is missing from two good fetches in a row (a per-key
+  `missing` count in the entry), so one short page from WDS is not read as
+  records deleted and then re-added. Two rows with the same key in one fetch
+  (same type, same receipt date) are kept apart with a stable " #2" suffix
+  instead of flapping against each other every run.
 - **Routing.** Extra-site changes never reach the Arbor Hills Sheet tabs, the
   risk register, or the coalition Sunday digest (ADR 064's lesson). Email goes to
   the site's scoped `recipients` only; empty = log only. A send that raises, or
@@ -83,7 +89,9 @@ is skipped, never written to the public Sheet. A fetch error or a missing row is
 never a change; failures on 3 distinct days in a row send one stale email per
 outage. For a change the email goes out before the row is written, so a crash
 re-sends rather than loses (the event may happen once in years; a duplicate is
-the cheaper failure). A send that returns False (no SMTP) counts as not sent. The fetch uses `pfas_client.fetch_page` (browser
+the cheaper failure), and while the row write keeps failing, `_meta` remembers
+the change already emailed so it is not re-sent every day. A send that returns
+False (no SMTP) counts as not sent. The fetch uses `pfas_client.fetch_page` (browser
 User-Agent): the page returns 403 to a bare client and 200 to a browser UA.
 
 A failure of the step itself (no private Sheet configured, its tab unreadable,
@@ -111,8 +119,9 @@ expansion, which will appear in WDS. So PTA stays out of `nsite_sites`.
 - Trisha gets an email whenever a watched Pine Tree Acres WDS record or the
   Macomb plans row changes, showing before and now. PTA events reach no
   public Sheet tab, the findings feed or the coalition digest. One exception to
-  know about: the PTA WDS seen-state (record keys such as
-  `398972:applications|Construction Permit|10/31/2019` and content hashes) sits
+  know about: the PTA WDS seen-state (under `398972:applications` and
+  `398972:annual`: record keys such as `Construction Permit|10/31/2019` with
+  readable values such as `Closure Type: Issued; Closure Date: 3/18/2020`) sits
   in `_meta.wds_seen` and the `_wds_seen` backup log on the public case-file
   Sheet, like Arbor Hills' own. It is public EGLE data with no analysis in it.
 - PTA watch events have no durable Sheet row (only the email and the seen-state).

@@ -639,36 +639,77 @@ def check_extra_sites(state: dict, cfg: dict, send_email, fetchers=None) -> None
             print(f"[wds] extra site step failed: {type(e).__name__}: {e}")
 
 
+# The identity field that gets a " #2", " #3" suffix when one fetch lists two
+# rows with the same key (see _disambiguate).
+_RELATED_KEY_FIELD = {"applications": "Receipt Date", "annual": "Year"}
+
+# Runs in a row a stored row must be missing from an otherwise good fetch
+# before it is reported "no longer listed" (a short page from WDS must not
+# read as records deleted, then re-added the next day).
+_GONE_AFTER_MISSES = 2
+
+
+def _disambiguate(coll: str, rows: list[dict], value) -> list[dict]:
+    """Copies of `rows` where a key listed more than once in this fetch gets a
+    stable " #2", " #3" suffix on its last identity field, ordered by the
+    stored value — so two same-type applications received the same day are
+    two records, not one record flapping between two values every run."""
+    spec = COLLECTIONS[coll]
+    field = _RELATED_KEY_FIELD[coll]
+    groups: dict = {}
+    for r in rows:
+        if any(str(x).strip() for x in spec["identity"](r)):
+            groups.setdefault(_idkey(spec, r), []).append(r)
+    out = [r for r in rows if not any(str(x).strip() for x in spec["identity"](r))]
+    for k, rs in groups.items():
+        rs = sorted(rs, key=value)
+        out.append(rs[0])
+        for n, r in enumerate(rs[1:], start=2):
+            out.append({**r, field: f"{_g(r, field)} #{n}"})
+    return out
+
+
 def _collect(coll, rows, entry, wds_cfg, sid):
-    """(new_entry, changes, undo, note) for one collection — pure apart from
-    the page-URL lookup. `undo` restores each change's previous stored value
-    (or removes a new key) if the email isn't sent."""
+    """(new_entry, changes, note) for one collection — pure apart from the
+    page-URL lookup. The caller restores `entry` itself if the email isn't sent."""
     fields = RELATED_FIELDS[coll]
+    value = _related_value(fields)
+    rows = _disambiguate(coll, rows, value)
     site_cfg = {**wds_cfg, "max_new_wds_alerts_per_run": 10**6}  # B(ii) off: never drop
     events, new_entry, note = diff_collection(
-        coll, rows, entry, site_cfg, classify=_related_watch, hasher=_related_value(fields))
+        coll, rows, entry, site_cfg, classify=_related_watch, hasher=value)
     link = wc.page_url(coll, sid)
     old = entry.get("records") or {}
-    changes, undo = [], []
+    changes = []
     for ev in events:
         prev = ev["prev_hash"]
         changes.append({"label": ev["label"], "before": _NOT_LISTED if prev is None else prev,
                         "now": ev["hash"], "link": link})
-        undo.append((ev["idkey"], prev))
     # Rows no longer listed. Only on a real diff: a first-run baseline (old is
-    # empty) or a Rule A skip (new_entry IS the old entry) reports nothing.
+    # empty) or a Rule A skip (new_entry IS the old entry) touches nothing.
     # diff_collection keeps every old key, so compare against the keys of the
-    # rows actually fetched, and drop the gone ones so each is reported once.
+    # rows actually fetched. A row must be missing on _GONE_AFTER_MISSES runs
+    # in a row before it is reported (then dropped, so it is reported once);
+    # the count lives in the entry's "missing" map and clears when it returns.
     if old and new_entry is not entry:
         spec = COLLECTIONS[coll]
         current = {_idkey(spec, r) for r in rows
                    if any(str(x).strip() for x in spec["identity"](r))}
+        missing = {}
+        prior = entry.get("missing") or {}
         for k in sorted(set(old) - current):
+            n = int(prior.get(k, 0)) + 1
+            if n < _GONE_AFTER_MISSES:
+                missing[k] = n
+                continue
             changes.append({"label": _key_label(coll, k), "before": old[k],
                             "now": _NO_LONGER, "link": link})
-            undo.append((k, old[k]))
             new_entry["records"].pop(k, None)
-    return new_entry, changes, undo, note
+        if missing:
+            new_entry["missing"] = missing
+    elif entry.get("missing"):
+        new_entry["missing"] = entry["missing"]
+    return new_entry, changes, note
 
 
 def _check_one_extra_site(site, primary, seen, wds_cfg, cfg, send_email, fetchers) -> None:
@@ -678,7 +719,7 @@ def _check_one_extra_site(site, primary, seen, wds_cfg, cfg, send_email, fetcher
         return
     name = site.get("name") or f"WDS site {sid}"
     recipients = list(site.get("recipients") or [])
-    pending = []  # (key, new_entry, undo) per collection with changes
+    pending = []  # (key, previous entry) per collection with changes
     changes = []
     for coll in site.get("collections") or []:
         if coll not in RELATED_FIELDS or coll not in fetchers:
@@ -692,7 +733,7 @@ def _check_one_extra_site(site, primary, seen, wds_cfg, cfg, send_email, fetcher
         key = _extra_key(sid, coll)
         try:
             entry = seen.get(key) or {"records": {}, "last_count": 0}
-            new_entry, coll_changes, undo, note = _collect(coll, rows, entry, wds_cfg, sid)
+            new_entry, coll_changes, note = _collect(coll, rows, entry, wds_cfg, sid)
         except Exception as e:  # noqa: BLE001 — keep the old seen-state
             print(f"[wds] {sid}:{coll}: diff failed, seen-state kept: {type(e).__name__}: {e}")
             continue
@@ -700,7 +741,7 @@ def _check_one_extra_site(site, primary, seen, wds_cfg, cfg, send_email, fetcher
         print(f"[wds] {sid}:{note}" + (f"; {len(coll_changes)} change(s)" if coll_changes else ""))
         if coll_changes:
             changes += coll_changes
-            pending.append((new_entry, undo))
+            pending.append((key, entry))
     if not changes:
         return
     if not recipients:
@@ -710,12 +751,8 @@ def _check_one_extra_site(site, primary, seen, wds_cfg, cfg, send_email, fetcher
     if _send_ok(send_email, subject, format_related_changes(changes, name, sid), cfg, recipients):
         print(f"[wds]   {sid}: change email sent ({len(changes)} change(s))")
         return
-    # Not sent: put every change back so the next run reports it again.
-    for new_entry, undo in pending:
-        recs = new_entry["records"]
-        for k, prev in undo:
-            if prev is None:
-                recs.pop(k, None)
-            else:
-                recs[k] = prev
+    # Not sent: restore each changed collection's previous entry, so the next
+    # run sees (and reports) exactly the same changes again.
+    for key, entry in pending:
+        seen[key] = entry
     print(f"[wds]   {sid}: change email not sent — reverted to re-send next run")
