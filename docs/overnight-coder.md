@@ -199,6 +199,18 @@ overrides apply on top of everything else in this document:
   established shape: Summary (bullets), Test plan (checked boxes), and a
   "Before merging" section if there's anything a human should know before
   the merge (e.g. new secrets needed, a manual activation step).
+- **Wellfield staging pin.** Trisha's nightly wellfield staging (in Lotext,
+  `documents/arbor-hills/wellfield-auto-staging/run_nightly.sh`) imports parser
+  modules from this repo and refuses to run when the ones that decide what a
+  reading is change. If the PR touches any of `woi_table_parser.py`,
+  `ocr_util.py`, `well_aliases.py`, `data/well_registry.json`, `name_check.py`
+  or `dataset_provenance.py` (check with
+  `git diff --name-only origin/main...HEAD`), put this line under "Before
+  merging": **"Wellfield staging re-pin needed: this changes a pinned data
+  module; staging skips from the first night after merge until the new
+  `DATA_PIN_EXPECTED` is approved."** Changes to `sheet_writer.py`,
+  `drive_client.py` or `archive_client.py` need no line: staging tests those
+  automatically.
 - **Landing a new stream's workflow file (`.github/workflows/<name>.yml`).**
   Pushing anything under `.github/workflows/` needs the **`workflow` OAuth
   scope** — but that restriction is on **OAuth-app / HTTPS-token pushes (the
