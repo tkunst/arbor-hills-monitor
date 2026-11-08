@@ -287,7 +287,9 @@ def test_one_county_failing_does_not_stop_the_next(monkeypatch):
         fake.rows.extend(rows)
     monkeypatch.setattr(sw, "append_county_plans_rows", append)
     cfg = {"egle_county_plans": {"counties": ["Macomb", "Mason"], "recipients": ["t@x"]}}
-    ecp.check(None, "sid", cfg, Mailer(), fetch_page=lambda u: PAGE_2026_11_07)
+    import pytest
+    with pytest.raises(RuntimeError):  # surfaced to the step-health counter
+        ecp.check(None, "sid", cfg, Mailer(), fetch_page=lambda u: PAGE_2026_11_07)
     assert calls == ["Macomb", "Mason"] and fake.rows[-1][1] == "Mason"
 
 
@@ -298,6 +300,40 @@ def test_watcher_runs_county_plans_on_the_private_sheet_only(monkeypatch):
     monkeypatch.setattr(watcher.dc, "sheets_service", lambda: object())
     monkeypatch.setenv("GSHEET_ID", "PUBLIC")
     monkeypatch.delenv("GSHEET_ID_PRIVATE", raising=False)
-    assert watcher._run_county_plans({}) == "skipped" and seen == []
+    state = {}
+    assert watcher._run_county_plans({}, state, "2026-11-08") == "failed" and seen == []
+    assert state["county_plans_health"]["fail_days"] == ["2026-11-08"]
     monkeypatch.setenv("GSHEET_ID_PRIVATE", "PRIVATE")
-    assert watcher._run_county_plans({}) == "ran" and seen == ["PRIVATE"]
+    assert watcher._run_county_plans({}, state, "2026-11-09") == "ran" and seen == ["PRIVATE"]
+    assert state["county_plans_health"] == {}   # reset on success
+
+
+# --- review round 3: step failures that leave no row still surface -----------------
+
+def test_step_failures_email_once_after_three_days():
+    cfg = {"egle_county_plans": {"recipients": ["t@x"], "stale_alert_after_days": 3}}
+    mail = Mailer()
+    h = {}
+    for day in ("2026-11-08", "2026-11-08", "2026-11-09"):
+        h = ecp.record_step_failure(h, "HttpError", day, cfg, mail)
+    assert mail.sent == [] and h["fail_days"] == ["2026-11-08", "2026-11-09"]
+    h = ecp.record_step_failure(h, "HttpError", "2026-11-10", cfg, mail)
+    assert mail.sent == [("[EGLE county plans] watch not running", ["t@x"])] and h["warned"]
+    h = ecp.record_step_failure(h, "HttpError", "2026-11-11", cfg, mail)
+    assert len(mail.sent) == 1   # once per outage
+
+
+def test_step_failure_email_not_sent_is_retried():
+    cfg = {"egle_county_plans": {"recipients": ["t@x"], "stale_alert_after_days": 1}}
+    h = ecp.record_step_failure({}, "X", "2026-11-08", cfg, lambda *a, **k: False)
+    assert h["warned"] is False
+    mail = Mailer()
+    h = ecp.record_step_failure(h, "X", "2026-11-09", cfg, mail)
+    assert len(mail.sent) == 1 and h["warned"]
+
+
+def test_step_failure_with_no_recipients_never_emails():
+    cfg = {"egle_county_plans": {"recipients": [], "stale_alert_after_days": 1}}
+    mail = Mailer()
+    ecp.record_step_failure({}, "X", "2026-11-08", cfg, mail)
+    assert mail.sent == []

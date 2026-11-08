@@ -521,8 +521,12 @@ behavior, update its entry here in the same PR.
   `recipients`, the rest → one summary email per run; a failed send reverts the
   seen-state so the next run re-sends; empty `recipients` = log only. State is
   `_meta.wds_seen["<site_id>:<collection>"]` (Arbor Hills keys have no colon),
-  so the ADR 024 backup log covers it. Rules A/B unchanged (same
-  `diff_collection`, which takes an optional `classify=`).
+  so the ADR 024 backup log covers it. Rule A and B(i) unchanged (same
+  `diff_collection`, with optional `classify=` / `content=` / `hasher=`);
+  B(ii) is replaced by bundling (below). Applications store the normalized
+  Closure Type TEXT per record (`RELATED_HASH`), so "issued" fires only on a
+  real change from a non-issued status; `_downgrade_backdated()` makes a "new"
+  CP row received on/before the newest known CP a watch (corrected old record).
   Same inline-mirror-before-write as backfill.py.
   **Stall guard (stall-hardening, 2026-10-23):** `run()` now counts each
   run's unprocessed / processed / struck / deferred documents and hands them
@@ -1228,7 +1232,11 @@ behavior, update its entry here in the same PR.
   change the email goes BEFORE the row (a crash re-sends, never loses; a failed
   send, or `send_email` returning False, writes nothing so the next run
   retries). Each county is isolated; the heading's table is tried after every
-  occurrence of the heading text. Fetch: `pfas_client.fetch_page`
+  occurrence of the heading text. Step failures that leave no row (no
+  `GSHEET_ID_PRIVATE`, tab unreadable, a county write raising — `check()`
+  re-raises after the loop) are counted by `watcher._run_county_plans()` in
+  `_meta.county_plans_health` via `record_step_failure()`: one "watch not
+  running" email after `stale_alert_after_days` distinct days; reset on success. Fetch: `pfas_client.fetch_page`
   (browser UA; a bare client gets 403).
 - `report_tracker.py` — **ADR 071** (coder:report-expectations-tracker,
   2026-10-23): expected reports vs. arrivals, for any number of landfills.
