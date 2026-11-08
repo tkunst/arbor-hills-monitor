@@ -22,61 +22,45 @@ EGLE around May 2026. Two state approvals remain:
 
 ## Decision
 
-### A. WDS extra sites (`wds.extra_sites`)
+### A. WDS extra sites (`wds.extra_sites`): a before/now change watch
 
 Stream C keeps polling Arbor Hills (475946) exactly as before. After that loop,
-`check_extra_sites()` polls each extra site's listed collections.
+`check_extra_sites()` polls each extra site's listed collections
+(`applications`, `annual`).
 
+- **Any change, reported as it is.** A new row, a changed field, or a row no
+  longer listed goes out in ONE email per site per run, showing what the record
+  said before and what it says now (applications: Closure Type and Closure Date;
+  annual: permitted capacity, years remaining, waste CY and tons). The subject is
+  factual (`Pine Tree Acres (WM, Macomb) WDS: 1 record change(s)`). There are no
+  severity tiers and no inference about what a change means.
+- **Why not classify.** The first design sent "[URGENT] … construction permit
+  issued" when it judged a permit had been issued. Four review rounds each found
+  a new way for that judgement to be wrong (a reworded status, a capitalisation
+  change, a Receipt Date corrected backward or forward re-keying an old Issued
+  permit as "new"). These records change a few times a year at most (Pine Tree
+  Acres has 10 applications since 2002), so reporting every change is cheap and
+  cannot cry wolf: a corrected Receipt Date shows up as one row "no longer
+  listed" and a near-identical one "not listed → …" in the same email.
 - **State** lives in the same `_meta.wds_seen` dict under
   `"<site_id>:<collection>"` keys. Arbor Hills keys are bare collection names
-  (never a colon), so the two cannot collide, and the ADR 024 `_wds_seen` backup
-  and recovery log covers the new keys with no code change. Rule A (bad-fetch
-  guard) and Rule B(i) (silent first baseline) apply unchanged: the same
-  `diff_collection()` runs, with optional `classify=` / `content=` / `hasher=`
-  overrides. Rule B(ii)'s over-cap re-baseline is OFF for extra sites (see
-  "Anti-stampede without dropping" below).
-- **Previous status is stored as text.** For applications the per-record value
-  in the seen-state is the Closure Type itself, lower-cased with spacing
-  collapsed (e.g. `issued`), not a digest. So the next run knows the previous
-  status: "construction permit issued" fires only when the status did not say
-  "issued" before and does now. `Issued` → `Issued - Modified`, and `Issued` →
-  `ISSUED` (no change at all after normalizing), never fire it.
-- **Back-dated "new" permits.** A new Construction Permit row whose Receipt
-  Date is not later than the newest permit already on record is treated as a
-  corrected old record (watch, with a note), not a new application. No prior
-  permit, or an unparseable date, keeps it urgent (fail-safe).
-- **Classification** (`RELATED_CLASSIFIERS`; only `applications` and `annual`
-  have rules): a NEW Construction Permit application = urgent, subject
-  "[URGENT] Pine Tree Acres expansion: construction permit application
-  received"; a Construction Permit whose Closure Type changes to Issued =
-  urgent, "... construction permit issued" (a new row first seen already
-  Issued gets the "issued" subject too); any other change, every Operating
-  License row, and every annual report-year = watch. No risk codes: these are
-  not Arbor Hills risks. For related sites an application's content is its
-  Closure Type alone, so a Closure Date correction on an Issued permit is no
-  event (no false "issued" email).
-- **Anti-stampede without dropping.** Arbor Hills' over-cap rule re-baselines
-  silently; for extra sites that could swallow the very milestone this watch
-  exists for (a new application landing the same day as other edits). So extra
-  sites never re-baseline over a cap: more than 3 events in one collection in
-  one run (`max_alerts_per_run` overrides) go out as ONE bundled email, marked
-  URGENT if any event is urgent. A WDS date-format change that re-keys every row
-  therefore sends one email, not one per permit. "Issued" is matched
-  case-insensitively anywhere in the Closure Type ("Issued - Modified").
+  (never a colon), so the two cannot collide. The stored per-record value is the
+  watched fields as readable text (e.g. `Closure Type: Issued; Closure Date:
+  3/18/2020`), not a digest, so the next run can print "before". The ADR 024
+  `_wds_seen` backup and recovery log persists it as-is.
+- **Rules.** Rule A (bad-fetch guard) and Rule B(i) (silent first baseline)
+  apply unchanged (`diff_collection()` with optional `classify=` / `hasher=`).
+  Rule B(ii)'s over-cap re-baseline is off for extra sites: however many
+  changes, it is one email, so nothing is silently dropped. A first run or a
+  Rule A skip never reports rows as "no longer listed".
+- **Routing.** Extra-site changes never reach the Arbor Hills Sheet tabs, the
+  risk register, or the coalition Sunday digest (ADR 064's lesson). Email goes to
+  the site's scoped `recipients` only; empty = log only. A send that raises, or
+  that `send_email` reports as not sent (returns False, e.g. no SMTP), puts every
+  change back so the next run reports it again. Each collection is isolated: one
+  that raises keeps its old seen-state and the others still report.
 - **Switch.** `wds.extra_sites_enabled` (on the generated activation table)
   pauses every extra site without losing state.
-- **Routing.** Extra-site events never reach the Arbor Hills Sheet tabs, the
-  risk register, or the coalition Sunday digest (ADR 064's lesson: neighbor
-  records in the Arbor Hills feed confused readers). Urgent events email the
-  site's scoped `recipients` at once; the rest go out as one summary email per
-  run to the same list. Empty `recipients` = log only, never the shared list. A
-  send that raises, or that `send_email` reports as not sent (returns False,
-  e.g. no SMTP configured), reverts the events' seen-state so the next run
-  re-sends. Each collection is isolated: one that raises keeps its old
-  seen-state and the others still alert.
-- **Wording.** WDS shows an application's type and dates, not what it is for.
-  The subject uses the "expansion" wording the handoff asked for; the body says
-  to open the record to confirm which project the application covers.
 
 PTA is configured with Trisha's address only (the new-stream precedent).
 Because WDS is already enabled, this part goes live on merge; the first run
@@ -124,7 +108,8 @@ expansion, which will appear in WDS. So PTA stays out of `nsite_sites`.
 
 ## Consequences
 
-- Trisha gets an email when either state approval moves. PTA events reach no
+- Trisha gets an email whenever a watched Pine Tree Acres WDS record or the
+  Macomb plans row changes, showing before and now. PTA events reach no
   public Sheet tab, the findings feed or the coalition digest. One exception to
   know about: the PTA WDS seen-state (record keys such as
   `398972:applications|Construction Permit|10/31/2019` and content hashes) sits
