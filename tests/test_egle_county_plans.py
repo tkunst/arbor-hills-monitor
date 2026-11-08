@@ -296,7 +296,7 @@ def test_one_county_failing_does_not_stop_the_next(monkeypatch):
 def test_watcher_runs_county_plans_on_the_private_sheet_only(monkeypatch):
     import watcher
     seen = []
-    monkeypatch.setattr(ecp, "check", lambda sheets, sid, cfg, mail: seen.append(sid))
+    monkeypatch.setattr(ecp, "check", lambda sheets, sid, cfg, mail, sent_memo=None: seen.append(sid))
     monkeypatch.setattr(watcher.dc, "sheets_service", lambda: object())
     monkeypatch.setenv("GSHEET_ID", "PUBLIC")
     monkeypatch.delenv("GSHEET_ID_PRIVATE", raising=False)
@@ -337,3 +337,25 @@ def test_step_failure_with_no_recipients_never_emails():
     mail = Mailer()
     ecp.record_step_failure({}, "X", "2026-11-08", cfg, mail)
     assert mail.sent == []
+
+
+def test_change_is_not_re_emailed_daily_when_the_row_write_keeps_failing(monkeypatch):
+    import pytest
+    import sheet_writer as sw
+    fake = FakeSheets(BASE)
+    _patch(monkeypatch, fake)
+
+    def boom(s, i, rows):
+        raise RuntimeError("quota")
+    monkeypatch.setattr(sw, "append_county_plans_rows", boom)
+    mail, memo = Mailer(), {}
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            ecp.check(None, "sid", CFG, mail, fetch_page=lambda u: PAGE_CHANGED, sent_memo=memo)
+    assert len(mail.sent) == 1 and memo == {"Macomb": "Macomb | Appendices | 2026*"}
+
+
+def test_step_failure_keeps_the_sent_memo():
+    h = ecp.record_step_failure({"sent": {"Macomb": "x"}}, "E", "2026-11-08",
+                                {"egle_county_plans": {}}, Mailer())
+    assert h["sent"] == {"Macomb": "x"}

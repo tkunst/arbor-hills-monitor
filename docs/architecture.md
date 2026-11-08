@@ -517,8 +517,11 @@ behavior, update its entry here in the same PR.
   (`diff_collection(hasher=...)`), so "before" is printable and the ADR 024
   backup log covers it. Rule A and B(i) unchanged; B(ii)'s silent over-cap
   re-baseline is off (one email however many changes). A first run or a Rule A
-  skip never reports rows as gone. A send that raises or returns False reverts
-  every change; each collection is isolated; empty `recipients` = log only.
+  skip never reports rows as gone; a row is reported gone only after
+  `_GONE_AFTER_MISSES` (2) good fetches without it (entry `missing` map).
+  `_disambiguate()` gives same-key rows in one fetch a stable " #2" suffix. A
+  send that raises or returns False restores each changed collection's previous
+  entry; each collection is isolated; empty `recipients` = log only.
   Same inline-mirror-before-write as backfill.py.
   **Stall guard (stall-hardening, 2026-10-23):** `run()` now counts each
   run's unprocessed / processed / struck / deferred documents and hands them

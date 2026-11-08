@@ -200,10 +200,14 @@ def format_stale(county: str, days: int, error: str, url: str = DEFAULT_URL) -> 
         "This email is sent once per outage; the next good read resets it.\n")
 
 
-def check(sheets, sheet_id: str, cfg: dict, send_email, fetch_page=None) -> None:
+def check(sheets, sheet_id: str, cfg: dict, send_email, fetch_page=None,
+          sent_memo: dict | None = None) -> None:
     """One run for every configured county. Raises on a state-tab read error
     (the caller isolates it); a page fetch failure is a recorded failed check.
-    `sheet_id` is the PRIVATE Sheet (GSHEET_ID_PRIVATE); see the module docstring."""
+    `sheet_id` is the PRIVATE Sheet (GSHEET_ID_PRIVATE); see the module docstring.
+    `sent_memo` ({county: new row text}, kept by the caller in _meta while the
+    step is failing) stops the same change email going out every day when the
+    row write itself keeps failing."""
     import sheet_writer as sw
     pc_cfg = cfg.get("egle_county_plans") or {}
     url = pc_cfg.get("url") or DEFAULT_URL
@@ -230,7 +234,8 @@ def check(sheets, sheet_id: str, cfg: dict, send_email, fetch_page=None) -> None
     for county in counties:
         try:
             _check_county(sheets, sheet_id, cfg, send_email, rows, county, page, error,
-                          url, recipients, stale_after, today, now)
+                          url, recipients, stale_after, today, now,
+                          sent_memo if sent_memo is not None else {})
         except Exception as e:  # noqa: BLE001 — one county never stops the next
             failed.append(type(e).__name__)
             print(f"[county-plans] {county}: failed ({type(e).__name__})")
@@ -250,7 +255,8 @@ def record_step_failure(health: dict, error: str, today: str, cfg: dict, send_em
     stale_after = int(pc_cfg.get("stale_alert_after_days", 3))
     recipients = list(pc_cfg.get("recipients") or [])
     days = sorted(set(health.get("fail_days") or []) | {today})
-    out = {"fail_days": days, "warned": bool(health.get("warned")), "last_error": error[:120]}
+    out = {"fail_days": days, "warned": bool(health.get("warned")), "last_error": error[:120],
+           "sent": dict(health.get("sent") or {})}
     if len(days) >= stale_after and not out["warned"]:
         if not recipients:
             print("[county-plans] step failing (no recipients, log only)")
@@ -271,7 +277,7 @@ def record_step_failure(health: dict, error: str, today: str, cfg: dict, send_em
 
 
 def _check_county(sheets, sheet_id, cfg, send_email, rows, county, page, error,
-                  url, recipients, stale_after, today, now) -> None:
+                  url, recipients, stale_after, today, now, sent_memo) -> None:
     import sheet_writer as sw
     fetched, err = None, error
     if page is not None:
@@ -280,6 +286,9 @@ def _check_county(sheets, sheet_id, cfg, send_email, rows, county, page, error,
             err = "row not found (page layout changed?)"
     new_rows, alerts = decide(rows, county, fetched, err, today, now, stale_after)
     for kind, subject, body, idx in alerts:
+        if kind == "changed" and sent_memo.get(county) == new_rows[idx][3]:
+            print(f"[county-plans] {county}: change already emailed; recording the row only")
+            continue
         if not recipients:
             print(f"[county-plans] {county}: {kind} (no recipients, log only)")
             if idx is not None:
@@ -293,6 +302,8 @@ def _check_county(sheets, sheet_id, cfg, send_email, rows, county, page, error,
             if send_email(subject, body, cfg, recipients=recipients) is False:
                 raise RuntimeError("not sent (SMTP not configured)")
             print(f"[county-plans] {county}: {kind} emailed")
+            if kind == "changed":
+                sent_memo[county] = new_rows[idx][3]
         except Exception as e:  # noqa: BLE001
             print(f"[county-plans] {county}: {kind} send FAILED ({type(e).__name__})")
             if idx is not None:
