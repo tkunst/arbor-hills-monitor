@@ -48,6 +48,7 @@ def _cfg(recipients=("trisha@example.org",), collections=("applications", "annua
          extra=True):
     wds = {"site_id": AH, "collections": ["applications"]}
     if extra:
+        wds["extra_sites_enabled"] = True
         wds["extra_sites"] = [{
             "site_id": PTA, "name": "Pine Tree Acres (WM, Macomb)",
             "alert_label": "Pine Tree Acres expansion",
@@ -266,6 +267,7 @@ def test_live_config_watches_pta_and_keeps_arbor_hills_primary():
     from config_loader import load_config
     wds = load_config()["wds"]
     assert str(wds["site_id"]) == AH
+    assert wds["extra_sites_enabled"] is True
     extra = {str(s["site_id"]): s for s in wds.get("extra_sites") or []}
     assert PTA in extra
     assert set(extra[PTA]["collections"]) == {"applications", "annual"}
@@ -316,17 +318,62 @@ def test_new_row_first_seen_already_issued_says_issued():
         "[URGENT] Pine Tree Acres expansion: construction permit issued"]
 
 
-def test_rekeyed_rows_rebaseline_instead_of_urgent_flood():
-    """A WDS date-format change re-keys every row: over the per-site cap ->
-    silent re-baseline, no urgent emails for old permits."""
+def test_rekeyed_rows_send_one_bundled_email_not_a_flood():
+    """A WDS date-format change re-keys every row: over the per-site threshold
+    -> ONE bundled email, not five urgent ones."""
     cfg = _cfg()
     state = _baselined_state(cfg)
     rekeyed = [dict(r, **{"Receipt Date": "0" + r["Receipt Date"]}) if r["Receipt Date"] else r
                for r in PTA_APPS_2026_11_07]
     mail = Mailer()
     ww.check_wds(state, cfg, mail, fetchers=_fetchers(rekeyed))
-    assert mail.sent == []
-    assert state["wds_seen"][f"{PTA}:applications"]["last_count"] == 10
+    assert [m["subject"] for m in mail.sent] == [
+        "[URGENT] Pine Tree Acres expansion: 10 WDS changes at once, 5 urgent"]
+    assert "how WDS prints its records" in mail.sent[0]["body"]
+
+
+def test_milestone_on_a_busy_day_is_delivered_not_rebaselined():
+    """A new CP application the same run as 3 other edits (over the threshold)
+    still reaches Trisha, bundled and marked URGENT."""
+    cfg = _cfg()
+    state = _baselined_state(cfg)
+    rows = [dict(r) for r in PTA_APPS_2026_11_07]
+    for r in rows[5:8]:
+        r["Closure Type"] = "Issued (amended)"   # 3 Operating License edits
+    mail = Mailer()
+    ww.check_wds(state, cfg, mail, fetchers=_fetchers([NEW_CP] + rows))
+    assert len(mail.sent) == 1
+    assert mail.sent[0]["subject"].startswith("[URGENT] Pine Tree Acres expansion: 4 WDS changes")
+    assert "Construction Permit (received 12/1/2026) (NEW)" in mail.sent[0]["body"]
+
+
+def test_bundle_send_failure_reverts_all():
+    cfg = _cfg()
+    state = _baselined_state(cfg)
+    rows = [dict(r) for r in PTA_APPS_2026_11_07]
+    for r in rows[5:8]:
+        r["Closure Type"] = "Issued (amended)"
+    ww.check_wds(state, cfg, FalseMailer(), fetchers=_fetchers([NEW_CP] + rows))
+    mail = Mailer()
+    ww.check_wds(state, cfg, mail, fetchers=_fetchers([NEW_CP] + rows))
+    assert len(mail.sent) == 1 and "4 WDS changes" in mail.sent[0]["subject"]
+
+
+def test_issued_variants_are_matched_case_insensitively():
+    sev, _, _ = ww._classify_related_application(
+        _app("Construction Permit", "12/1/2026", "Issued - Modified", "1/1/2027"), True)
+    assert sev == "urgent"
+    ev = {"name": "applications", "kind": "new", "label": "Construction Permit (received x)",
+          "detail": "Closure: ISSUED 1/1/2027"}
+    assert ww.related_urgent_subject(ev, "PTA").endswith("construction permit issued")
+
+
+def test_extra_sites_paused_by_flag():
+    cfg = _cfg()
+    cfg["wds"]["extra_sites_enabled"] = False
+    state = {"wds_seen": {}, "pending_digest": []}
+    ww.check_wds(state, cfg, Mailer(), fetchers=_fetchers(PTA_APPS_2026_11_07))
+    assert set(state["wds_seen"]) == {"applications"}
 
 
 def test_a_raising_collection_keeps_its_state_and_the_others_still_alert(monkeypatch):

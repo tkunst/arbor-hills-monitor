@@ -310,6 +310,18 @@ def _check_liveness(sheets, sheet_id: str, cfg: dict, state: dict, *, unprocesse
               f"{type(e).__name__}")
 
 
+def _run_county_plans(cfg: dict) -> str:
+    """EGLE county plans watch (ADR 074) on the PRIVATE Sheet only. With no
+    GSHEET_ID_PRIVATE it skips; it never falls back to the public GSHEET_ID."""
+    import egle_county_plans_watcher as ecp
+    priv_id = os.environ.get("GSHEET_ID_PRIVATE")
+    if not priv_id:
+        print("[watcher] EGLE county plans: GSHEET_ID_PRIVATE not set — skipped")
+        return "skipped"
+    ecp.check(dc.sheets_service(), priv_id, cfg, ea.send_email)
+    return "ran"
+
+
 def run() -> int:
     cfg = load_config()
     sheet_id = os.environ["GSHEET_ID"]
@@ -477,14 +489,7 @@ def run() -> int:
     # recipients; isolated so it can never break the watcher (class only).
     if (cfg.get("egle_county_plans") or {}).get("enabled"):
         try:
-            import egle_county_plans_watcher as ecp
-            # PRIVATE Sheet only (capacity analysis, not the operator-visible
-            # case file); no private Sheet = skip, never the public one.
-            priv_id = os.environ.get("GSHEET_ID_PRIVATE")
-            if priv_id:
-                ecp.check(dc.sheets_service(), priv_id, cfg, ea.send_email)
-            else:
-                print("[watcher] EGLE county plans: GSHEET_ID_PRIVATE not set — skipped")
+            _run_county_plans(cfg)
         except Exception as e:  # noqa: BLE001
             print(f"[watcher] EGLE county plans step skipped: {type(e).__name__}")
 

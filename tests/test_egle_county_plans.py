@@ -79,6 +79,13 @@ def test_county_name_with_plan_year_in_the_link_matches():
     assert ecp.extract_county_row(page, "Wash") is None
 
 
+def test_star_or_county_suffix_on_the_name_still_matches():
+    starred = PAGE_2026_11_07.replace(">Macomb</a>", ">Macomb</a>*")
+    assert ecp.extract_county_row(starred, "Macomb")["text"] == "Macomb* | Appendices"
+    suffixed = PAGE_2026_11_07.replace(">Macomb</a>", ">Macomb County</a>")
+    assert ecp.extract_county_row(suffixed, "Macomb")["text"] == "Macomb County | Appendices"
+
+
 def test_synthetic_changed_macomb_row():
     row = ecp.extract_county_row(PAGE_CHANGED, "Macomb")
     assert row["text"] == "Macomb | Appendices | 2026*"
@@ -282,3 +289,15 @@ def test_one_county_failing_does_not_stop_the_next(monkeypatch):
     cfg = {"egle_county_plans": {"counties": ["Macomb", "Mason"], "recipients": ["t@x"]}}
     ecp.check(None, "sid", cfg, Mailer(), fetch_page=lambda u: PAGE_2026_11_07)
     assert calls == ["Macomb", "Mason"] and fake.rows[-1][1] == "Mason"
+
+
+def test_watcher_runs_county_plans_on_the_private_sheet_only(monkeypatch):
+    import watcher
+    seen = []
+    monkeypatch.setattr(ecp, "check", lambda sheets, sid, cfg, mail: seen.append(sid))
+    monkeypatch.setattr(watcher.dc, "sheets_service", lambda: object())
+    monkeypatch.setenv("GSHEET_ID", "PUBLIC")
+    monkeypatch.delenv("GSHEET_ID_PRIVATE", raising=False)
+    assert watcher._run_county_plans({}) == "skipped" and seen == []
+    monkeypatch.setenv("GSHEET_ID_PRIVATE", "PRIVATE")
+    assert watcher._run_county_plans({}) == "ran" and seen == ["PRIVATE"]
