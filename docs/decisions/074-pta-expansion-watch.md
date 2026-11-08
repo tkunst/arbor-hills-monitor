@@ -57,8 +57,10 @@ Stream C keeps polling Arbor Hills (475946) exactly as before. After that loop,
   gone only after it is missing from two good fetches in a row (a per-key
   `missing` count in the entry), so one short page from WDS is not read as
   records deleted and then re-added. Two rows with the same key in one fetch
-  (same type, same receipt date) are kept apart with a stable " #2" suffix
-  instead of flapping against each other every run.
+  (same type, same receipt date) are kept apart with a " #2" suffix instead of
+  flapping against each other every run; rows are matched to the stored
+  records by value, so a new duplicate never takes over an existing record's
+  key (which would read as the old permit's status changing).
 - **Routing.** Extra-site changes never reach the Arbor Hills Sheet tabs, the
   risk register, or the coalition Sunday digest (ADR 064's lesson). Email goes to
   the site's scoped `recipients` only; empty = log only. A send that raises, or
@@ -96,8 +98,9 @@ User-Agent): the page returns 403 to a bare client and 200 to a browser UA.
 
 A failure of the step itself (no private Sheet configured, its tab unreadable,
 a county's row write failing) can't be recorded on the private Sheet, so it is
-counted in `_meta.county_plans_health` on the main Sheet (dates + error class
-only); failures on 3 distinct days send one "watch not running" email, and the
+counted in `_meta.county_plans_health` on the main Sheet (dates, an error
+class, and while failing the already-emailed change's public row text and file
+names); failures on 3 distinct days send one "watch not running" email, and the
 next successful run resets the count.
 
 Row matching accepts the county name with an optional "County", plan year and

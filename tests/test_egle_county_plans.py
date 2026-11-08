@@ -352,10 +352,23 @@ def test_change_is_not_re_emailed_daily_when_the_row_write_keeps_failing(monkeyp
     for _ in range(3):
         with pytest.raises(RuntimeError):
             ecp.check(None, "sid", CFG, mail, fetch_page=lambda u: PAGE_CHANGED, sent_memo=memo)
-    assert len(mail.sent) == 1 and memo == {"Macomb": "Macomb | Appendices | 2026*"}
+    assert len(mail.sent) == 1
+    assert memo == {"Macomb": "Macomb | Appendices | 2026* || "
+                              "Macomb.pdf,Macomb-Appendices.pdf,Macomb-2026-Amendment.pdf"}
 
 
 def test_step_failure_keeps_the_sent_memo():
     h = ecp.record_step_failure({"sent": {"Macomb": "x"}}, "E", "2026-11-08",
                                 {"egle_county_plans": {}}, Mailer())
     assert h["sent"] == {"Macomb": "x"}
+
+
+def test_files_only_change_after_a_memo_still_emails(monkeypatch):
+    new = ecp.extract_county_row(PAGE_CHANGED, "Macomb")
+    fake = FakeSheets(BASE)
+    _patch(monkeypatch, fake)
+    memo = {"Macomb": f"{new['text']} || {new['files']}"}
+    swapped = PAGE_CHANGED.replace("Macomb-2026-Amendment.pdf", "Macomb-2026-Amendment-v2.pdf")
+    mail = Mailer()
+    ecp.check(None, "sid", CFG, mail, fetch_page=lambda u: swapped, sent_memo=memo)
+    assert len(mail.sent) == 1

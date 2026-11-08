@@ -323,3 +323,22 @@ def test_live_config_watches_pta_and_keeps_arbor_hills_primary():
     assert extra[PTA]["recipients"], "scoped recipients must be set (empty = log only)"
     for c in extra[PTA]["collections"]:
         assert c in ww.RELATED_FIELDS
+
+
+def test_new_duplicate_never_takes_over_the_stored_record():
+    """A new pending CP received the same day as the stored Issued 2019 permit
+    must read as a NEW #2 record, not as the 2019 permit losing its status —
+    whichever way the two values sort."""
+    state = _baselined_state()
+    pending = _app("Construction Permit", "10/31/2019", "", "")
+    rows = [pending] + PTA_APPS_2026_11_07
+    (m,) = _run(state, rows).sent
+    assert m["subject"].endswith("1 record change(s)")
+    assert ("Construction Permit (received 10/31/2019 #2)\n  Before: (not listed)\n"
+            "  Now:    Closure Type: (blank); Closure Date: (blank)") in m["body"]
+    # Later issued: reported as #2 changing, the 2019 record untouched.
+    issued = [_app("Construction Permit", "10/31/2019", "Issued", "5/1/2027")] + PTA_APPS_2026_11_07
+    (m,) = _run(state, issued).sent
+    assert m["subject"].endswith("1 record change(s)")
+    assert "(received 10/31/2019 #2)\n  Before: Closure Type: (blank)" in m["body"]
+    assert _run(state, issued).sent == []
