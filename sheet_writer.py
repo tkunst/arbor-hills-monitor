@@ -261,9 +261,10 @@ TAB_PFAS_PWS = "Public Water Supply PFAS Watch"
 # seen. Same tab-is-the-state, append-only policy as TAB_PFAS: no tab until the
 # watcher first runs.
 TAB_EGLE_NEWS = "EGLE Newsroom Watch"
-# EGLE county solid-waste plans watch (egle_county_plans_watcher.py, ADR 074):
-# one row per baseline / change / failed check / recovery of a watched county's
-# row on EGLE's approved-plans page. The tab IS the state (append-only; the last
+# EGLE county solid-waste plans watch (egle_county_plans_watcher.py, ADR 074).
+# PRIVATE Sheet only (GSHEET_ID_PRIVATE; the caller passes that id): one row per
+# baseline / change / failed check / recovery of a watched county's row on
+# EGLE's approved-plans page. The tab IS the state (append-only; the last
 # baseline/changed/recovered row per county is the reference), read STRICTLY.
 TAB_COUNTY_PLANS = "EGLE County Plans Watch"
 # MPART PFAS open-data layers watch (Stream V, ADR 060) — same on-demand,

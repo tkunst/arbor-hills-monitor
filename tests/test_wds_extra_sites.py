@@ -272,3 +272,78 @@ def test_live_config_watches_pta_and_keeps_arbor_hills_primary():
     assert extra[PTA]["recipients"], "scoped recipients must be set (empty = log only)"
     for c in extra[PTA]["collections"]:
         assert c in ww.RELATED_CLASSIFIERS
+
+
+# --- review round 1 (PR #218) ------------------------------------------------
+
+class FalseMailer(Mailer):
+    """send_email returns False (no exception) when SMTP isn't configured."""
+
+    def __call__(self, subject, body, cfg, recipients=None):
+        self.sent.append({"subject": subject})
+        return False
+
+
+def test_send_returning_false_is_not_delivered_and_realerts():
+    cfg = _cfg()
+    state = _baselined_state(cfg)
+    rows = [NEW_CP] + PTA_APPS_2026_11_07
+    ww.check_wds(state, cfg, FalseMailer(), fetchers=_fetchers(rows))
+    spec = ww.COLLECTIONS["applications"]
+    assert ww._idkey(spec, NEW_CP) not in state["wds_seen"][f"{PTA}:applications"]["records"]
+    mail = Mailer()
+    ww.check_wds(state, cfg, mail, fetchers=_fetchers(rows))
+    assert [m["subject"][:8] for m in mail.sent] == ["[URGENT]"]
+
+
+def test_closure_date_correction_on_issued_permit_is_no_event():
+    cfg = _cfg()
+    state = _baselined_state(cfg)
+    corrected = [dict(r) for r in PTA_APPS_2026_11_07]
+    corrected[0]["Closure Date"] = "3/19/2020"   # was 3/18/2020, still Issued
+    mail = Mailer()
+    ww.check_wds(state, cfg, mail, fetchers=_fetchers(corrected))
+    assert mail.sent == []
+
+
+def test_new_row_first_seen_already_issued_says_issued():
+    cfg = _cfg()
+    state = _baselined_state(cfg)
+    issued_cp = _app("Construction Permit", "12/1/2026", "Issued", "5/1/2027")
+    mail = Mailer()
+    ww.check_wds(state, cfg, mail, fetchers=_fetchers([issued_cp] + PTA_APPS_2026_11_07))
+    assert [m["subject"] for m in mail.sent] == [
+        "[URGENT] Pine Tree Acres expansion: construction permit issued"]
+
+
+def test_rekeyed_rows_rebaseline_instead_of_urgent_flood():
+    """A WDS date-format change re-keys every row: over the per-site cap ->
+    silent re-baseline, no urgent emails for old permits."""
+    cfg = _cfg()
+    state = _baselined_state(cfg)
+    rekeyed = [dict(r, **{"Receipt Date": "0" + r["Receipt Date"]}) if r["Receipt Date"] else r
+               for r in PTA_APPS_2026_11_07]
+    mail = Mailer()
+    ww.check_wds(state, cfg, mail, fetchers=_fetchers(rekeyed))
+    assert mail.sent == []
+    assert state["wds_seen"][f"{PTA}:applications"]["last_count"] == 10
+
+
+def test_a_raising_collection_keeps_its_state_and_the_others_still_alert(monkeypatch):
+    cfg = _cfg()
+    state = _baselined_state(cfg)
+    before_annual = copy.deepcopy(state["wds_seen"][f"{PTA}:annual"])
+    orig = ww.wc.page_url
+
+    def page_url(name, w):
+        if name == "annual":
+            raise ValueError("boom")
+        return orig(name, w)
+    monkeypatch.setattr(ww.wc, "page_url", page_url)
+    terminated = PTA_APPS_2026_11_07[:4] + [
+        _app("Construction Permit", "10/11/2002", "Withdrawn", "2/5/2003")] + PTA_APPS_2026_11_07[5:]
+    annual = [{"Year": "2026"}] + PTA_ANNUAL_2026_11_07
+    mail = Mailer()
+    ww.check_wds(state, cfg, mail, fetchers=_fetchers(terminated, annual))
+    assert len(mail.sent) == 1 and "1 change(s)" in mail.sent[0]["subject"]
+    assert state["wds_seen"][f"{PTA}:annual"] == before_annual

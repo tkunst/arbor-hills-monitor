@@ -478,7 +478,13 @@ def run() -> int:
     if (cfg.get("egle_county_plans") or {}).get("enabled"):
         try:
             import egle_county_plans_watcher as ecp
-            ecp.check(sheets, sheet_id, cfg, ea.send_email)
+            # PRIVATE Sheet only (capacity analysis, not the operator-visible
+            # case file); no private Sheet = skip, never the public one.
+            priv_id = os.environ.get("GSHEET_ID_PRIVATE")
+            if priv_id:
+                ecp.check(dc.sheets_service(), priv_id, cfg, ea.send_email)
+            else:
+                print("[watcher] EGLE county plans: GSHEET_ID_PRIVATE not set — skipped")
         except Exception as e:  # noqa: BLE001
             print(f"[watcher] EGLE county plans step skipped: {type(e).__name__}")
 

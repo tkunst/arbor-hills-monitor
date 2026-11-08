@@ -33,6 +33,10 @@ checks span `stale_alert_after_days` distinct days in a row (default 3), ONE
 stale email goes out; the next successful read appends `recovered` and resets
 the streak. First successful read for a county baselines silently.
 
+STATE lives on the PRIVATE Sheet (GSHEET_ID_PRIVATE): the watch serves the
+capacity analysis, so it stays off the operator-visible case file. No private
+Sheet configured = the check is skipped (logged), never written to the public one.
+
 RECIPIENTS are scoped (egle_county_plans.recipients); an empty list means no
 email, never the shared alert list. A read error on the state tab raises (never
 treated as a first run).
@@ -89,16 +93,22 @@ def extract_county_row(page_html: str, county: str) -> dict | None:
     The row is the one whose text before any '|' or '(' is `county`,
     case-insensitive, optionally followed by a plan year ("Washtenaw 2019**"). `files` is the comma-joined list of link file
     names in page order, query string dropped."""
-    i = page_html.find(_HEADING)
-    if i < 0:
-        return None
-    t0 = page_html.find("<table", i)
-    if t0 < 0:
-        return None
-    t1 = page_html.find("</table>", t0)
-    table = page_html[t0:t1 if t1 > 0 else len(page_html)]
     # The county name may carry a plan year in the same link ("Washtenaw 2019**").
     want = re.compile(re.escape(county.strip()) + r"(?:\s+\d{4}\**)?", re.I)
+    # Try the table after EACH occurrence of the heading (a jump link or page
+    # summary could repeat the phrase above the real one).
+    for hm in re.finditer(re.escape(_HEADING), page_html):
+        t0 = page_html.find("<table", hm.end())
+        if t0 < 0:
+            break
+        t1 = page_html.find("</table>", t0)
+        row = _find_row(page_html[t0:t1 if t1 > 0 else len(page_html)], want)
+        if row is not None:
+            return row
+    return None
+
+
+def _find_row(table: str, want) -> dict | None:
     for m in re.finditer(r"<tr\b[^>]*>(.*?)</tr>", table, re.S | re.I):
         row = m.group(1)
         if "<td" not in row.lower():
@@ -187,7 +197,9 @@ def format_stale(county: str, days: int, error: str, url: str = DEFAULT_URL) -> 
 
 def check(sheets, sheet_id: str, cfg: dict, send_email, fetch_page=None) -> None:
     """One run for every configured county. Raises on a state-tab read error
-    (the caller isolates it); a page fetch failure is a recorded failed check."""
+    (the caller isolates it); a page fetch failure is a recorded failed check.
+    `sheet_id` is the PRIVATE Sheet (GSHEET_ID_PRIVATE): this watch exists for
+    the capacity analysis, so its rows stay off the operator-visible Sheet."""
     import sheet_writer as sw
     pc_cfg = cfg.get("egle_county_plans") or {}
     url = pc_cfg.get("url") or DEFAULT_URL
@@ -211,37 +223,51 @@ def check(sheets, sheet_id: str, cfg: dict, send_email, fetch_page=None) -> None
     rows = sw.read_county_plans_rows(sheets, sheet_id)  # raises on read error
     today, now = _today(), _now()
     for county in counties:
-        fetched, err = None, error
-        if page is not None:
-            fetched = extract_county_row(page, county)
-            if fetched is None:
-                err = "row not found (page layout changed?)"
-        new_rows, alerts = decide(rows, county, fetched, err, today, now, stale_after)
-        for kind, subject, body, idx in alerts:
-            if not recipients:
-                print(f"[county-plans] {county}: {kind} (no recipients, log only)")
-                if idx is not None:
-                    new_rows[idx][5] = "no"
-                continue
-            try:
-                body = body.replace(DEFAULT_URL, url)
-                send_email(subject, body, cfg, recipients=recipients)
-                print(f"[county-plans] {county}: {kind} emailed")
-            except Exception as e:  # noqa: BLE001
-                print(f"[county-plans] {county}: {kind} send FAILED ({type(e).__name__})")
-                if idx is not None:
-                    # Write nothing for this change: the next run sees the same
-                    # difference and tries the email again.
-                    new_rows[idx] = None
-                elif kind == "stale":
-                    # Keep the failed-check row but unmark it, so the next
-                    # failed check tries the stale email again.
-                    new_rows[0][5] = ""
-        new_rows = [r for r in new_rows if r is not None]
-        if new_rows:
-            sw.append_county_plans_rows(sheets, sheet_id, new_rows)
-        status = new_rows[0][2] if new_rows else "unchanged"
-        print(f"[county-plans] {county}: {status}")
+        try:
+            _check_county(sheets, sheet_id, cfg, send_email, rows, county, page, error,
+                          url, recipients, stale_after, today, now)
+        except Exception as e:  # noqa: BLE001 — one county never stops the next
+            print(f"[county-plans] {county}: failed ({type(e).__name__})")
+
+
+def _check_county(sheets, sheet_id, cfg, send_email, rows, county, page, error,
+                  url, recipients, stale_after, today, now) -> None:
+    import sheet_writer as sw
+    fetched, err = None, error
+    if page is not None:
+        fetched = extract_county_row(page, county)
+        if fetched is None:
+            err = "row not found (page layout changed?)"
+    new_rows, alerts = decide(rows, county, fetched, err, today, now, stale_after)
+    for kind, subject, body, idx in alerts:
+        if not recipients:
+            print(f"[county-plans] {county}: {kind} (no recipients, log only)")
+            if idx is not None:
+                new_rows[idx][5] = "no"
+            continue
+        try:
+            body = body.replace(DEFAULT_URL, url)
+            # send_email returns False (no exception) when SMTP isn't
+            # configured: that is NOT delivered (recording the change as
+            # alerted would lose it for good).
+            if send_email(subject, body, cfg, recipients=recipients) is False:
+                raise RuntimeError("not sent (SMTP not configured)")
+            print(f"[county-plans] {county}: {kind} emailed")
+        except Exception as e:  # noqa: BLE001
+            print(f"[county-plans] {county}: {kind} send FAILED ({type(e).__name__})")
+            if idx is not None:
+                # Write nothing for this change: the next run sees the same
+                # difference and tries the email again.
+                new_rows[idx] = None
+            elif kind == "stale":
+                # Keep the failed-check row but unmark it, so the next
+                # failed check tries the stale email again.
+                new_rows[0][5] = ""
+    new_rows = [r for r in new_rows if r is not None]
+    if new_rows:
+        sw.append_county_plans_rows(sheets, sheet_id, new_rows)
+    status = new_rows[0][2] if new_rows else "unchanged"
+    print(f"[county-plans] {county}: {status}")
 
 
 def run() -> int:
@@ -253,7 +279,11 @@ def run() -> int:
     if not (cfg.get("egle_county_plans") or {}).get("enabled"):
         print("[county-plans] egle_county_plans.enabled is false — skipping (no-op).")
         return 0
-    check(dc.sheets_service(), os.environ["GSHEET_ID"], cfg, ea.send_email)
+    priv = os.environ.get("GSHEET_ID_PRIVATE")
+    if not priv:
+        print("[county-plans] GSHEET_ID_PRIVATE not set — skipping (state is private-Sheet only).")
+        return 0
+    check(dc.sheets_service(), priv, cfg, ea.send_email)
     return 0
 
 

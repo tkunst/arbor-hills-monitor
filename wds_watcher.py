@@ -318,13 +318,13 @@ def _content_hash(spec, r) -> str:
 
 
 def _event_from_row(name: str, r: dict, kind: str, cfg_wds: dict, prev_hash=None,
-                    classify=None) -> dict:
+                    classify=None, spec=None) -> dict:
     """Build one event dict for a single row, shared by diff_collection() (live
     new/changed path) and historical_events() (one-off bulk-dump path) — the
     ONLY place classification happens, so the two paths can never drift.
-    `classify` overrides the Arbor Hills classifier; only the extra-site path
-    (ADR 074) passes one."""
-    spec = COLLECTIONS[name]
+    `classify` overrides the Arbor Hills classifier and `spec` the collection
+    spec; only the extra-site path (ADR 074) passes them."""
+    spec = spec or COLLECTIONS[name]
     floor = float(cfg_wds.get("years_remaining_floor", 3.0))
     if classify is not None:
         sev, dtype, risks = classify(r, kind == "changed")
@@ -360,7 +360,7 @@ def historical_events(name: str, rows: list[dict], cfg_wds: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict,
-                    classify=None):
+                    classify=None, content=None):
     """Diff freshly-fetched `rows` for one collection against `seen_entry`
     ({"records": {idkey: hash}, "last_count": N}).
 
@@ -372,8 +372,12 @@ def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict
     and B (silent baseline / over-cap) here so the orchestrator stays simple. A
     baseline/guard result yields events=[] and a fully-updated seen entry (records
     everything, alerts nothing). `classify` is passed through to
-    _event_from_row (None = the Arbor Hills classifiers)."""
+    _event_from_row (None = the Arbor Hills classifiers); `content` replaces the
+    collection's mutable-field tuple (None = the Arbor Hills one). Both are used
+    only by the extra-site path (ADR 074)."""
     spec = COLLECTIONS[name]
+    if content is not None:
+        spec = {**spec, "content": content}
     records = dict(seen_entry.get("records") or {})
     last_count = int(seen_entry.get("last_count") or 0)
     # Drop rows with an empty identity — WDS grids carry a trailing blank
@@ -411,7 +415,7 @@ def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict
             continue
         records[k] = h
         events.append(_event_from_row(name, r, kind, cfg_wds, prev_hash=prev,
-                                      classify=classify))
+                                      classify=classify, spec=spec))
 
     # Rule B(ii) — over-cap defense. If a single run produced more alert events
     # than the cap, this is almost certainly a first-enable-without-seed or a WDS
@@ -547,9 +551,11 @@ def check_wds(state: dict, cfg: dict, send_email, fetchers=None, on_row=None) ->
 def _classify_related_application(r, changed):
     """Another landfill's Part 115 application. URGENT only on the two expansion
     milestones: a NEW Construction Permit application, or a Construction Permit
-    whose Closure Type now reads Issued (content = Closure Type + Closure Date,
-    so a change landing on Issued is the pending -> Issued transition). Any other
-    change, and every Operating License row, is watch."""
+    whose Closure Type now reads Issued. The related-site content is Closure
+    Type ALONE (RELATED_CONTENT), so a `changed` event always means the Closure
+    Type itself changed, and a change landing on Issued is a transition from
+    something else (a Closure Date correction on an already-Issued permit is no
+    event at all). Any other change, and every Operating License row, is watch."""
     typ = _g(r, "Application Type").lower()
     if "construction permit" in typ:
         if not changed:
@@ -571,6 +577,18 @@ RELATED_CLASSIFIERS = {
     "annual": _classify_related_annual,
 }
 
+# Mutable-field tuples that differ from the Arbor Hills spec (see
+# _classify_related_application). Absent = the Arbor Hills content.
+RELATED_CONTENT = {
+    "applications": lambda r: (_g(r, "Closure Type"),),
+}
+
+# Per-site anti-stampede cap (Rule B(ii)) for extra sites, lower than Arbor
+# Hills' because every Construction Permit row is an URGENT event here: a WDS
+# date-format change re-keying PTA's 10 applications must re-baseline, not send
+# 5 urgent emails. Overridable per site with `max_alerts_per_run`.
+_EXTRA_SITE_CAP = 3
+
 
 def _extra_key(site_id: str, name: str) -> str:
     return f"{site_id}:{name}"
@@ -580,7 +598,7 @@ def related_urgent_subject(ev: dict, alert_label: str) -> str:
     """Subject for an extra site's urgent event (pure). The two milestones get
     their fixed wording; anything else urgent falls back to the event label."""
     if ev["name"] == "applications" and "construction permit" in ev["label"].lower():
-        if ev["kind"] == "new":
+        if ev["kind"] == "new" and not ev["detail"].startswith("Closure: Issued"):
             return f"[URGENT] {alert_label}: construction permit application received"
         return f"[URGENT] {alert_label}: construction permit issued"
     return f"[URGENT] {alert_label}: {ev['label']}"
@@ -619,69 +637,92 @@ def _revert(recs_entry: dict, ev: dict) -> None:
     recs_entry["last_count"] = len(recs)
 
 
+def _send_ok(send_email, subject, body, cfg, recipients) -> bool:
+    """True only when the mail was actually handed to SMTP. send_email returns
+    False (no exception) when SMTP isn't configured; treating that as delivered
+    would commit the event as seen and lose it (email_alerts.send_email's own
+    docstring asks callers that care to check the return value)."""
+    try:
+        return send_email(subject, body, cfg, recipients=recipients) is not False
+    except Exception as e:  # noqa: BLE001
+        print(f"[wds]   send raised {type(e).__name__}")
+        return False
+
+
 def check_extra_sites(state: dict, cfg: dict, send_email, fetchers=None) -> None:
     """Poll each `wds.extra_sites` entry's collections. Never raises on one
-    site's or one collection's failure."""
+    site's or one collection's failure: a collection whose diff or routing
+    raises keeps its previous seen-state, and the site's watch summary still
+    goes out for the collections that succeeded."""
     wds_cfg = cfg.get("wds") or {}
     primary = str(wds_cfg.get("site_id", _SITE))
     fetchers = fetchers or wc.FETCHERS
     seen = state.setdefault("wds_seen", {})
     for site in wds_cfg.get("extra_sites") or []:
-        sid = str((site or {}).get("site_id") or "").strip()
-        if not sid.isdigit() or sid == primary:
-            print(f"[wds] extra site {sid!r}: missing, non-numeric or the primary site — skipping")
+        try:
+            _check_one_extra_site(site or {}, primary, seen, wds_cfg, cfg, send_email, fetchers)
+        except Exception as e:  # noqa: BLE001 — one site never stops the next
+            print(f"[wds] extra site step failed: {type(e).__name__}: {e}")
+
+
+def _check_one_extra_site(site, primary, seen, wds_cfg, cfg, send_email, fetchers) -> None:
+    sid = str(site.get("site_id") or "").strip()
+    if not sid.isdigit() or sid == primary:
+        print(f"[wds] extra site {sid!r}: missing, non-numeric or the primary site — skipping")
+        return
+    name = site.get("name") or f"WDS site {sid}"
+    label = site.get("alert_label") or name
+    recipients = list(site.get("recipients") or [])
+    site_cfg = {**wds_cfg,
+                "max_new_wds_alerts_per_run": int(site.get("max_alerts_per_run", _EXTRA_SITE_CAP))}
+    summary = []  # (entry, ev) for this site's non-urgent events
+    for coll in site.get("collections") or []:
+        classify = RELATED_CLASSIFIERS.get(coll)
+        if classify is None or coll not in fetchers:
+            print(f"[wds] {sid}: collection {coll!r} has no related-site rules — skipping")
             continue
-        name = site.get("name") or f"WDS site {sid}"
-        label = site.get("alert_label") or name
-        recipients = list(site.get("recipients") or [])
-        summary = []  # (entry, ev) for this site's non-urgent events
-        for coll in site.get("collections") or []:
-            classify = RELATED_CLASSIFIERS.get(coll)
-            if classify is None or coll not in fetchers:
-                print(f"[wds] {sid}: collection {coll!r} has no related-site rules — skipping")
-                continue
-            try:
-                rows = fetchers[coll](sid)
-            except Exception as e:  # noqa: BLE001 — transient: skip, warn
-                print(f"[wds] {sid}:{coll}: fetch failed, skipping this run: {e}")
-                continue
-            key = _extra_key(sid, coll)
+        try:
+            rows = fetchers[coll](sid)
+        except Exception as e:  # noqa: BLE001 — transient: skip, warn
+            print(f"[wds] {sid}:{coll}: fetch failed, skipping this run: {e}")
+            continue
+        key = _extra_key(sid, coll)
+        try:
             entry = seen.get(key) or {"records": {}, "last_count": 0}
-            events, new_entry, note = diff_collection(coll, rows, entry, wds_cfg,
-                                                      classify=classify)
-            seen[key] = new_entry
-            print(f"[wds] {sid}:{note}")
+            events, new_entry, note = diff_collection(
+                coll, rows, entry, site_cfg, classify=classify,
+                content=RELATED_CONTENT.get(coll))
             link = wc.page_url(coll, sid)
             for ev in events:
                 ev["link"] = link
-                if ev["severity"] != "urgent":
-                    summary.append((new_entry, ev))
-                    continue
-                if not recipients:
-                    print(f"[wds]   {sid}: URGENT (no recipients, log only): {ev['label']}")
-                    continue
-                try:
-                    send_email(related_urgent_subject(ev, label),
-                               format_related_urgent_body(ev, name, sid), cfg,
-                               recipients=recipients)
-                    print(f"[wds]   {sid}: URGENT emailed: {ev['label']}")
-                except Exception as ae:  # noqa: BLE001 — re-alert next run
-                    _revert(new_entry, ev)
-                    print(f"[wds]   {sid}: URGENT send FAILED — reverted to re-alert next run: "
-                          f"{type(ae).__name__}")
-        if not summary:
+        except Exception as e:  # noqa: BLE001 — keep the old seen-state
+            print(f"[wds] {sid}:{coll}: diff failed, seen-state kept: {type(e).__name__}: {e}")
             continue
-        if not recipients:
-            print(f"[wds]   {sid}: {len(summary)} watch event(s) (no recipients, log only)")
-            continue
-        evs = [ev for _, ev in summary]
-        try:
-            send_email(f"[WDS watch] {name}: {len(evs)} change(s)",
-                       format_related_summary_body(evs, name, sid), cfg,
-                       recipients=recipients)
-            print(f"[wds]   {sid}: watch summary emailed ({len(evs)} event(s))")
-        except Exception as ae:  # noqa: BLE001 — re-send next run
-            for entry, ev in summary:
-                _revert(entry, ev)
-            print(f"[wds]   {sid}: watch summary send FAILED — reverted to re-send next run: "
-                  f"{type(ae).__name__}")
+        seen[key] = new_entry
+        print(f"[wds] {sid}:{note}")
+        for ev in events:
+            if ev["severity"] != "urgent":
+                summary.append((new_entry, ev))
+                continue
+            if not recipients:
+                print(f"[wds]   {sid}: URGENT (no recipients, log only): {ev['label']}")
+                continue
+            if _send_ok(send_email, related_urgent_subject(ev, label),
+                        format_related_urgent_body(ev, name, sid), cfg, recipients):
+                print(f"[wds]   {sid}: URGENT emailed: {ev['label']}")
+            else:
+                _revert(new_entry, ev)
+                print(f"[wds]   {sid}: URGENT not sent — reverted to re-alert next run")
+    if not summary:
+        return
+    if not recipients:
+        print(f"[wds]   {sid}: {len(summary)} watch event(s) (no recipients, log only)")
+        return
+    evs = [ev for _, ev in summary]
+    if _send_ok(send_email, f"[WDS watch] {name}: {len(evs)} change(s)",
+                format_related_summary_body(evs, name, sid), cfg, recipients):
+        print(f"[wds]   {sid}: watch summary emailed ({len(evs)} event(s))")
+    else:
+        for entry, ev in summary:
+            _revert(entry, ev)
+        print(f"[wds]   {sid}: watch summary not sent — reverted to re-send next run")

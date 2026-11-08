@@ -508,8 +508,13 @@ behavior, update its entry here in the same PR.
   landfills (today Pine Tree Acres, 398972: `applications` + `annual`).
   `check_extra_sites()` runs at the end of `check_wds()`, isolated, with its own
   classifiers (`RELATED_CLASSIFIERS`: a NEW Construction Permit application or a
-  CP whose Closure Type reads Issued = urgent; everything else watch; no risk
-  codes). Their events never reach `on_row` (Arbor Hills Sheet tabs / risk
+  CP whose Closure Type changes to Issued = urgent; everything else watch; no
+  risk codes). `RELATED_CONTENT` makes an application's content Closure Type
+  alone, so a Closure Date correction is no event. Per-site anti-stampede cap
+  `_EXTRA_SITE_CAP` (3, `max_alerts_per_run` overrides): a re-keying of all rows
+  re-baselines instead of sending urgent emails. Each collection is isolated (a
+  raising diff keeps its old seen-state); a send that raises or returns False
+  reverts. Their events never reach `on_row` (Arbor Hills Sheet tabs / risk
   register) or `pending_digest`: urgent → immediate email to the site's
   `recipients`, the rest → one summary email per run; a failed send reverts the
   seen-state so the next run re-sends; empty `recipients` = log only. State is
@@ -1213,12 +1218,15 @@ behavior, update its entry here in the same PR.
   when the row's text or its link file names change (a `?rev=` re-upload alone is
   not a change). Runs inside `watcher.run()` after the WDS block, isolated, gated
   on `egle_county_plans.enabled` (ships `false`). The append-only `EGLE County
-  Plans Watch` tab is the state, read strictly (`read_county_plans_rows`). First
+  Plans Watch` tab on the PRIVATE Sheet (`GSHEET_ID_PRIVATE`; unset = skipped,
+  never the public Sheet) is the state, read strictly (`read_county_plans_rows`). First
   read baselines silently. A fetch error or a missing row is a `fetch_failed`
   row, never a change; failures on `stale_alert_after_days` (3) distinct days in
   a row send ONE stale email; the next good read writes `recovered`. For a
   change the email goes BEFORE the row (a crash re-sends, never loses; a failed
-  send writes nothing so the next run retries). Fetch: `pfas_client.fetch_page`
+  send, or `send_email` returning False, writes nothing so the next run
+  retries). Each county is isolated; the heading's table is tried after every
+  occurrence of the heading text. Fetch: `pfas_client.fetch_page`
   (browser UA; a bare client gets 403).
 - `report_tracker.py` — **ADR 071** (coder:report-expectations-tracker,
   2026-10-23): expected reports vs. arrivals, for any number of landfills.
