@@ -33,9 +33,11 @@ checks span `stale_alert_after_days` distinct days in a row (default 3), ONE
 stale email goes out; the next successful read appends `recovered` and resets
 the streak. First successful read for a county baselines silently.
 
-STATE lives on the PRIVATE Sheet (GSHEET_ID_PRIVATE): the watch serves the
-capacity analysis, so it stays off the operator-visible case file. No private
-Sheet configured = the check is skipped (logged), never written to the public one.
+STATE lives on the PRIVATE Sheet (GSHEET_ID_PRIVATE), the home of the owner's
+working tabs, rather than the operator-visible case file. That the monitor
+watches this page is not secret (the public repo and Actions log show it); the
+rows are just not case-file evidence. No private Sheet configured = the check is
+skipped (logged), never written to the public one.
 
 RECIPIENTS are scoped (egle_county_plans.recipients); an empty list means no
 email, never the shared alert list. A read error on the state tab raises (never
@@ -93,8 +95,9 @@ def extract_county_row(page_html: str, county: str) -> dict | None:
     The row is the one whose text before any '|' or '(' is `county`,
     case-insensitive, optionally followed by a plan year ("Washtenaw 2019**"). `files` is the comma-joined list of link file
     names in page order, query string dropped."""
-    # The county name may carry a plan year in the same link ("Washtenaw 2019**").
-    want = re.compile(re.escape(county.strip()) + r"(?:\s+\d{4}\**)?", re.I)
+    # The county name may carry "County", a plan year and/or stars in the same
+    # link ("Washtenaw 2019**", "Macomb*", "Macomb County").
+    want = re.compile(re.escape(county.strip()) + r"(?:\s+County)?(?:\s+\d{4})?\**", re.I)
     # Try the table after EACH occurrence of the heading (a jump link or page
     # summary could repeat the phrase above the real one).
     for hm in re.finditer(re.escape(_HEADING), page_html):
@@ -198,8 +201,7 @@ def format_stale(county: str, days: int, error: str, url: str = DEFAULT_URL) -> 
 def check(sheets, sheet_id: str, cfg: dict, send_email, fetch_page=None) -> None:
     """One run for every configured county. Raises on a state-tab read error
     (the caller isolates it); a page fetch failure is a recorded failed check.
-    `sheet_id` is the PRIVATE Sheet (GSHEET_ID_PRIVATE): this watch exists for
-    the capacity analysis, so its rows stay off the operator-visible Sheet."""
+    `sheet_id` is the PRIVATE Sheet (GSHEET_ID_PRIVATE); see the module docstring."""
     import sheet_writer as sw
     pc_cfg = cfg.get("egle_county_plans") or {}
     url = pc_cfg.get("url") or DEFAULT_URL

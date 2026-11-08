@@ -560,7 +560,7 @@ def _classify_related_application(r, changed):
     if "construction permit" in typ:
         if not changed:
             return "urgent", "related", []
-        if _g(r, "Closure Type").strip().lower() == "issued":
+        if "issued" in _g(r, "Closure Type").lower():
             return "urgent", "related", []
     return "watch", "related", []
 
@@ -583,10 +583,12 @@ RELATED_CONTENT = {
     "applications": lambda r: (_g(r, "Closure Type"),),
 }
 
-# Per-site anti-stampede cap (Rule B(ii)) for extra sites, lower than Arbor
-# Hills' because every Construction Permit row is an URGENT event here: a WDS
-# date-format change re-keying PTA's 10 applications must re-baseline, not send
-# 5 urgent emails. Overridable per site with `max_alerts_per_run`.
+# Per-collection bundling threshold for extra sites. Above it, a collection's
+# events go out as ONE email listing them all (URGENT if any is urgent) instead
+# of one email each — so a WDS date-format change re-keying PTA's 10
+# applications sends one email, not five urgent ones, and a real milestone that
+# lands the same day as other edits is still delivered (never the silent
+# re-baseline Arbor Hills uses over its cap). Per site: `max_alerts_per_run`.
 _EXTRA_SITE_CAP = 3
 
 
@@ -598,7 +600,7 @@ def related_urgent_subject(ev: dict, alert_label: str) -> str:
     """Subject for an extra site's urgent event (pure). The two milestones get
     their fixed wording; anything else urgent falls back to the event label."""
     if ev["name"] == "applications" and "construction permit" in ev["label"].lower():
-        if ev["kind"] == "new" and not ev["detail"].startswith("Closure: Issued"):
+        if ev["kind"] == "new" and "issued" not in ev["detail"].lower():
             return f"[URGENT] {alert_label}: construction permit application received"
         return f"[URGENT] {alert_label}: construction permit issued"
     return f"[URGENT] {alert_label}: {ev['label']}"
@@ -649,6 +651,28 @@ def _send_ok(send_email, subject, body, cfg, recipients) -> bool:
         return False
 
 
+def _send_bundle(events, entry, sid, name, label, recipients, cfg, send_email) -> None:
+    """Many events from one collection in one run: one email listing all of them,
+    URGENT if any is urgent. A failed send reverts them all."""
+    n_urgent = sum(ev["severity"] == "urgent" for ev in events)
+    if n_urgent:
+        subject = f"[URGENT] {label}: {len(events)} WDS changes at once, {n_urgent} urgent"
+    else:
+        subject = f"[WDS watch] {name}: {len(events)} change(s)"
+    body = ("Many records changed at once, so they are listed together. This can be "
+            "a real filing or a change in how WDS prints its records; check the page.\n\n"
+            + format_related_summary_body(events, name, sid))
+    if not recipients:
+        print(f"[wds]   {sid}: {len(events)} bundled event(s) (no recipients, log only)")
+        return
+    if _send_ok(send_email, subject, body, cfg, recipients):
+        print(f"[wds]   {sid}: bundled email sent ({len(events)} event(s), {n_urgent} urgent)")
+    else:
+        for ev in events:
+            _revert(entry, ev)
+        print(f"[wds]   {sid}: bundled email not sent — reverted to re-send next run")
+
+
 def check_extra_sites(state: dict, cfg: dict, send_email, fetchers=None) -> None:
     """Poll each `wds.extra_sites` entry's collections. Never raises on one
     site's or one collection's failure: a collection whose diff or routing
@@ -657,6 +681,8 @@ def check_extra_sites(state: dict, cfg: dict, send_email, fetchers=None) -> None
     wds_cfg = cfg.get("wds") or {}
     primary = str(wds_cfg.get("site_id", _SITE))
     fetchers = fetchers or wc.FETCHERS
+    if not wds_cfg.get("extra_sites_enabled"):
+        return
     seen = state.setdefault("wds_seen", {})
     for site in wds_cfg.get("extra_sites") or []:
         try:
@@ -673,8 +699,10 @@ def _check_one_extra_site(site, primary, seen, wds_cfg, cfg, send_email, fetcher
     name = site.get("name") or f"WDS site {sid}"
     label = site.get("alert_label") or name
     recipients = list(site.get("recipients") or [])
-    site_cfg = {**wds_cfg,
-                "max_new_wds_alerts_per_run": int(site.get("max_alerts_per_run", _EXTRA_SITE_CAP))}
+    bundle_over = int(site.get("max_alerts_per_run", _EXTRA_SITE_CAP))
+    # Rule B(ii)'s silent re-baseline is switched off here (cap far above any
+    # real grid): over `bundle_over` events are bundled, never dropped.
+    site_cfg = {**wds_cfg, "max_new_wds_alerts_per_run": 10**6}
     summary = []  # (entry, ev) for this site's non-urgent events
     for coll in site.get("collections") or []:
         classify = RELATED_CLASSIFIERS.get(coll)
@@ -700,6 +728,9 @@ def _check_one_extra_site(site, primary, seen, wds_cfg, cfg, send_email, fetcher
             continue
         seen[key] = new_entry
         print(f"[wds] {sid}:{note}")
+        if len(events) > bundle_over:
+            _send_bundle(events, new_entry, sid, name, label, recipients, cfg, send_email)
+            continue
         for ev in events:
             if ev["severity"] != "urgent":
                 summary.append((new_entry, ev))

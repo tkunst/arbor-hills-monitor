@@ -510,11 +510,13 @@ behavior, update its entry here in the same PR.
   classifiers (`RELATED_CLASSIFIERS`: a NEW Construction Permit application or a
   CP whose Closure Type changes to Issued = urgent; everything else watch; no
   risk codes). `RELATED_CONTENT` makes an application's content Closure Type
-  alone, so a Closure Date correction is no event. Per-site anti-stampede cap
-  `_EXTRA_SITE_CAP` (3, `max_alerts_per_run` overrides): a re-keying of all rows
-  re-baselines instead of sending urgent emails. Each collection is isolated (a
-  raising diff keeps its old seen-state); a send that raises or returns False
-  reverts. Their events never reach `on_row` (Arbor Hills Sheet tabs / risk
+  alone, so a Closure Date correction is no event; "issued" is matched
+  case-insensitively anywhere in the Closure Type. Over `_EXTRA_SITE_CAP` (3,
+  `max_alerts_per_run` overrides) events in one collection in one run go out as
+  ONE bundled email (URGENT if any is urgent) — Rule B(ii)'s silent re-baseline
+  is switched off for extra sites so a milestone on a busy day is never dropped.
+  Gated on `wds.extra_sites_enabled`. Each collection is isolated (a raising
+  diff keeps its old seen-state); a send that raises or returns False reverts. Their events never reach `on_row` (Arbor Hills Sheet tabs / risk
   register) or `pending_digest`: urgent → immediate email to the site's
   `recipients`, the rest → one summary email per run; a failed send reverts the
   seen-state so the next run re-sends; empty `recipients` = log only. State is

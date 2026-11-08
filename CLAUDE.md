@@ -140,6 +140,7 @@ decision behind it; this table only answers "is it live right now."
 | --- | --- |
 | `data_lifecycle.snapshot_export.enabled` | yes |
 | `wds.enabled` | yes |
+| `wds.extra_sites_enabled` | yes |
 | `mmpc_archive.enabled` | yes |
 | `civicclerk_archive.enabled` | yes |
 | `pfas.enabled` | yes |

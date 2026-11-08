@@ -43,10 +43,16 @@ Stream C keeps polling Arbor Hills (475946) exactly as before. After that loop,
   not Arbor Hills risks. For related sites an application's content is its
   Closure Type alone, so a Closure Date correction on an Issued permit is no
   event (no false "issued" email).
-- **Anti-stampede.** Extra sites use a cap of 3 events per collection per run
-  (`max_alerts_per_run` overrides): if WDS ever re-formats dates and every row
-  re-keys as new, the collection re-baselines silently instead of sending
-  several urgent emails for old permits.
+- **Anti-stampede without dropping.** Arbor Hills' over-cap rule re-baselines
+  silently; for extra sites that could swallow the very milestone this watch
+  exists for (a new application landing the same day as other edits). So extra
+  sites never re-baseline over a cap: more than 3 events in one collection in
+  one run (`max_alerts_per_run` overrides) go out as ONE bundled email, marked
+  URGENT if any event is urgent. A WDS date-format change that re-keys every row
+  therefore sends one email, not one per permit. "Issued" is matched
+  case-insensitively anywhere in the Closure Type ("Issued - Modified").
+- **Switch.** `wds.extra_sites_enabled` (on the generated activation table)
+  pauses every extra site without losing state.
 - **Routing.** Extra-site events never reach the Arbor Hills Sheet tabs, the
   risk register, or the coalition Sunday digest (ADR 064's lesson: neighbor
   records in the Arbor Hills feed confused readers). Urgent events email the
@@ -73,15 +79,20 @@ watcher. For each configured county (Macomb) it reads the row's visible text and
 the file names its links point at (query strings dropped, so a re-upload under a
 new `?rev=` is not a change) and emails the scoped recipients, quoting old and
 new text, when either changes. State is a new append-only tab, `EGLE County
-Plans Watch`, on the PRIVATE Sheet (`GSHEET_ID_PRIVATE`), read strictly: the
-watch serves the capacity analysis, so it stays off the operator-visible case
-file (no private Sheet configured = the check is skipped, never written to the
-public Sheet). A fetch error or a missing row is a failed check,
+Plans Watch`, on the PRIVATE Sheet (`GSHEET_ID_PRIVATE`), read strictly. These
+rows are working notes, not case-file evidence, so they sit with the owner's
+other working tabs. That the monitor watches this page is not secret (the
+public repo and Actions log show it). No private Sheet configured = the check
+is skipped, never written to the public Sheet. A fetch error or a missing row is a failed check,
 never a change; failures on 3 distinct days in a row send one stale email per
 outage. For a change the email goes out before the row is written, so a crash
 re-sends rather than loses (the event may happen once in years; a duplicate is
 the cheaper failure). A send that returns False (no SMTP) counts as not sent. The fetch uses `pfas_client.fetch_page` (browser
 User-Agent): the page returns 403 to a bare client and 200 to a browser UA.
+
+Row matching accepts the county name with an optional "County", plan year and
+stars ("Washtenaw 2019**", "Macomb*"), so an approval marked on the name itself
+reads as a change, not as a missing row.
 
 Ships **disabled** (`egle_county_plans.enabled: false`), per the new-source
 rule. It runs inside the existing daily workflow, so no new workflow file.

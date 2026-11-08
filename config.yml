@@ -743,7 +743,11 @@ wds:
   #                 every Operating License row = watch
   #   annual        new or changed report-year = watch
   # State: _meta.wds_seen under "<site_id>:<collection>" keys. First run
-  # baselines silently (Rule B). Remove an entry to stop polling it.
+  # baselines silently (Rule B). Remove an entry to stop polling it, or set
+  # extra_sites_enabled: false to pause them all (state kept). Over
+  # `max_alerts_per_run` (default 3) events in one collection in one run go out
+  # as ONE bundled email (URGENT if any is urgent), never dropped.
+  extra_sites_enabled: true          # live at merge (coder:pta-expansion-watch, Trisha-directed)
   extra_sites:
     - site_id: "398972"            # Pine Tree Acres (WM, Lenox Twp, Macomb Co.)
       name: "Pine Tree Acres (WM, Macomb)"
