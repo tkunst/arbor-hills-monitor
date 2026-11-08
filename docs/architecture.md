@@ -505,28 +505,20 @@ behavior, update its entry here in the same PR.
   URL so penalties/compliance_actions and the two composting grids don't
   double-snapshot their shared pages. See ADR 043.
   **Extra sites (ADR 074, 2026-11-07):** `wds.extra_sites` lists other
-  landfills (today Pine Tree Acres, 398972: `applications` + `annual`).
-  `check_extra_sites()` runs at the end of `check_wds()`, isolated, with its own
-  classifiers (`RELATED_CLASSIFIERS`: a NEW Construction Permit application or a
-  CP whose Closure Type changes to Issued = urgent; everything else watch; no
-  risk codes). `RELATED_CONTENT` makes an application's content Closure Type
-  alone, so a Closure Date correction is no event; "issued" is matched
-  case-insensitively anywhere in the Closure Type. Over `_EXTRA_SITE_CAP` (3,
-  `max_alerts_per_run` overrides) events in one collection in one run go out as
-  ONE bundled email (URGENT if any is urgent) — Rule B(ii)'s silent re-baseline
-  is switched off for extra sites so a milestone on a busy day is never dropped.
-  Gated on `wds.extra_sites_enabled`. Each collection is isolated (a raising
-  diff keeps its old seen-state); a send that raises or returns False reverts. Their events never reach `on_row` (Arbor Hills Sheet tabs / risk
-  register) or `pending_digest`: urgent → immediate email to the site's
-  `recipients`, the rest → one summary email per run; a failed send reverts the
-  seen-state so the next run re-sends; empty `recipients` = log only. State is
-  `_meta.wds_seen["<site_id>:<collection>"]` (Arbor Hills keys have no colon),
-  so the ADR 024 backup log covers it. Rule A and B(i) unchanged (same
-  `diff_collection`, with optional `classify=` / `content=` / `hasher=`);
-  B(ii) is replaced by bundling (below). Applications store the normalized
-  Closure Type TEXT per record (`RELATED_HASH`), so "issued" fires only on a
-  real change from a non-issued status; `_downgrade_backdated()` makes a "new"
-  CP row received on/before the newest known CP a watch (corrected old record).
+  landfills (today Pine Tree Acres, 398972: `applications` + `annual`), gated
+  on `wds.extra_sites_enabled`. `check_extra_sites()` runs at the end of
+  `check_wds()`, isolated, as a plain BEFORE/NOW change watch: any new row,
+  changed field (`RELATED_FIELDS`) or row no longer listed goes out in ONE
+  email per site per run to the site's `recipients`, with no severity tiers and
+  no inference. Nothing reaches `on_row` (Arbor Hills Sheet tabs / risk
+  register) or `pending_digest`. State is
+  `_meta.wds_seen["<site_id>:<collection>"]` (Arbor Hills keys have no colon);
+  the stored per-record value is the watched fields as readable text
+  (`diff_collection(hasher=...)`), so "before" is printable and the ADR 024
+  backup log covers it. Rule A and B(i) unchanged; B(ii)'s silent over-cap
+  re-baseline is off (one email however many changes). A first run or a Rule A
+  skip never reports rows as gone. A send that raises or returns False reverts
+  every change; each collection is isolated; empty `recipients` = log only.
   Same inline-mirror-before-write as backfill.py.
   **Stall guard (stall-hardening, 2026-10-23):** `run()` now counts each
   run's unprocessed / processed / struck / deferred documents and hands them

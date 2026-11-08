@@ -1,9 +1,8 @@
 """WDS extra (related) sites — ADR 074, coder:pta-expansion-watch.
 
-Fixtures are the Pine Tree Acres (WDS 398972) Applications rows as read live on
-2026-11-07 (10 records + the trailing blank template row WDS always renders),
-plus a synthetic new Construction Permit application and a synthetic
-pending -> Issued transition."""
+A plain before/now change watch. Fixtures are the Pine Tree Acres (WDS 398972)
+Applications rows as read live on 2026-11-07 (10 records + the trailing blank
+template row WDS always renders) and two of its annual report-years."""
 import copy
 
 import wds_watcher as ww
@@ -51,203 +50,223 @@ def _cfg(recipients=("trisha@example.org",), collections=("applications", "annua
         wds["extra_sites_enabled"] = True
         wds["extra_sites"] = [{
             "site_id": PTA, "name": "Pine Tree Acres (WM, Macomb)",
-            "alert_label": "Pine Tree Acres expansion",
             "collections": list(collections), "recipients": list(recipients)}]
     return {"wds": wds}
 
 
 class Mailer:
-    def __init__(self, fail=False):
-        self.sent, self.fail = [], fail
+    def __init__(self, result=True, fail=False):
+        self.sent, self.result, self.fail = [], result, fail
 
     def __call__(self, subject, body, cfg, recipients=None):
         if self.fail:
             raise RuntimeError("smtp down")
         self.sent.append({"subject": subject, "body": body, "recipients": recipients})
+        return self.result
 
 
 def _fetchers(pta_apps, pta_annual=None, ah_apps=None):
     """Site-aware fake fetchers: the same callable serves both sites, keyed on w."""
     data = {"applications": {PTA: pta_apps, AH: ah_apps or AH_APPS},
-            "annual": {PTA: pta_annual or PTA_ANNUAL_2026_11_07, AH: []}}
+            "annual": {PTA: PTA_ANNUAL_2026_11_07 if pta_annual is None else pta_annual,
+                       AH: []}}
     return {name: (lambda w, n=name: copy.deepcopy(data[n][w])) for name in data}
 
 
-def _baselined_state(cfg):
+def _baselined_state(cfg=None):
     state = {"wds_seen": {}, "pending_digest": []}
-    ww.check_wds(state, cfg, Mailer(), fetchers=_fetchers(PTA_APPS_2026_11_07))
+    ww.check_wds(state, cfg or _cfg(), Mailer(), fetchers=_fetchers(PTA_APPS_2026_11_07))
     return state
 
 
-# --- state keys ------------------------------------------------------------
+def _run(state, apps, annual=None, cfg=None, mail=None):
+    mail = mail or Mailer()
+    ww.check_wds(state, cfg or _cfg(), mail, fetchers=_fetchers(apps, annual))
+    return mail
+
+
+# --- state ---------------------------------------------------------------------
 
 def test_extra_site_state_keys_never_collide_with_arbor_hills():
-    state = _baselined_state(_cfg())
-    seen = state["wds_seen"]
+    seen = _baselined_state()["wds_seen"]
     assert set(seen) == {"applications", f"{PTA}:applications", f"{PTA}:annual"}
-    # Arbor Hills' entry holds only Arbor Hills' record.
     assert seen["applications"]["last_count"] == 1
-    # PTA: the 10 real rows, the blank template row dropped.
-    assert seen[f"{PTA}:applications"]["last_count"] == 10
+    assert seen[f"{PTA}:applications"]["last_count"] == 10   # template row dropped
     assert seen[f"{PTA}:annual"]["last_count"] == 2
 
 
-def test_first_run_baselines_silently():
-    mail = Mailer()
+def test_stored_value_is_readable_text():
+    recs = _baselined_state()["wds_seen"][f"{PTA}:applications"]["records"]
+    assert recs["Construction Permit|10/31/2019"] == "Closure Type: Issued; Closure Date: 3/18/2020"
+
+
+def test_first_run_baselines_silently_and_nothing_reaches_the_digest():
     state = {"wds_seen": {}, "pending_digest": []}
-    ww.check_wds(state, _cfg(), mail, fetchers=_fetchers(PTA_APPS_2026_11_07))
-    assert mail.sent == []
-    assert state["pending_digest"] == []
+    mail = _run(state, PTA_APPS_2026_11_07)
+    assert mail.sent == [] and state["pending_digest"] == []
 
 
 def test_unchanged_second_run_sends_nothing():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers(PTA_APPS_2026_11_07))
-    assert mail.sent == []
+    state = _baselined_state()
+    assert _run(state, PTA_APPS_2026_11_07).sent == []
 
 
-# --- the two URGENT rules ----------------------------------------------------
+# --- before / now -------------------------------------------------------------------
 
-def test_new_construction_permit_application_is_urgent_with_fixed_subject():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers([NEW_CP] + PTA_APPS_2026_11_07))
-    assert len(mail.sent) == 1
-    m = mail.sent[0]
-    assert m["subject"] == ("[URGENT] Pine Tree Acres expansion: construction permit "
-                            "application received")
+def test_new_application_reports_not_listed_to_now():
+    state = _baselined_state()
+    mail = _run(state, [NEW_CP] + PTA_APPS_2026_11_07)
+    (m,) = mail.sent
+    assert m["subject"] == "Pine Tree Acres (WM, Macomb) WDS: 1 record change(s)"
     assert m["recipients"] == ["trisha@example.org"]
-    assert "Pine Tree Acres (WM, Macomb), WDS site 398972" in m["body"]
-    assert "Applications/Default.aspx?w=398972" in m["body"] or "w=398972" in m["body"]
-    # Never queued for the coalition Sunday digest.
+    assert ("Construction Permit (received 12/1/2026)\n"
+            "  Before: (not listed)\n"
+            "  Now:    Closure Type: (blank); Closure Date: (blank)\n") in m["body"]
+    assert "SolidWaste/Default.aspx?w=398972" in m["body"]
     assert state["pending_digest"] == []
 
 
-def test_construction_permit_closure_to_issued_is_urgent():
-    cfg = _cfg()
-    pending = PTA_APPS_2026_11_07 + [NEW_CP]
+def test_status_change_reports_before_and_now():
     state = {"wds_seen": {}, "pending_digest": []}
-    ww.check_wds(state, cfg, Mailer(), fetchers=_fetchers(pending))  # baseline incl. pending CP
+    _run(state, PTA_APPS_2026_11_07 + [NEW_CP])
     issued = PTA_APPS_2026_11_07 + [_app("Construction Permit", "12/1/2026", "Issued", "5/1/2027")]
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers(issued))
-    assert [m["subject"] for m in mail.sent] == [
-        "[URGENT] Pine Tree Acres expansion: construction permit issued"]
+    (m,) = _run(state, issued).sent
+    assert "  Before: Closure Type: (blank); Closure Date: (blank)\n" in m["body"]
+    assert "  Now:    Closure Type: Issued; Closure Date: 5/1/2027\n" in m["body"]
+    assert "URGENT" not in m["subject"]
 
 
-def test_other_construction_permit_change_is_watch_not_urgent():
-    cfg = _cfg()
-    state = {"wds_seen": {}, "pending_digest": []}
-    ww.check_wds(state, cfg, Mailer(), fetchers=_fetchers(PTA_APPS_2026_11_07 + [NEW_CP]))
-    terminated = PTA_APPS_2026_11_07 + [
-        _app("Construction Permit", "12/1/2026", "Terminated - Admin. Incomplete", "1/5/2027")]
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers(terminated))
-    assert len(mail.sent) == 1
-    assert mail.sent[0]["subject"] == "[WDS watch] Pine Tree Acres (WM, Macomb): 1 change(s)"
+def test_any_field_edit_is_reported_without_judgement():
+    state = _baselined_state()
+    rows = [dict(r) for r in PTA_APPS_2026_11_07]
+    rows[0]["Closure Type"] = "Issued - Modified"
+    rows[1]["Closure Date"] = "5/9/2015"
+    m = _run(state, rows).sent[0]
+    assert m["subject"].endswith("2 record change(s)")
+    assert "Now:    Closure Type: Issued - Modified; Closure Date: 3/18/2020" in m["body"]
+    assert "Now:    Closure Type: Issued; Closure Date: 5/9/2015" in m["body"]
 
 
-def test_operating_license_rows_are_watch_only():
-    sev, _, risks = ww._classify_related_application(
-        _app("Operating License", "9/1/2027", "", ""), False)
-    assert (sev, risks) == ("watch", [])
-    sev, _, _ = ww._classify_related_application(
-        _app("Operating License", "9/1/2027", "Issued", "1/1/2028"), True)
-    assert sev == "watch"
+def test_corrected_receipt_date_shows_as_gone_plus_new_in_one_email():
+    state = _baselined_state()
+    rows = [dict(r) for r in PTA_APPS_2026_11_07]
+    rows[0]["Receipt Date"] = "11/1/2019"   # forward correction re-keys the 2019 permit
+    (m,) = _run(state, rows).sent
+    assert m["subject"].endswith("2 record change(s)")
+    assert ("Construction Permit (received 11/1/2019)\n  Before: (not listed)\n"
+            "  Now:    Closure Type: Issued; Closure Date: 3/18/2020\n") in m["body"]
+    assert ("Construction Permit (received 10/31/2019)\n"
+            "  Before: Closure Type: Issued; Closure Date: 3/18/2020\n"
+            "  Now:    (no longer listed)\n") in m["body"]
+    # The vanished key is dropped, so it is reported once.
+    assert "Construction Permit|10/31/2019" not in state["wds_seen"][f"{PTA}:applications"]["records"]
+    assert _run(state, rows).sent == []
 
 
-def test_new_annual_report_year_is_watch_summary():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    annual = [{"Year": "2026", "Yrs Remaining End": "5.9"}] + PTA_ANNUAL_2026_11_07
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers(PTA_APPS_2026_11_07, annual))
-    assert len(mail.sent) == 1
-    assert "[WDS watch]" in mail.sent[0]["subject"]
-    assert "Annual Landfill Report — FY2026" in mail.sent[0]["body"]
+def test_new_annual_year_and_annual_revision_are_reported():
+    state = _baselined_state()
+    annual = [{"Year": "2026", "Yrs Remaining End": "5.9"}] + copy.deepcopy(PTA_ANNUAL_2026_11_07)
+    annual[1]["Yrs Remaining End"] = "6.7"
+    (m,) = _run(state, PTA_APPS_2026_11_07, annual).sent
+    assert "Annual Landfill Report — FY2026\n  Before: (not listed)" in m["body"]
+    assert "Before: Total Permitted Capacity: 89694901; Yrs Remaining End: 6.8" in m["body"]
+    assert "Now:    Total Permitted Capacity: 89694901; Yrs Remaining End: 6.7" in m["body"]
 
 
-def test_related_events_carry_no_arbor_hills_risk_codes():
-    for name, fn in ww.RELATED_CLASSIFIERS.items():
-        for changed in (False, True):
-            _, dtype, risks = fn(NEW_CP if name == "applications" else {"Year": "2026"}, changed)
-            assert risks == [] and dtype == "related"
+def test_many_changes_are_one_email_never_a_silent_rebaseline():
+    state = _baselined_state()
+    rekeyed = [dict(r, **{"Receipt Date": "0" + r["Receipt Date"]}) if r["Receipt Date"] else r
+               for r in PTA_APPS_2026_11_07]
+    (m,) = _run(state, rekeyed).sent
+    assert m["subject"].endswith("20 record change(s)")   # 10 new + 10 no longer listed
 
 
-# --- delivery safety -----------------------------------------------------------
+# --- guards ---------------------------------------------------------------------------
 
-def test_urgent_send_failure_reverts_and_realerts_next_run():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    rows = [NEW_CP] + PTA_APPS_2026_11_07
-    ww.check_wds(state, cfg, Mailer(fail=True), fetchers=_fetchers(rows))
-    spec = ww.COLLECTIONS["applications"]
-    assert ww._idkey(spec, NEW_CP) not in state["wds_seen"][f"{PTA}:applications"]["records"]
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers(rows))
-    assert len(mail.sent) == 1 and mail.sent[0]["subject"].startswith("[URGENT]")
+def test_bad_fetch_reports_nothing_gone():
+    state = _baselined_state()
+    assert _run(state, PTA_APPS_2026_11_07[:2]).sent == []   # Rule A: collapse skipped
+    assert state["wds_seen"][f"{PTA}:applications"]["last_count"] == 10
 
 
-def test_watch_summary_send_failure_reverts_and_resends():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    annual = [{"Year": "2026"}] + PTA_ANNUAL_2026_11_07
-    ww.check_wds(state, cfg, Mailer(fail=True), fetchers=_fetchers(PTA_APPS_2026_11_07, annual))
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers(PTA_APPS_2026_11_07, annual))
-    assert len(mail.sent) == 1
+def test_send_failure_or_false_reverts_and_resends():
+    for bad in (Mailer(fail=True), Mailer(result=False)):
+        state = _baselined_state()
+        rows = [dict(r) for r in PTA_APPS_2026_11_07]
+        rows[0]["Receipt Date"] = "11/1/2019"
+        _run(state, [NEW_CP] + rows, mail=bad)
+        recs = state["wds_seen"][f"{PTA}:applications"]["records"]
+        assert "Construction Permit|12/1/2026" not in recs
+        assert "Construction Permit|10/31/2019" in recs        # the vanished row is back
+        assert "Construction Permit|11/1/2019" not in recs
+        (m,) = _run(state, [NEW_CP] + rows).sent
+        assert m["subject"].endswith("3 record change(s)")
 
 
 def test_empty_recipients_logs_only_never_the_shared_list():
     cfg = _cfg(recipients=())
     state = _baselined_state(cfg)
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers([NEW_CP] + PTA_APPS_2026_11_07))
-    assert mail.sent == []
+    assert _run(state, [NEW_CP] + PTA_APPS_2026_11_07, cfg=cfg).sent == []
 
 
 def test_extra_site_fetch_failure_does_not_touch_arbor_hills():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
+    state = _baselined_state()
     before = copy.deepcopy(state["wds_seen"])
-
-    def boom(w):
-        raise RuntimeError("down")
-
     fetch = _fetchers(PTA_APPS_2026_11_07)
     orig = fetch["applications"]
-    fetch["applications"] = lambda w: boom(w) if w == PTA else orig(w)
+
+    def apps(w):
+        if w == PTA:
+            raise RuntimeError("down")
+        return orig(w)
+    fetch["applications"] = apps
     mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=fetch)
-    assert mail.sent == []
-    assert state["wds_seen"] == before
+    ww.check_wds(state, _cfg(), mail, fetchers=fetch)
+    assert mail.sent == [] and state["wds_seen"] == before
+
+
+def test_a_raising_collection_keeps_its_state_and_the_others_still_report(monkeypatch):
+    state = _baselined_state()
+    before_annual = copy.deepcopy(state["wds_seen"][f"{PTA}:annual"])
+    orig = ww.wc.page_url
+
+    def page_url(name, w):
+        if name == "annual":
+            raise ValueError("boom")
+        return orig(name, w)
+    monkeypatch.setattr(ww.wc, "page_url", page_url)
+    annual = [{"Year": "2026"}] + PTA_ANNUAL_2026_11_07
+    (m,) = _run(state, [NEW_CP] + PTA_APPS_2026_11_07, annual).sent
+    assert m["subject"].endswith("1 record change(s)")
+    assert state["wds_seen"][f"{PTA}:annual"] == before_annual
 
 
 def test_primary_site_listed_as_extra_is_ignored():
     cfg = _cfg()
     cfg["wds"]["extra_sites"][0]["site_id"] = AH
     state = {"wds_seen": {}, "pending_digest": []}
-    ww.check_wds(state, cfg, Mailer(), fetchers=_fetchers(PTA_APPS_2026_11_07))
+    _run(state, PTA_APPS_2026_11_07, cfg=cfg)
     assert set(state["wds_seen"]) == {"applications"}
 
 
-def test_unsupported_collection_is_skipped():
+def test_unwatchable_collection_is_skipped():
     cfg = _cfg(collections=("qmr", "applications"))
     state = {"wds_seen": {}, "pending_digest": []}
-    ww.check_wds(state, cfg, Mailer(), fetchers=_fetchers(PTA_APPS_2026_11_07))
-    assert f"{PTA}:qmr" not in state["wds_seen"]
-    assert f"{PTA}:applications" in state["wds_seen"]
+    _run(state, PTA_APPS_2026_11_07, cfg=cfg)
+    assert f"{PTA}:qmr" not in state["wds_seen"] and f"{PTA}:applications" in state["wds_seen"]
 
 
-# --- Arbor Hills unchanged ---------------------------------------------------
+def test_extra_sites_paused_by_flag():
+    cfg = _cfg()
+    cfg["wds"]["extra_sites_enabled"] = False
+    state = {"wds_seen": {}, "pending_digest": []}
+    _run(state, PTA_APPS_2026_11_07, cfg=cfg)
+    assert set(state["wds_seen"]) == {"applications"}
+
+
+# --- Arbor Hills unchanged -------------------------------------------------------
 
 def test_arbor_hills_alerts_identical_with_and_without_extra_sites():
-    """Replay: the same Arbor Hills state + a new Arbor Hills Construction Permit
-    produce the same seen-state, the same email and the same digest whether or
-    not extra_sites is configured (PTA quiet)."""
     ah_cp = _app("Construction Permit", "6/1/2026", "", "")
     outs = []
     for extra in (False, True):
@@ -269,187 +288,7 @@ def test_live_config_watches_pta_and_keeps_arbor_hills_primary():
     assert str(wds["site_id"]) == AH
     assert wds["extra_sites_enabled"] is True
     extra = {str(s["site_id"]): s for s in wds.get("extra_sites") or []}
-    assert PTA in extra
     assert set(extra[PTA]["collections"]) == {"applications", "annual"}
     assert extra[PTA]["recipients"], "scoped recipients must be set (empty = log only)"
     for c in extra[PTA]["collections"]:
-        assert c in ww.RELATED_CLASSIFIERS
-
-
-# --- review round 1 (PR #218) ------------------------------------------------
-
-class FalseMailer(Mailer):
-    """send_email returns False (no exception) when SMTP isn't configured."""
-
-    def __call__(self, subject, body, cfg, recipients=None):
-        self.sent.append({"subject": subject})
-        return False
-
-
-def test_send_returning_false_is_not_delivered_and_realerts():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    rows = [NEW_CP] + PTA_APPS_2026_11_07
-    ww.check_wds(state, cfg, FalseMailer(), fetchers=_fetchers(rows))
-    spec = ww.COLLECTIONS["applications"]
-    assert ww._idkey(spec, NEW_CP) not in state["wds_seen"][f"{PTA}:applications"]["records"]
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers(rows))
-    assert [m["subject"][:8] for m in mail.sent] == ["[URGENT]"]
-
-
-def test_closure_date_correction_on_issued_permit_is_no_event():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    corrected = [dict(r) for r in PTA_APPS_2026_11_07]
-    corrected[0]["Closure Date"] = "3/19/2020"   # was 3/18/2020, still Issued
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers(corrected))
-    assert mail.sent == []
-
-
-def test_new_row_first_seen_already_issued_says_issued():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    issued_cp = _app("Construction Permit", "12/1/2026", "Issued", "5/1/2027")
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers([issued_cp] + PTA_APPS_2026_11_07))
-    assert [m["subject"] for m in mail.sent] == [
-        "[URGENT] Pine Tree Acres expansion: construction permit issued"]
-
-
-def test_rekeyed_rows_send_one_bundled_email_not_a_flood():
-    """A WDS date-format change re-keys every row: over the per-site threshold
-    -> ONE bundled email, not five urgent ones."""
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    rekeyed = [dict(r, **{"Receipt Date": "0" + r["Receipt Date"]}) if r["Receipt Date"] else r
-               for r in PTA_APPS_2026_11_07]
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers(rekeyed))
-    assert [m["subject"] for m in mail.sent] == [
-        "[URGENT] Pine Tree Acres expansion: 10 WDS changes at once, 5 urgent"]
-    assert "how WDS prints its records" in mail.sent[0]["body"]
-
-
-def test_milestone_on_a_busy_day_is_delivered_not_rebaselined():
-    """A new CP application the same run as 3 other edits (over the threshold)
-    still reaches Trisha, bundled and marked URGENT."""
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    rows = [dict(r) for r in PTA_APPS_2026_11_07]
-    for r in rows[5:8]:
-        r["Closure Type"] = "Issued (amended)"   # 3 Operating License edits
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers([NEW_CP] + rows))
-    assert len(mail.sent) == 1
-    assert mail.sent[0]["subject"].startswith("[URGENT] Pine Tree Acres expansion: 4 WDS changes")
-    assert "Construction Permit (received 12/1/2026) (NEW)" in mail.sent[0]["body"]
-
-
-def test_bundle_send_failure_reverts_all():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    rows = [dict(r) for r in PTA_APPS_2026_11_07]
-    for r in rows[5:8]:
-        r["Closure Type"] = "Issued (amended)"
-    ww.check_wds(state, cfg, FalseMailer(), fetchers=_fetchers([NEW_CP] + rows))
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers([NEW_CP] + rows))
-    assert len(mail.sent) == 1 and "4 WDS changes" in mail.sent[0]["subject"]
-
-
-def test_issued_variants_are_matched_case_insensitively():
-    sev, _, _ = ww._classify_related_application(
-        _app("Construction Permit", "12/1/2026", "Issued - Modified", "1/1/2027"), True)
-    assert sev == "urgent"
-    ev = {"name": "applications", "kind": "new", "label": "Construction Permit (received x)",
-          "detail": "Closure: ISSUED 1/1/2027"}
-    assert ww.related_urgent_subject(ev, "PTA").endswith("construction permit issued")
-
-
-def test_extra_sites_paused_by_flag():
-    cfg = _cfg()
-    cfg["wds"]["extra_sites_enabled"] = False
-    state = {"wds_seen": {}, "pending_digest": []}
-    ww.check_wds(state, cfg, Mailer(), fetchers=_fetchers(PTA_APPS_2026_11_07))
-    assert set(state["wds_seen"]) == {"applications"}
-
-
-def test_a_raising_collection_keeps_its_state_and_the_others_still_alert(monkeypatch):
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    before_annual = copy.deepcopy(state["wds_seen"][f"{PTA}:annual"])
-    orig = ww.wc.page_url
-
-    def page_url(name, w):
-        if name == "annual":
-            raise ValueError("boom")
-        return orig(name, w)
-    monkeypatch.setattr(ww.wc, "page_url", page_url)
-    terminated = PTA_APPS_2026_11_07[:4] + [
-        _app("Construction Permit", "10/11/2002", "Withdrawn", "2/5/2003")] + PTA_APPS_2026_11_07[5:]
-    annual = [{"Year": "2026"}] + PTA_ANNUAL_2026_11_07
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers(terminated, annual))
-    assert len(mail.sent) == 1 and "1 change(s)" in mail.sent[0]["subject"]
-    assert state["wds_seen"][f"{PTA}:annual"] == before_annual
-
-
-# --- review round 3: previous status stored as text ---------------------------
-
-def test_stored_value_is_the_normalized_closure_text():
-    state = _baselined_state(_cfg())
-    recs = state["wds_seen"][f"{PTA}:applications"]["records"]
-    assert recs["Construction Permit|10/31/2019"] == "issued"
-    assert recs["Construction Permit|10/6/2006"] == "terminated - admin. incomplete"
-
-
-def test_issued_to_issued_modified_is_not_the_milestone():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    rows = [dict(r) for r in PTA_APPS_2026_11_07]
-    rows[0]["Closure Type"] = "Issued - Modified"
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers(rows))
-    assert [m["subject"] for m in mail.sent] == [
-        "[WDS watch] Pine Tree Acres (WM, Macomb): 1 change(s)"]
-
-
-def test_capitalisation_change_is_no_event():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    rows = [dict(r, **{"Closure Type": r["Closure Type"].upper()}) for r in PTA_APPS_2026_11_07]
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers(rows))
-    assert mail.sent == []
-
-
-def test_receipt_date_fix_on_old_permit_is_watch_not_urgent():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    rows = [dict(r) for r in PTA_APPS_2026_11_07]
-    rows[0]["Receipt Date"] = "10/30/2019"   # re-keys the 2019 permit as "new"
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers(rows))
-    assert len(mail.sent) == 1
-    assert mail.sent[0]["subject"].startswith("[WDS watch]")
-    assert "likely a corrected old record" in mail.sent[0]["body"]
-
-
-def test_genuinely_new_application_after_newest_permit_stays_urgent():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    mail = Mailer()
-    ww.check_wds(state, cfg, mail, fetchers=_fetchers([NEW_CP] + PTA_APPS_2026_11_07))
-    assert mail.sent[0]["subject"].startswith("[URGENT]")
-
-
-def test_revert_keeps_the_fetched_row_count():
-    cfg = _cfg()
-    state = _baselined_state(cfg)
-    # Leave a stale key behind (as a re-keying would), then fail a send.
-    state["wds_seen"][f"{PTA}:applications"]["records"]["Construction Permit|1/1/1990"] = "issued"
-    ww.check_wds(state, cfg, Mailer(fail=True),
-                 fetchers=_fetchers([NEW_CP] + PTA_APPS_2026_11_07))
-    assert state["wds_seen"][f"{PTA}:applications"]["last_count"] == 11
+        assert c in ww.RELATED_FIELDS

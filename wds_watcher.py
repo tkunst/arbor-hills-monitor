@@ -330,7 +330,7 @@ def _event_from_row(name: str, r: dict, kind: str, cfg_wds: dict, prev_hash=None
     floor = float(cfg_wds.get("years_remaining_floor", 3.0))
     if classify is not None:
         # Extra-site classifiers also get the record's previous stored value
-        # (None for a new record), see RELATED_HASH.
+        # (None for a new record).
         sev, dtype, risks = classify(r, kind == "changed", prev_hash)
     elif name == "annual":
         sev, dtype, risks = _classify_annual(r, kind == "changed", floor)
@@ -364,7 +364,7 @@ def historical_events(name: str, rows: list[dict], cfg_wds: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict,
-                    classify=None, content=None, hasher=None):
+                    classify=None, hasher=None):
     """Diff freshly-fetched `rows` for one collection against `seen_entry`
     ({"records": {idkey: hash}, "last_count": N}).
 
@@ -376,13 +376,10 @@ def diff_collection(name: str, rows: list[dict], seen_entry: dict, cfg_wds: dict
     and B (silent baseline / over-cap) here so the orchestrator stays simple. A
     baseline/guard result yields events=[] and a fully-updated seen entry (records
     everything, alerts nothing). `classify` is passed through to
-    _event_from_row (None = the Arbor Hills classifiers); `content` replaces the
-    collection's mutable-field tuple (None = the Arbor Hills one) and `hasher`
-    the stored per-record value (None = the 12-char content digest). All three
-    are used only by the extra-site path (ADR 074)."""
+    _event_from_row (None = the Arbor Hills classifiers) and `hasher` replaces
+    the stored per-record value (None = the 12-char content digest). Both are
+    used only by the extra-site path (ADR 074)."""
     spec = COLLECTIONS[name]
-    if content is not None:
-        spec = {**spec, "content": content}
     if hasher is not None:
         spec = {**spec, "hash": hasher}
     records = dict(seen_entry.get("records") or {})
@@ -543,151 +540,80 @@ def check_wds(state: dict, cfg: dict, send_email, fetchers=None, on_row=None) ->
 # ---------------------------------------------------------------------------
 # Extra (related) WDS sites — ADR 074. Another landfill whose solid-waste record
 # matters to Arbor Hills (today: Pine Tree Acres, 398972, whose 75M CY
-# expansion is the biggest single input to the regional capacity model). These
-# sites are NOT Arbor Hills evidence, so their events never touch the Arbor
-# Hills Sheet tabs, the risk register, or the coalition Sunday digest: urgent
-# events email the site's scoped `recipients` at once, everything else goes out
-# as one scoped summary email per run. Empty `recipients` = log only (never the
-# shared alert list). State lives in the SAME `_meta.wds_seen` dict under
-# "<site_id>:<collection>" keys — an Arbor Hills key never contains a colon, so
-# the two can't collide, and the ADR 024 `_wds_seen` backup/recovery log covers
-# these keys with no extra plumbing. Rule A (bad-fetch guard) and Rule B(i)
-# (silent first baseline) apply unchanged (same diff_collection). Rule B(ii)'s
-# over-cap re-baseline is switched OFF here: over `max_alerts_per_run` events
-# are bundled into one email instead (see _send_bundle). For applications the
-# stored per-record value is the normalized Closure Type text (RELATED_HASH),
-# not a digest, so a status change can be judged against the previous status.
+# expansion is the biggest single input to the regional capacity model).
+#
+# A plain BEFORE/NOW change watch, like the other snapshot watches: any change
+# to a watched record — a new row, a changed field, a row no longer listed —
+# goes out in ONE email per site per run showing what it said before and what
+# it says now. No severity tiers and no inference about what a change means
+# (an earlier design guessed "construction permit issued" and kept finding new
+# ways to guess wrong); these records change a few times a year at most.
+#
+# These sites are NOT Arbor Hills evidence: their changes never touch the Arbor
+# Hills Sheet tabs, the risk register or the coalition Sunday digest. Email goes
+# only to the site's scoped `recipients`; empty = log only (never the shared
+# list). State lives in the SAME `_meta.wds_seen` dict under
+# "<site_id>:<collection>" keys (an Arbor Hills key never contains a colon), and
+# the stored per-record value is the readable field text itself, so the next
+# run can print "before". The ADR 024 `_wds_seen` backup/recovery log covers
+# these keys as-is. Rule A (bad-fetch guard) and Rule B(i) (silent first
+# baseline) apply unchanged; Rule B(ii)'s over-cap re-baseline is off (however
+# many changes, it is one email, so nothing is ever silently dropped).
 # ---------------------------------------------------------------------------
 
-def _closure_norm(r) -> str:
-    """An application's Closure Type, lower-cased with whitespace collapsed:
-    the value an extra site STORES per record (RELATED_HASH), so the previous
-    status is readable on the next run and a capitalisation/spacing change in
-    how WDS prints it is no change at all."""
-    return " ".join(_g(r, "Closure Type").lower().split())
+# Collections an extra site may watch, and the fields shown as before/now.
+RELATED_FIELDS = {
+    "applications": ["Closure Type", "Closure Date"],
+    "annual": ["Total Permitted Capacity", "Yrs Remaining End", "Waste_Total", "Waste_Tons"],
+}
+
+_NOT_LISTED = "(not listed)"
+_NO_LONGER = "(no longer listed)"
 
 
-def _classify_related_application(r, changed, prev=None):
-    """Another landfill's Part 115 application. URGENT only on the two expansion
-    milestones: a NEW Construction Permit application, or a Construction Permit
-    whose status really moved to Issued — `prev` is the record's previously
-    stored Closure Type (RELATED_HASH stores the text itself, not a digest), so
-    "issued" -> "issued - modified" is NOT the milestone, only a status that
-    did not say issued before and does now. A Closure Date correction is no
-    event at all (the stored value is the Closure Type alone). Any other change,
-    and every Operating License row, is watch. (A NEW Construction Permit row is
-    further checked against the site's newest known permit in
-    _check_one_extra_site, so a corrected Receipt Date that re-keys an old
-    permit is not reported as a new application.)"""
-    typ = _g(r, "Application Type").lower()
-    if "construction permit" in typ:
-        if not changed:
-            return "urgent", "related", []
-        if "issued" in _closure_norm(r) and "issued" not in (prev or ""):
-            return "urgent", "related", []
+def _related_value(fields):
+    """The stored per-record value: the watched fields as readable text,
+    whitespace collapsed, a blank shown as '(blank)'."""
+    def f(r):
+        return "; ".join(f"{k}: {' '.join(str(_g(r, k)).split()) or '(blank)'}" for k in fields)
+    return f
+
+
+def _related_watch(r, changed, prev=None):
     return "watch", "related", []
 
 
-def _classify_related_annual(r, changed, prev=None):
-    """Another landfill's annual report-year: watch (refreshes its remaining-space
-    figure for the capacity model). No years-remaining floor: that floor is an
-    Arbor Hills R1 rule."""
-    return "watch", "related", []
-
-
-RELATED_CLASSIFIERS = {
-    "applications": _classify_related_application,
-    "annual": _classify_related_annual,
-}
-
-# Mutable-field tuples that differ from the Arbor Hills spec (see
-# _classify_related_application). Absent = the Arbor Hills content.
-RELATED_CONTENT = {
-    "applications": lambda r: (_g(r, "Closure Type"),),
-}
-
-# Stored per-record values that differ from the Arbor Hills digest. For
-# applications the normalized Closure Type TEXT is stored, so the next run can
-# read the previous status (a digest can't say whether it was already Issued).
-# The ADR 024 backup log persists `records` as-is, so this survives a recovery.
-RELATED_HASH = {
-    "applications": _closure_norm,
-}
-
-_MDY_FULL = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
-
-
-def _receipt_key(idkey: str):
-    """(yyyy, mm, dd) from an applications idkey "<Type>|<M/D/YYYY>", or None."""
-    m = _MDY_FULL.match(idkey.rsplit("|", 1)[-1].strip())
-    if not m:
-        return None
-    mm, dd, yyyy = (int(x) for x in m.groups())
-    return (yyyy, mm, dd)
-
-# Per-collection bundling threshold for extra sites. Above it, a collection's
-# events go out as ONE email listing them all (URGENT if any is urgent) instead
-# of one email each — so a WDS date-format change re-keying PTA's 10
-# applications sends one email, not five urgent ones, and a real milestone that
-# lands the same day as other edits is still delivered (never the silent
-# re-baseline Arbor Hills uses over its cap). Per site: `max_alerts_per_run`.
-_EXTRA_SITE_CAP = 3
+def _key_label(name: str, idkey: str) -> str:
+    """A readable label from a stored idkey (used for a row no longer listed,
+    whose row dict is gone)."""
+    parts = idkey.split("|")
+    if name == "applications" and len(parts) == 2:
+        return f"{parts[0] or 'Application'} (received {parts[1] or '?'})"
+    if name == "annual":
+        return f"Annual Landfill Report — FY{parts[0] or '?'}"
+    return idkey
 
 
 def _extra_key(site_id: str, name: str) -> str:
     return f"{site_id}:{name}"
 
 
-def related_urgent_subject(ev: dict, alert_label: str) -> str:
-    """Subject for an extra site's urgent event (pure). The two milestones get
-    their fixed wording; anything else urgent falls back to the event label."""
-    if ev["name"] == "applications" and "construction permit" in ev["label"].lower():
-        if ev["kind"] == "new" and "issued" not in ev["detail"].lower():
-            return f"[URGENT] {alert_label}: construction permit application received"
-        return f"[URGENT] {alert_label}: construction permit issued"
-    return f"[URGENT] {alert_label}: {ev['label']}"
-
-
-def format_related_urgent_body(ev: dict, site_name: str, site_id: str) -> str:
-    changed = " (UPDATED)" if ev["kind"] == "changed" else " (NEW)"
-    return (
-        f"URGENT — WDS (solid waste) change at {site_name}, WDS site {site_id}.\n\n"
-        f"{ev['label']}{changed}\n"
-        f"{ev['detail']}\n\n"
-        "WDS lists an application's type and dates, not what it is for. Open the "
-        "record to confirm which project it covers.\n\n"
-        f"Source (EGLE Waste Data System):\n  {ev.get('link') or wds_link(site_id)}\n"
-    )
-
-
-def format_related_summary_body(events: list[dict], site_name: str, site_id: str) -> str:
-    lines = [f"WDS (solid waste) changes at {site_name}, WDS site {site_id}:", ""]
-    for ev in events:
-        tag = "UPDATED" if ev["kind"] == "changed" else "NEW"
-        lines.append(f"- {ev['label']} ({tag}): {ev['detail']}")
-    lines += ["", f"Source (EGLE Waste Data System):\n  {wds_link(site_id)}"]
+def format_related_changes(changes: list[dict], site_name: str, site_id: str) -> str:
+    """Before/now email body (pure). `changes` items: {label, before, now, link}."""
+    lines = [f"Changes to {site_name}'s records in EGLE's Waste Data System "
+             f"(WDS site {site_id}):", ""]
+    for c in changes:
+        lines += [c["label"], f"  Before: {c['before']}", f"  Now:    {c['now']}",
+                  f"  Source: {c['link']}", ""]
+    lines.append("An automated comparison of the WDS pages since the last check; open the "
+                 "source to read the record.")
     return "\n".join(lines) + "\n"
-
-
-def _revert(recs_entry: dict, ev: dict) -> None:
-    """Undo one event's seen-state so the next run re-alerts (same rule as the
-    Arbor Hills urgent path: a brand-new record is dropped, a changed one gets
-    its previous hash back)."""
-    recs = recs_entry["records"]
-    if ev.get("prev_hash") is None:
-        recs.pop(ev["idkey"], None)
-    else:
-        recs[ev["idkey"]] = ev["prev_hash"]
-    # last_count stays the fetched row count diff_collection set: recomputing it
-    # from the stored keys could inflate it with keys a re-keying left behind,
-    # and Rule A would then read every normal fetch as a collapse.
 
 
 def _send_ok(send_email, subject, body, cfg, recipients) -> bool:
     """True only when the mail was actually handed to SMTP. send_email returns
     False (no exception) when SMTP isn't configured; treating that as delivered
-    would commit the event as seen and lose it (email_alerts.send_email's own
-    docstring asks callers that care to check the return value)."""
+    would commit the change as seen and lose it."""
     try:
         return send_email(subject, body, cfg, recipients=recipients) is not False
     except Exception as e:  # noqa: BLE001
@@ -695,55 +621,11 @@ def _send_ok(send_email, subject, body, cfg, recipients) -> bool:
         return False
 
 
-def _downgrade_backdated(events: list[dict], old_entry: dict) -> None:
-    """A NEW Construction Permit row whose Receipt Date is not later than the
-    newest Construction Permit already on record is almost certainly an old
-    permit re-keyed by a Receipt Date correction (or a WDS date-format change),
-    not a new application: downgrade it to watch (still reported, not URGENT).
-    Fail-safe: no prior permit, or an unparseable date, keeps it urgent."""
-    known = [_receipt_key(k) for k in (old_entry.get("records") or {})
-             if k.lower().startswith("construction permit|")]
-    known = [k for k in known if k]
-    if not known:
-        return
-    newest = max(known)
-    for ev in events:
-        if ev["kind"] != "new" or ev["severity"] != "urgent":
-            continue
-        rk = _receipt_key(ev["idkey"])
-        if rk is not None and rk <= newest:
-            ev["severity"] = "watch"
-            ev["detail"] += (" (received on or before the newest construction permit "
-                             "already on record, so likely a corrected old record)")
-
-
-def _send_bundle(events, entry, sid, name, label, recipients, cfg, send_email) -> None:
-    """Many events from one collection in one run: one email listing all of them,
-    URGENT if any is urgent. A failed send reverts them all."""
-    n_urgent = sum(ev["severity"] == "urgent" for ev in events)
-    if n_urgent:
-        subject = f"[URGENT] {label}: {len(events)} WDS changes at once, {n_urgent} urgent"
-    else:
-        subject = f"[WDS watch] {name}: {len(events)} change(s)"
-    body = ("Many records changed at once, so they are listed together. This can be "
-            "a real filing or a change in how WDS prints its records; check the page.\n\n"
-            + format_related_summary_body(events, name, sid))
-    if not recipients:
-        print(f"[wds]   {sid}: {len(events)} bundled event(s) (no recipients, log only)")
-        return
-    if _send_ok(send_email, subject, body, cfg, recipients):
-        print(f"[wds]   {sid}: bundled email sent ({len(events)} event(s), {n_urgent} urgent)")
-    else:
-        for ev in events:
-            _revert(entry, ev)
-        print(f"[wds]   {sid}: bundled email not sent — reverted to re-send next run")
-
-
 def check_extra_sites(state: dict, cfg: dict, send_email, fetchers=None) -> None:
-    """Poll each `wds.extra_sites` entry's collections. Never raises on one
-    site's or one collection's failure: a collection whose diff or routing
-    raises keeps its previous seen-state, and the site's watch summary still
-    goes out for the collections that succeeded."""
+    """Poll each `wds.extra_sites` entry's collections and send one before/now
+    email per site per run. Never raises on one site's or one collection's
+    failure; a collection that raises before its changes are collected keeps
+    its previous seen-state."""
     wds_cfg = cfg.get("wds") or {}
     primary = str(wds_cfg.get("site_id", _SITE))
     fetchers = fetchers or wc.FETCHERS
@@ -757,23 +639,50 @@ def check_extra_sites(state: dict, cfg: dict, send_email, fetchers=None) -> None
             print(f"[wds] extra site step failed: {type(e).__name__}: {e}")
 
 
+def _collect(coll, rows, entry, wds_cfg, sid):
+    """(new_entry, changes, undo, note) for one collection — pure apart from
+    the page-URL lookup. `undo` restores each change's previous stored value
+    (or removes a new key) if the email isn't sent."""
+    fields = RELATED_FIELDS[coll]
+    site_cfg = {**wds_cfg, "max_new_wds_alerts_per_run": 10**6}  # B(ii) off: never drop
+    events, new_entry, note = diff_collection(
+        coll, rows, entry, site_cfg, classify=_related_watch, hasher=_related_value(fields))
+    link = wc.page_url(coll, sid)
+    old = entry.get("records") or {}
+    changes, undo = [], []
+    for ev in events:
+        prev = ev["prev_hash"]
+        changes.append({"label": ev["label"], "before": _NOT_LISTED if prev is None else prev,
+                        "now": ev["hash"], "link": link})
+        undo.append((ev["idkey"], prev))
+    # Rows no longer listed. Only on a real diff: a first-run baseline (old is
+    # empty) or a Rule A skip (new_entry IS the old entry) reports nothing.
+    # diff_collection keeps every old key, so compare against the keys of the
+    # rows actually fetched, and drop the gone ones so each is reported once.
+    if old and new_entry is not entry:
+        spec = COLLECTIONS[coll]
+        current = {_idkey(spec, r) for r in rows
+                   if any(str(x).strip() for x in spec["identity"](r))}
+        for k in sorted(set(old) - current):
+            changes.append({"label": _key_label(coll, k), "before": old[k],
+                            "now": _NO_LONGER, "link": link})
+            undo.append((k, old[k]))
+            new_entry["records"].pop(k, None)
+    return new_entry, changes, undo, note
+
+
 def _check_one_extra_site(site, primary, seen, wds_cfg, cfg, send_email, fetchers) -> None:
     sid = str(site.get("site_id") or "").strip()
     if not sid.isdigit() or sid == primary:
         print(f"[wds] extra site {sid!r}: missing, non-numeric or the primary site — skipping")
         return
     name = site.get("name") or f"WDS site {sid}"
-    label = site.get("alert_label") or name
     recipients = list(site.get("recipients") or [])
-    bundle_over = int(site.get("max_alerts_per_run", _EXTRA_SITE_CAP))
-    # Rule B(ii)'s silent re-baseline is switched off here (cap far above any
-    # real grid): over `bundle_over` events are bundled, never dropped.
-    site_cfg = {**wds_cfg, "max_new_wds_alerts_per_run": 10**6}
-    summary = []  # (entry, ev) for this site's non-urgent events
+    pending = []  # (key, new_entry, undo) per collection with changes
+    changes = []
     for coll in site.get("collections") or []:
-        classify = RELATED_CLASSIFIERS.get(coll)
-        if classify is None or coll not in fetchers:
-            print(f"[wds] {sid}: collection {coll!r} has no related-site rules — skipping")
+        if coll not in RELATED_FIELDS or coll not in fetchers:
+            print(f"[wds] {sid}: collection {coll!r} is not watchable for extra sites — skipping")
             continue
         try:
             rows = fetchers[coll](sid)
@@ -783,45 +692,30 @@ def _check_one_extra_site(site, primary, seen, wds_cfg, cfg, send_email, fetcher
         key = _extra_key(sid, coll)
         try:
             entry = seen.get(key) or {"records": {}, "last_count": 0}
-            events, new_entry, note = diff_collection(
-                coll, rows, entry, site_cfg, classify=classify,
-                content=RELATED_CONTENT.get(coll), hasher=RELATED_HASH.get(coll))
-            if coll == "applications":
-                _downgrade_backdated(events, entry)
-            link = wc.page_url(coll, sid)
-            for ev in events:
-                ev["link"] = link
+            new_entry, coll_changes, undo, note = _collect(coll, rows, entry, wds_cfg, sid)
         except Exception as e:  # noqa: BLE001 — keep the old seen-state
             print(f"[wds] {sid}:{coll}: diff failed, seen-state kept: {type(e).__name__}: {e}")
             continue
         seen[key] = new_entry
-        print(f"[wds] {sid}:{note}")
-        if len(events) > bundle_over:
-            _send_bundle(events, new_entry, sid, name, label, recipients, cfg, send_email)
-            continue
-        for ev in events:
-            if ev["severity"] != "urgent":
-                summary.append((new_entry, ev))
-                continue
-            if not recipients:
-                print(f"[wds]   {sid}: URGENT (no recipients, log only): {ev['label']}")
-                continue
-            if _send_ok(send_email, related_urgent_subject(ev, label),
-                        format_related_urgent_body(ev, name, sid), cfg, recipients):
-                print(f"[wds]   {sid}: URGENT emailed: {ev['label']}")
-            else:
-                _revert(new_entry, ev)
-                print(f"[wds]   {sid}: URGENT not sent — reverted to re-alert next run")
-    if not summary:
+        print(f"[wds] {sid}:{note}" + (f"; {len(coll_changes)} change(s)" if coll_changes else ""))
+        if coll_changes:
+            changes += coll_changes
+            pending.append((new_entry, undo))
+    if not changes:
         return
     if not recipients:
-        print(f"[wds]   {sid}: {len(summary)} watch event(s) (no recipients, log only)")
+        print(f"[wds]   {sid}: {len(changes)} change(s) (no recipients, log only)")
         return
-    evs = [ev for _, ev in summary]
-    if _send_ok(send_email, f"[WDS watch] {name}: {len(evs)} change(s)",
-                format_related_summary_body(evs, name, sid), cfg, recipients):
-        print(f"[wds]   {sid}: watch summary emailed ({len(evs)} event(s))")
-    else:
-        for entry, ev in summary:
-            _revert(entry, ev)
-        print(f"[wds]   {sid}: watch summary not sent — reverted to re-send next run")
+    subject = f"{name} WDS: {len(changes)} record change(s)"
+    if _send_ok(send_email, subject, format_related_changes(changes, name, sid), cfg, recipients):
+        print(f"[wds]   {sid}: change email sent ({len(changes)} change(s))")
+        return
+    # Not sent: put every change back so the next run reports it again.
+    for new_entry, undo in pending:
+        recs = new_entry["records"]
+        for k, prev in undo:
+            if prev is None:
+                recs.pop(k, None)
+            else:
+                recs[k] = prev
+    print(f"[wds]   {sid}: change email not sent — reverted to re-send next run")
