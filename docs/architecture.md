@@ -519,7 +519,9 @@ behavior, update its entry here in the same PR.
   re-baseline is off (one email however many changes). A first run or a Rule A
   skip never reports rows as gone; a row is reported gone only after
   `_GONE_AFTER_MISSES` (2) good fetches without it (entry `missing` map).
-  `_disambiguate()` gives same-key rows in one fetch a stable " #2" suffix. A
+  `_disambiguate()` keeps same-key rows in one fetch apart with a " #2" suffix,
+  matching rows to the stored slots by value so a new duplicate never takes
+  over an existing record's key. A
   send that raises or returns False restores each changed collection's previous
   entry; each collection is isolated; empty `recipients` = log only.
   Same inline-mirror-before-write as backfill.py.
@@ -1230,8 +1232,10 @@ behavior, update its entry here in the same PR.
   occurrence of the heading text. Step failures that leave no row (no
   `GSHEET_ID_PRIVATE`, tab unreadable, a county write raising — `check()`
   re-raises after the loop) are counted by `watcher._run_county_plans()` in
-  `_meta.county_plans_health` via `record_step_failure()`: one "watch not
-  running" email after `stale_alert_after_days` distinct days; reset on success. Fetch: `pfas_client.fetch_page`
+  `_meta.county_plans_health` via `record_step_failure()` (dates, error class,
+  and the already-emailed change text + files so a failing row write doesn't
+  re-send it daily): one "watch not running" email after
+  `stale_alert_after_days` distinct days; reset on success. Fetch: `pfas_client.fetch_page`
   (browser UA; a bare client gets 403).
 - `report_tracker.py` — **ADR 071** (coder:report-expectations-tracker,
   2026-10-23): expected reports vs. arrivals, for any number of landfills.

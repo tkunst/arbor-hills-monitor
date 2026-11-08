@@ -649,23 +649,52 @@ _RELATED_KEY_FIELD = {"applications": "Receipt Date", "annual": "Year"}
 _GONE_AFTER_MISSES = 2
 
 
-def _disambiguate(coll: str, rows: list[dict], value) -> list[dict]:
-    """Copies of `rows` where a key listed more than once in this fetch gets a
-    stable " #2", " #3" suffix on its last identity field, ordered by the
-    stored value — so two same-type applications received the same day are
-    two records, not one record flapping between two values every run."""
+def _disambiguate(coll: str, rows: list[dict], value, old: dict) -> list[dict]:
+    """Copies of `rows` where a key listed more than once in this fetch is kept
+    apart with a " #2", " #3" suffix on its last identity field, so two
+    same-type applications received the same day are two records, not one
+    record flapping between two values every run.
+
+    Which row gets which slot follows the STORED records (`old`): a row whose
+    value equals a stored slot's value keeps that slot, so a new duplicate
+    never takes over an existing record's key (which would read as the old
+    permit's status changing). Remaining rows fill remaining stored slots (a
+    real change to that record), then new numbered slots."""
     spec = COLLECTIONS[coll]
     field = _RELATED_KEY_FIELD[coll]
     groups: dict = {}
+    out = []
     for r in rows:
         if any(str(x).strip() for x in spec["identity"](r)):
             groups.setdefault(_idkey(spec, r), []).append(r)
-    out = [r for r in rows if not any(str(x).strip() for x in spec["identity"](r))]
-    for k, rs in groups.items():
-        rs = sorted(rs, key=value)
-        out.append(rs[0])
-        for n, r in enumerate(rs[1:], start=2):
-            out.append({**r, field: f"{_g(r, field)} #{n}"})
+        else:
+            out.append(r)
+    for base, rs in groups.items():
+        if len(rs) == 1 and not any(k.startswith(base + " #") for k in old):
+            out.append(rs[0])
+            continue
+        slot_re = re.compile(re.escape(base) + r"(?: #(\d+))?$")
+        stored = sorted((k for k in old if slot_re.match(k)),
+                        key=lambda k: int(slot_re.match(k).group(1) or 1))
+        taken, assigned, rest = set(), [], []
+        for r in sorted(rs, key=value):
+            hit = next((k for k in stored if k not in taken and old[k] == value(r)), None)
+            if hit is None:
+                rest.append(r)
+            else:
+                taken.add(hit)
+                assigned.append((hit, r))
+        free = [k for k in stored if k not in taken]
+        n = max([int(slot_re.match(k).group(1) or 1) for k in stored] + [0])
+        for r in rest:
+            if free:
+                assigned.append((free.pop(0), r))
+            else:
+                n += 1
+                assigned.append((base if n == 1 else f"{base} #{n}", r))
+        for slot, r in assigned:
+            suffix = slot[len(base):]
+            out.append(r if not suffix else {**r, field: f"{_g(r, field)}{suffix}"})
     return out
 
 
@@ -674,7 +703,7 @@ def _collect(coll, rows, entry, wds_cfg, sid):
     page-URL lookup. The caller restores `entry` itself if the email isn't sent."""
     fields = RELATED_FIELDS[coll]
     value = _related_value(fields)
-    rows = _disambiguate(coll, rows, value)
+    rows = _disambiguate(coll, rows, value, entry.get("records") or {})
     site_cfg = {**wds_cfg, "max_new_wds_alerts_per_run": 10**6}  # B(ii) off: never drop
     events, new_entry, note = diff_collection(
         coll, rows, entry, site_cfg, classify=_related_watch, hasher=value)

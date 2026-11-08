@@ -722,8 +722,9 @@ _META_DEFAULTS = {
     "doc_pipeline_health": {},
     # egle_county_plans_watcher.py (ADR 074): days the county-plans STEP itself
     # failed (no private Sheet / its tab unreadable), kept here because those
-    # failures can't be recorded on the private Sheet they're about. Dates and
-    # an error class only. Written by watcher.run.
+    # failures can't be recorded on the private Sheet they're about. Holds
+    # dates, an error class, and while failing the already-emailed change
+    # (public EGLE row text + file names). Written by watcher.run.
     "county_plans_health": {},
 }
 
