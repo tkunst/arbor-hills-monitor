@@ -249,3 +249,36 @@ def test_live_config_ships_disabled_and_watches_macomb():
     assert c["enabled"] is False
     assert "Macomb" in c["counties"]
     assert c["recipients"]
+
+
+# --- review round 1 (PR #218) ------------------------------------------------------
+
+def test_send_returning_false_writes_nothing_so_it_retries(monkeypatch):
+    fake = FakeSheets(BASE)
+    _patch(monkeypatch, fake)
+    ecp.check(None, "sid", CFG, lambda s, b, c, recipients=None: False,
+              fetch_page=lambda u: PAGE_CHANGED)
+    assert fake.rows == BASE
+
+
+def test_heading_repeated_above_the_table_still_finds_the_row():
+    page = ('<a href="#plans">Currently Approved County Plans</a>'
+            '<table><tr><td>Contents</td></tr></table>' + PAGE_2026_11_07)
+    assert ecp.extract_county_row(page, "Macomb") == MACOMB_NOW
+
+
+def test_one_county_failing_does_not_stop_the_next(monkeypatch):
+    import sheet_writer as sw
+    fake = FakeSheets()
+    _patch(monkeypatch, fake)
+    calls = []
+
+    def append(s, i, rows):
+        calls.append(rows[0][1])
+        if rows[0][1] == "Macomb":
+            raise RuntimeError("429")
+        fake.rows.extend(rows)
+    monkeypatch.setattr(sw, "append_county_plans_rows", append)
+    cfg = {"egle_county_plans": {"counties": ["Macomb", "Mason"], "recipients": ["t@x"]}}
+    ecp.check(None, "sid", cfg, Mailer(), fetch_page=lambda u: PAGE_2026_11_07)
+    assert calls == ["Macomb", "Mason"] and fake.rows[-1][1] == "Mason"

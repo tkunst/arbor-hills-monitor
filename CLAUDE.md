@@ -254,8 +254,8 @@ decision behind it; this table only answers "is it live right now."
   — and every other `<X> Watch` snapshot tab: ROP/MMD/RIDE/PFAS/Public Water
   Supply PFAS/GFL Info Site/Meeting/MPART Data/Submissions/Violations/
   Compliance Actions/Evaluations/Permits/Complaints/Public Notices/
-  EGLE Newsroom/EGLE County Plans, plus the private-Sheet `GovQA Archive Watch`/
-  `RRD Documents`) must RAISE on a genuine TRANSPORT read failure, never
+  EGLE Newsroom, plus the private-Sheet `GovQA Archive Watch`/
+  `RRD Documents`/`EGLE County Plans Watch`) must RAISE on a genuine TRANSPORT read failure, never
   swallow it to `[]` — a swallowed transient error misreads as "nothing seen
   yet" and silently re-baselines over real state (the ADR 018/023 "spurious
   baseline becomes the state" failure). Enforced two ways in the code:
