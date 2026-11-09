@@ -10,6 +10,7 @@
 -->
 <head>
 <meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Arbor Hills: Surface-Methane SEM Exceedances</title>
 <meta name="description" content="An interactive map of the Arbor Hills Landfill's documented surface-methane (SEM) exceedances, stepped across six reports and inspections, with the SEM5000 walk tracks for the two EGLE targeted inspections.">
@@ -224,7 +225,9 @@ const satLayer = L.layerGroup([
   L.tileLayer(ESRI, {maxZoom:20, attribution:"Imagery &copy; Esri, Maxar"}),
   L.tileLayer(ESRI_LBL, {maxZoom:20, opacity:0.9})
 ]);
-const streetLayer = L.tileLayer(OSM, {maxZoom:19, attribution:"&copy; OpenStreetMap"});
+const streetLayer = L.tileLayer(OSM, {maxZoom:19, attribution:"&copy; OpenStreetMap",
+  // The page sets no-referrer (for MiEnviro links); OSM tile policy asks for a Referer.
+  referrerPolicy:"strict-origin-when-cross-origin"});
 satLayer.addTo(map);
 if(base==="street"){ map.removeLayer(satLayer); streetLayer.addTo(map); map.getContainer().classList.add("muted-base"); }
 map.on("moveend zoomend", writeHash);

@@ -431,10 +431,15 @@ def render_page(open_entries: list[dict], closed_entries: list[dict],
     # Hidden, machine-readable state for the next run (see render_state_block).
     state_block = render_state_block(list(open_entries) + list(closed_entries))
 
+    # <meta name="referrer" content="no-referrer">: MiEnviro (mienviro.michigan.gov)
+    # answers 401 to any download request carrying a Referer from this site, so
+    # the record links on these pages only work with no Referer at all.
+    # tests/test_referrer_policy.py pins it on every page under site/.
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Public Comment Periods &middot; Arbor Hills Monitor</title>
 <meta name="description" content="Michigan EGLE public-comment periods for the Arbor Hills Landfill complex -- open now with deadlines, and closed with outcomes.">

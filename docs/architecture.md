@@ -1279,6 +1279,10 @@ behavior, update its entry here in the same PR.
   wrapper that fetches the two tabs and calls `build_pages()` — the same
   pure/I/O split `sheet_writer.py` uses between row-building and the API
   itself, and the same shape `public_comment_feed.py` below reuses.
+  Every page it renders carries `<meta name="referrer" content="no-referrer">`
+  (2026-11-08): MiEnviro answers 401 to a download carrying this site's
+  Referer, so the record links only work with none. All other site pages are
+  hand-written and carry the same tag; `tests/test_referrer_policy.py` pins it.
 - `fulltext_search.py` — **ADR 062 addendum (2026-11-02; shipped OFF behind
   `fulltext_search.enabled`)**: pure scope + text rules for full-text search over
   the Mirror PDFs on the public records page. Only entries already in the
@@ -1334,3 +1338,5 @@ behavior, update its entry here in the same PR.
   workflow (`public-comment.yml`) and is always on. Editorial note baked into
   the module: this page is FACTUAL RECORDS ONLY — it never tells anyone to
   comment; that call to action lives on the separate advocacy site.
+  Its page carries the same site-wide `no-referrer` meta as `findings_feed.py`
+  (MiEnviro 401s a request with this site's Referer).
