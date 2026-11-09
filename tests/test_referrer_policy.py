@@ -82,7 +82,11 @@ def _read(rel):
         return fh.read()
 
 
-@pytest.mark.parametrize("rel", [p for p in PAGES if "tile.openstreetmap.org" in _read(p)])
+# Pages that load OSM tiles (a page-content scan, not URL sanitization).
+_OSM_TILES = re.compile(r"https://tile\.openstreetmap\.org/")
+
+
+@pytest.mark.parametrize("rel", [p for p in PAGES if _OSM_TILES.search(_read(p))])
 def test_osm_tiles_still_send_a_referer(rel):
     """OSM's tile usage policy asks browser apps to send a Referer, so the OSM
     layer overrides the page-wide no-referrer for its tile images (Leaflet 1.9's
