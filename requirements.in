@@ -7,7 +7,7 @@ PyYAML>=6.0              # config.yml
 # Was previously only arriving transitively (via anthropic and ocrmypdf's own
 # deps); pinned explicitly now that this repo compiles a hashed lockfile, so a
 # transitive-only version never silently moves without a line of its own here.
-pydantic>=2.0
+pydantic>=2.14.2
 
 # Google Drive + Sheets (service-account auth; no local mount)
 google-api-python-client>=2.130
@@ -34,15 +34,15 @@ requests>=2.32
 # laughs: the bytes are an untrusted nSITE download, so a hostile document.xml
 # must be refused (raised → caught as a poison strike), never entity-expanded.
 defusedxml>=0.7          # XXE-safe drop-in for xml.etree in _docx_body_text
-extract-msg>=0.57.0       # .msg envelope + attachment extraction (GPL)
+extract-msg>=0.58.1       # .msg envelope + attachment extraction (GPL)
 xlrd>=2.0                # legacy .xls attachments (e.g. lab-report EDDs)
 openpyxl>=3.1             # .xlsx attachments, in case a future EDD is that format
 
 # Tests: synthetic PDFs are built with PyMuPDF (already a dep) — no extra
 # PDF library needed. pytest is the only test-time addition.
-pytest>=8.0
+pytest>=9.2.0
 # httplib2 is imported directly in tests/test_sheet_writer.py and
 # tests/test_ride_docs.py (building a fake googleapiclient HttpError). Was
 # previously only arriving transitively via google-api-python-client and
 # google-auth-httplib2; pinned explicitly for the same reason as pydantic above.
-httplib2>=0.22
+httplib2>=0.32.1
