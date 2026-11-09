@@ -32,6 +32,10 @@ def _assert_no_referrer(html, where):
     assert found == ["no-referrer"], (
         f"{where}: expected exactly one <meta name=\"referrer\" content=\"no-referrer\"> "
         f"in <head>, found {found}")
+    # Browsers also honour a referrer meta in <body> (the last one wins), so a
+    # second one anywhere would silently override this.
+    everywhere = re.findall(r'<meta\b[^>]*name=["\']?referrer', html, re.I)
+    assert len(everywhere) == 1, f"{where}: {len(everywhere)} referrer metas in the page"
     # The policy only governs requests issued after it is parsed, so it must come
     # before any stylesheet, script or link-bearing markup in the head.
     first_fetch = re.search(r"<(link|script|style|img|iframe)\b", head.group(1), re.I)
@@ -68,3 +72,24 @@ def test_findings_feed_pages_set_no_referrer():
 def test_public_comment_feed_page_sets_no_referrer():
     _assert_no_referrer(pcf.render_page([], [], "2026-11-08 12:00 UTC"),
                         "public_comment_feed")
+
+
+_OSM_LAYER = re.compile(r"L\.tileLayer\(OSM,\s*\{[^}]*\}\)", re.S)
+
+
+def _read(rel):
+    with open(os.path.join(_SITE, rel), encoding="utf-8") as fh:
+        return fh.read()
+
+
+@pytest.mark.parametrize("rel", [p for p in PAGES if "tile.openstreetmap.org" in _read(p)])
+def test_osm_tiles_still_send_a_referer(rel):
+    """OSM's tile usage policy asks browser apps to send a Referer, so the OSM
+    layer overrides the page-wide no-referrer for its tile images (Leaflet 1.9's
+    per-layer `referrerPolicy`). Without this the street basemap could be blocked
+    if OSM starts enforcing that policy."""
+    layers = _OSM_LAYER.findall(_read(rel))
+    assert layers, f"{rel}: loads OSM tiles but no L.tileLayer(OSM, {{...}}) found"
+    for layer in layers:
+        assert 'referrerPolicy:"strict-origin-when-cross-origin"' in layer, (
+            f"{rel}: OSM tile layer lacks referrerPolicy")
