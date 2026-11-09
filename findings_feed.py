@@ -717,10 +717,15 @@ def render_page(page_rows: list[dict], page_num: int, total_pages: int,
     # pages on every timestamp bump. If this line's wording or date format
     # ever changes, update that regex in the same commit — a silent mismatch
     # there brings back the exact daily-noise bug that guard exists to fix.
+    # <meta name="referrer" content="no-referrer">: MiEnviro (mienviro.michigan.gov)
+    # answers 401 to any download request carrying a Referer from this site, so
+    # the record links on these pages only work with no Referer at all.
+    # tests/test_referrer_policy.py pins it on every page under site/.
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <meta name="description" content="Every public regulatory record the Arbor Hills Monitor has collected for these facilities, newest first.">
