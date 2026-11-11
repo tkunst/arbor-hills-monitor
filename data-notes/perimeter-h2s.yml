@@ -30,6 +30,9 @@
 id: perimeter-h2s
 as_of: "October 9, 2026, 12:00 p.m. ET"
 
+# Summary line for the "collapsed" variant (homepage; Trisha 2026-11-11: named after the dataset it describes).
+collapsed_title: "Perimeter air-monitoring data-quality note (updated October 9, 2026; corrects the September 25 note)"
+
 # Rendered inside <p class="data-quality-note"> (variant "callout") on every page.
 html: >-
   <strong>Data-quality note (updated October 9, 2026; corrects the September 25 note):</strong>

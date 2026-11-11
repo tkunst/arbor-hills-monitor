@@ -7,6 +7,7 @@ The note lives in ONE file, data-notes/<id>.yml. This script copies it into:
       <!-- dq-note:<id>:<variant> --> ... <!-- /dq-note:<id> -->
   variant "callout" -> <p class="data-quality-note">{html}</p>
   variant "footer"  -> {footer_html}           (bare text, for inside an existing <p>)
+  variant "collapsed" -> <details class="data-quality-note"><summary>{collapsed_title}</summary><p>{html body}</p></details>
 * FAQ structured data: any JSON-LD Question whose visible answer (<div class="faq">)
   contains a marker gets its acceptedAnswer text rebuilt from that visible answer, so
   search engines see the same words as readers;
@@ -61,6 +62,12 @@ def render(note: dict, variant: str) -> str:
         return f'<p class="data-quality-note">{note["html"].strip()}</p>'
     if variant == "footer":
         return note["footer_html"].strip()
+    if variant == "collapsed":
+        # Homepage (Trisha 2026-11-11): the same note folded behind a one-line summary, titled
+        # after the dataset it describes. The body is `html` minus its leading <strong> title.
+        body = re.sub(r"^\s*<strong>.*?</strong>\s*", "", note["html"].strip(), count=1, flags=re.S)
+        return (f'<details class="data-quality-note"><summary><strong>{note["collapsed_title"].strip()}'
+                f'</strong></summary><p>{body}</p></details>')
     raise ValueError(f"unknown dq-note variant {variant!r}")
 
 

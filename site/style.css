@@ -69,7 +69,7 @@ a { color: var(--link); }
   border-radius: 6px;
 }
 
-.data-links h2 {
+.data-links h2, .data-links h3 {
   font-size: 1.05rem;
   margin-top: 0;
 }
@@ -321,3 +321,27 @@ footer.site-footer {
   margin-top: 0.75rem;
   cursor: pointer;
 }
+
+/* preview 11/11: section nav + collapsible data-quality note */
+.site-nav { font-family: system-ui, sans-serif; font-size: .9rem; margin: .6rem 0 0; }
+.site-nav a { white-space: nowrap; }
+details.data-quality-note summary { cursor: pointer; }
+.site-header .brand { display: flex; align-items: center; gap: 1.2rem; margin: 0 0 .8rem; }
+.site-header .brand .mark { flex: 0 0 auto; width: 96px; height: 96px; }
+.site-header .brand h1 { font-size: 2.2rem; margin: 0 0 .5rem; }
+.site-header .brand .site-nav { margin: 0; }
+@media (max-width: 480px) { .site-header .brand { gap: .8rem; } .site-header .brand .mark { width: 64px; height: 64px; } .site-header .brand h1 { font-size: 1.6rem; } }
+
+/* preview 11/11: nav groups. Hierarchy: group title (1.4rem serif) > box title (1rem serif) > body; the hill-line glyph echoes the monitor mark. */
+:root { --mark: #2f7fb3; }
+@media (prefers-color-scheme: dark) { :root { --mark: #6fb0dc; } }
+.nav-group { margin: 3.25rem 0 0; scroll-margin-top: 1rem; }
+.group-head { margin: 0 0 1rem; }
+.group-glyph { display: block; color: var(--mark); margin: 0 0 .45rem; }
+.group-head h2 { font-size: 1.4rem; margin: 0; letter-spacing: .005em; }
+.group-head .group-desc { margin: .2rem 0 0; color: var(--muted); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: .88rem; line-height: 1.45; }
+.nav-group .data-links { margin-top: .75rem; padding: 1rem 1.15rem; }
+.nav-group .data-links:first-of-type { margin-top: 0; }
+.nav-group .data-links h3 { font-size: 1rem; margin: 0 0 .15rem; }
+.nav-group .data-links ul { margin-top: .35rem; }
+.nav-group .data-links li { font-size: .97rem; }
