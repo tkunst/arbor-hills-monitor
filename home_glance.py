@@ -24,10 +24,10 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-# The count's label. Kept in ONE place on purpose: "since 2020" is on the
-# pre-publish fact-check list (handoff section 9) and the published feed
-# reaches back to 1967, so this wording may change.
-COUNT_LABEL = "filings read since 2020"
+# The count's label, kept in ONE place. No start year (Trisha 11/12): the count
+# is the Public Records feed's own total, which reaches back to 1967, so
+# "documents read" is always true and matches that page's "N documents".
+COUNT_LABEL = "documents read"
 
 CHECKED_MAX_AGE_HOURS = 48
 EASTERN = ZoneInfo("America/Detroit")
