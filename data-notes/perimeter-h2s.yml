@@ -77,7 +77,7 @@ html: >-
 
 # Rendered as the text of a page footer (variant "footer").
 footer_html: >-
-  An independent project of Landfill Records Project LLC. Fence-line readings come from the operator's public perimeter
+  Arbor Hills Monitor, an independent project of Landfill Records Project LLC. Fence-line readings come from the operator's public perimeter
   feed, hosted by Barr Engineering; as of October 9, 2026, several stations'
   hydrogen-sulfide readings have known data-quality problems (see the data-quality note).
 
