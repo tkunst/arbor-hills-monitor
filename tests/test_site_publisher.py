@@ -34,7 +34,7 @@ import public_comment_feed as pcf
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE = os.path.join(_REPO, "site")
 LLC = "Landfill Records Project LLC"
-FOOTER_LEAD = f"An independent project of {LLC}."
+FOOTER_LEAD = f"Arbor Hills Monitor, an independent project of {LLC}."  # Trisha 2026-11-11
 
 # Pages that must carry a site-footer: the hand-written ones plus the single
 # public_comment_feed.py page. The 42 site/public-records/ pages are generated
