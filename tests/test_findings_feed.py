@@ -1245,3 +1245,61 @@ def test_malformed_added_at_is_blanked_not_sorted_to_the_top(added_at):
         ff.merge_and_sort([_row(date="2026-09-07", name="Auto")], []),
         [_hc_row(doc_date="", added_at=added_at, title="Bad")])
     assert [r["document_name"] for r in combined] == ["Auto", "Bad"]
+
+
+# --- build_home_glance / newest_filing (homepage GlanceCard, 2026-11-12) ----
+
+def test_newest_filing_is_latest_date_filed_not_latest_document_date():
+    # Rows arrive newest DOCUMENT date first; the card wants the newest FILING.
+    rows = ff.merge_and_sort([
+        _row(date="2026-11-01", name="Old report filed late", document_date="2026-08-10",
+             link="https://x/late"),
+        _row(date="2026-10-20", name="Recent letter", document_date="2026-10-19",
+             link="https://x/recent"),
+    ], [])
+    assert ff.newest_filing(rows)["document_name"] == "Old report filed late"
+
+
+def test_newest_filing_skips_handcurated_unprocessable_and_unlinked_rows():
+    auto = ff.merge_and_sort([
+        _row(date="2026-10-01", name="Real filing", link="https://x/real"),
+        _row(date="2026-12-01", name="Stub", doc_type=ff.UNPROCESSABLE_TYPE, link="https://x/stub"),
+        _row(date="2026-12-02", name="No link", link=""),
+        _row(date="2026-12-03", name="Bad link", link="javascript:alert(1)"),
+        _row(date="not a date", name="Bad date", link="https://x/bad"),
+    ], [])
+    # A hand-curated row's date_filed is its entry date, never an EGLE filing.
+    rows = ff.merge_handcurated(auto, [_hc_row(added_at="2026-12-31T00:00:00")])
+    assert ff.newest_filing(rows)["document_name"] == "Real filing"
+
+
+def test_newest_filing_tie_keeps_input_order_and_none_when_empty():
+    rows = ff.merge_and_sort([
+        _row(date="2026-10-01", name="A", document_date="2026-09-30", link="https://x/a"),
+        _row(date="2026-10-01", name="B", document_date="2026-09-01", link="https://x/b"),
+    ], [])
+    assert ff.newest_filing(rows)["document_name"] == "A"
+    assert ff.newest_filing([]) is None
+
+
+def test_build_home_glance_count_is_the_feed_total_and_fields_are_public_values():
+    rows = ff.merge_and_sort([
+        _row(date="2026-10-01", name="Report 2026-10-01", link="https://x/1",
+             facility="Arbor Hills Remediation Area"),
+        _row(date="2026-09-01", name="Older", link="https://x/2"),
+    ], [])
+    rows = ff.merge_handcurated(rows, [_hc_row()])
+    glance = json.loads(ff.build_home_glance(rows))
+    assert glance["count"] == len(rows) == 3
+    newest = glance["newest"]
+    # Title is the same strip_embedded_date/redact view the feed publishes.
+    published = next(r for r in rows if r["link"] == "https://x/1")
+    assert newest["title"] == ff._public_view(published)["title"]
+    assert newest["date_filed"] == "2026-10-01"
+    assert newest["link"] == "https://x/1"
+    assert newest["facility"] == ff.facility_display("Arbor Hills Remediation Area")
+
+
+def test_build_home_glance_is_deterministic_and_null_when_nothing_qualifies():
+    assert ff.build_home_glance([]) == ff.build_home_glance([])
+    assert json.loads(ff.build_home_glance([])) == {"count": 0, "newest": None}

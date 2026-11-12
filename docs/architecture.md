@@ -1283,6 +1283,23 @@ behavior, update its entry here in the same PR.
   (2026-11-08): MiEnviro answers 401 to a download carrying this site's
   Referer, so the record links only work with none. All other site pages are
   hand-written and carry the same tag; `tests/test_referrer_policy.py` pins it.
+- `home_glance.py` + `scripts/fill_home_glance.py`: **homepage GlanceCard
+  (design handoff 2026-11-12).** The homepage's "N filings read", "Newest
+  filing" (GlanceCard line + first feature card) and "Last checked" are filled
+  at deploy time, never hand-typed. `findings_feed.build_home_glance()` writes
+  `site/public-records/glance.json` beside the search index in the same
+  `gen_findings_feed.py` run: `count` (= the feed's own published total) and the
+  newest AUTO filing by EGLE's Date Filed (`newest_filing()`: no hand-curated row,
+  no unprocessable stub, https link only; redacted `_public_view` title). No
+  timestamp in it, so findings-feed's diff-quiet guard is unaffected. `pages.yml`
+  fills `site/index.html` between the `<!-- glance:card -->` / `<!-- glance:feature -->`
+  markers just before upload (stdlib only, never fails the deploy). "Last checked"
+  is the last SCHEDULED `daily.yml` run that succeeded, read by a separate
+  `lastcheck` job holding only `actions: read`; it renders only when 48 hours old
+  or less, and an inline script on the page removes it once it ages past 48 hours
+  in the reader's browser. The committed `site/index.html` never carries a
+  timestamp. The count's label lives in one constant, `home_glance.COUNT_LABEL`
+  ("since 2020" is on the pre-publish fact-check list).
 - `fulltext_search.py` — **ADR 062 addendum (2026-11-02; shipped OFF behind
   `fulltext_search.enabled`)**: pure scope + text rules for full-text search over
   the Mirror PDFs on the public records page. Only entries already in the

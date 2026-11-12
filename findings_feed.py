@@ -898,3 +898,61 @@ def build_search_index(rows: list[dict]) -> str:
     a no-op on an unchanged day (see render_page's footer comment and the
     handoff). Fixed separators keep the output deterministic across runs."""
     return json.dumps([_search_entry(r) for r in rows], separators=(",", ":"))
+
+
+# The homepage GlanceCard (site/index.html, filled at deploy time by
+# scripts/fill_home_glance.py) needs two facts the search index above can't
+# give it: the published document count, and the NEWEST FILING by EGLE's
+# Date Filed (the search index carries only the document's own date, ADR 065).
+# Written next to the search index as glance.json by gen_findings_feed.py.
+HOME_GLANCE_FILENAME = "glance.json"
+UNPROCESSABLE_TYPE = "(unprocessable source)"
+
+
+def _is_iso_day(value: str) -> bool:
+    try:
+        _date.fromisoformat((value or "")[:10])
+    except ValueError:
+        return False
+    return True
+
+
+def newest_filing(rows: list[dict]) -> dict | None:
+    """The auto-pipeline row with the latest Date Filed, or None. Excludes
+    Hand-Curated rows (their date_filed is the day a human entered the row,
+    not an EGLE filing date -- the `"source" in row` key-presence check
+    _public_view uses), unprocessable-source stubs, and rows with no usable
+    https link or no ISO date_filed. Ties keep the input order (rows arrive
+    newest Document Date first), so the result is deterministic."""
+    best = None
+    for row in rows:
+        if "source" in row or (row.get("type") or "") == UNPROCESSABLE_TYPE:
+            continue
+        filed = (row.get("date_filed") or "")[:10]
+        if not _is_iso_day(filed) or not _public_view(row)["link"]:
+            continue
+        if best is None or filed > (best.get("date_filed") or "")[:10]:
+            best = row
+    return best
+
+
+def build_home_glance(rows: list[dict]) -> str:
+    """rows: the same merged list build_pages()/build_search_index() take.
+    Returns a JSON object string: `count` (= the feed's own published total,
+    the "N documents" line on public-records/index.html) and `newest` (title,
+    facility, date_filed, link of newest_filing(), all from the same
+    redacted/scheme-checked _public_view values the feed publishes; null when
+    no row qualifies). No timestamp, so an unchanged day is byte-identical
+    and findings-feed.yml's diff-quiet guard stays quiet."""
+    row = newest_filing(rows)
+    newest = None
+    if row is not None:
+        pv = _public_view(row)
+        newest = {
+            "title": pv["title"],
+            "facility": facility_display(row.get("facility") or ""),
+            "date_filed": (row.get("date_filed") or "")[:10],
+            "link": pv["link"],
+        }
+    return json.dumps({"count": len(rows), "newest": newest},
+                      separators=(",", ":"), sort_keys=True)
