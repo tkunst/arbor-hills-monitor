@@ -909,9 +909,16 @@ HOME_GLANCE_FILENAME = "glance.json"
 UNPROCESSABLE_TYPE = "(unprocessable source)"
 
 
+_STRICT_ISO_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
 def _is_iso_day(value: str) -> bool:
+    """Strict YYYY-MM-DD only (fromisoformat alone also takes 20261110 and
+    week dates, which would then win the string comparison below)."""
+    if not _STRICT_ISO_DAY_RE.match(value or ""):
+        return False
     try:
-        _date.fromisoformat((value or "")[:10])
+        _date.fromisoformat(value)
     except ValueError:
         return False
     return True
@@ -929,7 +936,7 @@ def newest_filing(rows: list[dict]) -> dict | None:
         if "source" in row or (row.get("type") or "") == UNPROCESSABLE_TYPE:
             continue
         filed = (row.get("date_filed") or "")[:10]
-        if not _is_iso_day(filed) or not _public_view(row)["link"]:
+        if not _is_iso_day(filed) or not _public_view(row)["link"].startswith("https://"):
             continue
         if best is None or filed > (best.get("date_filed") or "")[:10]:
             best = row

@@ -1290,7 +1290,7 @@ behavior, update its entry here in the same PR.
   `site/public-records/glance.json` beside the search index in the same
   `gen_findings_feed.py` run: `count` (= the feed's own published total) and the
   newest AUTO filing by EGLE's Date Filed (`newest_filing()`: no hand-curated row,
-  no unprocessable stub, https link only; redacted `_public_view` title). No
+  no unprocessable stub, https link only, strict YYYY-MM-DD Date Filed; redacted `_public_view` title). No
   timestamp in it, so findings-feed's diff-quiet guard is unaffected. `pages.yml`
   fills `site/index.html` between the `<!-- glance:card -->` / `<!-- glance:feature -->`
   markers just before upload (stdlib only, never fails the deploy). "Last checked"

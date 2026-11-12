@@ -125,3 +125,26 @@ def test_homepage_structure():
     assert "&rarr;</a>" not in page
     assert 'name="referrer" content="no-referrer"' in page
     assert 'name="viewport"' in page
+
+
+def test_fill_script_leaves_page_untouched_when_glance_json_is_missing(tmp_path, monkeypatch, capsys):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "fill_home_glance", os.path.join(ROOT, "scripts", "fill_home_glance.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    index = tmp_path / "index.html"
+    index.write_text(_page(), encoding="utf-8")
+    monkeypatch.setattr(mod, "INDEX", str(index))
+    monkeypatch.setattr(mod, "GLANCE", str(tmp_path / "missing.json"))
+    before = index.read_text(encoding="utf-8")
+    assert mod.main() == 0
+    assert index.read_text(encoding="utf-8") == before
+    assert "::warning::" in capsys.readouterr().out
+    # and fills when the data is there
+    glance = tmp_path / "glance.json"
+    glance.write_text(json.dumps(GLANCE_DATA), encoding="utf-8")
+    monkeypatch.setattr(mod, "GLANCE", str(glance))
+    monkeypatch.setenv("LAST_CHECK_AT", "")
+    assert mod.main() == 0
+    assert "Staff Report &lt;b&gt;&amp;" in index.read_text(encoding="utf-8")

@@ -1267,6 +1267,8 @@ def test_newest_filing_skips_handcurated_unprocessable_and_unlinked_rows():
         _row(date="2026-12-02", name="No link", link=""),
         _row(date="2026-12-03", name="Bad link", link="javascript:alert(1)"),
         _row(date="not a date", name="Bad date", link="https://x/bad"),
+        _row(date="20261231", name="Compact date", link="https://x/compact"),
+        _row(date="2026-12-04", name="Plain http", link="http://x/http"),
     ], [])
     # A hand-curated row's date_filed is its entry date, never an EGLE filing.
     rows = ff.merge_handcurated(auto, [_hc_row(added_at="2026-12-31T00:00:00")])
