@@ -559,15 +559,15 @@ def test_the_parked_workflow_must_be_in_place_before_the_stream_is_enabled():
     )
 
 
-def test_shipped_config_ships_disabled():
-    """New source built unattended (overnight-coder Step 3) — verified live
-    against config.yml, not assumed from the handoff."""
+def test_shipped_config_enabled():
+    """Built unattended and shipped disabled (overnight-coder Step 3); enabled
+    by Trisha 2026-11-12. Pins the live state so a stray edit is caught."""
     import pathlib
 
     import yaml
     with open(pathlib.Path(__file__).resolve().parent.parent / "config.yml") as f:
         cfg = yaml.safe_load(f)
-    assert cfg["nsite_complaints"]["enabled"] is False
+    assert cfg["nsite_complaints"]["enabled"] is True
 
 
 def test_shipped_config_tiers_cover_every_registry_site_and_differ_from_siblings():
