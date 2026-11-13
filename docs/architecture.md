@@ -970,7 +970,8 @@ behavior, update its entry here in the same PR.
   `.github/workflows/nsite-permits-watch.yml` (this build session's SSH key
   authenticated non-interactively, so the `workflow`-OAuth-scope parking
   Streams L/M needed did not apply). See ADR 030.
-- `nsite_complaints_watcher.py` — Stream P: daily snapshot-diff of EGLE's
+- `nsite_complaints_watcher.py` — Stream P (**enabled 2026-11-12, Trisha**; the
+  first run baselines silently): daily snapshot-diff of EGLE's
   nSITE **Complaints** profile (citizen/agency reports against a facility,
   often the trigger for an inspection) for every srn in
   `nsite_complaints.tiers`, against the `Complaints Watch` tab. Item key

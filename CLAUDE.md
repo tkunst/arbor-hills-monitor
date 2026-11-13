@@ -162,7 +162,7 @@ decision behind it; this table only answers "is it live right now."
 | `nsite_compliance_actions.enabled` | yes |
 | `nsite_evaluations.enabled` | yes |
 | `nsite_permits.enabled` | yes |
-| `nsite_complaints.enabled` | no |
+| `nsite_complaints.enabled` | yes |
 | `nsite_public_notices.enabled` | yes |
 | `gfl_info_site.enabled` | yes |
 | `pfas_pws.enabled` | yes |
