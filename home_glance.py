@@ -25,9 +25,10 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 # The count's label, kept in ONE place. No start year (Trisha 11/12): the count
-# is the Public Records feed's own total, which reaches back to 1967, so
-# "documents read" is always true and matches that page's "N documents".
-COUNT_LABEL = "documents read"
+# is the Public Records feed's own total, which reaches back to 1967. "on file",
+# not "read" (refutation gate 11/12): the total includes a few stub rows for
+# documents the monitor could not open.
+COUNT_LABEL = "documents on file"
 
 CHECKED_MAX_AGE_HOURS = 48
 EASTERN = ZoneInfo("America/Detroit")
@@ -96,7 +97,7 @@ def render_card(glance: dict, checked: datetime | None, now: datetime) -> str:
     if checked_is_fresh(checked, now):
         iso = checked.strftime("%Y-%m-%dT%H:%M:%SZ")
         lines.append(f'<p class="cline glance-checked" data-checked="{iso}">'
-                     f"Last checked <strong>{html.escape(format_checked(checked))}</strong></p>")
+                     f"Last check of EGLE document listings <strong>{html.escape(format_checked(checked))}</strong></p>")
     newest = glance.get("newest") or {}
     link, title = _safe_link(newest.get("link")), newest.get("title") or ""
     if link and title:

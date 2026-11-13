@@ -1284,7 +1284,7 @@ behavior, update its entry here in the same PR.
   Referer, so the record links only work with none. All other site pages are
   hand-written and carry the same tag; `tests/test_referrer_policy.py` pins it.
 - `home_glance.py` + `scripts/fill_home_glance.py`: **homepage GlanceCard
-  (design handoff 2026-11-12).** The homepage's "N documents read", "Newest
+  (design handoff 2026-11-12).** The homepage's "N documents on file", "Newest
   filing" (GlanceCard line + first feature card) and "Last checked" are filled
   at deploy time, never hand-typed. `findings_feed.build_home_glance()` writes
   `site/public-records/glance.json` beside the search index in the same
@@ -1299,7 +1299,7 @@ behavior, update its entry here in the same PR.
   or less, and an inline script on the page removes it once it ages past 48 hours
   in the reader's browser. The committed `site/index.html` never carries a
   timestamp. The count's label lives in one constant, `home_glance.COUNT_LABEL`
-  ("documents read", no start year: the feed reaches back to 1967; Trisha 11/12).
+  ("documents on file", no start year: the feed reaches back to 1967; Trisha 11/12; "read" dropped after the 11/12 refutation gate).
 - `fulltext_search.py` — **ADR 062 addendum (2026-11-02; shipped OFF behind
   `fulltext_search.enabled`)**: pure scope + text rules for full-text search over
   the Mirror PDFs on the public records page. Only entries already in the
