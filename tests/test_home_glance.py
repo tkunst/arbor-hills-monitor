@@ -55,15 +55,15 @@ def test_render_card_escapes_and_shows_count_and_newest():
     assert '<p class="big">2,207</p>' in card
     assert hg.COUNT_LABEL in card
     assert "Staff Report &lt;b&gt;&amp;" in card
-    assert "Last checked" not in card
+    assert "Last check of" not in card
 
 
 def test_render_card_last_checked_only_when_fresh():
     fresh = hg.render_card(GLANCE_DATA, NOW - timedelta(hours=3), NOW)
     assert 'data-checked="2026-11-12T12:00:00Z"' in fresh
-    assert "Last checked <strong>Nov 12, 7:00 AM ET</strong>" in fresh
+    assert "Last check of EGLE document listings <strong>Nov 12, 7:00 AM ET</strong>" in fresh
     stale = hg.render_card(GLANCE_DATA, NOW - timedelta(hours=49), NOW)
-    assert "Last checked" not in stale and "data-checked" not in stale
+    assert "Last check of" not in stale and "data-checked" not in stale
 
 
 def test_render_drops_non_https_links():
