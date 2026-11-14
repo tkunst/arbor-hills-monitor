@@ -64,6 +64,15 @@ facilities:
 # quality alone doesn't fix the windowing (large_doc_page_threshold/
 # large_doc_max_keyword_pages below still caps what the classifier ever sees),
 # but a stronger model is a free upgrade for the pages it IS shown.
+# One-off notice at the TOP of the Sunday digest (email_alerts.active_digest_announcement).
+# Shown through `until` (inclusive, Detroit date), then dropped automatically.
+# Trisha 2026-11-14: launch note for the capacity tool, for the 11/15 digest only.
+digest_announcement:
+  until: "2026-11-15"
+  text: |
+    Arbor Hills Monitor just launched an interactive landfill capacity tool:
+    https://policy.arborhillsmonitor.org/capacity/
+    Let us know if you have questions! corrections@arborhillsmonitor.org
 anthropic_model: "claude-sonnet-5"
 # Output cap for the classification call. Generous enough that measurements[]
 # on a multi-well WOI report isn't truncated mid-JSON. If a doc ever fails with
