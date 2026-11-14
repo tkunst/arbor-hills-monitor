@@ -378,7 +378,8 @@ def format_urgent_body(parsed, metadata: dict, link: str, cfg: dict | None = Non
     )
 
 
-def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None) -> str:
+def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None,
+                       announcement: str = "") -> str:
     """items: [{parsed, metadata, link}]. Procedural items (deadlines and notices) first.
 
     urgent_recap: same shape, plus each item's metadata carries
@@ -396,9 +397,12 @@ def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None
     right after the urgent recap and before the ordinary procedural/other
     split — the rescue this feature exists for: such an item no longer
     renders in "OTHER NEW DOCUMENTS" at all (pulled out, not also-listed)."""
-    if not items and not urgent_recap:
-        return "No new Arbor Hills (N2688) documents this period."
     lines = []
+    if announcement:
+        # Trisha-set promo/notice (config `digest_announcement`), rendered first.
+        lines += ["ANNOUNCEMENT:", *[f"  {ln}" if ln else "" for ln in announcement.strip().splitlines()], ""]
+    if not items and not urgent_recap:
+        return "\n".join(lines + ["No new Arbor Hills (N2688) documents this period."])
     if urgent_recap:
         lines.append("URGENT ITEMS FROM EARLIER:")
         for it in urgent_recap:
@@ -930,7 +934,33 @@ def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = 
     watcher can record a skipped digest for the owner weekly email."""
     subject = f"Arbor Hills N2688 digest — {len(items)} new document(s)"
     recipients = merge_extra_recipients(resolve_recipients(cfg), "DIGEST_RECIPIENTS_EXTRA")
-    return send_email(subject, format_digest_body(items, urgent_recap), cfg, recipients=recipients)
+    body = format_digest_body(items, urgent_recap, announcement=active_digest_announcement(cfg))
+    return send_email(subject, body, cfg, recipients=recipients)
+
+
+def active_digest_announcement(cfg: dict, today=None) -> str:
+    """config.yml `digest_announcement: {text, until}`: a short notice Trisha
+    wants at the top of the Sunday digest. Shown through `until` (YYYY-MM-DD,
+    inclusive, America/Detroit date), then silently dropped, so a one-off promo
+    never lingers. Missing/blank text, a missing or malformed `until`, or a past
+    `until` all mean no announcement (fail closed)."""
+    import datetime as _dt
+    block = cfg.get("digest_announcement") or {}
+    text = str(block.get("text") or "").strip()
+    until = str(block.get("until") or "").strip()
+    if not text or not until:
+        return ""
+    try:
+        until_d = _dt.date.fromisoformat(until)
+    except ValueError:
+        return ""
+    if today is None:
+        try:
+            from zoneinfo import ZoneInfo
+            today = _dt.datetime.now(ZoneInfo("America/Detroit")).date()
+        except Exception:  # noqa: BLE001 — tz data missing: fall back to UTC date
+            today = _dt.datetime.utcnow().date()
+    return text if today <= until_d else ""
 
 
 def send_upcoming(upcoming_block: str, cfg: dict) -> None:

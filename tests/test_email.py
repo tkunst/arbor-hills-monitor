@@ -191,7 +191,7 @@ def test_send_digest_passes_urgent_recap_through_and_resolves_recipients(monkeyp
     seen = {}
     monkeypatch.setattr(
         ea, "format_digest_body",
-        lambda items, urgent_recap=None: seen.update(items=items, urgent_recap=urgent_recap) or "body",
+        lambda items, urgent_recap=None, announcement="": seen.update(items=items, urgent_recap=urgent_recap) or "body",
     )
     sent = []
     monkeypatch.setattr(ea, "send_email",
@@ -676,3 +676,47 @@ def test_temperature_after_a_comma_is_still_read():
     assert ea._max_temperature_f("131°F,145°F") == 145
     # A real thousands separator is still read as one number, never as "145".
     assert [m.group(1) for m in ea._TEMP_RE.finditer("2,145°F")] == ["2,145"]
+
+
+# --- digest_announcement (Trisha 2026-11-14) --------------------------------
+
+import datetime as _dt
+
+
+def _ann_cfg(until="2026-11-15", text="Launch note\nhttps://example.org/x/"):
+    return {"alert_recipients": ["base@x.com"], "digest_announcement": {"until": until, "text": text}}
+
+
+def test_announcement_shown_through_until_inclusive():
+    assert ea.active_digest_announcement(_ann_cfg(), today=_dt.date(2026, 11, 15)).startswith("Launch note")
+    assert ea.active_digest_announcement(_ann_cfg(), today=_dt.date(2026, 11, 16)) == ""
+
+
+def test_announcement_fails_closed_on_bad_or_missing_fields():
+    d = _dt.date(2026, 11, 14)
+    assert ea.active_digest_announcement({}, today=d) == ""
+    assert ea.active_digest_announcement(_ann_cfg(until=""), today=d) == ""
+    assert ea.active_digest_announcement(_ann_cfg(until="next week"), today=d) == ""
+    assert ea.active_digest_announcement(_ann_cfg(text="  "), today=d) == ""
+
+
+def test_announcement_renders_first_in_digest_body():
+    body = ea.format_digest_body([], None, announcement="Launch note\nhttps://example.org/x/")
+    assert body.splitlines()[0] == "ANNOUNCEMENT:"
+    assert "  https://example.org/x/" in body
+    assert body.index("ANNOUNCEMENT:") < body.index("No new Arbor Hills")
+
+
+def test_no_announcement_leaves_body_unchanged():
+    assert ea.format_digest_body([], None) == "No new Arbor Hills (N2688) documents this period."
+
+
+def test_send_digest_includes_active_announcement(monkeypatch):
+    monkeypatch.delenv("ALERT_RECIPIENTS_EXTRA", raising=False)
+    monkeypatch.delenv("DIGEST_RECIPIENTS_EXTRA", raising=False)
+    monkeypatch.setattr(ea, "active_digest_announcement", lambda cfg, today=None: "Launch note")
+    bodies = []
+    monkeypatch.setattr(ea, "send_email",
+                        lambda subj, body, c, recipients=None: bodies.append(body))
+    ea.send_digest([], _ann_cfg())
+    assert bodies and bodies[0].startswith("ANNOUNCEMENT:\n  Launch note")
