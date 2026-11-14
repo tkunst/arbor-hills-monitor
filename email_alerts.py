@@ -946,6 +946,8 @@ def active_digest_announcement(cfg: dict, today=None) -> str:
     `until` all mean no announcement (fail closed)."""
     import datetime as _dt
     block = cfg.get("digest_announcement") or {}
+    if not isinstance(block, dict):
+        return ""
     text = str(block.get("text") or "").strip()
     until = str(block.get("until") or "").strip()
     if not text or not until:

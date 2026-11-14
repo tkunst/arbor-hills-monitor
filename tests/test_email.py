@@ -698,6 +698,7 @@ def test_announcement_fails_closed_on_bad_or_missing_fields():
     assert ea.active_digest_announcement(_ann_cfg(until=""), today=d) == ""
     assert ea.active_digest_announcement(_ann_cfg(until="next week"), today=d) == ""
     assert ea.active_digest_announcement(_ann_cfg(text="  "), today=d) == ""
+    assert ea.active_digest_announcement({"digest_announcement": "just a string"}, today=d) == ""
 
 
 def test_announcement_renders_first_in_digest_body():
