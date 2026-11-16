@@ -218,3 +218,53 @@ change; three corpus reports re-routed):
   zero spelling; existing rows change only through
   `scripts/backfill_well_aliases.py --apply` (Trisha's to run).
 - No per-well value changed in the three reports; only ids and the new column.
+
+## Addendum (2026-11-15, coder:non-ah-points-hc1laron-rnginlet): two non-AH ids, and a `points` list
+
+**Ruling.** Trisha 2026-11-15 (staging review, check B): add `HC1LARON` as a
+well and `RNGINLET` as its own non-well point type; the test points
+(`STEST…`/`ETEST…`/`WTEST…`) stay out.
+
+- `HC1LARON` is a ruled **new well** (`new_wells`). GFL's April 2026 General
+  Report workbook (sheet `Wells`) lists it at row 4580, the end of the
+  "Temperature (145 degrees F)" alternate-standard list that row 4535
+  introduces: `HC1LARON(10/1/2022)`. No filing seen spells out the name.
+- `RNGINLET` goes in a new, optional registry list, `points`:
+  `[{id, point_type, source, ruled}]`, with `point_type` one of
+  `POINT_TYPES` (`{"rng_inlet"}`). When the list is present, it is counted
+  in `counts`. A registry without it is still valid, so an older packet
+  still loads, and `schema_version` stays 1.
+  `WellRegistry.points` is {id: type}, and `point_type()` returns
+  "probe", the point's own type, or "well".
+
+**Validation.** Ids must be AH-form, except the ones named in
+`NON_AH_IDS` (`HC1LARON`, `RNGINLET`). That is a list, never a pattern. The
+same validator rules apply as before, plus these:
+
+- Aliases stay AH-form only, both key and target.
+- A point is never an alias key or target.
+- No id appears in two lists.
+
+**Monitor use.** `woi_router` treats a `rng_inlet` point exactly as a probe
+(`NON_WELL_POINT_TYPES`):
+
+- WOI Well Summary: its `Point Type` cell reads `rng_inlet`.
+- It is never counted as a well, either in the routed-report log line or in
+  the hot-well count.
+- It is never the table-built headline.
+- It is never in `well_readings`, so it never reaches `well_watch`.
+
+Measurements keep every point, as for probes (the existing rule: the
+registry never changes what reaches Measurements). On the corpus no
+`RNGINLET` reading reaches the 131°F watch band: its maximum is 111.4°F,
+and the 2026-11-15 base release's 160 workbook rows top out at 93.1°F. A
+future reading at or above the band would reach Measurements and
+`is_urgent` the way a probe's does. Accepted, low.
+
+**Lotext (separate commit, by path).** Staging stamps `point_type` =
+`rng_inlet` on new `RNGINLET` rows. It reads the type through this
+module's `load_registry()`, from the registry `merge_well_aliases` reads,
+so on a monitor that predates `points` the change is a no-op. Held rows are
+never edited, so the 160 `RNGINLET` rows already in
+`wellfield-data-2026-11-15` keep a blank `point_type` until a corrections
+release relabels them (Trisha's call).
