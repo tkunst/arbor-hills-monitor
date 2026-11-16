@@ -47,6 +47,27 @@ REGISTRY_SCHEMA_VERSION = 1
 # in a future export fails the loader (and CI) rather than silently widening the
 # rule to short/spaced ids.
 _AH_FORM = re.compile(r"^AH[A-Z0-9]+$")
+# The non-AH ids admitted ONE BY ONE by an owner ruling (Trisha 2026-11-15,
+# coder:non-ah-points-hc1laron-rnginlet; ADR 068 addendum 2026-11-15). GFL prints
+# both under its "Well ID" column: HC1LARON is an extraction well (GFL's April 2026
+# General Report lists it with an approved 145F alternate standard dated
+# 10/1/2022); RNGINLET is the RNG plant inlet, a non-well point (registry
+# `points`, point_type "rng_inlet"). An explicit list, never a pattern: the
+# STEST/ETEST/NTEST/WTEST/RGINLET2 ids GFL also prints stay out. woi_table_parser
+# keeps the same literal list (NON_AH_POINT_IDS, pinned equal by a test; this
+# module must not import the parser, a release packet bundles it alone). Aliases
+# stay AH-form only.
+NON_AH_IDS = frozenset({"HC1LARON", "RNGINLET"})
+# The point types a registry `points` entry may carry. "well" and "probe" are
+# not among them: wells are the default, probes have their own list.
+POINT_TYPES = frozenset({"rng_inlet"})
+# Every point_type that is NOT a well: never counted as a well, never a well
+# headline, never handed to well_watch (woi_router).
+NON_WELL_POINT_TYPES = frozenset({"probe"}) | POINT_TYPES
+
+
+def _registry_id_ok(i: str) -> bool:
+    return bool(_AH_FORM.match(i)) or i in NON_AH_IDS
 
 # A documented GUARD, not active logic: identifiers that must never be renamed by
 # any future normalization rule (they were listed in 2026-07 as flares, outfalls,
@@ -161,20 +182,27 @@ class WellRegistry:
     new_wells: frozenset              # ruled new wells, kept under their own ids
     probes: frozenset                 # gas probes, by GFL's "Probe ID" label
     sources: types.MappingProxyType   # {id or alias: citation}
+    # other non-well points {id: point_type in POINT_TYPES} (2026-11-15)
+    points: types.MappingProxyType = types.MappingProxyType({})
 
     @property
     def ruled_ids(self) -> frozenset:
         """Ids a human has already ruled on (never a rename candidate)."""
-        return self.new_wells | self.probes | frozenset(self.aliases.values())
+        return (self.new_wells | self.probes | frozenset(self.points)
+                | frozenset(self.aliases.values()))
 
     def point_type(self, well_id) -> str:
-        """"probe" for a GFL-labeled probe, else "well" (every other id GFL
-        prints under its "Well ID" column)."""
-        return "probe" if str(well_id or "").rstrip("*") in self.probes else "well"
+        """"probe" for a GFL-labeled probe, a `points` entry's own type (e.g.
+        "rng_inlet"), else "well" (every other id GFL prints under its
+        "Well ID" column)."""
+        w = str(well_id or "").rstrip("*")
+        if w in self.probes:
+            return "probe"
+        return self.points.get(w, "well")
 
 
 EMPTY_REGISTRY = WellRegistry(types.MappingProxyType({}), frozenset(), frozenset(),
-                              types.MappingProxyType({}))
+                              types.MappingProxyType({}), types.MappingProxyType({}))
 _DATE_RE = re.compile(r"^20\d\d-\d\d-\d\d$")
 _MAX_SOURCE_CHARS = 1000  # a citation, not a payload (the file passes the data guard)
 _MAX_NOTE_CHARS = 1000
@@ -182,7 +210,7 @@ _MAX_ENTRIES = 2000
 # room for _MAX_ENTRIES entries at the largest size the validator allows
 # (~1.1 KB each); the committed file is ~47 KB for ~100 entries (2026-10-22)
 _MAX_REGISTRY_BYTES = 2_500_000
-_TOP_KEYS = {"_note", "schema_version", "counts", "aliases", "new_wells", "probes"}
+_TOP_KEYS = {"_note", "schema_version", "counts", "aliases", "new_wells", "probes", "points"}
 _REG_CACHE: dict[str, WellRegistry] = {}
 
 
@@ -219,11 +247,14 @@ def _is_date(v) -> bool:
 
 def validate_registry(doc) -> WellRegistry:
     """Raise WellAliasError unless `doc` is a clean registry; return it parsed.
-    Checks: schema version and counts; every id AH-form; every entry cites a
+    Checks: schema version and counts; every id AH-form (or one of the
+    owner-admitted NON_AH_IDS; aliases AH-form only); every entry cites a
     source; the alias map passes validate_alias_map (no self-alias, chain or
     excluded key); no id listed twice; a ruled new well is never an alias KEY
-    (it may be a target: GFL prints AHWW0CS9 as AHWWCS09's alias); a probe is
-    never an alias key or target; no id is both a new well and a probe."""
+    (it may be a target: GFL prints AHWW0CS9 as AHWWCS09's alias); a probe or
+    a `points` entry is never an alias key or target; no id is in two lists.
+    `points` (2026-11-15) is optional: [{id, point_type, source, ruled}],
+    point_type one of POINT_TYPES; when present it is counted in `counts`."""
     if not isinstance(doc, dict):
         raise WellAliasError("well registry must be a JSON object")
     extra = sorted(set(doc) - _TOP_KEYS)
@@ -238,28 +269,39 @@ def validate_registry(doc) -> WellRegistry:
     al = _entries(doc, "aliases", ("alias", "canonical"))
     nw = _entries(doc, "new_wells", ("id",))
     pr = _entries(doc, "probes", ("id",))
-    if len(al) + len(nw) + len(pr) > _MAX_ENTRIES:
+    pt = _entries(doc, "points", ("id", "point_type")) if "points" in doc else []
+    if len(al) + len(nw) + len(pr) + len(pt) > _MAX_ENTRIES:
         raise WellAliasError(f"well registry has more than {_MAX_ENTRIES} entries")
     counts = doc.get("counts") or {}
     got = {"aliases": len(al), "new_wells": len(nw), "probes": len(pr)}
+    if "points" in doc:
+        got["points"] = len(pt)
     if counts != got:
         raise WellAliasError(f"well registry counts {counts!r} != {got}")
+    bad_type = sorted(e["point_type"] for e in pt if e["point_type"] not in POINT_TYPES)
+    if bad_type:
+        raise WellAliasError(f"well registry points have unknown point_type(s) {bad_type} "
+                             f"(allowed: {sorted(POINT_TYPES)})")
     aliases = {e["alias"]: e["canonical"] for e in al}
     dup = [k for k, n in collections.Counter([e["alias"] for e in al] + [e["id"] for e in nw]
-                                             + [e["id"] for e in pr]).items() if n > 1]
+                                             + [e["id"] for e in pr]
+                                             + [e["id"] for e in pt]).items() if n > 1]
     if dup:
         raise WellAliasError(f"well registry lists an id twice: {sorted(dup)}")
     validate_alias_map(aliases)
     new_wells = frozenset(e["id"] for e in nw)
     probes = frozenset(e["id"] for e in pr)
-    bad = sorted(i for i in new_wells | probes if not _AH_FORM.match(i))
+    points = {e["id"]: e["point_type"] for e in pt}
+    bad = sorted(i for i in new_wells | probes | set(points) if not _registry_id_ok(i))
     if bad:
-        raise WellAliasError(f"well registry has non-AH-form ids: {bad}")
+        raise WellAliasError(f"well registry has non-AH-form ids not in NON_AH_IDS: {bad}")
     renamed = sorted(new_wells & set(aliases))
     probe_alias = sorted(probes & (set(aliases) | set(aliases.values())))
-    if renamed or probe_alias:
+    point_alias = sorted(set(points) & (set(aliases) | set(aliases.values())))
+    if renamed or probe_alias or point_alias:
         raise WellAliasError(f"ruled new wells used as an alias key {renamed}; "
-                             f"probes used as an alias key or target {probe_alias}")
+                             f"probes used as an alias key or target {probe_alias}; "
+                             f"points used as an alias key or target {point_alias}")
     for k, v in aliases.items():
         # a curated pair may respell an R2 (AHWW423R2 -> AHW423R2) but never
         # change the redrill generation (R2 vs R3 are different physical wells)
@@ -267,9 +309,9 @@ def validate_registry(doc) -> WellRegistry:
         if sk and sv and sk[2] != sv[2]:
             raise WellAliasError(f"alias {k} -> {v} changes the redrill generation")
     sources = {e["alias"]: e["source"] for e in al}
-    sources.update({e["id"]: e["source"] for e in nw + pr})
+    sources.update({e["id"]: e["source"] for e in nw + pr + pt})
     return WellRegistry(types.MappingProxyType(dict(aliases)), new_wells, probes,
-                        types.MappingProxyType(sources))
+                        types.MappingProxyType(sources), types.MappingProxyType(points))
 
 
 def check_alias_map_matches(alias_map: dict, registry: WellRegistry) -> None:

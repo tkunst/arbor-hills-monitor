@@ -242,6 +242,13 @@ behavior, update its entry here in the same PR.
   reach `well_watch`; Measurements are unchanged (a probe reading still emits one if it
   meets the usual rule). `scripts/backfill_well_aliases.py` relabels existing rows: it defaults to
   a dry run, and `--apply` is Trisha's to run.
+  **Non-AH ids (ADR 068 addendum 2026-11-15):** ids must be AH-form except the
+  ones named in `NON_AH_IDS` (`HC1LARON`, `RNGINLET`; pinned equal to
+  `woi_table_parser.NON_AH_POINT_IDS`). The registry's optional `points` list
+  types other non-well points (`RNGINLET` -> `rng_inlet`, `POINT_TYPES`); a
+  `rng_inlet` point is treated exactly as a probe (`NON_WELL_POINT_TYPES`):
+  never counted as a well, never the headline, never handed to `well_watch`.
+  Aliases stay AH-form only.
 - `drive_client.py` — Google Drive + Sheets API (service account, folder ID).
 - `mirror_index.py` — **ADR 073** (CODER-PLAN step 3, 2026-11-05): the public
   `Mirror Index` tab, one row per mirrored PDF (Drive sha256/md5/size/head
@@ -433,7 +440,11 @@ behavior, update its entry here in the same PR.
   Validation gate: CH4 + CO2 + O2 + Balance ≈ 100. Attachment 1 is the FULL
   wellfield, broader than the formally-designated Wells of Interest —
   `extract_woi_well_list()` tags which wells are on the WOI list rather than
-  assuming every parsed well is one.
+  assuming every parsed well is one. `WELL_RE` reads AH-form ids plus the two non-AH
+  ids named in `NON_AH_POINT_IDS` (`HC1LARON`, `RNGINLET`; ADR 005 addendum
+  2026-11-15); every other non-AH id (STEST/ETEST/NTEST/WTEST, RGINLET2, lab
+  rows) is still skipped. `extract_woi_well_list()` keeps its own AH-only
+  token scan, so neither id can become a WOI.
 - `backfill.py` — nightly batch of 50, self-terminating, resumable. Mirrors
   each doc to Drive inline (`archiver.mirror_one_now()`) before writing its
   Sheet row. **FORCE_REPROCESS read cache (coder:backfill-purge-read-cache,
