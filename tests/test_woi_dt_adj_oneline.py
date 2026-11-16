@@ -203,8 +203,8 @@ def test_one_line_rows_do_not_widen_a_split_candidate_main_rejects(tmp_path):
     # Page 2 prints only one-line rows plus a row main never starts (a well id
     # WELL_RE refuses). Main's candidate is page 1 alone, so the table stays
     # rejected and no row main started becomes a reading.
-    for p2 in ([_oneline_row("AHW5", 0), _oneline_row("AHW5", 1), row("HC1LARON", 2)],
-               [row("HC1LARON", 2), _oneline_row("AHW5", 0), _oneline_row("AHW5", 1)]):
+    for p2 in ([_oneline_row("AHW5", 0), _oneline_row("AHW5", 1), row("STEST3", 2)],
+               [row("STEST3", 2), _oneline_row("AHW5", 0), _oneline_row("AHW5", 1)]):
         g = w.parse_gas_extraction_report(
             build(tmp_path / "r.pdf", [three("AHW1"), p2], left_headers=[0]))
         assert g.readings == []

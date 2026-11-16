@@ -50,7 +50,15 @@ from typing import Optional
 
 import fitz  # pymupdf
 
-WELL_RE = re.compile(r"^AH[A-Z0-9]+\*{0,4}$")
+# The non-AH ids GFL prints under "Well ID" that an owner ruling admitted BY
+# NAME (Trisha 2026-11-15, ADR 005 addendum 2026-11-15): HC1LARON, an extraction
+# well, and RNGINLET, the RNG plant inlet (a non-well point; its point_type comes
+# from the well registry). An explicit list, never a pattern: STEST.../ETEST.../
+# NTEST.../WTEST.../RGINLET2 and lab rows stay unread. Pinned equal to
+# well_aliases.NON_AH_IDS by a test.
+NON_AH_POINT_IDS = ("HC1LARON", "RNGINLET")
+WELL_RE = re.compile(r"^(?:AH[A-Z0-9]+|" + "|".join(map(re.escape, NON_AH_POINT_IDS))
+                     + r")\*{0,4}$")
 # The Alias column printed next to Well ID in some tables (ADR 005 addendum
 # 2026-10-19): looser than WELL_RE, since aliases such as EW-008 or V-10 are
 # not AH-format.
@@ -2064,12 +2072,15 @@ def per_well_summary(
     woi_set: Optional[set] = None,
     valid_only: bool = True,
     probe_ids: Optional[set] = None,
+    point_types: Optional[dict] = None,
 ) -> list[dict]:
     """Aggregate to one row per canonical well: max temp (with its date + the O2
     and CH4 read at that same moment), and max O2. Sorted hottest-first. Each
     row's `point_type` is "probe" when its id is in `probe_ids` (the well
-    registry's GFL-labeled probes, ADR 068 addendum 2026-10-22), else "well";
-    with no `probe_ids` (no registry given) it is None: unknown, never asserted."""
+    registry's GFL-labeled probes, ADR 068 addendum 2026-10-22), the type
+    `point_types` gives it (the registry's other non-well points, e.g.
+    {"RNGINLET": "rng_inlet"}, 2026-11-15), else "well"; with no `probe_ids`
+    (no registry given) it is None: unknown, never asserted."""
     by_well: dict[str, list[WOIReading]] = {}
     for r in readings:
         if valid_only and not r.valid:
@@ -2094,7 +2105,8 @@ def per_well_summary(
             "max_o2_pct": max_o2,
             "n_readings": len(rs),
             "point_type": (None if probe_ids is None
-                           else "probe" if well in probe_ids else "well"),
+                           else "probe" if well in probe_ids
+                           else (point_types or {}).get(well, "well")),
         })
     rows.sort(key=lambda d: (d["max_temp_f"] is not None, d["max_temp_f"] or -1), reverse=True)
     return rows

@@ -52,7 +52,7 @@ def test_committed_registry_loads_with_its_counts():
     reg = wa.load_registry()
     doc = _committed()
     assert doc["counts"] == {"aliases": len(reg.aliases), "new_wells": len(reg.new_wells),
-                             "probes": len(reg.probes)}
+                             "probes": len(reg.probes), "points": len(reg.points)}
     assert len(reg.aliases) >= 60 and len(reg.probes) == 31
     assert reg.aliases["AHWW0CS9"] == "AHWWCS09"          # GFL's own pair (2026-10-22)
     assert {"AHWWCO01", "AHWWCS1A"} <= reg.new_wells
