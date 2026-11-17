@@ -5,7 +5,7 @@
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Datasets &middot; Arbor Hills Monitor</title>
-<meta name="description" content="Open, reproducible datasets on the Arbor Hills Landfill in Salem Township, Michigan: wellfield gas and temperature, the 2026 wellhead hydrogen-sulfide survey, perimeter fence-line air monitoring, and flagged elevated-temperature wells. Each with source PDFs and build scripts. Free to download.">
+<meta name="description" content="Open, reproducible datasets on the Arbor Hills Landfill in Salem Township, Michigan: wellfield gas and temperature, the 2026 wellhead hydrogen-sulfide survey, perimeter fence-line air monitoring, flagged elevated-temperature wells, gas-migration borings and landfill gas laboratory analyses. Each with source PDFs and build scripts. Free to download.">
 <link rel="stylesheet" href="../style.css">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
@@ -74,6 +74,18 @@
 </div>
 
 <div class="ds">
+<h2><a href="gas-migration-borings/">Gas-migration borings, probes and passive vents (2020, 2024, 2026)</a></h2>
+<p>Methane measured by depth in the borings east of the landfill, soil descriptions, construction of the temporary gas probes and passive vents, and 2024 probe water levels, from consultant reports filed with EGLE, with the source pages and a parser.</p>
+<p class="span">2020, 2024, 2026 &middot; CSV &middot; consultant reports to EGLE (FOIA E701381, E700318)</p>
+</div>
+
+<div class="ds">
+<h2><a href="gas-lab-analyses/">Landfill gas laboratory analyses (June 4, 2024 samples)</a></h2>
+<p>Laboratory results for two gas samples, gas well AHEW57R2 and temporary gas probe AHTGP18D: 68 volatile organic compounds, fixed gases and reduced sulfur compounds, with the source pages and a parser.</p>
+<p class="span">June 2024 &middot; CSV &middot; consultant report to EGLE (FOIA E701381)</p>
+</div>
+
+<div class="ds">
 <h2><a href="https://github.com/tkunst/arbor-hills-monitor/releases/tag/neshap-data-2026-08-29">NESHAP semi-annual compliance dataset (2025)</a></h2>
 <p>Structured data from the operator's two 2025 semi-annual NESHAP reports to EGLE: the exceedance rosters, enhanced-monitoring and visual subsurface-oxidation inspection logs, and report-level facts, with both source PDFs and the parser.</p>
 <p class="span">2025 H1 + H2 &middot; CSV &middot; operator semi-annual NESHAP reports (SRN N2688)</p>
@@ -106,6 +118,8 @@
     {"@type":"Dataset","name":"Arbor Hills Landfill wellhead hydrogen-sulfide survey (2026)","description":"The operator's own per-well wellhead hydrogen-sulfide (H2S) readings from its 2026 annual survey at the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688) - all 506 survey points - published with the source PDF and a reproducible parser. Values are in-gas source-strength concentrations measured inside the wells, not resident exposure.","creator":{"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},"license":"https://creativecommons.org/licenses/by/4.0/","url":"https://arborhillsmonitor.org/data/wellhead-h2s/"},
     {"@type":"Dataset","name":"Arbor Hills Landfill perimeter air-monitoring dataset (May 2022-September 2026)","description":"Fence-line methane and hydrogen-sulfide readings from the six-station perimeter network (MS-1 through MS-6) around the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688), May 2022 to September 2026, from GFL's public perimeter feed operated by Barr Engineering. A raw snapshot is bundled so the enriched table can be reproduced offline. Note: several stations' hydrogen-sulfide channels report a constant value for long periods, a non-responsive-sensor pattern preserved in the raw values; see the data-quality note on the dataset page.","creator":{"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},"license":"https://creativecommons.org/licenses/by/4.0/","url":"https://arborhillsmonitor.org/data/perimeter-air/"},
     {"@type":"Dataset","name":"Arbor Hills Landfill gas collected, daily (June 2023-September 2026)","description":"Daily landfill-gas flow at the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688) to the renewable natural gas plant, the turbine plant and the landfill flares, June 2023 to September 2026, from the gas plants' monthly reports to Michigan EGLE, with the source PDFs and a reproducible parser.","creator":{"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},"license":"https://creativecommons.org/licenses/by/4.0/","url":"https://arborhillsmonitor.org/data/landfill-gas-collected/"},
+    {"@type":"Dataset","name":"Arbor Hills Landfill gas-migration borings, probes and passive vents (2020, 2024, 2026)","description":"Methane measured by depth in borings east of the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688), soil units, construction of temporary gas probes and passive vents, and 2024 probe water levels, as printed in consultant reports filed with Michigan EGLE, with the source pages and a reproducible parser.","creator":{"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},"license":"https://creativecommons.org/licenses/by/4.0/","url":"https://arborhillsmonitor.org/data/gas-migration-borings/"},
+    {"@type":"Dataset","name":"Arbor Hills Landfill gas laboratory analyses (June 4, 2024 samples)","description":"Laboratory analysis of two gas samples taken June 4, 2024 at the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688): volatile organic compounds, fixed gases and reduced sulfur compounds, as printed in the consultant's report to Michigan EGLE, with the source pages and a reproducible parser.","creator":{"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},"license":"https://creativecommons.org/licenses/by/4.0/","url":"https://arborhillsmonitor.org/data/gas-lab-analyses/"},
     {"@type":"Dataset","name":"Arbor Hills Landfill flagged wells: elevated-temperature reading history","description":"A curated subset of the Arbor Hills Landfill wellfield dataset (Salem Township, Washtenaw County, Michigan; SRN N2688): the elevated-temperature reading history for flagged wells, against the subsurface-temperature-event thresholds, drawn from the operator's monthly reports filed with Michigan EGLE.","creator":{"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},"license":"https://creativecommons.org/licenses/by/4.0/","url":"https://arborhillsmonitor.org/data/flagged-wells/"}
   ]
 }
