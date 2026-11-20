@@ -133,6 +133,10 @@ document_titles:
     "-2935564993291663255": "EGLE cover email: HOV temperature-waiver renewal approval letter"
     "7045536706099143566": "GFL Consent Judgment report: 2026 Second Quarter (CJ No. 2020-0593-CE)"
     "6170358256723179173": "Submitted by Arbor Hills Landfill: response to EGLE's request for more information on the Wetland 1 permit application (alternatives, drainage, PFAS sampling)"
+    # 2001-02 RA NPDES permit MI0045713 file (filed 2002-06-02; EGLE re-saved them 2026-11-18 when removing password protection, so Word date fields read "November 18, 2026"). Trisha 2026-11-20.
+    "-9043306413740510666": "MDEQ NPDES permit application transmittal memo: Onyx-Arbor Hills, permit MI0045713"
+    "-4641939518665646501": "MDEQ briefing memo to the NPDES permit decision-maker: reissue permit MI0045713 (Arbor Hills Remediation Area)"
+    "-575530312320575034": "MDEQ cover-letter template (unfilled draft) for NPDES permit MI0045713"
     # 429 reviewed display names for documents whose nSITE title is a bare placeholder (Site / Submission PDF /
     # nForm Document), added 2026-10-23 (Trisha-reviewed; built by Lotext analysis/generic-titles-rewrite-2026-10-23).
     # Shape: "Email correspondence (<org> to <org>): <subject>" or "Submitted by <facility>: <document type>"; no personal names.
