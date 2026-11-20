@@ -1977,7 +1977,7 @@ def test_shipped_keywords_are_valid_and_multiword_terms_are_quoted():
     from config_loader import load_config
     kws = gw._keywords(load_config())
     assert [k["term"] for k in kws] == ['"Arbor Hills"', "Holloway", "10690", '"Six Mile"', "Napier", '"Great Lakes Recycling"',
-                                        "10833", "N2688", "475946", "81000004"]
+                                        "10159", "10833", "N2688", "475946", "81000004"]
     for k in kws:
         bare = gw.bare_term(k["term"])
         assert (" " not in bare) or k["term"].startswith('"'), k                     # an unquoted multi-word term would be OR-ed word by word
