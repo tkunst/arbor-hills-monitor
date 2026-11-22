@@ -267,4 +267,6 @@ module's `load_registry()`, from the registry `merge_well_aliases` reads,
 so on a monitor that predates `points` the change is a no-op. Held rows are
 never edited, so the 160 `RNGINLET` rows already in
 `wellfield-data-2026-11-15` keep a blank `point_type` until a corrections
-release relabels them (Trisha's call).
+release relabels them (Trisha's call). *(2026-11-22: relabelled to `rng_inlet` in
+`wellfield-data-2026-11-22`, one change-log row each, Trisha 2026-11-22; the
+478 held test-point rows got `point_type` = `test_point` there too.)*
