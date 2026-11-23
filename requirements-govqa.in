@@ -7,4 +7,4 @@
 # 2026-10-28; Ubuntu 26.04 needs >= 1.61). The -c keeps shared transitive
 # deps (typing-extensions, greenlet) at the main lockfile's versions.
 -c requirements.txt
-playwright>=1.64.1
+playwright>=1.65.2
