@@ -11,9 +11,12 @@ tool makes no interpretive claims the data does not support.
 ## Data + method
 
 - **Readings:** the public wellfield dataset (WOI Status Reports + Gas-Extraction Exceedance
-  filings), as-found readings only (ADJ duplicates excluded). Rows the dataset marks
-  `point_type` = "probe" (IDs GFL labels as gas probes, not extraction wells) are not shown.
-  Built from the 2026-10-24 new-readings release (`wellfield-data-2026-10-24`).
+  filings), as-found readings only (ADJ duplicates excluded). Only gas extraction wellheads
+  are shown: gas probes (`point_type` = "probe"), the flare
+  points, the gas plant reading, the vacuum point, the RNG plant inlet (`point_type` =
+  "rng_inlet"), valve points and test points (`point_type` = "test_point") are left out (the
+  same rule as the dataset's wellhead counts, `wellhead_points.py`). Built from the
+  `wellfield-data-2026-11-22` release (wellhead readings 2021-03-01 to 2026-09-30).
 - **Well locations (lineages):** successive redrill wells at one location are merged into a
   single continuous series when their reading dates do not overlap; overlapping candidates are
   kept separate.
