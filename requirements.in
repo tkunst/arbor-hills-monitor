@@ -10,7 +10,7 @@ PyYAML>=6.0              # config.yml
 pydantic>=2.14.3
 
 # Google Drive + Sheets (service-account auth; no local mount)
-google-api-python-client>=2.130
+google-api-python-client>=2.202.0
 google-auth>=2.62.2
 # OAuth-as-user flow for the durable PDF archive (archiver.py / oauth_setup.py).
 # Only needed for the optional archive job; the core monitor doesn't import it.
