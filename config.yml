@@ -137,6 +137,9 @@ document_titles:
     "-9043306413740510666": "MDEQ NPDES permit application transmittal memo: Onyx-Arbor Hills, permit MI0045713"
     "-4641939518665646501": "MDEQ briefing memo to the NPDES permit decision-maker: reissue permit MI0045713 (Arbor Hills Remediation Area)"
     "-575530312320575034": "MDEQ cover-letter template (unfilled draft) for NPDES permit MI0045713"
+    # Wetland 1 JPA Red File transmittal (EGLE WRD, dated 2026-08-26). The 8/24 copy was IRM-locked; EGLE re-posted a readable copy (archived 2026-11-20). Trisha 2026-11-23.
+    "6504634457641138286": "EGLE Red File transmittal to EPA, USFWS and USACE: Wetland 1 permit application HQK-4R25-67T36"
+    "1320691490590903667": "EGLE Red File transmittal, Wetland 1 permit application HQK-4R25-67T36 (rights-locked copy; a readable copy was posted 2026-11)"
     # 429 reviewed display names for documents whose nSITE title is a bare placeholder (Site / Submission PDF /
     # nForm Document), added 2026-10-23 (Trisha-reviewed; built by Lotext analysis/generic-titles-rewrite-2026-10-23).
     # Shape: "Email correspondence (<org> to <org>): <subject>" or "Submitted by <facility>: <document type>"; no personal names.
