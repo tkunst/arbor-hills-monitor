@@ -1976,7 +1976,7 @@ def test_the_workflow_never_receives_the_public_sheet_id_is_notify_only_and_pins
 def test_shipped_keywords_are_valid_and_multiword_terms_are_quoted():
     from config_loader import load_config
     kws = gw._keywords(load_config())
-    assert [k["term"] for k in kws] == ['"Arbor Hills"', "Holloway", "10690", '"Six Mile"', "Napier", '"Great Lakes Recycling"',
+    assert [k["term"] for k in kws] == ['"Arbor Hills"', "Holloway", "10690", '"Six Mile"', "Napier",
                                         "10159", "10833", "N2688", "475946", "81000004"]
     for k in kws:
         bare = gw.bare_term(k["term"])

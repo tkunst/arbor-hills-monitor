@@ -2323,7 +2323,7 @@ govqa:
     - {term: "10690"}
     - {term: '"Six Mile"'}
     - {term: "Napier"}
-    - {term: '"Great Lakes Recycling"'}
+    # "Great Lakes Recycling" removed 2026-11-25 (Trisha): the site has returned 0 items for it since ~11/15, raising a needs-attention email on many runs; the site's address is still covered by "10833".
     - {term: "10159"}            # 10159 W Six Mile Rd, the Remediation Area address on the 2002 NPDES MI0045713 permit (added 2026-11-20, Trisha)
     - {term: "10833"}            # 10833 Five Mile Rd (the number is the distinctive part; a quoted "10833 Five Mile" returns 1,637 items)
     - {term: "N2688"}
