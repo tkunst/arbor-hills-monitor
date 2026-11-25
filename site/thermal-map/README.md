@@ -16,7 +16,7 @@ the map makes no interpretive claims the data does not support.
 - **Clustering:** single-linkage at 400 ft; identical to the SET-report C1 spatial analysis.
   "Run B" placement (actual coordinates plus rebore approximation for retired redrill wells).
 - **Parcels:** Washtenaw County GIS, reprojected to WGS84 (GFL-owned 305 ac, Salem
-  Township-owned 164 ac, and the Section-12 GFL-owned expansion parcel, 251.05 ac of land per the county deed record).
+  Township-owned 164 ac, and the GFL-owned land north of Six Mile Road where GFL proposes a new landfill, 251.05 ac per the county deed record).
 - **Schools:** Salem Elementary and Ridge Wood Elementary (the Ridge Wood outline is
   approximate). The "School Air Monitor" point is read from aerial imagery.
 
@@ -26,7 +26,7 @@ copy in the Lotext corpus; this folder holds the self-contained runtime.
 ## Controls
 
 Year slider (Overall + 2021-2026), 131/145 F threshold, satellite/street basemap, toggles
-for other located wells and the expansion parcel, and a "Copy view link" button that
+for other located wells and the land for the proposed new landfill, and a "Copy view link" button that
 encodes the current view (center, zoom, and every control) in the URL for sharing.
 
 Built with Leaflet (vendored locally). Self-contained except for the basemap tiles.
