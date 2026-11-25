@@ -68,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment.outputs.page_url || steps.deployment_retry.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -130,6 +130,18 @@ jobs:
       - name: Deploy to GitHub Pages
         if: github.event.workflow_run.name != 'fulltext-index' || steps.fulltext.outputs.enabled == 'true'
         id: deployment
+        # GitHub's artifact list can lag the upload by a fraction of a second, so
+        # deploy-pages sometimes finds "0 artifact(s)" for an upload that was
+        # already finalized (6 of 15 runs, 2026-11-22..25). It fails there, before
+        # any deployment is created, so one retry after a short wait is safe.
+        continue-on-error: true
+        uses: actions/deploy-pages@v5
+      - name: Wait before retrying the deploy
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 20
+      - name: Deploy to GitHub Pages (retry)
+        if: steps.deployment.outcome == 'failure'
+        id: deployment_retry
         uses: actions/deploy-pages@v5
 
   cleanup:
