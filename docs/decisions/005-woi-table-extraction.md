@@ -1141,3 +1141,41 @@ own `ADJ` line is cut off the header in both forms, as before.
 - The layout, Alias label and column set of a two-digit table still come from
   main's over-long header text (the 2026-10-21 addendum's first accepted
   item); only the ADJ label and the boundary read the cut text.
+
+## Addendum (2026-11-15, coder:non-ah-points-hc1laron-rnginlet): two non-AH ids read by name
+
+**Ruling.** Trisha 2026-11-15: read `HC1LARON` (all readings) and `RNGINLET`
+(the RNG plant inlet, as its own point type); the `STEST…`/`ETEST…`/`WTEST…`
+test points stay out. GFL prints both ids under its "Well ID" column, and the
+AH-only `WELL_RE` skipped every row of them without a warning (the 2026-10-21
+addendum names the `HC1LARON` rows of `31dbbade` and `5379a301`; the
+2026-10-21 two-digit-year addendum lists `RNGINLET` among the ids skipped in
+`97d39ba7`).
+
+**Change.** `WELL_RE` is now `^(?:AH[A-Z0-9]+|HC1LARON|RNGINLET)\*{0,4}$`,
+built from `NON_AH_POINT_IDS`. It is an explicit list, never a pattern: every
+other non-AH id (`STEST…`, `ETEST…`, `NTEST…`, `WTEST…`, `RGINLET2`,
+`NVALVE…`, lab rows such as `LCS`) is still skipped. The list is pinned equal
+to `well_aliases.NON_AH_IDS` by a test, and each id carries a ruling and a
+citation in `data/well_registry.json` (ADR 068 addendum 2026-11-15:
+`HC1LARON` is a ruled new well, `RNGINLET` a `rng_inlet` point).
+`extract_woi_well_list()` keeps its own AH-only token scan, so neither id can
+become a Well of Interest. (A CJ report's "do not have an Oxygen Limit"
+legend lists both.) `per_well_summary()` takes an optional `point_types`
+map ({id: type}) beside `probe_ids`.
+
+**Measured effect** (the WOI corpus, `origin/main` @ `80e11a6` vs this
+change: 324 cached PDFs, 109 WOI files, both caches):
+
+- Every AH reading is identical, in the same order, with the same values,
+  ADJ flag, alias and page. Rejected tables, `extract_woi_well_list()`,
+  `parse_co_data()` and every parse counter are also identical.
+- Readings rose from 715,747 to 726,339 (+10,592). All of the new readings
+  are at the two ids, and all are valid. `RNGINLET` has 9,822 (4,911
+  as-found + 4,911 ADJ) in 37 files, dated 10/11/2023–6/4/2026. `HC1LARON`
+  has 770 (385 + 385) in 59 files, dated 7/26/2023–7/17/2026. Byte-identical
+  twins and Drive-mirror copies are counted in each file.
+- No new reading is at or above the 131°F watch band. `RNGINLET` runs
+  4.7–111.4°F and `HC1LARON` 32.4–105.5°F, so no routed report's
+  Measurements set or urgency changes on the corpus. No CO reading is
+  printed at either id.

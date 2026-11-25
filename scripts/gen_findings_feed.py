@@ -137,6 +137,8 @@ def main() -> None:
     # HTML and the JSON search index can never drift out of lockstep with
     # each other (ADR 062 Phase 2).
     index_json = findings_feed.build_search_index(rows)
+    # Homepage GlanceCard data (count + newest filing), same rows again.
+    glance_json = findings_feed.build_home_glance(rows)
 
     os.makedirs(OUT_DIR, exist_ok=True)
     # Clear existing pages first — a shrinking dataset (a purge/re-dump) must
@@ -152,6 +154,10 @@ def main() -> None:
     index_path = os.path.join(OUT_DIR, SEARCH_INDEX_FILENAME)
     with open(index_path, "w", encoding="utf-8") as f:
         f.write(index_json)
+
+    glance_path = os.path.join(OUT_DIR, findings_feed.HOME_GLANCE_FILENAME)
+    with open(glance_path, "w", encoding="utf-8") as f:
+        f.write(glance_json)
 
     print(f"Wrote {len(pages)} page(s), {len(rows)} document(s), to {OUT_DIR}")
 

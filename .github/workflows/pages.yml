@@ -37,8 +37,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  lastcheck:
+    # The homepage GlanceCard's "Last checked" line: when the last SCHEDULED
+    # daily.yml run (the watcher that checks EGLE's filing systems) ended in
+    # success. A manual run (e.g. a test-email send) never counts. Its own job
+    # so only it holds `actions: read` (the deploy job keeps its token scope)
+    # and no repo code runs with it. Best-effort: on any API error the value is
+    # blank, the line is simply not shown, and the deploy still runs.
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      actions: read
+    outputs:
+      at: ${{ steps.q.outputs.at }}
+    steps:
+      - id: q
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          at=$(gh run list -R "$REPO" --workflow daily.yml --event schedule \
+                 --status success --limit 1 --json updatedAt --jq '.[0].updatedAt // ""' 2>/dev/null || true)
+          case "$at" in 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*Z) ;; *) at="" ;; esac
+          echo "at=$at" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: lastcheck
+    if: ${{ !cancelled() && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -82,6 +108,14 @@ jobs:
           else
             echo "::warning::full-text bundle missing or stale; deploying without full-text search"
           fi
+      - name: Fill the homepage glance card
+        # Count + newest filing from site/public-records/glance.json, plus the
+        # Last checked time from the lastcheck job (shown only when 48 hours old
+        # or less). Standard library only; never fails the deploy
+        # (scripts/fill_home_glance.py).
+        env:
+          LAST_CHECK_AT: ${{ needs.lastcheck.outputs.at }}
+        run: python3 scripts/fill_home_glance.py
       - name: Configure Pages
         # A run triggered by fulltext-index only matters when full text is on;
         # with the flag off it would just redeploy the same site a second time

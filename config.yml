@@ -64,6 +64,15 @@ facilities:
 # quality alone doesn't fix the windowing (large_doc_page_threshold/
 # large_doc_max_keyword_pages below still caps what the classifier ever sees),
 # but a stronger model is a free upgrade for the pages it IS shown.
+# One-off notice at the TOP of the Sunday digest (email_alerts.active_digest_announcement).
+# Shown through `until` (inclusive, Detroit date), then dropped automatically.
+# Trisha 2026-11-14: launch note for the capacity tool, for the 11/15 digest only.
+digest_announcement:
+  until: "2026-11-15"
+  text: |
+    Arbor Hills Monitor just launched an interactive landfill capacity tool:
+    https://policy.arborhillsmonitor.org/capacity/
+    Let us know if you have questions! corrections@arborhillsmonitor.org
 anthropic_model: "claude-sonnet-5"
 # Output cap for the classification call. Generous enough that measurements[]
 # on a multi-well WOI report isn't truncated mid-JSON. If a doc ever fails with
@@ -123,6 +132,14 @@ document_titles:
     "8510351745791368151": "EGLE letter: 2-year HOV temperature-waiver renewal (16 WOI wells/sumps)"
     "-2935564993291663255": "EGLE cover email: HOV temperature-waiver renewal approval letter"
     "7045536706099143566": "GFL Consent Judgment report: 2026 Second Quarter (CJ No. 2020-0593-CE)"
+    "6170358256723179173": "Submitted by Arbor Hills Landfill: response to EGLE's request for more information on the Wetland 1 permit application (alternatives, drainage, PFAS sampling)"
+    # 2001-02 RA NPDES permit MI0045713 file (filed 2002-06-02; EGLE re-saved them 2026-11-18 when removing password protection, so Word date fields read "November 18, 2026"). Trisha 2026-11-20.
+    "-9043306413740510666": "MDEQ NPDES permit application transmittal memo: Onyx-Arbor Hills, permit MI0045713"
+    "-4641939518665646501": "MDEQ briefing memo to the NPDES permit decision-maker: reissue permit MI0045713 (Arbor Hills Remediation Area)"
+    "-575530312320575034": "MDEQ cover-letter template (unfilled draft) for NPDES permit MI0045713"
+    # Wetland 1 JPA Red File transmittal (EGLE WRD, dated 2026-08-26). The 8/24 copy was IRM-locked; EGLE re-posted a readable copy (archived 2026-11-20). Trisha 2026-11-23.
+    "6504634457641138286": "EGLE Red File transmittal to EPA, USFWS and USACE: Wetland 1 permit application HQK-4R25-67T36"
+    "1320691490590903667": "EGLE Red File transmittal, Wetland 1 permit application HQK-4R25-67T36 (rights-locked copy; a readable copy was posted 2026-11)"
     # 429 reviewed display names for documents whose nSITE title is a bare placeholder (Site / Submission PDF /
     # nForm Document), added 2026-10-23 (Trisha-reviewed; built by Lotext analysis/generic-titles-rewrite-2026-10-23).
     # Shape: "Email correspondence (<org> to <org>): <subject>" or "Submitted by <facility>: <document type>"; no personal names.
@@ -1953,11 +1970,10 @@ nsite_permits:
 # assigned from Complaints-specific RATE, not the raw 6,396 (see ADR 031 for
 # the full table).
 nsite_complaints:
-  # Ships OFF: a brand-new poller against a live external system, built
-  # unattended (overnight-coder Step 3). Flipping this to true is a separate
-  # human step. The first enabled run baselines every due site silently — no
-  # alert flood, even at N2688's 6,396 records.
-  enabled: false
+  # Shipped OFF (built unattended, overnight-coder Step 3); ENABLED 2026-11-12 by
+  # Trisha. The first enabled run baselines every due site silently — no alert
+  # flood, even at N2688's 6,396 records.
+  enabled: true
   # Recipient override: Trisha only to start (the Meeting Watch / MMD / RIDE /
   # Submissions / Violations / Compliance Actions / Evaluations / Permits
   # precedent for a brand-new alert stream). Delete/comment this block to send
@@ -2308,6 +2324,7 @@ govqa:
     - {term: '"Six Mile"'}
     - {term: "Napier"}
     - {term: '"Great Lakes Recycling"'}
+    - {term: "10159"}            # 10159 W Six Mile Rd, the Remediation Area address on the 2002 NPDES MI0045713 permit (added 2026-11-20, Trisha)
     - {term: "10833"}            # 10833 Five Mile Rd (the number is the distinctive part; a quoted "10833 Five Mile" returns 1,637 items)
     - {term: "N2688"}
     - {term: "475946"}

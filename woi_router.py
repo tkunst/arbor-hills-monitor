@@ -218,6 +218,10 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
     # included, so the registry never changes what reaches Measurements; the
     # headline is the hottest WELL, see build_key_data_point.)
     probes = registry.probes if registry is not None else frozenset()
+    # Other registered non-well points (RNGINLET -> "rng_inlet", 2026-11-15):
+    # treated exactly as probes below (never a well), Measurements included.
+    points = dict(registry.points) if registry is not None else {}
+    non_wells = frozenset(probes) | frozenset(points)
     peak = max(asfound, key=lambda r: r.temp) if asfound else None
     if peak is not None and peak.temp < watch_f:
         measurements.extend(wtp.to_measurements(peak))
@@ -264,8 +268,11 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
         context=f"WOI report {metadata.get('doc_id', '?')}",
         ruled=registry.ruled_ids if registry is not None else None)
     summary = wtp.per_well_summary(valid, woi_set=woi_set,
-                                   probe_ids=set(probes) if registry is not None else None)
+                                   probe_ids=set(probes) if registry is not None else None,
+                                   point_types=points)
     n_probes = sum(1 for d in summary if d.get("point_type") == "probe")
+    n_points = sum(1 for d in summary
+                   if d.get("point_type") in well_aliases.POINT_TYPES)
     # Replace only the metrics this router re-derives exhaustively from the
     # tables; any other classifier measurement (H2S, a permitted limit, ...)
     # is kept. With the header now searched on every page, large compilations
@@ -278,10 +285,11 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
     validity = 100.0 * (len(valid) + n_merged) / max(1, len(readings))
     n_hot = sum(1 for r in asfound if r.temp >= watch_f)
     n_hot_wells = sum(1 for d in summary if (d["max_temp_f"] or 0) >= watch_f
-                      and d.get("point_type") != "probe")
+                      and d.get("point_type") not in well_aliases.NON_WELL_POINT_TYPES)
     print(f"[woi_router] ROUTED {metadata.get('document_name')!r}: {len(readings)} "
           f"readings ({validity:.1f}% valid), "
-          + (f"{len(summary) - n_probes} wells + {n_probes} probes "
+          + (f"{len(summary) - n_probes - n_points} wells + {n_probes} probes "
+             + (f"+ {n_points} other points " if n_points else "")
              if registry is not None else f"{len(summary)} points (probes not known) ")
           + f"({len(woi_set)} on the WOI list), {n_hot} as-found readings "
           f">= {watch_f:.0f}F -> {len(measurements)} measurements "
@@ -298,9 +306,10 @@ def route_measurements(parsed, pdf_path: str, metadata: dict, cfg: dict,
         # Every valid reading (as-found AND ADJ), probes included: the
         # headline / summary checks compare text against all of them.
         "readings": valid,
-        # The same without GFL-labeled probes, for well_watch (ADR 058), which
-        # needs single-well rows below the watch band trim and the ADJ rows.
-        "well_readings": [r for r in valid if r.well_id not in probes],
+        # The same without GFL-labeled probes or other non-well points
+        # (RNGINLET), for well_watch (ADR 058), which needs single-well rows
+        # below the watch band trim and the ADJ rows.
+        "well_readings": [r for r in valid if r.well_id not in non_wells],
         "n_probes": n_probes,
     }
 
@@ -344,7 +353,8 @@ def build_key_data_point(routed: dict, parsed=None, cfg: Optional[dict] = None) 
     None when the summary holds no temperature. Pure. `parsed`/`cfg` are
     accepted for call-site symmetry and unused."""
     rows = [d for d in ((routed or {}).get("summary") or [])
-            if d.get("point_type") != "probe"]  # wells only (ADR 068 addendum 2026-10-22)
+            # wells only (ADR 068 addendum 2026-10-22; other non-well points 2026-11-15)
+            if d.get("point_type") not in well_aliases.NON_WELL_POINT_TYPES]
     if not rows or rows[0].get("max_temp_f") is None:
         return None
     top = rows[0]

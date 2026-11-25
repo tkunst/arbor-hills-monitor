@@ -2,9 +2,9 @@
 
 Publisher = Landfill Records Project LLC (the entity formed to publish this
 project; confirmed 2026-10-08). The editorial byline (Trisha Kunst) is a
-different relationship and is deliberately NOT touched: schema.org `founder`,
-the homepage paragraph describing the separate advocacy site, and the two
-thermal-map copyright-holder comments all stay as they were.
+different relationship and is deliberately NOT touched: schema.org `founder`
+and the two thermal-map copyright-holder comments stay as they were. (The
+homepage's visible text names the project, not Trisha, since 2026-11-16.)
 
 Three sources emit a `site-footer`: the committed HTML under site/, the two
 Python renderers that regenerate site/public-records/ and site/public-comment/
@@ -34,7 +34,7 @@ import public_comment_feed as pcf
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE = os.path.join(_REPO, "site")
 LLC = "Landfill Records Project LLC"
-FOOTER_LEAD = f"An independent project of {LLC}."
+FOOTER_LEAD = f"Arbor Hills Monitor, an independent project of {LLC}."  # Trisha 2026-11-11
 
 # Pages that must carry a site-footer: the hand-written ones plus the single
 # public_comment_feed.py page. The 42 site/public-records/ pages are generated
@@ -45,6 +45,9 @@ FOOTER_PAGES = (
     "2022-event/index.html",
     "data/index.html",
     "data/flagged-wells/index.html",
+    "data/gas-lab-analyses/index.html",
+    "data/gas-migration-borings/index.html",
+    "data/landfill-gas-collected/index.html",
     "data/perimeter-air/index.html",
     "data/wellfield/index.html",
     "data/wellhead-h2s/index.html",
@@ -59,6 +62,9 @@ JSONLD_PAGES = (
     "index.html",
     "data/index.html",
     "data/flagged-wells/index.html",
+    "data/gas-lab-analyses/index.html",
+    "data/gas-migration-borings/index.html",
+    "data/landfill-gas-collected/index.html",
     "data/perimeter-air/index.html",
     "data/wellfield/index.html",
     "data/wellhead-h2s/index.html",
@@ -193,7 +199,7 @@ def test_public_comment_feed_renderer_footer_names_the_llc():
 def test_founder_byline_and_copyright_holder_are_untouched():
     home = _read(os.path.join(SITE, "index.html"))
     assert '"founder":{"@type":"Person","name":"Trisha Kunst"}' in home
-    assert "Trisha Kunst, the resident who maintains this project, also publishes" in home
+    assert "Arbor Hills Monitor also publishes submitted public comments" in home
     for page in ("thermal-map", "thermal-map-embed"):
         src = _read(os.path.join(SITE, page, "index.html"))
         # The code/content copyright holder is a separate decision from who

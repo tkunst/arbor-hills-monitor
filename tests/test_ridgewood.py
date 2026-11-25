@@ -619,3 +619,25 @@ def test_review_recipients_unset_falls_back_to_full_list(monkeypatch):
         specs={"2026-07": {"values": ["<1", "<1"], "all_clear": False}})
     assert ra.run() == 0
     assert len(sent) == 1 and sent[0][2] is None      # None -> send_email uses alert_recipients
+
+
+# --- TLS trust: pinned GoDaddy TLS Root CA - R1 (2026-11-12) ------------------
+
+def test_ssl_context_loads_pinned_godaddy_root():
+    import ssl
+    ctx = rc._ssl_context()
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
+    subjects = [dict(x[0] for x in c["subject"]).get("commonName") for c in ctx.get_ca_certs()]
+    assert "GoDaddy TLS Root CA - R1" in subjects
+
+
+def test_ssl_context_fails_closed_on_swapped_root(tmp_path, monkeypatch):
+    import certifi
+    import pytest
+    bogus = tmp_path / "root.pem"
+    # any valid PEM that is not the pinned root
+    first = open(certifi.where()).read().split("-----END CERTIFICATE-----")[0] + "-----END CERTIFICATE-----\n"
+    bogus.write_text(first[first.index("-----BEGIN CERTIFICATE-----"):])
+    monkeypatch.setattr(rc, "_EXTRA_ROOT_PEM", str(bogus))
+    with pytest.raises(rc.RidgewoodFetchError):
+        rc._ssl_context()

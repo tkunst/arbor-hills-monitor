@@ -40,6 +40,10 @@ egle-n2688-state.json
 # ignored path even when it's inside an added directory), so the file would be
 # written on every run but never actually committed/deployed.
 !site/public-records/search-index.json
+# Homepage GlanceCard data (count + newest filing), written beside the search
+# index by gen_findings_feed.py and read by scripts/fill_home_glance.py at
+# deploy time. Same reasoning as search-index.json above.
+!site/public-records/glance.json
 # ADR 066: the Ridge Wood provenance manifest is a legitimate committed record
 # (one entry per report version; the git commit history IS its tamper-evident
 # "signature" -- Trisha's 2026-10-08 ruling), not a data file this rule is meant

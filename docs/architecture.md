@@ -242,6 +242,13 @@ behavior, update its entry here in the same PR.
   reach `well_watch`; Measurements are unchanged (a probe reading still emits one if it
   meets the usual rule). `scripts/backfill_well_aliases.py` relabels existing rows: it defaults to
   a dry run, and `--apply` is Trisha's to run.
+  **Non-AH ids (ADR 068 addendum 2026-11-15):** ids must be AH-form except the
+  ones named in `NON_AH_IDS` (`HC1LARON`, `RNGINLET`; pinned equal to
+  `woi_table_parser.NON_AH_POINT_IDS`). The registry's optional `points` list
+  types other non-well points (`RNGINLET` -> `rng_inlet`, `POINT_TYPES`); a
+  `rng_inlet` point is treated exactly as a probe (`NON_WELL_POINT_TYPES`):
+  never counted as a well, never the headline, never handed to `well_watch`.
+  Aliases stay AH-form only.
 - `drive_client.py` — Google Drive + Sheets API (service account, folder ID).
 - `mirror_index.py` — **ADR 073** (CODER-PLAN step 3, 2026-11-05): the public
   `Mirror Index` tab, one row per mirrored PDF (Drive sha256/md5/size/head
@@ -433,7 +440,11 @@ behavior, update its entry here in the same PR.
   Validation gate: CH4 + CO2 + O2 + Balance ≈ 100. Attachment 1 is the FULL
   wellfield, broader than the formally-designated Wells of Interest —
   `extract_woi_well_list()` tags which wells are on the WOI list rather than
-  assuming every parsed well is one.
+  assuming every parsed well is one. `WELL_RE` reads AH-form ids plus the two non-AH
+  ids named in `NON_AH_POINT_IDS` (`HC1LARON`, `RNGINLET`; ADR 005 addendum
+  2026-11-15); every other non-AH id (STEST/ETEST/NTEST/WTEST, RGINLET2, lab
+  rows) is still skipped. `extract_woi_well_list()` keeps its own AH-only
+  token scan, so neither id can become a WOI.
 - `backfill.py` — nightly batch of 50, self-terminating, resumable. Mirrors
   each doc to Drive inline (`archiver.mirror_one_now()`) before writing its
   Sheet row. **FORCE_REPROCESS read cache (coder:backfill-purge-read-cache,
@@ -970,7 +981,8 @@ behavior, update its entry here in the same PR.
   `.github/workflows/nsite-permits-watch.yml` (this build session's SSH key
   authenticated non-interactively, so the `workflow`-OAuth-scope parking
   Streams L/M needed did not apply). See ADR 030.
-- `nsite_complaints_watcher.py` — Stream P: daily snapshot-diff of EGLE's
+- `nsite_complaints_watcher.py` — Stream P (**enabled 2026-11-12, Trisha**; the
+  first run baselines silently): daily snapshot-diff of EGLE's
   nSITE **Complaints** profile (citizen/agency reports against a facility,
   often the trigger for an inspection) for every srn in
   `nsite_complaints.tiers`, against the `Complaints Watch` tab. Item key
@@ -1283,6 +1295,23 @@ behavior, update its entry here in the same PR.
   (2026-11-08): MiEnviro answers 401 to a download carrying this site's
   Referer, so the record links only work with none. All other site pages are
   hand-written and carry the same tag; `tests/test_referrer_policy.py` pins it.
+- `home_glance.py` + `scripts/fill_home_glance.py`: **homepage GlanceCard
+  (design handoff 2026-11-12).** The homepage's "N documents on file", "Newest
+  filing" (GlanceCard line + first feature card) and "Last checked" are filled
+  at deploy time, never hand-typed. `findings_feed.build_home_glance()` writes
+  `site/public-records/glance.json` beside the search index in the same
+  `gen_findings_feed.py` run: `count` (= the feed's own published total) and the
+  newest AUTO filing by EGLE's Date Filed (`newest_filing()`: no hand-curated row,
+  no unprocessable stub, https link only, strict YYYY-MM-DD Date Filed; redacted `_public_view` title). No
+  timestamp in it, so findings-feed's diff-quiet guard is unaffected. `pages.yml`
+  fills `site/index.html` between the `<!-- glance:card -->` / `<!-- glance:feature -->`
+  markers just before upload (stdlib only, never fails the deploy). "Last checked"
+  is the last SCHEDULED `daily.yml` run that succeeded, read by a separate
+  `lastcheck` job holding only `actions: read`; it renders only when 48 hours old
+  or less, and an inline script on the page removes it once it ages past 48 hours
+  in the reader's browser. The committed `site/index.html` never carries a
+  timestamp. The count's label lives in one constant, `home_glance.COUNT_LABEL`
+  ("documents on file", no start year: the feed reaches back to 1967; Trisha 11/12; "read" dropped after the 11/12 refutation gate).
 - `fulltext_search.py` — **ADR 062 addendum (2026-11-02; shipped OFF behind
   `fulltext_search.enabled`)**: pure scope + text rules for full-text search over
   the Mirror PDFs on the public records page. Only entries already in the

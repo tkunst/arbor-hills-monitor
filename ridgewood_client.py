@@ -43,7 +43,9 @@ from __future__ import annotations
 import hashlib
 import html as _html
 import http.cookiejar
+import os
 import re
+import ssl
 import urllib.parse
 import urllib.request
 
@@ -100,9 +102,37 @@ class RidgewoodFetchError(RuntimeError):
 # Fetch (network I/O — stdlib, same posture as pfas_client)
 # ---------------------------------------------------------------------------
 
+# arborhillsmonitoring.com renewed its certificate on 2026-11-10 with a GoDaddy
+# DV cert that chains to "GoDaddy TLS Root CA - R1" (issued 2025-08-28). That
+# root is not yet in certifi, the macOS store, or the Actions runner's store, so
+# every fetch failed CERTIFICATE_VERIFY_FAILED from 2026-11-11. We ADD that one
+# root to the default trust store for this client only; verification stays on.
+# The PEM was fetched from GoDaddy's repository (the intermediate's AIA URL, over
+# both http and https, identical bytes) and is checked against this SHA-256
+# before use, so a swapped file fails closed instead of widening trust.
+_EXTRA_ROOT_PEM = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "certs", "godaddy-tls-root-r1.pem")
+_EXTRA_ROOT_SHA256 = "25cf3da8e9b97addbf92543c2b82527c8a4e2cff2062a6483040d4b64ace719f"
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """Default verifying context plus the pinned GoDaddy TLS Root CA - R1."""
+    ctx = ssl.create_default_context()
+    with open(_EXTRA_ROOT_PEM, "r", encoding="ascii") as f:
+        pem = f.read()
+    der = ssl.PEM_cert_to_DER_cert(pem)
+    if hashlib.sha256(der).hexdigest() != _EXTRA_ROOT_SHA256:
+        raise RidgewoodFetchError(
+            f"{_EXTRA_ROOT_PEM}: SHA-256 does not match the pinned GoDaddy R1 root")
+    ctx.load_verify_locations(cadata=pem)
+    return ctx
+
+
 def _opener():
     cj = http.cookiejar.CookieJar()
-    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    op = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(cj),
+        urllib.request.HTTPSHandler(context=_ssl_context()))
     op.addheaders = [("User-Agent", _UA), ("Accept", "text/html,application/pdf")]
     return op
 

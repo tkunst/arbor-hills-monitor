@@ -16,6 +16,7 @@ EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 ALLOWED_EMAILS_IN_CONFIG = {
     "arbor-hills@trishakunst.com",  # Trisha's own catch-all -- the monitor owner
     "unsubscribe@trishakunst.com",  # ADR 040: the CAN-SPAM opt-out mailbox, printed in every unsubscribe footer -- meant to be public
+    "corrections@arborhillsmonitor.org",  # the public corrections inbox already printed on site/corrections/; used in the 11/15 digest_announcement (Trisha 2026-11-14)
 }
 
 CONFIG_PATH = os.path.join(

@@ -5,7 +5,7 @@
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Datasets &middot; Arbor Hills Monitor</title>
-<meta name="description" content="Open, reproducible datasets on the Arbor Hills Landfill in Salem Township, Michigan: wellfield gas and temperature, the 2026 wellhead hydrogen-sulfide survey, perimeter fence-line air monitoring, and flagged elevated-temperature wells. Each with source PDFs and build scripts. Free to download.">
+<meta name="description" content="Open, reproducible datasets on the Arbor Hills Landfill in Salem Township, Michigan: wellfield gas and temperature, the 2026 wellhead hydrogen-sulfide survey, perimeter fence-line air monitoring, flagged elevated-temperature wells, gas-migration borings and landfill gas laboratory analyses. Each with source PDFs and build scripts. Free to download.">
 <link rel="stylesheet" href="../style.css">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
@@ -40,31 +40,6 @@
 <p class="tagline">Open, reproducible datasets on the Arbor Hills Landfill in Salem Township, Washtenaw County, Michigan. Each one is built from public regulatory records and published with its source files and the scripts that produced it, so any figure can be checked back to where it came from. All free to download.</p>
 </header>
 
-<div class="ds">
-<h2><a href="wellfield/">Wellfield gas &amp; temperature dataset (2021&ndash;2026)</a></h2>
-<p>Every EGLE-filed wellhead reading &mdash; temperature, methane, oxygen, carbon monoxide, and gas ratios &mdash; well by well, with source PDFs and build scripts.</p>
-<p class="span">2021&ndash;2026 &middot; CSV &middot; operator EGLE filings (SRN N2688)</p>
-</div>
-
-<div class="ds">
-<h2><a href="wellhead-h2s/">Wellhead hydrogen-sulfide survey (2026)</a></h2>
-<p>The operator's own per-well wellhead hydrogen-sulfide readings from its 2026 annual survey, all 506 wells, with the source PDF and a reproducible parser.</p>
-<p class="span">2026 &middot; CSV &middot; operator annual survey (SRN N2688)</p>
-</div>
-
-<div class="ds">
-<h2><a href="perimeter-air/">Perimeter air-monitoring dataset (May 2022&ndash;Sept 2026)</a></h2>
-<p>Fence-line methane and hydrogen-sulfide readings from the six-station perimeter network, with a raw snapshot bundled for offline reproducibility.</p>
-<p class="span">May 2022&ndash;Sept 2026 &middot; CSV &middot; GFL public perimeter feed (Barr Engineering)</p>
-<!-- dq-note:perimeter-h2s:callout --><p class="data-quality-note"><strong>Data-quality note (updated October 9, 2026; corrects the September 25 note):</strong> for long stretches, several fence-line stations' hydrogen-sulfide (H2S) channels have reported a single constant value while the station kept reporting and its methane channel kept varying. A sensor in clean air can legitimately read 0.0 for weeks or even months, but a constant non-zero value for months, or a constant 0.0 for more than a year while neighboring stations vary, is a standard data-quality flag, not evidence of clean air. The feed marks every reading below 7&nbsp;ppb as "BDL" (below detection limit), apart from a small number with no label, and that includes the stuck 3.0&ndash;3.2 and 5.4&nbsp;ppb values described here. So the BDL label cannot tell a stuck sensor from a working one, and a "BDL" reading is not on its own evidence that the air was clean. GFL's public dashboard shows only these labels (for both hydrogen sulfide and methane), not the numbers, so a stuck sensor and a working one look the same there; the numeric values are available in the feed's underlying data service and in this project's dataset. <strong>Now:</strong> MS-3 and MS-4 are reporting varying readings. MS-5 and MS-2 have resumed varying readings only recently, so their records are short: MS-5 since September 26, 2026 (up to 11.0&nbsp;ppb), after reading 0.0 from May 28, 2025 (apart from one 0.1&nbsp;ppb reading) and sending no data from September 16 to 26; MS-2 since September 24, 2026 (up to 2.3&nbsp;ppb), after reading 0.0 from June 30, 2025; for its last week of that stretch, from 9&nbsp;p.m. on September 16 to 7&nbsp;p.m. on September 24, MS-2's methane channel also read a constant 0.0&nbsp;ppm. Since 11&nbsp;a.m. on October 6, MS-5 and MS-2 have each read 0.0&nbsp;ppb in all but one hour. MS-6 read 3.0&ndash;3.2&nbsp;ppb from May 28, 2025 (apart from two readings on June 11, 2026) until 11&nbsp;a.m. on September 29, 2026, when it dropped to 0.0&nbsp;ppb; it then sent no data after 5&nbsp;p.m. that day until it resumed at 11&nbsp;a.m. on October 5, read 0.0&nbsp;ppb H2S and 0&ndash;2&nbsp;ppm methane every hour through 5&nbsp;p.m. on October 6, and has sent no data since. MS-1 has sent no data since noon on September 17, 2026, after reading exactly 0.0 for both gases from 9&nbsp;p.m. on September 16. <strong>Earlier:</strong> MS-1 read a constant 3.0 or 3.1&nbsp;ppb from May 28, 2025 to May 28, 2026, starting the same hour MS-5 and MS-6 went flat; MS-3 read a constant 5.4&nbsp;ppb from July 15 to October 16, 2025, and 3.1&nbsp;ppb from November 24 to December 1, 2025, the same value MS-1 and MS-6 read in those hours. A quiet record at a station during these periods is not evidence of clean air. The stations then reporting varying readings recorded hourly values above 30&nbsp;ppb (the 2022 Consent Judgment's fence-line action level, which is defined on a 15-minute rolling average; an hourly value from the public feed is a screening signal, not a confirmed crossing), most recently on September 14, 2026, up to 153.4&nbsp;ppb at MS-1 (which has sent no data since September 17). None of the stations reporting varying readings has recorded an hourly value at or above 30&nbsp;ppb since. These are observations from GFL's public perimeter feed, hosted by Barr Engineering; the cause has not been publicly confirmed by GFL, EGLE or Barr Engineering. Status as of October 9, 2026, 12:00&nbsp;p.m.&nbsp;ET.</p><!-- /dq-note:perimeter-h2s -->
-</div>
-
-<div class="ds">
-<h2><a href="flagged-wells/">Flagged wells: elevated-temperature reading history</a></h2>
-<p>A smaller, curated subset of the wellfield dataset &mdash; the elevated-temperature reading history for the flagged wells.</p>
-<p class="span">Curated subset &middot; CSV &middot; operator EGLE filings (SRN N2688)</p>
-</div>
-
 <div class="data-links">
 <h2>Related</h2>
 <ul>
@@ -74,10 +49,60 @@
 </ul>
 </div>
 
+<div class="ds">
+<h2><a href="wellfield/">Wellfield gas &amp; temperature dataset (2021&ndash;2026)</a></h2>
+<p>Every EGLE-filed wellhead reading &mdash; temperature, methane, oxygen, carbon monoxide, and gas ratios &mdash; well by well, with source PDFs and build scripts.</p>
+<p class="span">2021&ndash;2026 &middot; CSV &middot; operator EGLE filings (SRN N2688)</p>
+</div>
+
+<div class="ds">
+<h2><a href="wellhead-h2s/">Wellhead hydrogen-sulfide survey (2026)</a></h2>
+<p>The operator's own per-well wellhead hydrogen-sulfide readings from its 2026 annual survey, all 506 survey points, with the source PDF and a reproducible parser.</p>
+<p class="span">2026 &middot; CSV &middot; operator annual survey (SRN N2688)</p>
+</div>
+
+<div class="ds">
+<h2><a href="flagged-wells/">Flagged wells: elevated-temperature reading history</a></h2>
+<p>A smaller, curated subset of the wellfield dataset &mdash; the elevated-temperature reading history for the flagged wells.</p>
+<p class="span">Curated subset &middot; CSV &middot; operator EGLE filings (SRN N2688)</p>
+</div>
+
+<div class="ds">
+<h2><a href="landfill-gas-collected/">Landfill gas collected, daily (June 2023&ndash;September 2026)</a></h2>
+<p>Daily gas flow to the RNG plant, the turbine plant and the flares, with vacuum, methane percent and heat content, from the gas plants&rsquo; monthly reports to EGLE, with the 40 source PDFs and a parser.</p>
+<p class="span">June 2023&ndash;September 2026 &middot; CSV &middot; gas plants&rsquo; EGLE monthly reports (SRN N1504, P1488)</p>
+</div>
+
+<div class="ds">
+<h2><a href="gas-migration-borings/">Gas-migration borings, probes and passive vents (2020, 2024, 2026)</a></h2>
+<p>Methane measured by depth in borings along Napier Road, soil descriptions, construction of the temporary gas probes and passive vents, and 2024 probe liquid levels, from consultant reports filed with EGLE, with the source pages and a parser.</p>
+<p class="span">2020, 2024, 2026 &middot; CSV &middot; consultant reports to EGLE (FOIA E701381, E700318)</p>
+</div>
+
+<div class="ds">
+<h2><a href="gas-lab-analyses/">Landfill gas laboratory analyses (June 4, 2024 samples)</a></h2>
+<p>Laboratory results for two gas samples, gas well AHEW57R2 and temporary gas probe AHTGP18D: 68 volatile organic compounds, fixed gases and reduced sulfur compounds, with the source pages and a parser.</p>
+<p class="span">June 2024 &middot; CSV &middot; consultant report to EGLE (FOIA E701381)</p>
+</div>
+
+<div class="ds">
+<h2><a href="https://github.com/tkunst/arbor-hills-monitor/releases/tag/neshap-data-2026-08-29">NESHAP semi-annual compliance dataset (2025)</a></h2>
+<p>Structured data from the operator's two 2025 semi-annual NESHAP reports to EGLE: the exceedance rosters, enhanced-monitoring and visual subsurface-oxidation inspection logs, and report-level facts, with both source PDFs and the parser.</p>
+<p class="span">2025 H1 + H2 &middot; CSV &middot; operator semi-annual NESHAP reports (SRN N2688)</p>
+</div>
+
+<div class="ds">
+<h2><a href="perimeter-air/">Perimeter air-monitoring dataset (May 2022&ndash;Sept 2026)</a></h2>
+<p>Fence-line methane and hydrogen-sulfide readings from the six-station perimeter network, with a raw snapshot bundled for offline reproducibility.</p>
+<p class="span">May 2022&ndash;Sept 2026 &middot; CSV &middot; GFL public perimeter feed (Barr Engineering)</p>
+<!-- dq-note:perimeter-h2s:callout --><p class="data-quality-note"><strong>Data-quality note (updated November 20, 2026):</strong> for long stretches, several fence-line stations' hydrogen-sulfide (H2S) channels have reported a single constant value, or no value at all, while the station kept reporting and its methane channel kept varying. A sensor in clean air can legitimately read 0.0 for weeks or even months, but a constant non-zero value for months, or a constant 0.0 for more than a year while neighboring stations vary, is a standard data-quality flag, not evidence of clean air. The feed marks every reading below 7&nbsp;ppb as "BDL" (below detection limit), apart from a small number with no label, and that includes the stuck 3.0&ndash;3.2 and 5.4&nbsp;ppb values described here. So the BDL label cannot tell a stuck sensor from a working one, and a "BDL" reading is not on its own evidence that the air was clean. GFL's public dashboard shows hydrogen sulfide only through these labels, not the numbers, so a stuck sensor and a working one look the same there; the numeric values are available in the feed's underlying data service and in this project's dataset. <strong>Now:</strong> MS-1 and MS-6 have reported no hydrogen-sulfide value since 1&nbsp;p.m. on October 19, 2026: the H2S field is empty every hour while each station's methane channel keeps reporting varying values. Both had stopped sending data in September and October and resumed on October 14 (MS-6, 5&nbsp;p.m.) and October 15 (MS-1, 10&nbsp;a.m.), reading 0.0&nbsp;ppb every hour until noon on October 19. So two of the six stations currently have no hydrogen-sulfide record. MS-3 reads 0.0&nbsp;ppb in most hours with small values in some (up to 10.4&nbsp;ppb since noon on October 9). MS-2, MS-4 and MS-5 also read 0.0&nbsp;ppb in most hours, with scattered small values since noon on October 9 (up to 3.9, 4.3 and 13.4&nbsp;ppb); since the evening of November 11 all three have read exactly 0.0 every hour while their methane channels keep varying. <strong>Earlier:</strong> MS-1 read a constant 3.0 or 3.1&nbsp;ppb from May 28, 2025 to May 28, 2026, starting the same hour MS-5 and MS-6 went flat; MS-3 read a constant 5.4&nbsp;ppb from July 15 to October 16, 2025, and 3.1&nbsp;ppb from November 24 to December 1, 2025, the same value MS-1 and MS-6 read in those hours. MS-5 read 0.0 from May 28, 2025 (apart from one 0.1&nbsp;ppb reading), sent no data from September 16 to 26, 2026, and since then has read mostly 0.0 with intermittent small values. MS-2 read 0.0 from June 30, 2025 until September 24, 2026; for its last week of that stretch, from 9&nbsp;p.m. on September 16 to 7&nbsp;p.m. on September 24, MS-2's methane channel also read a constant 0.0&nbsp;ppm. MS-6 read 3.0&ndash;3.2&nbsp;ppb from May 28, 2025 (apart from two readings on June 11, 2026) until 10&nbsp;a.m. on September 29, 2026, then 0.0&nbsp;ppb from 11&nbsp;a.m., with no data from September 29 to October 5 and again from 5&nbsp;p.m. on October 6 to October 14. MS-1 read exactly 0.0 for both gases from 9&nbsp;p.m. on September 16 and sent no data from noon on September 17 to October 15. A quiet record at a station during these periods is not evidence of clean air. The stations then reporting varying readings recorded hourly values above 30&nbsp;ppb (the 2022 Consent Judgment's fence-line action level, which is defined on a 15-minute rolling average; an hourly value from the public feed is a screening signal, not a confirmed crossing), most recently on September 14, 2026, when MS-1 reached 153.4&nbsp;ppb. No station has recorded an hourly value at or above 30&nbsp;ppb since (MS-1 and MS-6 have reported no hydrogen-sulfide value since October 19). These are observations from GFL's public perimeter feed, hosted by Barr Engineering; the cause has not been publicly confirmed by GFL, EGLE or Barr Engineering. Status as of November 20, 2026, 3:00&nbsp;p.m.&nbsp;ET.</p><!-- /dq-note:perimeter-h2s -->
+</div>
+
+
 <footer class="site-footer">
 <p class="legal-nav"><a href="/terms-of-use/">Terms</a> &middot; <a href="/privacy-policy/">Privacy</a> &middot; <a href="/disclaimer/">Disclaimer</a> &middot; <a href="/corrections/">Corrections</a> &middot; <a href="/ip-fair-use/">IP &amp; Fair Use</a></p>
 <p class="footer-disclaimer">Arbor Hills Monitor presents public regulatory records and monitoring data as an informational resource. This site does not constitute legal, medical, environmental, or professional advice. Verify all information against the cited primary sources -- including EGLE&rsquo;s own portals -- before relying on it.</p>
-<p>An independent project of Landfill Records Project LLC. Source data comes from public records of Michigan EGLE and other government entities, and from other publicly available documents, presented without alteration.</p>
+<p>Arbor Hills Monitor, an independent project of Landfill Records Project LLC. Source data comes from public records of Michigan EGLE and other government entities, and from other publicly available documents, presented without alteration.</p>
 </footer>
 
 <script type="application/ld+json">
@@ -90,8 +115,11 @@
   "publisher": {"@type":"Organization","name":"Landfill Records Project LLC"},
   "dataset": [
     {"@type":"Dataset","name":"Arbor Hills Landfill wellfield gas and temperature dataset (2021-2026)","description":"Every EGLE-filed wellhead reading at the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688) - temperature, methane, oxygen, carbon monoxide, and methane-to-carbon-dioxide ratio, well by well from 2021 to 2026 - parsed from the operator's monthly reports filed with Michigan EGLE, with the source PDFs and reproducible build scripts.","creator":{"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},"license":"https://creativecommons.org/licenses/by/4.0/","url":"https://arborhillsmonitor.org/data/wellfield/"},
-    {"@type":"Dataset","name":"Arbor Hills Landfill wellhead hydrogen-sulfide survey (2026)","description":"The operator's own per-well wellhead hydrogen-sulfide (H2S) readings from its 2026 annual survey at the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688) - all 506 wells - published with the source PDF and a reproducible parser. Values are in-gas source-strength concentrations measured inside the wells, not resident exposure.","creator":{"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},"license":"https://creativecommons.org/licenses/by/4.0/","url":"https://arborhillsmonitor.org/data/wellhead-h2s/"},
+    {"@type":"Dataset","name":"Arbor Hills Landfill wellhead hydrogen-sulfide survey (2026)","description":"The operator's own per-well wellhead hydrogen-sulfide (H2S) readings from its 2026 annual survey at the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688) - all 506 survey points - published with the source PDF and a reproducible parser. Values are in-gas source-strength concentrations measured inside the wells, not resident exposure.","creator":{"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},"license":"https://creativecommons.org/licenses/by/4.0/","url":"https://arborhillsmonitor.org/data/wellhead-h2s/"},
     {"@type":"Dataset","name":"Arbor Hills Landfill perimeter air-monitoring dataset (May 2022-September 2026)","description":"Fence-line methane and hydrogen-sulfide readings from the six-station perimeter network (MS-1 through MS-6) around the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688), May 2022 to September 2026, from GFL's public perimeter feed operated by Barr Engineering. A raw snapshot is bundled so the enriched table can be reproduced offline. Note: several stations' hydrogen-sulfide channels report a constant value for long periods, a non-responsive-sensor pattern preserved in the raw values; see the data-quality note on the dataset page.","creator":{"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},"license":"https://creativecommons.org/licenses/by/4.0/","url":"https://arborhillsmonitor.org/data/perimeter-air/"},
+    {"@type":"Dataset","name":"Arbor Hills Landfill gas collected, daily (June 2023-September 2026)","description":"Daily landfill-gas flow at the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688) to the renewable natural gas plant, the turbine plant and the landfill flares, June 2023 to September 2026, from the gas plants' monthly reports to Michigan EGLE, with the source PDFs and a reproducible parser.","creator":{"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},"license":"https://creativecommons.org/licenses/by/4.0/","url":"https://arborhillsmonitor.org/data/landfill-gas-collected/"},
+    {"@type":"Dataset","name":"Arbor Hills Landfill gas-migration borings, probes and passive vents (2020, 2024, 2026)","description":"Methane measured by depth in borings along Napier Road at the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688), soil units, construction of temporary gas probes and passive vents, and 2024 probe liquid levels, as printed in consultant reports filed with Michigan EGLE, with the source pages and a reproducible parser.","creator":{"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},"license":"https://creativecommons.org/licenses/by/4.0/","url":"https://arborhillsmonitor.org/data/gas-migration-borings/"},
+    {"@type":"Dataset","name":"Arbor Hills Landfill gas laboratory analyses (June 4, 2024 samples)","description":"Laboratory analysis of two gas samples taken June 4, 2024 at the Arbor Hills Landfill (Salem Township, Washtenaw County, Michigan; SRN N2688): volatile organic compounds, fixed gases and reduced sulfur compounds, as printed in the consultant's report to Michigan EGLE, with the source pages and a reproducible parser.","creator":{"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},"license":"https://creativecommons.org/licenses/by/4.0/","url":"https://arborhillsmonitor.org/data/gas-lab-analyses/"},
     {"@type":"Dataset","name":"Arbor Hills Landfill flagged wells: elevated-temperature reading history","description":"A curated subset of the Arbor Hills Landfill wellfield dataset (Salem Township, Washtenaw County, Michigan; SRN N2688): the elevated-temperature reading history for flagged wells, against the subsurface-temperature-event thresholds, drawn from the operator's monthly reports filed with Michigan EGLE.","creator":{"@type":"Organization","name":"Arbor Hills Monitor","url":"https://arborhillsmonitor.org/"},"license":"https://creativecommons.org/licenses/by/4.0/","url":"https://arborhillsmonitor.org/data/flagged-wells/"}
   ]
 }

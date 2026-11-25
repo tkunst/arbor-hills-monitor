@@ -1,10 +1,11 @@
 {
-  "_note": "SOURCE OF TRUTH for Arbor Hills well-id rulings (ADR 068 addendum 2026-10-22): spelling aliases, ruled new wells and GFL-labeled gas probes, each with its citation. Edit by PR only. data/well_aliases.json is GENERATED from this file (python3 well_aliases.py --export); never hand-edit that one.",
+  "_note": "SOURCE OF TRUTH for Arbor Hills well-id rulings (ADR 068 addendum 2026-10-22): spelling aliases, ruled new wells, GFL-labeled gas probes and other non-well points (2026-11-15), each with its citation. Edit by PR only. data/well_aliases.json is GENERATED from this file (python3 well_aliases.py --export); never hand-edit that one.",
   "schema_version": 1,
   "counts": {
     "aliases": 60,
-    "new_wells": 12,
-    "probes": 31
+    "new_wells": 13,
+    "probes": 31,
+    "points": 1
   },
   "aliases": [
     {
@@ -428,6 +429,11 @@
       "id": "AHWWCS1C",
       "source": "AHWWCS1A/1B/1C/09/12: listed under GFL's \"Well ID\" column (2023 Q4 report p235; Q4 2025 CJ report pp287, 309), same family as AHWWCS1D already held. GFL does not define \"CS\". Ruled new wells, Trisha 2026-10-22 (rule: GFL's column label decides well vs probe).",
       "ruled": "2026-10-22"
+    },
+    {
+      "id": "HC1LARON",
+      "source": "Not AH-form; admitted by name (well_aliases.NON_AH_IDS). GFL prints it under \"Well ID\" in its gas-extraction tables (e.g. 2025 1st semi-annual WOI status report) and treats it as a regulated extraction well: the April 2026 General Report workbook (Gas Extraction Exceedance), row 4535 \"The following alternate standards have been approved for the following wells:\", Temperature (145 degrees F) list, ends row 4580 with \"HC1LARON(10/1/2022)\". The name is not spelled out in any filing seen. Trisha 2026-11-15: add it as a well.",
+      "ruled": "2026-11-15"
     }
   ],
   "probes": [
@@ -585,6 +591,14 @@
       "id": "AHTGP18S",
       "source": "GFL \"Probe Monitoring Site Report\", column \"Probe ID\" (Q4 2025 CJ report, nSITE -6434168316378583072, p352; all 31 also in the 2025 Q1 CJ report, nSITE -3054672390421616919, pp458-461). Labeled by GFL's heading only; the prefixes are not defined in any filing seen. Trisha 2026-10-22: use GFL's label.",
       "ruled": "2026-10-22"
+    }
+  ],
+  "points": [
+    {
+      "id": "RNGINLET",
+      "point_type": "rng_inlet",
+      "source": "Not AH-form; admitted by name (well_aliases.NON_AH_IDS). GFL prints it under \"Well ID\" in its gas-extraction tables (CJ quarterly reports, General Report workbooks, 10/2023 on) and lists it among the wells with no oxygen limit (April 2026 General Report workbook, row 4588 list). Read as the RNG plant inlet; not a gas extraction well. Trisha 2026-11-15: its own point type \"rng_inlet\", never counted as a well.",
+      "ruled": "2026-11-15"
     }
   ]
 }
