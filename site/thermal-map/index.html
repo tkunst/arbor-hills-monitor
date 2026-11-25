@@ -321,10 +321,10 @@ function build(){
     .bindTooltip(`GFL-owned parcel, ${esc(PARCELS.gfl.acres)} ac`,{sticky:true}).addTo(overlay);
   L.polygon(PARCELS.salem.ring, {color:"#e05cc8",weight:2,opacity:0.95,fillColor:"#e05cc8",fillOpacity:0.07})
     .bindTooltip(`Salem Township-owned parcel, ${esc(PARCELS.salem.acres)} ac`,{sticky:true}).addTo(overlay);
-  // Section-12 proposed-expansion parcel (GFL-owned), dashed = not yet built
+  // GFL-owned land north of Six Mile Road (proposed new landfill), dashed = not yet built
   if(showExp){
     L.polygon(PARCELS.expansion.ring, {color:"#ffd24a",weight:2.5,opacity:0.95,dashArray:"7 6",fillColor:"#caa020",fillOpacity:0.22})
-      .bindTooltip(`Expansion parcel: GFL-owned land, Section 12, ${esc(PARCELS.expansion.acres)} ac`,{sticky:true}).addTo(overlay);
+      .bindTooltip(`Proposed new landfill: GFL-owned land north of Six Mile Road, ${esc(PARCELS.expansion.acres)} ac`,{sticky:true}).addTo(overlay);
   }
   // schools (orange markup); Ridge Wood dashed = roughly hand-drawn (approx.)
   Object.values(SCHOOLS).forEach(s=>{
