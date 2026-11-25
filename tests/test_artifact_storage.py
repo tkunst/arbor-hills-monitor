@@ -213,3 +213,17 @@ def test_cleanup_script_behaviour_under_bash_e(tmp_path):
     rc, out = _run_cleanup(tmp_path, [22], ("", "gh: Server Error (HTTP 502)", 1))   # API down: not hidden
     assert rc == 1 and "1 delete(s) failed" in out
     assert "boom" not in out and "Server Error" not in out                           # gh errors never logged
+
+
+def test_pages_deploy_retries_once_after_a_failed_first_attempt():
+    steps = _wf("pages.yml")["jobs"]["deploy"]["steps"]
+    by_id = {s.get("id"): s for s in steps if s.get("id")}
+    first, retry = by_id["deployment"], by_id["deployment_retry"]
+    assert first["continue-on-error"] is True
+    assert str(first["uses"]).startswith("actions/deploy-pages")
+    assert str(retry["uses"]).startswith("actions/deploy-pages")
+    assert retry["if"] == "steps.deployment.outcome == 'failure'"
+    assert "continue-on-error" not in retry  # a second failure turns the run red
+    i = steps.index(first)
+    assert steps[i + 1]["if"] == "steps.deployment.outcome == 'failure'" and "sleep" in steps[i + 1]["run"]
+    assert steps[i + 2] is retry
