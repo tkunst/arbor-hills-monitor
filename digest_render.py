@@ -272,7 +272,12 @@ def _date_cell(m: dict) -> str:
         d = date.fromisoformat(dd)
         shown = f"{d.strftime('%b')} {d.day}<br>{d.year}"
     except ValueError:
-        shown = e(dd)
+        # Hand-curated dates can be partial: "2016-09" or "2016".
+        mm = re.fullmatch(r"(\d{4})-(\d{2})", dd)
+        if mm and 1 <= int(mm.group(2)) <= 12:
+            shown = f"{date(int(mm.group(1)), int(mm.group(2)), 1).strftime('%b')}<br>{mm.group(1)}"
+        else:
+            shown = e(dd)
     if not m.get("document_date") and dd:
         shown += "<br>filed"
     return shown

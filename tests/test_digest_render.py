@@ -177,3 +177,11 @@ def test_send_email_with_html_is_multipart_and_footers_non_owners_only(monkeypat
     assert "To unsubscribe" not in owner_html
     assert dr.FOOTER_SLOT not in ally_html and dr.FOOTER_SLOT not in owner_html
     assert "(this address:" not in by["ally@y.org"].get_body(("plain",)).get_content()
+
+
+def test_partial_hand_curated_dates_render_like_full_ones():
+    month = _it("Guidance", document_date="2016-09")
+    year = _it("Old memo", document_date="2016")
+    html = dr.render_html([month, year])
+    assert 'width:56px;">Sep<br>2016</td>' in html
+    assert 'width:56px;">2016</td>' in html
