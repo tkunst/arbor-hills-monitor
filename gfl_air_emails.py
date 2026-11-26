@@ -589,7 +589,10 @@ def format_screening_email(opened: list[dict], continuing: list[dict], monitor_r
                             f"concentration, {pct:g}% methane falls within methane's "
                             f"~5-15% flammable range and warrants immediate safety "
                             f"assessment.")
-        ctx = context.get(_episode_key(o["station"], o["gas"])) or context.get(o["station"])
+        # Per EPISODE (event_id) first: two episodes at one station each get the hours
+        # around their own first value above (2026-11-26); station keys kept for old callers.
+        ctx = (context.get(o.get("event_id", "")) or context.get(_episode_key(o["station"], o["gas"]))
+               or context.get(o["station"]))
         body.append(f"      Station {o['station']} location: {_coord_str(coords, o['station'])}")
         body.append(f"      ±2-hour context around {o['station']} "
                     f"(all values that station's own raw hourly reading):")

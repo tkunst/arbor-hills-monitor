@@ -714,16 +714,24 @@ def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds
     if result.opened:
         opened_isos = [o.get("opened_at", "") for o in result.opened]
         hist = is_historical(opened_isos, now_utc)
+        # ±2h context PER EPISODE (keyed by event_id), centred on that episode's first
+        # value above — not one window per station, which gave a station's second episode
+        # the first one's hours (2026-11-26). Same-centre episodes share one fetch.
         context: dict = {}
-        for st in sorted({o["station"] for o in result.opened}):
-            center = _iso_to_epoch_ms(next((o["opened_at"] for o in result.opened
-                                            if o["station"] == st), ""))
+        fetched: dict = {}
+        for o in result.opened:
+            center = _iso_to_epoch_ms(o.get("opened_at", ""))
             if center is None:
                 continue
-            try:
-                context[st] = gc.fetch_station_window(cfg_gfl, st, center, 2)
-            except Exception as e:  # noqa: BLE001 — context is best-effort
-                print(f"[gfl-air]   ±2h context for {st} unavailable: {e}")
+            k = (o["station"], center)
+            if k not in fetched:
+                try:
+                    fetched[k] = gc.fetch_station_window(cfg_gfl, o["station"], center, 2)
+                except Exception as e:  # noqa: BLE001 — context is best-effort
+                    print(f"[gfl-air]   ±2h context for {o['station']} unavailable: {e}")
+                    fetched[k] = None
+            if fetched[k] is not None:
+                context[o.get("event_id", "")] = fetched[k]
         subject, body = format_screening_email(
             result.opened, continuing, monitor_rows, watch_thresholds, link=link,
             retrieved_iso=retrieved_iso, coords=coords, context=context, historical=hist,

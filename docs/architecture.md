@@ -669,11 +669,20 @@ behavior, update its entry here in the same PR.
   stations are SUPPOSED to exist). The roster is reconciled against the
   readings on every poll and against the registry on every run that fetches
   it (see the `gfl_air_episodes.py` entry below); neither is trusted alone.
+  **Date filters (2026-11-26, ADR 014 addendum):** the server drops the time from a
+  `date '...'` literal, so every windowed query (the H2S average, the ±2h context) uses a
+  `TIMESTAMP` literal in the layer's fixed-EST zone (UTC−5 all year,
+  `_layer_timestamp_literal`), pads it ±1 h, and re-filters rows by epoch on the client
+  (`_window_rows`, raises on a truncated result). The H2S average is computed on the
+  client from those rows. **TEST rows (ADR 039 addendum):** `classify_reading` reports a
+  `_Text = TEST` value as a sentinel (anomaly, never an exceedance) and
+  `reading_to_measurements` drops it; an urgent/watch reason ends `(source label: X)` when
+  the feed prints a word (e.g. `ERR`) beside the value.
 - `gfl_air_watcher.py` — daily poll of the GFL air feed: incremental OBJECTID
   cursor (in the `GFL Air` tab), readings → Measurements (`basis=measured`),
   same-day exceedance alerts via its own classifier. Gated on `gfl_air.enabled`.
   H2S alerts on a rolling per-station 24-hr AVERAGE (`gfl_air.h2s_avg_window_hours`,
-  server-side query; matches the 72 ppb 24-hr action level — set `0` to restore the
+  computed on the client from an exact 24-hour row window since 2026-11-26; matches the 72 ppb 24-hr action level — set `0` to restore the
   instantaneous alert); CH4 stays instantaneous. See ADR 014 decision 4 + addendum.
   A liveness check (`gfl_air.max_stale_days`) alerts once if a poll finds zero new
   readings while the newest is stale — mitigates ADR 014's OBJECTID-reset silent
@@ -686,7 +695,8 @@ behavior, update its entry here in the same PR.
   a legacy array reads as empty → fail-safe re-derive). Per daily run it emails
   the `watch_alert_recipients` list (+ `GFL_AIR_WATCH_RECIPIENTS_EXTRA`) at most
   ONE consolidated SCREENING (open) email (all six monitors' verbatim readings
-  for both gases, flagged STRICTLY above; ±2h context; station coords) and ONE
+  for both gases, flagged STRICTLY above; ±2h context per episode, keyed by event_id since
+  2026-11-26; station coords) and ONE
   CLOSEOUT (close) email (start/peak/return/duration per episode); a
   continuing-only run sends nothing (no re-alert). Each closed episode also
   appends a row to the "Perimeter Action-Level Episodes" tab (the RCA-tracking

@@ -203,7 +203,7 @@ Replayed the historical feed through `process_episodes`:
    degrades toward a duplicate/slightly-wrong close row, or an unlogged episode in the
    open-only-then-recovers-before-next-run case — never a false `[URGENT]`, never lost
    measurements.
-2. **Pre-existing, out of scope:** the untouched EXCEEDANCE tier treats a `CH4=999`
+2. **CLOSED 2026-11-26 (see the addendum at the end).** *Was:* **Pre-existing, out of scope:** the untouched EXCEEDANCE tier treats a `CH4=999`
    `TEST` reading as ≥500 ppm → a potential false `[URGENT]` to the full list. Not
    introduced here (this ADR protects the exceedance tier); the `is_no_data`
    TEST-exclusion added here fixes it for the screening tier only. A future change could
@@ -359,3 +359,30 @@ a human check against layer 0 before merge.
 the screening email against a live `fetch_station_coords()` result and confirm the
 registry names match the roster exactly (no `ROSTER MISMATCH` line in the log, no
 "not in this monitor's configured roster" note in the email).
+
+
+## Addendum 2026-11-26: residual 2 closed; ±2-hour context per episode; source label on urgent lines
+
+Accuracy fixes found during the alert-email redesign (layout C chosen the same day; that
+redesign is a separate change and ADR). No threshold or recipient changes.
+
+1. **Residual 2 closed — TEST rows in the EXCEEDANCE tier.** `classify_reading` now reports a
+   value whose `_Text` is `TEST` as a **sentinel** (status `sentinel`, severity `anomaly`), never
+   an exceedance, and `reading_to_measurements` leaves it out of the measured series (no more
+   `basis=measured` 999 ppm rows on the public Measurements tab). The reason string carries
+   `SENTINEL_REASON`, so `alert_on_sentinel=False` strips it like any other sentinel detail.
+   Effect: a CH4=999 TEST row that would have sent a full-list `[URGENT]` now sends at most the
+   `[GFL air anomaly]` email (same full list — no recipient change). The `GFL Air` snapshot tab
+   shows such a row's status as `sentinel`. **Live check:** no TEST rows have appeared since
+   go-live (2026-07-18), so no past alert is affected; the last ones are MS-5, 2024-12-19.
+2. **±2-hour context per episode.** The watcher keyed the context by station and centred it on
+   that station's first opened episode, so a station's second episode in one run showed the first
+   one's hours (MS-3, 2026-11-22: three episodes, one window). Context is now keyed by `event_id`,
+   centred on each episode's first value above; episodes sharing a centre share one fetch.
+   `format_screening_email` looks up `event_id` first and keeps the station keys for old callers.
+   (The window itself was also wrong — see ADR 014's 2026-11-26 addendum.)
+3. **Source label on urgent lines.** When the feed prints a word instead of a number beside a
+   flagged value (e.g. `CH4_Text = ERR` on the 2023-10-16 MS-2 readings up to 89,090 ppm, and on
+   the 511 ppm MS-3 reading of 2025-05-13), the urgent/watch line now ends
+   `(source label: ERR)`. **Alerting is unchanged** (fail-safe: an ERR-labelled value above a level
+   still alerts); whether ERR values should alert at all is an open question for Trisha.

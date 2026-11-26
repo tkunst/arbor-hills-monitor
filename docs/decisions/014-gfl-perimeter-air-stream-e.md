@@ -352,7 +352,7 @@ changed. The snapshot tab still shows each station's instantaneous H2S status.
   (`alert_lines(..., h2s_averaged=True)` passes `classify_reading` a thresholds dict
   with `h2s_ppb` removed), while CH4 exceedance, the CH4 watch tier, and the H2S
   sentinel→anomaly path are all untouched.
-- **⚠️ Timezone trap — use the standardized `date '...'` literal, NOT `TIMESTAMP '...'`.**
+- **⚠️ SUPERSEDED 2026-11-26 — see the addendum at the end of this ADR.** *(Original note kept for history:)* **Timezone trap — use the standardized `date '...'` literal, NOT `TIMESTAMP '...'`.**
   Spike (live feed, 2026-07-18): layer 4's `dateFieldsTimeReference` is fixed **Eastern
   Standard Time (UTC-5, DST-insensitive)**, and ArcGIS interprets a `TIMESTAMP` literal
   in that field timezone — so a UTC-computed cutoff lands ~5h late and the "24-hour"
@@ -457,3 +457,46 @@ notification/dedup model changed:
 The 500 ppm CH4 exceedance tier and the H2S 24-hr-average exceedance tier remain
 **exactly** as this ADR describes. See ADR 039 for the full replacement design + the
 2026-09-10 live-feed backtest.
+
+
+## Addendum 2026-11-26: the `date '...'` literal drops the time of day — TIMESTAMP + exact client window (supersedes the 2026-07-18 timezone note)
+
+**Found** by the alert-email redesign session (AHM-AlertsRedesign), live feed, 2026-11-26.
+The server **truncates a standardized `date 'YYYY-MM-DD HH:MM:SS'` literal to its date**
+and reads it as midnight in the layer's fixed-EST zone (05:00 UTC). Live proof:
+`Date > date '2026-11-22 00:00:00'`, `... '12:00:00'` and `... '23:00:00'` all returned
+the same 660 rows, while `Date > TIMESTAMP '2026-11-22 12:00:00'` returned the rows after
+17:00 UTC. Either the server changed after the 2026-07-18 spike or the spike missed it.
+
+**Effects (both fixed here):**
+- `fetch_h2s_window_avg`: the "24-hour" H2S average behind the full-list `[URGENT]` alert
+  really covered **19 to 43 hours** depending on the time of day (live `n=38` per station at
+  20:06 UTC). **Backtest, 2026-07-18 → 2026-11-26, every run hour:** the highest per-station
+  average in either window was 8.7 ppb (true windows ≤ 6.7 ppb at 20:00 UTC), far below the
+  72 ppb level, so **no `[URGENT]` was ever caused or hidden** by the wrong window.
+- `fetch_station_window`: the screening email's "±2-hour context" collapsed to the single
+  12:00 AM ET row (visible in every block of the real 2026-11-22 email).
+
+**Decision.**
+- Date filters use a `TIMESTAMP` literal in the layer's zone: the UTC instant **minus 5 hours,
+  all year** (`dateFieldsTimeReference` = `Etc/GMT+5`, `respectsDaylightSaving: false`,
+  re-verified 2026-11-26; summer replays — 2026-09-14, 2026-09-29 — matched the real emails).
+  Helper: `gfl_air_client._layer_timestamp_literal`.
+- Belt and braces: every windowed query pads the filter by ±1 hour and **re-filters the rows by
+  epoch on the client** (`_window_rows`), and raises `GflAirFetchError` if the server reports a
+  truncated result. A future literal-parsing change can only fetch extra rows, never widen a window.
+- The H2S average is now computed **on the client** from that bounded row fetch (about 6 stations ×
+  24 rows) instead of server-side grouped statistics. A reading excluded by `is_no_data`
+  (missing, the configured H2S sentinel, or the TEST marker) does not count; BDL 0.0 does.
+- Live check after the patch: `n` ≤ 24 per station; context for MS-4 centred 2026-11-22 03:00Z
+  returns 01:00–05:00Z; summer case MS-1 2026-09-14 17:00Z returns 15:00–19:00Z.
+
+**Not changed:** the 72 ppb level, the 24-hour window length, `h2s_avg_min_readings` (12), the
+OBJECTID cursor queries (no date literal), recipients.
+
+**Elsewhere (reported, not fixed here):** Lotext analysis scripts that use midnight `date '...'`
+literals (`perimeter-h2s-sensor-anomaly-2026-09-05/probe_h2s_channel_health.py`,
+`h2s-quiet-check-2026-11-16/pull_h2s_quiet_check.py`,
+`perimeter-air-refresh-2026-10-20/fetch_and_build.py`) start their windows at 05:00 UTC rather
+than 00:00 UTC. The dataset-release updater `tools/update_perimeter_enriched.py` is unaffected
+(wide lookback, de-duplicates by epoch).
