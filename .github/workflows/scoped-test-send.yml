@@ -13,6 +13,11 @@ on:
         description: "Single email address to send the scoped test to"
         type: string
         required: true
+      kind:
+        description: "basic = one-line check; digest = preview of next Sunday's digest (read-only)"
+        type: choice
+        options: [basic, digest]
+        default: basic
 
 permissions:
   contents: read
@@ -30,6 +35,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install --require-hashes -r requirements.txt
+      - name: Write service-account key to a temp file (digest preview only)
+        if: ${{ inputs.kind == 'digest' }}
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+        run: |
+          printf '%s' "$GDRIVE_SA_KEY" > "$RUNNER_TEMP/gdrive-sa-key.json"
+          echo "GDRIVE_SA_KEY=$RUNNER_TEMP/gdrive-sa-key.json" >> "$GITHUB_ENV"
       - name: Send scoped test email
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
@@ -42,4 +54,7 @@ jobs:
           # workflow_dispatch input, operator-supplied (not untrusted event
           # data); read by Python via os.environ — never shell-evaluated.
           SCOPED_TEST_RECIPIENT: ${{ inputs.recipient }}
+          SCOPED_TEST_KIND: ${{ inputs.kind }}
+          # Digest preview reads the public Sheet's _meta queue (read-only).
+          GSHEET_ID: ${{ secrets.GSHEET_ID }}
         run: python scripts/send_scoped_test.py
