@@ -458,7 +458,6 @@ The 500 ppm CH4 exceedance tier and the H2S 24-hr-average exceedance tier remain
 **exactly** as this ADR describes. See ADR 039 for the full replacement design + the
 2026-09-10 live-feed backtest.
 
-
 ## Addendum 2026-11-26: the `date '...'` literal drops the time of day — TIMESTAMP + exact client window (supersedes the 2026-07-18 timezone note)
 
 **Found** by the alert-email redesign session (AHM-AlertsRedesign), live feed, 2026-11-26.
@@ -469,6 +468,7 @@ the same 660 rows, while `Date > TIMESTAMP '2026-11-22 12:00:00'` returned the r
 17:00 UTC. Either the server changed after the 2026-07-18 spike or the spike missed it.
 
 **Effects (both fixed here):**
+
 - `fetch_h2s_window_avg`: the "24-hour" H2S average behind the full-list `[URGENT]` alert
   really covered **19 to 43 hours** depending on the time of day (live `n=38` per station at
   20:06 UTC). **Backtest, 2026-07-18 → 2026-11-26, every run hour:** the highest per-station
@@ -478,6 +478,7 @@ the same 660 rows, while `Date > TIMESTAMP '2026-11-22 12:00:00'` returned the r
   12:00 AM ET row (visible in every block of the real 2026-11-22 email).
 
 **Decision.**
+
 - Date filters use a `TIMESTAMP` literal in the layer's zone: the UTC instant **minus 5 hours,
   all year** (`dateFieldsTimeReference` = `Etc/GMT+5`, `respectsDaylightSaving: false`,
   re-verified 2026-11-26; summer replays — 2026-09-14, 2026-09-29 — matched the real emails).
