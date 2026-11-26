@@ -360,7 +360,6 @@ the screening email against a live `fetch_station_coords()` result and confirm t
 registry names match the roster exactly (no `ROSTER MISMATCH` line in the log, no
 "not in this monitor's configured roster" note in the email).
 
-
 ## Addendum 2026-11-26: residual 2 closed; ±2-hour context per episode; source label on urgent lines
 
 Accuracy fixes found during the alert-email redesign (layout C chosen the same day; that
