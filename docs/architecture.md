@@ -40,7 +40,10 @@ behavior, update its entry here in the same PR.
   fallback — same classification call, no extra LLM call) and
   `display_title` (the model's raw proposal, only requested when the caller
   passes `title_is_generic=True`; still domain-agnostic — this module has no
-  opinion on what makes a title generic). `classify()`/`ocr_in_place()` moved
+  opinion on what makes a title generic). A found date that is the PDF's own
+  render date (CreationDate/ModDate) and >30 days after Date Filed is rejected
+  as `render_date_rejected` (`is_render_date`; Word auto-DATE fields printed at
+  download time, ADR 065 addendum 2026-11-26). `classify()`/`ocr_in_place()` moved
   to `ocr_util.py` (ADR 069); both names stay importable here unchanged.
   The OCR-or-not step is `_ocr_decision()`; when the file is left unchanged it
   returns the page check as `ParsedDoc.ocr_stats`, which `doc_pipeline` hands to

@@ -196,3 +196,19 @@ Owner rulings, PR #160:
   blank with method `future_date_rejected` and does not fall back to the model's guess, and
   `findings_feed.parse_feed_rows` blanks one already in the Sheet at build time (the
   2031-10-13 permit-expiration case).
+
+## Addendum (2026-11-26): a date printed at download time is not the document's date
+
+nSITE serves some Word files by converting them to PDF on download. If the Word file's dateline
+is an auto-updating DATE field, the PDF prints the **download day**. RA doc
+`-4822817218216203790` (a DEQ TTBEL memo dated 2002-01-31, filed 2022-06-02) was read as
+2026-11-18: page 1 rendered "November 18, 2026", and the real date sat only in the page-2 running
+header, which falls past the page-1 search window. The PDF's own CreationDate was 2026-11-18.
+
+Rule (`egle_doc_parser.is_render_date`, applied in `parse_document`): a found date that equals the
+PDF's CreationDate or ModDate **and** is more than 30 days after Date Filed is rejected with method
+`render_date_rejected`. The model's read is the fallback, and it is held to the same test (a model
+that reads the same printed download day leaves the date blank). The 30-day gap keeps real
+same-day filings and documents dated a few weeks after filing. When Date Filed or the PDF metadata
+is missing, nothing is rejected. The one affected Sheet row was corrected by hand on 2026-11-26.
+`scripts/backfill_document_dates_titles.py` reads page text only and does not apply this rule.

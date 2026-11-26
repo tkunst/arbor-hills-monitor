@@ -487,6 +487,53 @@ def extract_document_date_from_text(pages: list[str],
     return candidate
 
 
+# Method recorded when the date found is the day the PDF itself was rendered,
+# not a date the author wrote. nSITE serves some Word files by converting them
+# on download, so an auto-updating Word DATE field prints the DOWNLOAD day as
+# the dateline (RA doc -4822817218216203790: a 2002-01-31 DEQ memo, filed
+# 2022-06-02, read as 2026-11-18 because page 1 rendered "November 18, 2026"
+# and the PDF's CreationDate was that same day). Such a date is rejected and
+# the model's read is the fallback (it must not be the render date either).
+RENDER_DATE_REJECTED = "render_date_rejected"
+
+# A real document can be dated a few weeks after nSITE's Date Filed (ADR 065
+# found one filed 3 weeks before its own date), so a match with the PDF's
+# render date only counts as an artifact when it is this far past filing.
+_RENDER_DATE_MIN_GAP_DAYS = 30
+
+_PDF_META_DATE_RE = re.compile(r"^(?:D:)?(\d{4})(\d{2})(\d{2})")
+
+
+def pdf_render_dates(doc: "fitz.Document") -> set[str]:
+    """ISO dates from the PDF's own CreationDate / ModDate metadata (the
+    local date as written, e.g. "D:20261118131700-05'00'" -> "2026-11-18").
+    Empty when the metadata is missing or malformed. Never raises."""
+    out: set[str] = set()
+    meta = getattr(doc, "metadata", None) or {}
+    for key in ("creationDate", "modDate"):
+        m = _PDF_META_DATE_RE.match(meta.get(key) or "")
+        if m:
+            iso = _make_iso(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            if iso:
+                out.add(iso)
+    return out
+
+
+def is_render_date(doc_date: str, render_dates: set[str], date_filed: str) -> bool:
+    """True when `doc_date` is the PDF's own render date AND falls more than
+    _RENDER_DATE_MIN_GAP_DAYS after nSITE's Date Filed -- the signature of a
+    Word auto-date field printed at download time. False whenever either date
+    is missing or unparseable (never rejects on a guess). Pure."""
+    if not doc_date or doc_date not in render_dates:
+        return False
+    try:
+        filed = date.fromisoformat((date_filed or "")[:10])
+        found = date.fromisoformat(doc_date)
+    except ValueError:
+        return False
+    return (found - filed).days > _RENDER_DATE_MIN_GAP_DAYS
+
+
 def extract_document_date(doc: "fitz.Document", max_pages: int = 2) -> tuple[str, str]:
     """extract_document_date_from_text() over the first `max_pages` RAW pages
     of an already-open fitz doc."""
@@ -1113,6 +1160,7 @@ def parse_document(
         # Deterministic date pass over the RAW first pages (not the windowed
         # classifier text above) — see extract_document_date's docstring.
         det_date, det_method = extract_document_date(doc, max_pages=2)
+        render_dates = pdf_render_dates(doc)
     finally:
         doc.close()
 
@@ -1212,6 +1260,11 @@ def parse_document(
     # model's own read is only a fallback for the docs it finds nothing in,
     # and is validated (ISO + plausible range) before being trusted — see
     # _is_plausible_iso_date.
+    date_filed = metadata.get("date_filed") or ""
+    if det_date and is_render_date(det_date, render_dates, date_filed):
+        log.warning("document date %s is the PDF's render date, filed %s; rejected (%s)",
+                    det_date, date_filed, metadata.get("document_name", "?"))
+        det_date, det_method = "", RENDER_DATE_REJECTED
     if det_date:
         document_date, document_date_method = det_date, det_method
     elif det_method == FUTURE_DATE_REJECTED:
@@ -1220,10 +1273,13 @@ def parse_document(
         document_date, document_date_method = "", FUTURE_DATE_REJECTED
     else:
         llm_date = fields.get("document_date")
-        if _is_plausible_iso_date(llm_date):
+        if (_is_plausible_iso_date(llm_date)
+                and not is_render_date(llm_date, render_dates, date_filed)):
             document_date, document_date_method = llm_date or "", "llm"
         else:
-            document_date, document_date_method = "", ""
+            # Keep RENDER_DATE_REJECTED as the method so the blank is explained.
+            document_date, document_date_method = "", (
+                det_method if det_method == RENDER_DATE_REJECTED else "")
 
     display_title = ""
     if title_is_generic:

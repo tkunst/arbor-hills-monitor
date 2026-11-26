@@ -347,6 +347,92 @@ def test_parse_document_future_date_is_blank_and_never_the_llm_guess(monkeypatch
     assert parsed.document_date_method == p.FUTURE_DATE_REJECTED
 
 
+# ---------------------------------------------------------------------------
+# Render-date guard: a Word auto-DATE field printed at download time
+# (RA doc -4822817218216203790: 2002 memo, filed 2022-06-02, read as 2026-11-18)
+# ---------------------------------------------------------------------------
+
+def test_pdf_render_dates_reads_creation_and_mod_dates():
+    class _Doc:
+        metadata = {"creationDate": "D:20261118131700-05'00'", "modDate": "D:20261119080000Z"}
+    assert p.pdf_render_dates(_Doc()) == {"2026-11-18", "2026-11-19"}
+
+
+def test_pdf_render_dates_tolerates_missing_or_bad_metadata():
+    class _Empty:
+        metadata = {}
+    class _Bad:
+        metadata = {"creationDate": "yesterday", "modDate": "D:20261341000000"}
+    class _NoneMeta:
+        metadata = None
+    assert p.pdf_render_dates(_Empty()) == set()
+    assert p.pdf_render_dates(_Bad()) == set()
+    assert p.pdf_render_dates(_NoneMeta()) == set()
+
+
+def test_is_render_date():
+    render = {"2026-11-18"}
+    # The real case: render date, years after filing.
+    assert p.is_render_date("2026-11-18", render, "2022-06-02") is True
+    # A real letter written, filed and downloaded the same day stays.
+    assert p.is_render_date("2026-11-18", render, "2026-11-18") is False
+    # Dated a few weeks after filing (ADR 065 saw this) stays.
+    assert p.is_render_date("2026-11-18", render, "2026-10-28") is False
+    # Not the render date: never rejected, however late.
+    assert p.is_render_date("2026-11-17", render, "2022-06-02") is False
+    # Missing / unparseable inputs never reject.
+    assert p.is_render_date("2026-11-18", render, "") is False
+    assert p.is_render_date("2026-11-18", render, "not a date") is False
+    assert p.is_render_date("", render, "2022-06-02") is False
+    assert p.is_render_date("2026-11-18", set(), "2022-06-02") is False
+
+
+@pytest.fixture
+def render_dated_pdf(tmp_path):
+    """Page 1 prints the download day (as nSITE's Word conversion does) and
+    the PDF's CreationDate is that same day."""
+    path = str(tmp_path / "render_dated.pdf")
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 72), "November 18, 2026\nTO: File\nSUBJECT: TTBEL Recommendations")
+    doc.set_metadata({"creationDate": "D:20261118131700-05'00'",
+                      "modDate": "D:20261118132100-05'00'"})
+    doc.save(path)
+    doc.close()
+    return path
+
+
+def test_parse_document_render_date_falls_back_to_llm(monkeypatch, render_dated_pdf):
+    monkeypatch.setattr(
+        p, "_classify_with_claude",
+        lambda *a, **k: _fake_classification(document_date="2002-01-31"))
+    parsed = p.parse_document(render_dated_pdf, {"date_filed": "2022-06-02"},
+                              RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
+    assert parsed.document_date == "2002-01-31"
+    assert parsed.document_date_method == "llm"
+
+
+def test_parse_document_render_date_llm_echo_is_blank(monkeypatch, render_dated_pdf):
+    # The model reading the same printed download day is rejected too.
+    monkeypatch.setattr(
+        p, "_classify_with_claude",
+        lambda *a, **k: _fake_classification(document_date="2026-11-18"))
+    parsed = p.parse_document(render_dated_pdf, {"date_filed": "2022-06-02"},
+                              RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
+    assert parsed.document_date == ""
+    assert parsed.document_date_method == p.RENDER_DATE_REJECTED
+
+
+def test_parse_document_same_day_filing_keeps_the_dateline(monkeypatch, render_dated_pdf):
+    # A letter filed the day it was written (and downloaded) is not an artifact.
+    monkeypatch.setattr(
+        p, "_classify_with_claude",
+        lambda *a, **k: _fake_classification(document_date="2002-01-31"))
+    parsed = p.parse_document(render_dated_pdf, {"date_filed": "2026-11-18"},
+                              RISK_REGISTER, signal_keywords=SIGNAL_KEYWORDS)
+    assert parsed.document_date == "2026-11-18"
+    assert parsed.document_date_method == "dateline"
+
+
 def test_parse_document_no_date_anywhere_is_blank(monkeypatch, text_pdf):
     monkeypatch.setattr(
         p, "_classify_with_claude", lambda *a, **k: _fake_classification())
