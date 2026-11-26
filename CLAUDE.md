@@ -78,6 +78,7 @@ module, and update that entry in the same PR.
 - `sheet_writer.py` — the Sheet tabs; routing/fan-out is pure and tested.
 - `dataset_provenance.py` — the public Sheet's `Dataset Provenance` tab + annotation columns.
 - `email_alerts.py` — urgent alerts + weekly digest; urgency decision is pure.
+- `digest_render.py` — the Sunday digest's plain-text + HTML bodies (layout B), pure; footer slot filled per recipient by `send_email`.
 - `owner_notices.py` — owner-only weekly email + same-day owner alerts (ADR 070).
 - `review_flags.py` — "needs human review" log on the private Sheet (ADR 067 amendment).
 - `mirror_index.py` — the public `Mirror Index` tab: Drive checksums + page/OCR stats per mirrored PDF, written at upload; flag `mirror_index.enabled` (ADR 073).
