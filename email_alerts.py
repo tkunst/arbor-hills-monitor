@@ -884,6 +884,9 @@ def route_hand_curated_urgent_or_digest(
     metadata = {"document_name": document_name, "date_filed": date_filed}
     record = {
         "date_filed": date_filed, "document_name": document_name,
+        # A hand-curated record's one date is the hand-entered document date
+        # (Hand-Curated Files doc_date), so the digest shows it unlabeled.
+        "document_date": date_filed,
         "doc_type": doc_type, "severity": severity, "risks": list(risks or []),
         "key_data_point": key_data_point, "link": link,
     }
