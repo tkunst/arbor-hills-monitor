@@ -428,6 +428,12 @@ behavior, update its entry here in the same PR.
   (`watcher._next_site_baseline`); a site whose sitemap fails keeps its old
   baseline and lists nothing; the first run only saves a baseline; new pages
   alone never trigger a digest. `_META_CELL_ROWS` grew 8 → 10 for the new key.
+  **Digest preview test send (2026-11-26):** `scoped-test-send.yml` takes
+  `kind: digest` to send a [TEST] preview of the next Sunday digest to ONE
+  address (`scripts/send_scoped_test.py`), rendered by the real code from the
+  live `_meta` queue, with the subscriber footer shown even to an owner. It
+  reads `_meta` and the sitemaps only; it never writes `_meta`, so the real
+  digest and the new-pages baseline are unaffected.
   **coder:keydatapoint-guard (2026-10-17):** `is_urgent()` is now the bool of
   one `_urgency_decision()`, whose reasons `urgency_reason()` joins, so the two
   can't drift. `format_urgent_body(..., cfg)` prints "Urgent because: …" next
