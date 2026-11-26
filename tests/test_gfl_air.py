@@ -2082,3 +2082,25 @@ def test_episode_back_value_marked_bdl_shows_no_number():
     rows = gw._monitor_rows(latest, WT, SENT, registry=_registry())
     _, text, _ = _email(res.opened, rows, list(latest.values()) + rs, closed=res.closed, state=res.state)
     assert "Back at or below at" in text and "(below detection limit)." in text and "(0 ppb)" not in text
+
+
+def test_scoped_test_gfl_air_preview_is_read_only_and_finds_last_episode(monkeypatch):
+    import importlib.util
+    import pathlib
+    spec = importlib.util.spec_from_file_location(
+        "send_scoped_test", pathlib.Path(__file__).resolve().parents[1] / "scripts" / "send_scoped_test.py")
+    sst = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sst)
+    now = datetime.fromtimestamp((DAY1 + 30 * 3600_000) / 1000, tz=timezone.utc)
+    rows_by_call = [[_elev(1, "MS-2", 0.0, 5.0, DAY1 + 20 * 3600_000)],          # quiet day
+                    [_elev(2, "MS-3", 0.0, 45.0, DAY1), _elev(3, "MS-3", 0.0, 5.0, DAY1 + 3600_000)]]
+    calls = []
+    monkeypatch.setattr(gc, "_window_rows", lambda *a, **k: calls.append(a) or rows_by_call[len(calls) - 1])
+    monkeypatch.setattr(gc, "fetch_station_coords", lambda *a, **k: _registry())
+    monkeypatch.setattr(gw.sw, "append_rows", lambda *a, **k: pytest.fail("preview must not write"))
+    cfg = {"gfl_air": {"watch_thresholds": WT, "sentinels": SENT, "station_prefix": "MS-",
+                       "expected_stations": STATIONS, "dashboard_url": "https://d.example/"},
+           "unsubscribe": {}}
+    subj, text, html = sst.build_gfl_air_preview(cfg, "owner@example.com", now=now)
+    assert len(calls) == 2 and subj.startswith("[TEST] ") and "Methane SCREENING ALERT" in subj
+    assert text.startswith("[TEST - replay") and gr.FOOTER_SLOT in html

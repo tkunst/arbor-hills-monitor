@@ -14,9 +14,9 @@ on:
         type: string
         required: true
       kind:
-        description: "basic = one-line check; digest = preview of next Sunday's digest (read-only)"
+        description: "basic = one-line check; digest = preview of next Sunday's digest (read-only); gfl-air = perimeter screening email replay (read-only)"
         type: choice
-        options: [basic, digest]
+        options: [basic, digest, gfl-air]
         default: basic
 
 permissions:

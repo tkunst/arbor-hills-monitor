@@ -15,6 +15,8 @@ recipient list; this is a one-off probe.
 
 Input: SCOPED_TEST_RECIPIENT env var, a single email address.
 SCOPED_TEST_KIND: "basic" (default) sends the one-line footer/render check;
+"gfl-air" (2026-11-26) replays the most recent perimeter-air run window that had an
+episode through the layout-C screening email (ADR 075), read-only from the live feed.
 "digest" (2026-11-26) sends a preview of the NEXT Sunday digest, rendered by
 the real digest code from the live _meta queue, with the subscriber footer
 shown even when the recipient is an owner (owners never get one otherwise).
@@ -76,6 +78,55 @@ def _send_digest_preview(cfg: dict, recipient: str) -> bool:
                          footer_show_address=False)
 
 
+def build_gfl_air_preview(cfg: dict, recipient: str, now=None, max_days: int = 30):
+    """READ-ONLY [TEST] preview of the perimeter-air daily-run screening email (layout C,
+    ADR 075): walks back day by day (24-hour windows ending at the daily run hour) to the
+    most recent window in which an episode opened, renders it with the real code from the
+    live feed, and returns (subject, text, html) — or None if no window in max_days had
+    one. Never touches the GFL Air tab, the cursor or episode state."""
+    from datetime import datetime, timezone
+    import gfl_air_client as gc
+    import gfl_air_episodes as ge
+    import gfl_air_render as gr
+    g = cfg.get("gfl_air") or {}
+    c = gc._svc(g)
+    wt, sent, prefix = g.get("watch_thresholds") or {}, g.get("sentinels") or {}, g.get("station_prefix", "MS-")
+    roster, _ = ge.station_roster(g, prefix)
+    now = now or datetime.now(timezone.utc)
+    end = now.replace(minute=0, second=0, microsecond=0)
+    try:
+        coords = gc.fetch_station_coords(g, station_prefix=prefix)
+    except gc.GflAirFetchError:
+        coords = {}
+    for _ in range(max_days):
+        start = end - timedelta(hours=24)
+        rd = sorted(gc._window_rows(c, "", start, end, gc._READING_FIELDS),
+                    key=lambda r: r.get("OBJECTID") or 0)
+        res = ge.process_episodes(rd, wt, sent, {}, station_prefix=prefix)
+        if res.opened:
+            rows = ge._monitor_rows(ge.latest_per_station(rd, prefix), wt, sent, registry=coords)
+            subj, text, html = gr.render_run_email(
+                opened=res.opened, closed=res.closed, state_after=res.state, readings=rd,
+                monitor_rows=rows, watch_thresholds=wt, sentinels=sent,
+                retrieved_iso=now.strftime("%Y-%m-%dT%H:%M:%SZ"), coords=coords, roster=roster,
+                registry_available=bool(coords), historical=ge.is_historical(
+                    [o["opened_at"] for o in res.opened], now),
+                periods=gr.suspect_periods(g), prefix=prefix,
+                link=g.get("dashboard_url") or g.get("service_url", ""))
+            note = ("[TEST - replay of the most recent past run window with an episode, rendered by "
+                    "the layout-C code from the live feed. Not a live alert.]\n\n")
+            mailto, postal = ea._unsubscribe_settings(cfg)
+            is_owner = (ea._norm_email(recipient) in ea.load_owner_emails(cfg)
+                        or ea._email_domain(recipient) in ea.load_owner_domains(cfg))
+            text = note + text
+            if mailto and is_owner:   # show the subscriber footer on an owner's copy too
+                text += ea.unsubscribe_footer(cfg, mailto, postal, recipient)
+                html = ea._with_html_footer(html, cfg, mailto, postal)
+            return "[TEST] " + subj, text, html
+        end = start
+    return None
+
+
 def run() -> int:
     recipient = os.environ.get("SCOPED_TEST_RECIPIENT", "").strip()
     if not recipient:
@@ -89,6 +140,13 @@ def run() -> int:
     cfg = load_config()
     if kind == "digest":
         sent = _send_digest_preview(cfg, recipient)
+    elif kind == "gfl-air":
+        built = build_gfl_air_preview(cfg, recipient)
+        if built is None:
+            print("[send_scoped_test] no perimeter episode in the last 30 days — nothing sent.")
+            return 1
+        subject, text, html = built
+        sent = ea.send_email(subject, text, cfg, recipients=[recipient], html=html)
     elif kind == "basic":
         sent = ea.send_email(
             "[TEST] Arbor Hills monitor — scoped footer/render check",
