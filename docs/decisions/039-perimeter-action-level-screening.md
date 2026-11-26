@@ -384,5 +384,6 @@ redesign is a separate change and ADR). No threshold or recipient changes.
 3. **Source label on urgent lines.** When the feed prints a word instead of a number beside a
    flagged value (e.g. `CH4_Text = ERR` on the 2023-10-16 MS-2 readings up to 89,090 ppm, and on
    the 511 ppm MS-3 reading of 2025-05-13), the urgent/watch line now ends
-   `(source label: ERR)`. **Alerting is unchanged** (fail-safe: an ERR-labelled value above a level
-   still alerts); whether ERR values should alert at all is an open question for Trisha.
+   `(source label: X)`; for `ERR` it reads `(suspect sensor; source label: ERR)` (Trisha, 2026-11-26:
+   "ERR should be labeled suspect sensor"). **Alerting is unchanged** (fail-safe: an ERR-labelled value
+   above a level still alerts).

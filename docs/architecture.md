@@ -677,7 +677,7 @@ behavior, update its entry here in the same PR.
   client from those rows. **TEST rows (ADR 039 addendum):** `classify_reading` reports a
   `_Text = TEST` value as a sentinel (anomaly, never an exceedance) and
   `reading_to_measurements` drops it; an urgent/watch reason ends `(source label: X)` when
-  the feed prints a word (e.g. `ERR`) beside the value.
+  the feed prints a word beside the value, `(suspect sensor; source label: ERR)` for `ERR`.
 - `gfl_air_watcher.py` — daily poll of the GFL air feed: incremental OBJECTID
   cursor (in the `GFL Air` tab), readings → Measurements (`basis=measured`),
   same-day exceedance alerts via its own classifier. Gated on `gfl_air.enabled`.
