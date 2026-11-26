@@ -538,39 +538,44 @@ def test_summary_is_single_update_and_blanks_a_shrunk_station_set(monkeypatch):
 
 # pure client: the window-cutoff literal + the grouped-stats query/parse -----------
 
-def test_utc_date_literal_is_utc_and_offsets_by_hours():
-    now = datetime(2026, 7, 18, 5, 34, 13, tzinfo=timezone.utc)
-    assert gc._utc_date_literal(now, 24) == "2026-07-17 05:34:13"
-    assert gc._utc_date_literal(now, 0) == "2026-07-18 05:34:13"    # window 0 = no look-back
+def _ms(y, mo, d, h, mi=0):
+    return int(datetime(y, mo, d, h, mi, tzinfo=timezone.utc).timestamp() * 1000)
 
 
-def test_fetch_h2s_window_avg_query_shape_and_parse(monkeypatch):
+def test_layer_timestamp_literal_is_fixed_est_all_year():
+    # The layer's date fields are fixed EST (Etc/GMT+5, no DST): a UTC instant is written
+    # 5 hours earlier in winter AND summer (ADR 014 addendum 2026-11-26).
+    assert gc._layer_timestamp_literal(datetime(2026, 7, 18, 5, 0, tzinfo=timezone.utc)) == "2026-07-18 00:00:00"
+    assert gc._layer_timestamp_literal(datetime(2026, 11, 22, 17, 0, tzinfo=timezone.utc)) == "2026-11-22 12:00:00"
+
+
+def test_fetch_h2s_window_avg_uses_timestamp_and_exact_client_window(monkeypatch):
+    # The old `date '...'` literal was truncated to midnight EST by the server (live:
+    # '00:00', '12:00' and '23:00' returned the same rows), so "24 hours" was 19-43 h.
+    # Now: a padded TIMESTAMP filter in fixed EST, then an EXACT epoch filter here.
     captured = {}
+    now = datetime(2026, 7, 18, 5, 0, tzinfo=timezone.utc)
+    rows = [
+        {"LocName": "MS-1", "Date": _ms(2026, 7, 17, 4), "H2S": 90.0, "H2S_Text": "90"},   # 25 h old: OUT
+        {"LocName": "MS-1", "Date": _ms(2026, 7, 17, 5), "H2S": 80.0, "H2S_Text": "80"},   # exactly 24 h: OUT (strict >)
+        {"LocName": "MS-1", "Date": _ms(2026, 7, 17, 6), "H2S": 3.0, "H2S_Text": "BDL"},
+        {"LocName": "MS-1", "Date": _ms(2026, 7, 18, 4), "H2S": 4.0, "H2S_Text": "BDL"},
+        {"LocName": "MS-2", "Date": _ms(2026, 7, 18, 4), "H2S": 999.0, "H2S_Text": "TEST"},  # no-data: excluded
+        {"LocName": "MS-2", "Date": _ms(2026, 7, 18, 3), "H2S": None, "H2S_Text": "NaN"},    # missing: excluded
+        {"LocName": "10-Meter MET Tower", "Date": _ms(2026, 7, 18, 4), "H2S": 5.0, "H2S_Text": "5"},
+    ]
 
     def fake_query(service_url, layer, params, *, timeout=60):
-        captured.update(service_url=service_url, layer=layer, params=params)
-        return {"features": [
-            {"attributes": {"LocName": "MS-1", "avgH2S": 3.5, "n": 20}},
-            {"attributes": {"LocName": "MS-2", "avgH2S": None, "n": 0}},
-            {"attributes": {"LocName": "10-Meter MET Tower", "avgH2S": 5.0, "n": 3}},
-        ]}
+        captured.update(layer=layer, params=params)
+        return {"features": [{"attributes": r} for r in rows]}
     monkeypatch.setattr(gc, "_query", fake_query)
-    cfg_gfl = {"service_url": "http://svc/FeatureServer", "readings_layer": 4,
-               "sentinels": {"h2s_ppb": 999}}
-    now = datetime(2026, 7, 18, 5, 0, tzinfo=timezone.utc)
-    out = gc.fetch_h2s_window_avg(cfg_gfl, 24, now=now)
-
+    out = gc.fetch_h2s_window_avg({"service_url": "http://svc/FeatureServer", "readings_layer": 4,
+                                   "sentinels": {"h2s_ppb": 999}}, 24, now=now)
     where = captured["params"]["where"]
-    # UTC standardized `date` literal — NOT `TIMESTAMP` (layer date fields are EST-fixed,
-    # so a TIMESTAMP cutoff would silently shift the window ~5h; spike 2026-07-18).
-    assert "date '2026-07-17 05:00:00'" in where and "TIMESTAMP" not in where
-    assert "H2S <> 999" in where                            # sentinel excluded server-side
-    assert captured["params"]["groupByFieldsForStatistics"] == "LocName"
-    assert '"avg"' in captured["params"]["outStatistics"]   # avg + count grouped stats
-    assert '"count"' in captured["params"]["outStatistics"]
+    # cutoff 2026-07-17 05:00Z, padded back 1 h -> 04:00Z -> fixed EST 2026-07-16 23:00.
+    assert "TIMESTAMP '2026-07-16 23:00:00'" in where and "date '" not in where
     assert captured["layer"] == 4
-    # MET tower filtered out by station_prefix; None avg preserved, n coerced to int.
-    assert out == {"MS-1": {"avg": 3.5, "n": 20}, "MS-2": {"avg": None, "n": 0}}
+    assert out == {"MS-1": {"avg": 3.5, "n": 2}, "MS-2": {"avg": None, "n": 0}}
 
 
 def test_fetch_h2s_window_avg_raises_on_fetch_error_never_zero(monkeypatch):
@@ -582,14 +587,38 @@ def test_fetch_h2s_window_avg_raises_on_fetch_error_never_zero(monkeypatch):
                                 now=datetime(2026, 7, 18, tzinfo=timezone.utc))
 
 
-def test_fetch_h2s_window_avg_omits_sentinel_clause_when_unconfigured(monkeypatch):
+def test_fetch_h2s_window_avg_raises_on_truncated_result(monkeypatch):
+    # A partial window must never be averaged as if complete.
+    monkeypatch.setattr(gc, "_query", lambda *a, **k: {"features": [], "exceededTransferLimit": True})
+    with pytest.raises(gc.GflAirFetchError):
+        gc.fetch_h2s_window_avg({"service_url": "http://svc", "readings_layer": 4}, 24,
+                                now=datetime(2026, 7, 18, tzinfo=timezone.utc))
+
+
+def test_fetch_h2s_window_avg_keeps_999_when_sentinel_unconfigured(monkeypatch):
+    rows = [{"LocName": "MS-1", "Date": _ms(2026, 7, 18, 4), "H2S": 999.0, "H2S_Text": "999"}]
+    monkeypatch.setattr(gc, "_query", lambda *a, **k: {"features": [{"attributes": r} for r in rows]})
+    out = gc.fetch_h2s_window_avg({"service_url": "http://svc", "readings_layer": 4,
+                                   "sentinels": {"h2s_ppb": None}}, 24,
+                                  now=datetime(2026, 7, 18, 5, tzinfo=timezone.utc))
+    assert out == {"MS-1": {"avg": 999.0, "n": 1}}          # explicit None -> no sentinel exclusion
+
+
+def test_fetch_station_window_is_exact_plus_minus_hours(monkeypatch):
+    # Context rows are exactly [centre - 2 h, centre + 2 h], whatever the server returns.
+    centre = _ms(2026, 11, 22, 3)
+    rows = [{"LocName": "MS-4", "Date": _ms(2026, 11, 22, h), "H2S": 0.0, "CH4": float(h)}
+            for h in range(0, 7)]
     captured = {}
-    monkeypatch.setattr(gc, "_query",
-                        lambda su, ly, params, **k: captured.update(params=params) or {"features": []})
-    gc.fetch_h2s_window_avg({"service_url": "http://svc", "readings_layer": 4,
-                             "sentinels": {"h2s_ppb": None}}, 24,
-                            now=datetime(2026, 7, 18, tzinfo=timezone.utc))
-    assert "H2S <>" not in captured["params"]["where"]      # no sentinel key -> no exclusion clause
+
+    def fake_query(service_url, layer, params, *, timeout=60):
+        captured.update(params=params)
+        return {"features": [{"attributes": r} for r in rows]}
+    monkeypatch.setattr(gc, "_query", fake_query)
+    got = gc.fetch_station_window({"service_url": "http://svc", "readings_layer": 4}, "MS-4", centre, 2)
+    assert [r["CH4"] for r in got] == [1.0, 2.0, 3.0, 4.0, 5.0]
+    assert "LocName = 'MS-4'" in captured["params"]["where"]
+    assert "TIMESTAMP '2026-11-21 18:59:59'" in captured["params"]["where"]   # 01:00Z - 1 ms - 1 h pad = 23:59:59Z -> EST
 
 
 # pure watcher: the average -> alert-line decision --------------------------------
@@ -2061,3 +2090,68 @@ def test_config_yml_roster_is_well_formed():
     roster, warns = gw.station_roster(g, g.get("station_prefix", gc.DEFAULT_STATION_PREFIX))
     assert roster and warns == []
     assert len(roster) == len(set(roster))
+
+
+# ----- accuracy fixes 2026-11-26 (ADR 014 + ADR 039 addenda) -------------------
+
+def test_test_marker_is_anomaly_not_exceedance_in_urgent_tier():
+    # ADR 039 residual 2: a CH4=999 TEST maintenance row used to classify as >= 500 ppm
+    # and send a full-list [URGENT]. It is now a sentinel/anomaly, never an exceedance.
+    r = _reading(1, "MS-5", 999.0, 999.0, DAY0, h2s_text="TEST", ch4_text="TEST")
+    c = gc.classify_reading(r, {"h2s_ppb": 72, "ch4_ppm": 500}, SENT)
+    assert c["severity"] == "anomaly"
+    assert c["ch4"][1] == "sentinel" and c["h2s"][1] == "sentinel"
+    lines, has_exc, _ = gw.alert_lines([r], {"h2s_ppb": 72, "ch4_ppm": 500}, SENT, True)
+    assert not has_exc and lines and lines[0].startswith("anomaly")
+    # With alert_on_sentinel off, the TEST row produces no line at all.
+    lines, has_exc, _ = gw.alert_lines([r], {"h2s_ppb": 72, "ch4_ppm": 500}, SENT, False)
+    assert lines == [] and not has_exc
+
+
+def test_test_marker_never_becomes_a_measured_value():
+    r = _reading(1, "MS-5", 999.0, 999.0, DAY0, h2s_text="TEST", ch4_text="TEST")
+    assert gc.reading_to_measurements(r, sentinels=SENT) == []
+
+
+def test_exceedance_line_shows_the_source_label_verbatim():
+    # Real feed rows (MS-2, 2023-10-16) carry CH4_Text 'ERR' on values up to 89,090 ppm.
+    # The alert still fires (fail-safe), and the line now says what the source printed.
+    r = _reading(1, "MS-2", 0.0, 89090.0, DAY0, h2s_text="BDL", ch4_text="ERR")
+    lines, has_exc, _ = gw.alert_lines([r], {"h2s_ppb": 72, "ch4_ppm": 500}, SENT, True)
+    assert has_exc and "CH4=89090 >= action level 500 (source label: ERR)" in lines[0]
+    # A numeric label (the feed's rounded copy of the value) adds nothing.
+    r2 = _reading(2, "MS-2", 0.0, 511.4, DAY0, h2s_text="BDL", ch4_text="511")
+    lines2, _, _ = gw.alert_lines([r2], {"h2s_ppb": 72, "ch4_ppm": 500}, SENT, True)
+    assert "source label" not in lines2[0]
+
+
+def test_screening_context_is_per_episode_not_per_station():
+    # Two methane episodes at MS-3 in one run each show the hours around THEIR first
+    # value above; before, both showed the first episode's window.
+    first = _opened("MS-3", "ch4", 43.0, DAY0)
+    second = dict(_opened("MS-3", "ch4", 59.0, DAY0 + 8 * 3600_000))
+    second["event_id"] = gw._event_id("MS-3", second["opened_at"], 2)
+    ctx = {first["event_id"]: [_elev(1, "MS-3", 0.0, 43.0, DAY0)],
+           second["event_id"]: [_elev(2, "MS-3", 0.0, 59.0, DAY0 + 8 * 3600_000)]}
+    _, body = gw.format_screening_email([first, second], [], [], WT, link="L",
+                                        retrieved_iso="2026-09-10T13:00:00Z", context=ctx)
+    blocks = body.split("±2-hour context around MS-3")
+    assert len(blocks) == 3
+    assert "CH4=43 ppm" in blocks[1] and "CH4=59 ppm" not in blocks[1]
+    assert "CH4=59 ppm" in blocks[2]
+
+
+def test_run_fetches_context_per_episode(monkeypatch):
+    fake, sent = _wire_with_recipients(monkeypatch, _watch_cfg())
+    _baseline_then(monkeypatch)
+    calls = []
+    monkeypatch.setattr(gw.gc, "fetch_station_window",
+                        lambda cfg, st, center, hours: calls.append((st, center)) or [])
+    new = [_elev(106 + i, s, 0.0, 5.0, DAY1) for i, s in enumerate(STATIONS)]
+    new += [_elev(120, "MS-3", 0.0, 45.0, DAY1 + 3600_000),      # MS-3 opens
+            _elev(121, "MS-3", 0.0, 5.0, DAY1 + 7200_000),       # closes
+            _elev(122, "MS-3", 0.0, 50.0, DAY1 + 10800_000)]     # re-opens: 2nd episode
+    monkeypatch.setattr(gw.gc, "fetch_readings",
+                        lambda c, since, limit=None: [r for r in new if r["OBJECTID"] > since])
+    assert gw.run() == 0
+    assert sorted(calls) == [("MS-3", DAY1 + 3600_000), ("MS-3", DAY1 + 10800_000)]

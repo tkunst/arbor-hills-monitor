@@ -109,8 +109,9 @@ GASES = tuple(key for key, *_ in _POLLUTANTS)          # ("h2s", "ch4"), in this
 # H2S=999). The numeric sentinel config excludes 999 for H2S but only 99999 for CH4,
 # so a CH4=999 TEST row would otherwise flag as a real methane action-level crossing.
 # The episode engine treats a TEST-texted reading as no-data for BOTH gases (see
-# is_no_data + ADR 039); this is scoped to the NEW watch/episode tier and never
-# touches the untouched exceedance-tier paths (classify_reading / select_measurements).
+# is_no_data + ADR 039). Since 2026-11-26 the exceedance tier does too: classify_reading
+# reports a TEST value as a sentinel (anomaly, never an exceedance) and
+# reading_to_measurements leaves it out of the measured series (ADR 039 residual 2, closed).
 NO_DATA_TEXT = "TEST"
 
 
@@ -246,12 +247,66 @@ def fetch_baseline(cfg_gfl: dict, *, station_prefix: str = DEFAULT_STATION_PREFI
     return list(latest.values())
 
 
-def _utc_date_literal(now: datetime, hours: int) -> str:
-    """The `now - hours` cutoff formatted for an ArcGIS standardized-query `date`
-    literal ('YYYY-MM-DD HH:MM:SS'). Pure — unit-tested. `now` MUST be UTC; the
-    literal is written in UTC because the query below uses the `date` keyword (see
-    fetch_h2s_window_avg's docstring on the date-vs-TIMESTAMP timezone trap)."""
-    return (now - timedelta(hours=int(hours))).strftime("%Y-%m-%d %H:%M:%S")
+# The readings layer's date fields are in FIXED Eastern Standard Time: the layer reports
+# dateFieldsTimeReference {timeZone: "Eastern Standard Time", timeZoneIANA: "Etc/GMT+5",
+# respectsDaylightSaving: false} (re-verified live 2026-11-26). A TIMESTAMP literal is read
+# in that zone, so a UTC instant is written as UTC-5, all year (no DST shift).
+_LAYER_UTC_OFFSET = timedelta(hours=-5)
+
+
+def _layer_timestamp_literal(dt_utc: datetime) -> str:
+    """A UTC instant as an ArcGIS `TIMESTAMP 'YYYY-MM-DD HH:MM:SS'` literal in the layer's
+    fixed-EST field time zone. Pure — unit-tested.
+
+    ADR 014 addendum 2026-11-26 (supersedes the 2026-07-18 spike note): the standardized
+    `date '...'` literal this module used before is TRUNCATED TO ITS DATE by the server,
+    which then reads it as midnight EST (05:00 UTC). Live proof: `Date > date '2026-11-22
+    00:00:00'`, `... '12:00:00'` and `... '23:00:00'` all returned the same 660 rows. That
+    turned the "24-hour" H2S average into a 19-43 hour window and collapsed the ±2-hour
+    context to the single midnight row. The TIMESTAMP literal honours the time of day;
+    every caller ALSO re-filters the returned rows by epoch on the client, so a future
+    server change cannot silently widen a window again."""
+    if dt_utc.tzinfo is None:
+        dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+    return (dt_utc.astimezone(timezone.utc) + _LAYER_UTC_OFFSET).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _epoch_ms(dt_utc: datetime) -> int:
+    return int(dt_utc.timestamp() * 1000)
+
+
+def _window_rows(c: dict, where_extra: str, start_utc: datetime, end_utc: Optional[datetime],
+                 out_fields: str, *, end_inclusive: bool = False) -> list[dict]:
+    """Rows with start_utc < Date (<= or <) end_utc, fetched with a padded TIMESTAMP filter
+    (±1 h, so a literal-parsing surprise can only fetch EXTRA rows) and then filtered
+    EXACTLY by epoch on the client. Raises GflAirFetchError if the server says the result
+    was truncated — a partial window must never be averaged or shown as complete."""
+    pad = timedelta(hours=1)
+    where = f"Date > TIMESTAMP '{_layer_timestamp_literal(start_utc - pad)}'"
+    if end_utc is not None:
+        where += f" AND Date < TIMESTAMP '{_layer_timestamp_literal(end_utc + pad)}'"
+    if where_extra:
+        where = f"{where_extra} AND {where}"
+    data = _query(c["service_url"], c["readings_layer"], {
+        "where": where,
+        "outFields": out_fields,
+        "orderByFields": "Date ASC",
+        "returnGeometry": "false",
+        "resultRecordCount": 2000,
+    })
+    if data.get("exceededTransferLimit"):
+        raise GflAirFetchError("window query truncated by the server (exceededTransferLimit)")
+    lo = _epoch_ms(start_utc)
+    hi = _epoch_ms(end_utc) if end_utc is not None else None
+    out = []
+    for a in _features(data):
+        d = a.get("Date")
+        if not isinstance(d, (int, float)) or d <= lo:
+            continue
+        if hi is not None and (d > hi if end_inclusive else d >= hi):
+            continue
+        out.append(a)
+    return out
 
 
 def fetch_h2s_window_avg(
@@ -261,70 +316,40 @@ def fetch_h2s_window_avg(
     now: Optional[datetime] = None,
     station_prefix: str = DEFAULT_STATION_PREFIX,
 ) -> dict[str, dict]:
-    """Per-station TRAILING-WINDOW H2S average over the last `hours`, computed
-    SERVER-SIDE in one grouped-statistics query (no client row loop, no 214k pull).
-    Returns {station: {'avg': float|None, 'n': int}} for MS-* stations; 'avg' is
-    None when the window holds no usable readings for that station. Raises
-    GflAirFetchError on any fetch/HTTP/ArcGIS-error (via _query) — a failed average
-    query must NEVER be read as '0 ppb'; the watcher skips the average alert and warns.
+    """Per-station TRAILING-WINDOW H2S average over the last `hours` (readings with
+    Date > now - hours). Returns {station: {'avg': float|None, 'n': int}} for MS-*
+    stations; 'avg' is None when the window holds no usable readings for that station.
+    Raises GflAirFetchError on any fetch/HTTP/ArcGIS-error or a truncated result — a
+    failed average query must NEVER be read as '0 ppb'; the watcher skips the average
+    alert and warns.
 
     The 72 ppb H2S action level is itself a 24-HOUR AVERAGE level (Michigan ITSL /
     Ridge Wood published level; ADR 014 decision 4), so the H2S exceedance ALERT is
     driven by this rolling average, not a single instantaneous hour.
 
-    ⚠️ TIMEZONE TRAP (spike-verified 2026-07-18, live feed) — DO NOT change the
-    `date '...'` literal below to `TIMESTAMP '...'`. Layer 4's `dateFieldsTimeReference`
-    is fixed Eastern Standard Time (UTC-5, DST-insensitive), and ArcGIS interprets a
-    `TIMESTAMP` literal in THAT field timezone — so a UTC-computed cutoff would land
-    ~5h late and this "24-hour" window would silently become a ~19-hour one. The
-    standardized-query `date 'YYYY-MM-DD HH:MM:SS'` literal is interpreted in UTC
-    (verified: it returns the exact UTC-24h row set, matching a client-side epoch
-    computation to 1e-6 across all six stations). Raw-epoch `Date > <ms>` is rejected
-    HTTP 400 (ADR 014 decision 1), so `date` is the one correct form.
-
-    The sentinel (config `sentinels.h2s_ppb`, default 999 — ambiguous no-data /
-    off-scale) is excluded in the WHERE so a no-data marker can't corrupt the
-    average; BDL readings (0.0) correctly count as reported. Cheap (bounded window)."""
+    Computed on the CLIENT from one bounded row fetch (~6 stations x `hours` rows) so the
+    window is exact by epoch regardless of how the server parses date literals (ADR 014
+    addendum 2026-11-26: the old server-side grouped statistics used a `date '...'`
+    literal the server truncated to midnight EST, so "24 hours" was really 19-43). A
+    reading that is not a real measurement (missing, the configured H2S sentinel, or the
+    TEST marker — is_no_data) is excluded; BDL readings (0.0) correctly count as reported."""
     c = _svc(cfg_gfl)
-    now = now or datetime.now(timezone.utc)
-    cutoff = _utc_date_literal(now, hours)
-    sentinel = (cfg_gfl.get("sentinels") or {}).get("h2s_ppb", DEFAULT_SENTINEL_H2S)
-    where = f"Date > date '{cutoff}'"
-    if sentinel is not None:
-        where += f" AND H2S <> {float(sentinel):g}"   # keep the no-data sentinel out
-    data = _query(c["service_url"], c["readings_layer"], {
-        "where": where,
-        "groupByFieldsForStatistics": "LocName",
-        "outStatistics": json.dumps([
-            {"statisticType": "avg", "onStatisticField": "H2S",
-             "outStatisticFieldName": "avgH2S"},
-            {"statisticType": "count", "onStatisticField": "H2S",
-             "outStatisticFieldName": "n"},
-        ]),
-        "returnGeometry": "false",
-    })
-    out: dict[str, dict] = {}
-    for a in _features(data):
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    sentinels = cfg_gfl.get("sentinels") or {}
+    if "h2s_ppb" not in sentinels:
+        sentinels = {**sentinels, "h2s_ppb": DEFAULT_SENTINEL_H2S}
+    rows = _window_rows(c, "", now - timedelta(hours=int(hours)), None,
+                        "LocName,Date,H2S,H2S_Text")
+    acc: dict[str, list[float]] = {}
+    for a in rows:
         st = (a.get("LocName") or "").strip()
-        if station_prefix and not st.startswith(station_prefix):
+        if not st or (station_prefix and not st.startswith(station_prefix)):
             continue
-        if not st:
+        bucket = acc.setdefault(st, [])
+        if is_no_data(a, "h2s", sentinels):
             continue
-        n_raw = a.get("n")
-        try:
-            n = int(n_raw) if n_raw is not None else 0
-        except (TypeError, ValueError):
-            n = 0
-        out[st] = {"avg": _as_float(a.get("avgH2S")), "n": n}
-    return out
-
-
-def _epoch_ms_to_utc_date_literal(ms: int) -> str:
-    """An epoch-ms instant as an ArcGIS standardized-query `date` literal
-    ('YYYY-MM-DD HH:MM:SS'), interpreted in UTC (same rationale as
-    _utc_date_literal / fetch_h2s_window_avg's TIMEZONE TRAP note — NOT a TIMESTAMP
-    literal, which the layer would read in its fixed-EST field tz)."""
-    return datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        bucket.append(float(gas_value(a, "h2s")))
+    return {st: {"avg": (sum(v) / len(v)) if v else None, "n": len(v)} for st, v in acc.items()}
 
 
 def fetch_station_coords(cfg_gfl: dict, *, station_prefix: str = DEFAULT_STATION_PREFIX) -> dict:
@@ -375,24 +400,20 @@ def fetch_station_window(cfg_gfl: dict, station: str, center_epoch_ms: int,
                          hours: int) -> list[dict]:
     """BEST-EFFORT ±`hours` context readings for ONE station around `center_epoch_ms`
     (the flagged reading's epoch), OLDEST-first — the "2 hours before and after"
-    context table Model A carries. One small windowed query on the readings layer,
-    with a UTC `date` literal (NOT TIMESTAMP — the fixed-EST trap). Raises
+    context table Model A carries. One small windowed query on the readings layer
+    (padded TIMESTAMP filter in the layer's fixed-EST zone, then an exact epoch filter
+    on the client; ADR 014 addendum 2026-11-26). Raises
     GflAirFetchError on failure; the caller treats the context table as best-effort
     (a live event's +2h rows may not exist yet). Station names are the feed's own
     MS-* values; a defensive quote-strip keeps the WHERE literal well-formed."""
     c = _svc(cfg_gfl)
-    span_ms = int(hours) * 3600 * 1000
-    start = _epoch_ms_to_utc_date_literal(center_epoch_ms - span_ms)
-    end = _epoch_ms_to_utc_date_literal(center_epoch_ms + span_ms)
+    span = timedelta(hours=int(hours))
+    center = datetime.fromtimestamp(int(center_epoch_ms) / 1000, tz=timezone.utc)
     st = str(station).replace("'", "")
-    data = _query_readings(c["service_url"], c["readings_layer"], {
-        "where": f"LocName = '{st}' AND Date >= date '{start}' AND Date <= date '{end}'",
-        "outFields": _READING_FIELDS,
-        "orderByFields": "Date ASC",
-        "returnGeometry": "false",
-        "resultRecordCount": 2 * int(hours) + 6,
-    })
-    return _features(data)
+    # [center - span, center + span] inclusive: the open lower bound of _window_rows is
+    # nudged back 1 ms so the reading exactly `hours` before the centre is kept.
+    return _window_rows(c, f"LocName = '{st}'", center - span - timedelta(milliseconds=1),
+                        center + span, _CORE_READING_FIELDS, end_inclusive=True)
 
 
 # ---------------------------------------------------------------------------
@@ -495,8 +516,8 @@ def is_no_data(row: dict, gas: str, sentinels: Optional[dict] = None) -> bool:
     marker. The TEST clause matters because the numeric sentinel config excludes 999
     for H2S but only 99999 for CH4, while the feed's CH4=999 fault rows all carry
     CH4_Text='TEST' (spike 2026-09-10) — so without it a maintenance/test reading
-    would flag as a real methane action-level crossing. Scoped to the episode tier;
-    the exceedance-tier paths are unchanged. See ADR 039."""
+    would flag as a real methane action-level crossing. The exceedance tier applies the
+    same TEST rule in classify_reading / reading_to_measurements (2026-11-26). See ADR 039."""
     val = gas_value(row, gas)
     if val is None:
         return True
@@ -548,17 +569,34 @@ def classify_reading(row: dict, thresholds: dict, sentinels: Optional[dict] = No
                 f"{field}={val:g} is a {SENTINEL_REASON} (ambiguous — surfaced as anomaly)")
             _bump("anomaly")
             continue
+        if gas_text(row, key).upper() == NO_DATA_TEXT:
+            # The source's TEST marker: a maintenance/test row, not a measurement (e.g. the
+            # CH4=999 TEST rows, which would otherwise classify as >= 500 ppm). Surfaced as
+            # an anomaly like a numeric sentinel, never as an exceedance (ADR 039 residual 2,
+            # closed 2026-11-26). The reason carries SENTINEL_REASON so the
+            # alert_on_sentinel=False filter strips it like any other sentinel detail.
+            result[key] = (val, "sentinel")
+            result["reasons"].append(
+                f"{field}={val:g} is a {SENTINEL_REASON} (source marks it {NO_DATA_TEXT} — surfaced as anomaly)")
+            _bump("anomaly")
+            continue
         thr = thresholds.get(cfgkey)
         wthr = watch.get(cfgkey)
+        # The source's own word label for this value (e.g. ERR), shown verbatim beside a
+        # flagged value so a reader sees what the feed itself says about it. Alerting is
+        # unchanged (fail-safe: an ERR-labelled value above a level still alerts).
+        _txt = gas_text(row, key)
+        _lab = (f" (source label: {_txt})"
+                if _txt and not _txt.replace(".", "", 1).lstrip("-").isdigit() else "")
         if thr is not None and val >= float(thr):
             result[key] = (val, "exceedance")
-            result["reasons"].append(f"{field}={val:g} >= action level {float(thr):g}")
+            result["reasons"].append(f"{field}={val:g} >= action level {float(thr):g}{_lab}")
             _bump("urgent")
         elif wthr is not None and val >= float(wthr):
             result[key] = (val, "watch")
             _below = f" (below the {float(thr):g} action level)" if thr is not None else ""
             result["reasons"].append(
-                f"{field}={val:g} >= watch level {float(wthr):g}, early-warning{_below}")
+                f"{field}={val:g} >= watch level {float(wthr):g}, early-warning{_below}{_lab}")
             _bump("watch")
         else:
             result[key] = (val, "ok")
@@ -622,6 +660,8 @@ def reading_to_measurements(
         val = _as_float(row.get(field))
         if val is None or _is_sentinel(val, sent.get(cfgkey)):
             continue
+        if (row.get(f"{field}_Text") or "").strip().upper() == NO_DATA_TEXT:
+            continue          # a TEST row is not a measured value (ADR 039 residual 2, closed)
         out.append({
             "metric": metric,
             "value": val,
