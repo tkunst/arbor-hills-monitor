@@ -404,6 +404,21 @@ behavior, update its entry here in the same PR.
   so every urgent item appears in two consecutive digests under "URGENT ITEMS
   FROM THE PAST TWO WEEKS". An attempted-but-unsent digest still counts, as it
   already does for `pending_digest`.
+  **HTML digest, layout B (2026-11-26, Trisha):** `send_digest` sends plain
+  text + HTML (multipart/alternative) built by `digest_render.py`: sections
+  urgent (past two weeks) → correspondence → deadlines and notices → other
+  notable → other routine, newest first by document date; a count line that
+  matches the sections; no risk codes (design-system rule: subscribers never
+  see the register); design-system colors and the letterhead mark (hosted at
+  `site/img/letterhead-mark-96.png`, absolute URL, because Gmail blocks SVG and
+  data URIs). `send_email(html=..., footer_show_address=...)` is backward
+  compatible (html=None sends exactly as before); a non-owner's HTML part gets
+  the footer in `digest_render.FOOTER_SLOT`, owners get none. The digest's
+  footer drops "(this address: …)"; other streams keep it. Above 85 KB the
+  HTML drops the oldest routine (then notable, deadline, correspondence) rows
+  behind an "…and N more" line so Gmail's ~102 KB clip never hides the footer;
+  the urgent recap is never trimmed and the text part lists everything.
+  Subject keeps its "Arbor Hills N2688 digest" prefix; em-dash → colon.
   **coder:keydatapoint-guard (2026-10-17):** `is_urgent()` is now the bool of
   one `_urgency_decision()`, whose reasons `urgency_reason()` joins, so the two
   can't drift. `format_urgent_body(..., cfg)` prints "Urgent because: …" next

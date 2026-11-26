@@ -378,99 +378,25 @@ def format_urgent_body(parsed, metadata: dict, link: str, cfg: dict | None = Non
     )
 
 
-def digest_date(metadata: dict) -> str:
-    """The date the digest shows and sorts by: the date printed on the document
-    (`document_date`, ADR 065), else nSITE's Date Filed. Both are ISO strings,
-    so they sort as text."""
-    return metadata.get("document_date") or metadata.get("date_filed") or ""
-
-
-def _digest_date_label(metadata: dict) -> str:
-    """Printed date for one digest line. A fallback to Date Filed is labeled
-    "filed ..." so a reader never mistakes a filing date for the document's."""
-    if metadata.get("document_date"):
-        return metadata["document_date"]
-    filed = metadata.get("date_filed") or ""
-    return f"filed {filed}" if filed else ""
-
-
-def _newest_first(items: list[dict]) -> list[dict]:
-    """Sort digest items newest first by digest_date(). Stable, so items with
-    the same date keep their queue order; an item with no date sorts last."""
-    return sorted(items, key=lambda it: digest_date(it["metadata"]), reverse=True)
+# Digest dates live in digest_render (shared by the text and HTML bodies).
+from digest_render import digest_date  # noqa: E402,F401  (re-exported for callers/tests)
 
 
 def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None,
-                       announcement: str = "") -> str:
-    """items: [{parsed, metadata, link}]. Procedural items (deadlines and notices) first.
+                       announcement: str = "", send_date=None) -> str:
+    """The digest's PLAIN-TEXT body. items / urgent_recap: [{parsed, metadata,
+    link}]; recap metadata also carries 'urgent_sent_at'. Rendered by
+    digest_render.render_text, which holds the section rules (layout B,
+    2026-11-26): urgent items from the past two weeks, correspondence and
+    enforcement (ADR 065), deadlines and notices, other notable, other
+    routine, each newest first by the document's own date, no risk codes.
 
-    urgent_recap: same shape, plus each item's metadata carries
-    'urgent_sent_at' — a recap of items sent as their own same-day [URGENT]
-    email to the urgent-tier list. Rendered FIRST. NOTE: the header deliberately
-    does NOT say the items were "already emailed separately" — digest-only
-    recipients (e.g. DIGEST_RECIPIENTS_EXTRA — the commissioners) do NOT receive
-    the same-day [URGENT] emails, so for them this recap is their FIRST sighting,
-    not a repeat; claiming otherwise would be false. The 'Sent <date>' line still
-    records when the urgent email went to the urgent-tier list.
-
-    ADR 065: an item whose `parsed.is_correspondence` is True (a generic-titled
-    EGLE letter is_correspondence_letter() flagged as substantive — see that
-    function) gets pinned to its OWN "CORRESPONDENCE & ENFORCEMENT" section,
-    right after the urgent recap and before the ordinary procedural/other
-    split — the rescue this feature exists for: such an item no longer
-    renders in "OTHER NEW DOCUMENTS" at all (pulled out, not also-listed).
-
-    Every section lists its items newest first by digest_date() (the document's
-    own date, else Date Filed), and each line prints that date."""
-    lines = []
-    if announcement:
-        # Trisha-set promo/notice (config `digest_announcement`), rendered first.
-        lines += ["ANNOUNCEMENT:", *[f"  {ln}" if ln else "" for ln in announcement.strip().splitlines()], ""]
-    if not items and not urgent_recap:
-        return "\n".join(lines + ["No new Arbor Hills (N2688) documents this period."])
-    if urgent_recap:
-        lines.append("URGENT ITEMS FROM THE PAST TWO WEEKS:")
-        for it in _newest_first(urgent_recap):
-            p, m = it["parsed"], it["metadata"]
-            sent_at = m.get("urgent_sent_at", "")
-            lines.append(f"  - Sent {sent_at}  {m.get('document_name','')}")
-            lines.append(f"      {p.key_data_point}")
-            lines.append(f"      {it['link']}")
-        lines.append("")
-    items = _newest_first(items)
-    correspondence = [it for it in items if getattr(it["parsed"], "is_correspondence", False)]
-    remaining = [it for it in items if not getattr(it["parsed"], "is_correspondence", False)]
-    if correspondence:
-        lines.append("CORRESPONDENCE & ENFORCEMENT (EGLE letter under a generic filing title):")
-        for it in correspondence:
-            p, m = it["parsed"], it["metadata"]
-            lines.append(f"  - {_digest_date_label(m)}  {m.get('document_name','')}")
-            lines.append(f"      {p.key_data_point}")
-            lines.append(f"      {it['link']}")
-        lines.append("")
-    procedural = [it for it in remaining if it["parsed"].doc_type == "procedural"]
-    others = [it for it in remaining if it["parsed"].doc_type != "procedural"]
-    lines += [f"Arbor Hills (N2688) digest — {len(items)} new document(s).", ""]
-    if procedural:
-        lines.append("DEADLINES AND NOTICES:")
-        for it in procedural:
-            p, m = it["parsed"], it["metadata"]
-            lines.append(f"  - {_digest_date_label(m)}  {m.get('document_name','')}")
-            lines.append(f"      {p.key_data_point}")
-            lines.append(f"      {it['link']}")
-        lines.append("")
-    if others:
-        lines.append("OTHER NEW DOCUMENTS:")
-        for it in others:
-            p, m = it["parsed"], it["metadata"]
-            risks = ", ".join(p.risks) or "-"
-            lines.append(
-                f"  - {_digest_date_label(m)}  [{p.doc_type}/{p.severity}/{risks}]  "
-                f"{m.get('document_name','')}"
-            )
-            lines.append(f"      {p.key_data_point}")
-            lines.append(f"      {it['link']}")
-    return "\n".join(lines)
+    The urgent-recap header deliberately does NOT say the items were "already
+    emailed separately": digest-only recipients (DIGEST_RECIPIENTS_EXTRA) never
+    got the same-day [URGENT] email, so for them this is the first sighting."""
+    import digest_render
+    return digest_render.render_text(items, urgent_recap, announcement=announcement,
+                                     send_date=send_date)
 
 
 # ---------------------------------------------------------------------------
@@ -626,23 +552,34 @@ def build_list_unsubscribe(mailto: str, recipient: str) -> str:
     return f"<mailto:{addr}?subject={subj}&body={body}>"
 
 
-def unsubscribe_footer(cfg: dict, mailto: str, postal: str, recipient: str) -> str:
-    """The opt-out footer: why they receive it, how to opt out (of ALL monitor
-    mail), a clear sender identity, and — only if configured — a physical postal
-    address. A working opt-out is the one required element for these advocacy
-    alerts; the postal line is optional and omitted when unset (Trisha's call).
-    Uses the standard '-- ' signature separator."""
+def _footer_parts(cfg: dict) -> tuple[str, str]:
     u = cfg.get("unsubscribe") or {}
     sender = (u.get("sender_identity") or "Arbor Hills Monitor").strip()
     reason = (u.get("receiving_reason")
               or "You are receiving this because your address was added to the "
                  "Arbor Hills Monitor alert list.").strip()
+    return sender, reason
+
+
+def unsubscribe_footer(cfg: dict, mailto: str, postal: str, recipient: str,
+                       show_address: bool = True) -> str:
+    """The opt-out footer: why they receive it, how to opt out (of ALL monitor
+    mail), a clear sender identity, and — only if configured — a physical postal
+    address. A working opt-out is the one required element for these advocacy
+    alerts; the postal line is optional and omitted when unset (Trisha's call).
+    Uses the standard '-- ' signature separator.
+
+    show_address=False drops "(this address: ...)": the Sunday digest omits it
+    (Trisha, 2026-11-26, "confusing and unnecessary"); the List-Unsubscribe
+    header's mailto body still carries the exact address for triage."""
+    sender, reason = _footer_parts(cfg)
     postal_line = f"{postal}\n" if postal else ""
+    this_address = f" (this address: {recipient})" if show_address else ""
     return (
         "\n\n-- \n"
         f"{reason}\n"
         f"To unsubscribe from all Arbor Hills Monitor emails, reply to "
-        f"this message or email {mailto} (this address: {recipient}).\n"
+        f"this message or email {mailto}{this_address}.\n"
         f"{sender}\n"
         f"{postal_line}"
     )
@@ -674,8 +611,26 @@ def redact_smtp_error(e: BaseException) -> str:
     return " / ".join(parts)
 
 
+def _with_html_footer(html_body: str, cfg: dict, mailto: str, postal: str) -> str:
+    """Put the non-owner unsubscribe footer (ADR 040) into the HTML body's
+    footer slot, or before </body> when the body has no slot."""
+    import digest_render
+    sender, reason = _footer_parts(cfg)
+    row = digest_render.footer_html(reason, mailto, sender, postal)
+    if digest_render.FOOTER_SLOT in html_body:
+        return html_body.replace(digest_render.FOOTER_SLOT, row, 1)
+    return html_body.replace("</body>", row + "</body>", 1)
+
+
+def _html_without_slot(html_body: str) -> str:
+    """Owner copies (and unarmed sends) get no footer: drop the empty slot."""
+    import digest_render
+    return html_body.replace(digest_render.FOOTER_SLOT, "")
+
+
 def send_email(subject: str, body: str, cfg: dict, recipients: list | None = None,
-               log_subject: bool = True) -> bool:
+               log_subject: bool = True, html: str | None = None,
+               footer_show_address: bool = True) -> bool:
     """Send to all configured recipients via SMTP (TLS). No-op with a warning if
     SMTP env vars are missing (so a dry/local run doesn't crash) — returns False
     in that case, True once at least one message was actually handed to the SMTP
@@ -716,6 +671,12 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
       * The URGENT path always includes an owner (arbor-hills@…), so suppression
         and the fail-safe can never empty it → never a spurious False → never a
         silently-unsent-and-unrecapped urgent doc.
+
+    `html` (optional) adds an HTML alternative part (multipart/alternative);
+    a non-owner's copy gets the footer in both parts, in the HTML body's
+    digest_render.FOOTER_SLOT. `footer_show_address=False` leaves "(this
+    address: ...)" out of the footer (the Sunday digest). With html=None and
+    the default footer the message is exactly as before.
 
     `log_subject=False` keeps the subject out of this function's own log lines
     (the Actions log is public): the owner-only emails (owner_notices.py)
@@ -773,10 +734,14 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
                 is_owner = (_norm_email(recipient) in owners
                             or _email_domain(recipient) in owner_domains)
                 out_body = body
+                out_html = html
                 add_unsub_header = False
                 if not is_owner:
                     if armed:
-                        out_body = body + unsubscribe_footer(cfg, mailto, postal, recipient)
+                        out_body = body + unsubscribe_footer(cfg, mailto, postal, recipient,
+                                                             show_address=footer_show_address)
+                        if html is not None:
+                            out_html = _with_html_footer(html, cfg, mailto, postal)
                         add_unsub_header = True
                     elif owners:
                         # We can positively tell this is a third party AND there is no
@@ -806,6 +771,8 @@ def send_email(subject: str, body: str, cfg: dict, recipients: list | None = Non
                         # backend — mailto is the compliant mechanism.
                         msg["List-Unsubscribe"] = build_list_unsubscribe(mailto, recipient)
                     msg.set_content(out_body)
+                    if out_html is not None:
+                        msg.add_alternative(_html_without_slot(out_html), subtype="html")
                 except ValueError:
                     skipped_headers += 1
                     continue
@@ -956,12 +923,32 @@ def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = 
     line on purpose — the header still reads as "N new documents"; the recap
     section inside the body is what surfaces the urgent items.
 
+    Sent as plain text plus HTML (digest_render, layout B, 2026-11-26).
+
     Returns send_email's result (False = nothing handed to SMTP), so the
     watcher can record a skipped digest for the owner weekly email."""
-    subject = f"Arbor Hills N2688 digest — {len(items)} new document(s)"
+    import digest_render
+    # Prefix kept exactly ("Arbor Hills N2688 digest") for inbox filters; the
+    # em-dash became a colon (design system: no em-dashes in public text).
+    subject = f"Arbor Hills N2688 digest: {len(items)} new document(s)"
     recipients = merge_extra_recipients(resolve_recipients(cfg), "DIGEST_RECIPIENTS_EXTRA")
-    body = format_digest_body(items, urgent_recap, announcement=active_digest_announcement(cfg))
-    return send_email(subject, body, cfg, recipients=recipients)
+    announcement = active_digest_announcement(cfg)
+    send_date = _detroit_today()
+    body = format_digest_body(items, urgent_recap, announcement=announcement, send_date=send_date)
+    html_body = digest_render.render_html(items, urgent_recap, announcement=announcement,
+                                          send_date=send_date)
+    return send_email(subject, body, cfg, recipients=recipients, html=html_body,
+                      footer_show_address=False)
+
+
+def _detroit_today():
+    """Today's date in America/Detroit (the digest's printed date)."""
+    import datetime as _dt
+    try:
+        from zoneinfo import ZoneInfo
+        return _dt.datetime.now(ZoneInfo("America/Detroit")).date()
+    except Exception:  # noqa: BLE001 — tz data missing: fall back to UTC date
+        return _dt.datetime.utcnow().date()
 
 
 def active_digest_announcement(cfg: dict, today=None) -> str:

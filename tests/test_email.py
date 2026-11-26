@@ -106,7 +106,7 @@ def test_send_digest_with_no_extra_uses_resolve_recipients(monkeypatch):
     monkeypatch.delenv("DIGEST_RECIPIENTS_EXTRA", raising=False)
     sent = []
     monkeypatch.setattr(ea, "send_email",
-                        lambda subj, body, c, recipients=None: sent.append(recipients))
+                        lambda subj, body, c, recipients=None, **kw: sent.append(recipients))
     ea.send_digest([], _DIGEST_CFG)
     assert sent == [["base@x.com"]]
 
@@ -116,7 +116,7 @@ def test_send_digest_adds_digest_recipients_extra_on_top_of_the_full_list(monkey
     monkeypatch.setenv("DIGEST_RECIPIENTS_EXTRA", "commissioner@washtenaw.org, base@x.com")
     sent = []
     monkeypatch.setattr(ea, "send_email",
-                        lambda subj, body, c, recipients=None: sent.append(recipients))
+                        lambda subj, body, c, recipients=None, **kw: sent.append(recipients))
     ea.send_digest([], _DIGEST_CFG)
     assert sent == [["base@x.com", "commissioner@washtenaw.org"]]
 
@@ -152,7 +152,7 @@ def test_format_digest_body_with_no_recap_is_byte_identical_to_before():
     baseline = ea.format_digest_body(items)
     assert ea.format_digest_body(items, None) == baseline
     assert ea.format_digest_body(items, []) == baseline
-    assert "Arbor Hills (N2688) digest — 1 new document(s)." in baseline
+    assert "1 new document · 0 deadlines and notices · 1 notable." in baseline
     assert "URGENT ITEMS" not in baseline
 
 
@@ -164,16 +164,17 @@ def test_format_digest_body_empty_with_no_recap_is_unchanged():
 def test_format_digest_body_recap_only_still_renders_not_empty_message():
     body = ea.format_digest_body([], [_recap_item()])
     assert body != "No new Arbor Hills (N2688) documents this period."
-    assert "URGENT ITEMS FROM THE PAST TWO WEEKS:" in body
+    assert "URGENT ITEMS FROM THE PAST TWO WEEKS (1)" in body
     assert "already emailed separately" not in body  # digest-only members never got the urgent email
-    assert "Sent 2026-08-15T09:00:00  Urgent Doc" in body
+    assert "  - filed 2026-08-15  Urgent Doc" in body
+    assert "urgent alert sent 2026-08-15" in body
 
 
 def test_format_digest_body_recap_section_renders_before_procedural_and_other():
     body = ea.format_digest_body([_item()], [_recap_item()])
     recap_idx = body.index("URGENT ITEMS FROM THE PAST TWO WEEKS")
-    digest_idx = body.index("Arbor Hills (N2688) digest —")
-    assert recap_idx < digest_idx
+    other_idx = body.index("OTHER NEW DOCUMENTS")
+    assert recap_idx < other_idx
 
 
 def test_format_digest_body_recap_line_shows_sent_at_per_item():
@@ -181,8 +182,9 @@ def test_format_digest_body_recap_line_shows_sent_at_per_item():
         _recap_item(document_name="First", urgent_sent_at="2026-08-12T10:00:00"),
         _recap_item(document_name="Second", urgent_sent_at="2026-08-14T22:30:00"),
     ])
-    assert "Sent 2026-08-12T10:00:00  First" in body
-    assert "Sent 2026-08-14T22:30:00  Second" in body
+    first, second = body.index("First"), body.index("Second")
+    assert "urgent alert sent 2026-08-12" in body[first:second]
+    assert "urgent alert sent 2026-08-14" in body[second:]
 
 
 def test_send_digest_passes_urgent_recap_through_and_resolves_recipients(monkeypatch):
@@ -191,15 +193,15 @@ def test_send_digest_passes_urgent_recap_through_and_resolves_recipients(monkeyp
     seen = {}
     monkeypatch.setattr(
         ea, "format_digest_body",
-        lambda items, urgent_recap=None, announcement="": seen.update(items=items, urgent_recap=urgent_recap) or "body",
+        lambda items, urgent_recap=None, announcement="", send_date=None: seen.update(items=items, urgent_recap=urgent_recap) or "body",
     )
     sent = []
     monkeypatch.setattr(ea, "send_email",
-                        lambda subj, body, c, recipients=None: sent.append((subj, body, recipients)))
+                        lambda subj, body, c, recipients=None, **kw: sent.append((subj, body, recipients)))
     recap = [_recap_item()]
     ea.send_digest([], _DIGEST_CFG, urgent_recap=recap)
     assert seen == {"items": [], "urgent_recap": recap}
-    assert sent == [("Arbor Hills N2688 digest — 0 new document(s)", "body", ["base@x.com"])]
+    assert sent == [("Arbor Hills N2688 digest: 0 new document(s)", "body", ["base@x.com"])]
 
 
 # --- ADR 065: correspondence & enforcement digest section ------------------
@@ -286,7 +288,7 @@ def _correspondence_item(document_name="EGLE letter: HOV renewal"):
 
 def test_format_digest_body_correspondence_pinned_section_renders():
     body = ea.format_digest_body([_correspondence_item(), _item()])
-    assert "CORRESPONDENCE & ENFORCEMENT" in body
+    assert "CORRESPONDENCE AND ENFORCEMENT (1): EGLE letter under a generic filing title" in body
     assert "EGLE letter: HOV renewal" in body
 
 
@@ -299,15 +301,14 @@ def test_format_digest_body_correspondence_item_not_duplicated_in_other_section(
 
 def test_format_digest_body_no_correspondence_items_omits_section():
     body = ea.format_digest_body([_item()])
-    assert "CORRESPONDENCE & ENFORCEMENT" not in body
+    assert "CORRESPONDENCE AND ENFORCEMENT" not in body
 
 
 def test_format_digest_body_correspondence_renders_after_urgent_recap():
     body = ea.format_digest_body([_correspondence_item()], [_recap_item()])
     recap_idx = body.index("URGENT ITEMS FROM THE PAST TWO WEEKS")
-    corr_idx = body.index("CORRESPONDENCE & ENFORCEMENT")
-    digest_idx = body.index("Arbor Hills (N2688) digest —")
-    assert recap_idx < corr_idx < digest_idx
+    corr_idx = body.index("CORRESPONDENCE AND ENFORCEMENT")
+    assert recap_idx < corr_idx
 
 
 def test_format_digest_body_missing_is_correspondence_attr_is_false(monkeypatch):
@@ -315,7 +316,7 @@ def test_format_digest_body_missing_is_correspondence_attr_is_false(monkeypatch)
     # ADR 065) has no is_correspondence key -- getattr's default must keep
     # that item in the ordinary flow, not raise.
     body = ea.format_digest_body([_item()])
-    assert "CORRESPONDENCE & ENFORCEMENT" not in body
+    assert "CORRESPONDENCE AND ENFORCEMENT" not in body
 
 
 def test_send_urgent_alert_never_sees_digest_recipients_extra(monkeypatch):
@@ -325,7 +326,7 @@ def test_send_urgent_alert_never_sees_digest_recipients_extra(monkeypatch):
     monkeypatch.setenv("DIGEST_RECIPIENTS_EXTRA", "commissioner@washtenaw.org")
     sent = []
     monkeypatch.setattr(ea, "send_email",
-                        lambda subj, body, c, recipients=None: sent.append(recipients))
+                        lambda subj, body, c, recipients=None, **kw: sent.append(recipients))
     ea.send_urgent_alert(_doc(severity="urgent"), {"document_name": "x"}, "http://x", _DIGEST_CFG)
     assert sent == [None]  # send_urgent_alert passes no explicit recipients -> resolve_recipients only
 
@@ -659,7 +660,7 @@ def test_digest_procedural_heading_is_deadlines_and_notices():
                   page_count=1, measurements=[])
     body = ea.format_digest_body([{"parsed": p, "metadata": {"date_filed": "2026-10-15",
                                    "document_name": "Notice"}, "link": "https://x"}])
-    assert "DEADLINES AND NOTICES:" in body
+    assert "DEADLINES AND NOTICES (1)" in body
     assert "ACTION ITEMS" not in body
 
 
@@ -718,7 +719,7 @@ def test_send_digest_includes_active_announcement(monkeypatch):
     monkeypatch.setattr(ea, "active_digest_announcement", lambda cfg, today=None: "Launch note")
     bodies = []
     monkeypatch.setattr(ea, "send_email",
-                        lambda subj, body, c, recipients=None: bodies.append(body))
+                        lambda subj, body, c, recipients=None, **kw: bodies.append(body))
     ea.send_digest([], _ann_cfg())
     assert bodies and bodies[0].startswith("ANNOUNCEMENT:\n  Launch note")
 
@@ -740,13 +741,13 @@ def test_digest_date_prefers_document_date_and_falls_back_to_filed():
 
 def test_format_digest_body_prints_document_date_not_filed_date():
     body = ea.format_digest_body([_dated_item("RCA", "2026-11-20", "2026-09-25")])
-    assert "  - 2026-09-25  [" in body
+    assert "  - 2026-09-25  RCA" in body
     assert "2026-11-20" not in body
 
 
 def test_format_digest_body_labels_a_filed_date_fallback():
     body = ea.format_digest_body([_dated_item("No dateline", "2026-11-20")])
-    assert "  - filed 2026-11-20  [" in body
+    assert "  - filed 2026-11-20  No dateline" in body
 
 
 def test_format_digest_body_sorts_newest_first_by_document_date():

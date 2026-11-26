@@ -415,7 +415,15 @@ def test_digest_stream_suppression_and_apparatus(monkeypatch):
     assert "dropme@example.org" not in msgs             # suppressed
     assert msgs[OWNER]["List-Unsubscribe"] is None      # owner clean
     assert msgs[COMMISSIONER]["List-Unsubscribe"] is not None
-    assert POSTAL in msgs[COMMISSIONER].get_content()
+    commissioner = msgs[COMMISSIONER]
+    text = commissioner.get_body(("plain",)).get_content()
+    html = commissioner.get_body(("html",)).get_content()
+    assert POSTAL in text and POSTAL in html            # footer in both parts
+    assert MAILTO in html
+    assert "(this address:" not in text                 # digest omits it (2026-11-26)
+    owner = msgs[OWNER]
+    assert "AHM-UNSUBSCRIBE-FOOTER" not in owner.get_body(("html",)).get_content()
+    assert MAILTO not in owner.get_body(("html",)).get_content()   # owners: no footer
 
 
 def test_watch_stream_suppression_and_apparatus(monkeypatch):
