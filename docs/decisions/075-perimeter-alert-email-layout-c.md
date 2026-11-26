@@ -1,6 +1,6 @@
 # ADR 075: Perimeter-air alert emails, layout C — one daily-run screening email, HTML + text
 
-**Status:** accepted (2026-11-26) · **Stream E** (`gfl_air`) · supersedes ADR 039 §4 (two
+**Status:** accepted and live (2026-11-26; merged after Trisha reviewed a CI test send) · **Stream E** (`gfl_air`) · supersedes ADR 039 §4 (two
 emails per run), ADR 039 §2's mandatory-wording list, and ADR 039's 2026-09-11
 benchmark-reference addendum. ADR 039's episode engine, thresholds and episode log are
 unchanged. Session AHM-AlertsRedesign; mockups and every decision below were reviewed by
@@ -125,3 +125,12 @@ flagged reading with the feed's label in a grey box (e.g. "source: ERR").
   note and `config.yml` are updated.
 - Detection limits are inferred from the feed's labels (H2S < 7 ppb, methane ≤ 0 ppm);
   the source publishes none.
+
+## Verification (2026-11-26)
+
+- Real past runs (2026-11-22, 2026-09-14, 2026-09-29) rendered through the real code path
+  match the approved mockups; HTML sizes 40 / 49 / 40 KB.
+- CI test send: `scoped-test-send` gained a read-only `gfl-air` mode (replays the most
+  recent 24-hour run window with an episode from the live feed, subscriber footer shown,
+  `[TEST]` subject prefix, one recipient). Run 45905579083 delivered the Nov 21–22 replay to
+  Trisha's owner inbox; she approved it ("It looks great").
