@@ -458,6 +458,7 @@ def test_route_hand_curated_not_urgent_queues_to_pending_digest(monkeypatch):
     assert sent == []  # no email attempted at all for a non-urgent doc
     assert len(state["pending_digest"]) == 1
     assert state["pending_digest"][0]["document_name"] == "Test Doc"
+    assert state["pending_digest"][0]["document_date"] == "2026-09-20"   # hand-entered doc date
     assert "urgent_sent_at" not in state["pending_digest"][0]
     assert state["pending_urgent_recap"] == []
 
