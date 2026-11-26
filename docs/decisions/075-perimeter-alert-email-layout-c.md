@@ -95,7 +95,9 @@ Removed or changed by Trisha:
   local times), which mirror the perimeter-air dataset's data-quality note — "the same
   rules as our data quality note for the data set uses" (Trisha): a constant non-zero H2S
   value for months, or a constant 0.0 for more than a year while neighbours vary — plus
-  any value the feed labels ERR. Update the config list whenever the note changes.
+Update the config list whenever the note changes.
+- A value the feed labels **ERR** is NOT a suspect sensor (Trisha changed her ruling the same
+  day): it shows the same grey box as BDL, reading "source: ERR", and never sets a max.
 - A suspect, BDL (H2S) or no-data value never sets a max. A max that is not an episode
   peak listed below carries its station and time (CLAUDE.md "Assumptions": every max
   carries its reading's own date) — e.g. a methane-only run's H2S max.
@@ -105,7 +107,7 @@ Removed or changed by Trisha:
 
 Same look, HTML part added; subjects, triggers, recipients and plain text unchanged
 except "GFL's OWN self-reported" → "GFL's self-reported". The urgent HTML shows each
-flagged reading with the feed's label ("suspect sensor · source: ERR" for ERR).
+flagged reading with the feed's label in a grey box (e.g. "source: ERR").
 
 ## Consequences
 

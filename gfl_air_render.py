@@ -30,8 +30,10 @@ Accuracy rules this module holds (data layer):
   * A value the source marks BDL never shows its number and never counts as an H2S max.
   * No-data (missing / sentinel / TEST, gc.is_no_data) is never a value, never a max.
   * Suspect sensor = a channel inside a configured period (gfl_air.suspect_sensors, the
-    perimeter-air dataset's data-quality note) or a value the feed labels ERR. A suspect
-    value never sets a max; it is shown as the feed reports it in the grid colour only.
+    perimeter-air dataset's data-quality note). A suspect value never sets a max; it is
+    shown as the feed reports it in the grid colour only.
+  * A value the feed labels ERR shows the same grey box as BDL, reading "source: ERR"
+    (Trisha 2026-11-26), and never sets a max.
   * Any max carries its reading's station and time unless it is an episode peak listed
     below with its time (CLAUDE.md "Assumptions").
   * Every filer-supplied string is escaped; only http(s) links become hrefs.
@@ -215,9 +217,7 @@ def in_period(periods: list[dict], station: str, gas: str, iso: str) -> dict | N
 
 
 def is_suspect(periods, row: dict, gas: str) -> bool:
-    """A suspect reading: inside a configured period, or the feed labels it ERR."""
-    if gc.gas_text(row, gas).upper() == "ERR":
-        return True
+    """A suspect reading: inside a configured suspect-sensor period."""
     return in_period(periods, gc.station_of(row), gas, gc.reading_iso(row)) is not None
 
 
@@ -243,6 +243,8 @@ def run_max(series: dict, gas: str, sentinels, periods) -> tuple | None:
             if gc.is_no_data(r, gas, sentinels) or is_suspect(periods, r, gas):
                 continue
             if gas == "h2s" and gc.gas_text(r, gas).upper() == "BDL":
+                continue
+            if gc.gas_text(r, gas).upper() == "ERR":     # the feed marks the value an error
                 continue
             v = gc.gas_value(r, gas)
             if v is not None and (best is None or v > best[0]):
@@ -303,8 +305,6 @@ def build(*, opened, closed, state_after, readings, monitor_rows, watch_threshol
         if any(in_period([p], p["station"], p["gas"], h) for h in run_hours) and \
                 p["station"] in series:
             stuck.append(p)
-    err_channels = sorted({(st, g) for st, by in series.items() for r in by.values() for g in gc.GASES
-                           if gc.gas_text(r, g).upper() == "ERR"})
 
     subj_stations = sorted({x["station"] for x in list(opened) + list(closed)})
     span_isos = [x.get("opened_at", "") for x in opened] + [x.get("cleared_at", "") for x in closed]
@@ -323,7 +323,7 @@ def build(*, opened, closed, state_after, readings, monitor_rows, watch_threshol
         "peaks": peaks, "stations": stations, "monitor_rows": monitor_rows, "reporting": reporting,
         "n_expected": n_expected, "missing": missing, "unexpected": unexpected, "legacy": legacy,
         "n_rows": len(monitor_rows),
-        "registry_available": registry_available, "stuck": stuck, "err_channels": err_channels,
+        "registry_available": registry_available, "stuck": stuck,
         "periods": periods, "sentinels": sentinels, "wt": watch_thresholds or {},
         "retrieved": retrieved_iso, "coords": coords or {}, "link": link, "historical": historical,
     }
@@ -456,8 +456,10 @@ def latest_cell(m: dict, row: dict, gas: str) -> tuple[str, str]:
     st_period = in_period(m["periods"], row["station"], gas, row.get("as_of", ""))
     if g["no_data"]:
         return "nodata", "no data"
-    if st_period or (g.get("text") or "").upper() == "ERR":
+    if st_period:
         return "suspect", "suspect sensor"
+    if (g.get("text") or "").upper() == "ERR":
+        return "bdl", "source: ERR"          # same grey box as BDL (Trisha 2026-11-26)
     if g["over"]:
         return "above", num(g["val"])
     if (g.get("text") or "").upper() == "BDL":
@@ -507,7 +509,6 @@ def event_pairs(m: dict) -> list[tuple[str, str]]:
                f"(not counted toward the {m['n_expected']} expected). ")
     dq += "No-data and test markers (999, 99999, TEST) are never flagged. The source does not publish calibration status. "
     names = [f"{p['station']} {_GAS_LABEL[p['gas']]}" for p in m["stuck"]]
-    names += [f"{st} {_GAS_LABEL[g]} (values labelled ERR)" for st, g in m["err_channels"]]
     if names:
         grid_gases = [g for g in gc.GASES if g in m["gases"] and any(p["gas"] == g for p in m["stuck"])]
         where = (f" (lilac in the {' and '.join(_GAS_LABEL[g] for g in grid_gases)} grid)" if grid_gases else "")
@@ -525,7 +526,6 @@ def event_pairs(m: dict) -> list[tuple[str, str]]:
 
 def suspect_footnote(m: dict) -> str:
     bits = [f"{p['station']} {_GAS_LABEL[p['gas']]}: {p['note']}" for p in m["stuck"] if p["note"]]
-    bits += [f"{st} {_GAS_LABEL[g]}: values the feed labels ERR" for st, g in m["err_channels"]]
     return ("Suspect sensors: " + "; ".join(bits) + ". " + SUSPECT_FOOT_TAIL) if bits else ""
 
 
@@ -672,7 +672,7 @@ def _latest_table(m: dict) -> str:
             elif kind == "suspect":
                 cells += f'<td style="{_TD}">{_chip("suspect sensor", suspect=True)}</td>'
             elif kind == "bdl":
-                cells += f'<td style="{_TD}">{_chip("source: BDL")}</td>'
+                cells += f'<td style="{_TD}">{_chip(txt)}</td>'
             elif kind == "above":
                 cells += f'<td style="{_TD}background:#fde4b8;"><b>{e(txt)}</b></td>'
             else:
@@ -790,8 +790,7 @@ URG_BAR, URG_BG, URG_INK = "#b42318", "#fdecea", "#6e1710"
 HEALTH_BAR, HEALTH_BG, HEALTH_INK = "#5a6a75", "#f1f3f4", "#2e3a42"
 SELF_REPORTED = ("These are GFL's self-reported perimeter readings (H2S in ppb, CH4 in ppm), "
                  "not an EGLE measurement.")
-LABEL_NOTE = ("A source box shows the label the feed prints beside the number, verbatim. "
-              "A value the feed labels ERR is shown as a suspect sensor reading.")
+LABEL_NOTE = "A source box shows the label the feed prints beside the number, verbatim."
 
 
 def _shell(eyebrow: str, lede_html: str, pre: str, rows: str) -> str:
@@ -873,7 +872,7 @@ def render_urgent_html(rows: list[dict], avg_lines: list[str], *, thresholds: di
                 f"<b>{e(num(best[0]))} {unit(best[1])}</b> {e(_GAS_LABEL[best[1]])} at {e(best[2])}, "
                 f"{e(et_short(best[3]))}.")
         if best[4].upper() == "ERR":
-            lede += " The feed labels that value ERR (suspect sensor)."
+            lede += " The feed labels that value ERR."
     elif n_exc:
         lede = f"<b>{n_exc} station(s) at or above the H2S {h2s_window_hours}-hour average action level.</b>"
     else:
@@ -898,9 +897,7 @@ def render_urgent_html(rows: list[dict], avg_lines: list[str], *, thresholds: di
                 lvl = (thresholds or {}).get(gc.gas_cfgkey(g))
                 s = f"<b>{e(s)}</b>" + (f" &ge; {e(num(lvl))} {unit(g)} action level" if lvl is not None else "")
             t = (p["text"] or "").strip()
-            if t.upper() == "ERR":
-                s += " " + _chip("suspect sensor · source: ERR", suspect=True)
-            elif _is_label(t):
+            if _is_label(t):
                 s += " " + _chip(f"source: {t}")
             bits.append(s)
         bg = f"background:{URG_BG};" if r["flag"] == "EXCEEDANCE" else f"background:{TABLE_NODATA_BG};"

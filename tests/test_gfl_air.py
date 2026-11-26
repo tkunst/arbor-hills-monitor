@@ -1735,7 +1735,8 @@ def test_exceedance_line_shows_the_source_label_verbatim():
     # The alert still fires (fail-safe), and the line now says what the source printed.
     r = _reading(1, "MS-2", 0.0, 89090.0, DAY0, h2s_text="BDL", ch4_text="ERR")
     lines, has_exc, _ = gw.alert_lines([r], {"h2s_ppb": 72, "ch4_ppm": 500}, SENT, True)
-    assert has_exc and "CH4=89090 >= action level 500 (suspect sensor; source label: ERR)" in lines[0]
+    assert has_exc and "CH4=89090 >= action level 500 (source label: ERR)" in lines[0]
+    assert "suspect sensor" not in lines[0]
     # A numeric label (the feed's rounded copy of the value) adds nothing.
     r2 = _reading(2, "MS-2", 0.0, 511.4, DAY0, h2s_text="BDL", ch4_text="511")
     lines2, _, _ = gw.alert_lines([r2], {"h2s_ppb": 72, "ch4_ppm": 500}, SENT, True)
@@ -1878,17 +1879,18 @@ def test_run_email_bdl_hidden_suspect_flagged_and_max_rules():
     latest = _quiet()
     latest["MS-1"] = _r(1, "MS-1", 2.3, 5.0, BATCH_MS, h2s_text="BDL", ch4_text="5")
     latest["MS-2"] = _r(2, "MS-2", 0.0, 5.0, BATCH_MS, h2s_text="BDL", ch4_text="5")      # suspect period
-    latest["MS-4"] = _r(4, "MS-4", 9.0, 5.0, BATCH_MS, h2s_text="ERR", ch4_text="5")      # ERR -> suspect
+    latest["MS-4"] = _r(4, "MS-4", 9.0, 5.0, BATCH_MS, h2s_text="ERR", ch4_text="5")      # ERR -> label box
     latest["MS-5"] = _r(5, "MS-5", 8.0, 5.0, BATCH_MS, h2s_text="8", ch4_text="5")        # real H2S max
     latest["MS-3"] = _elev(3, "MS-3", 0.0, 45.0, BATCH_MS)
     rows = gw._monitor_rows(latest, WT, SENT, registry=_registry())
     _, text, html = _email([_opened("MS-3", "ch4", 45.0, BATCH_MS)], rows, latest, periods=PERIODS)
     line = {ln.split(":")[0].strip(): ln for ln in text.splitlines() if ln.startswith("  MS-")}
     assert "2.3" not in line["MS-1"] and "source: BDL" in line["MS-1"]
-    assert "suspect sensor" in line["MS-2"] and "suspect sensor" in line["MS-4"]
+    assert "suspect sensor" in line["MS-2"]
+    assert "source: ERR" in line["MS-4"] and "9" not in line["MS-4"].split("|")[0] and "suspect" not in line["MS-4"]
     # H2S max: MS-5's 8 ppb (not the ERR 9, not BDL 2.3); not an episode peak -> station + time
     assert "Hourly H2S by station: not above limit · Max 8 ppb (MS-5," in text
-    assert "Stuck sensor noted: MS-2 H2S, MS-4 H2S (values labelled ERR)" in text
+    assert "Stuck sensor noted: MS-2 H2S; details" in text and "ERR" not in text.split("Suspect sensors:")[1]
     assert "Suspect sensors: MS-2 H2S: constant 0.0 ppb from June 30, 2025 to September 24, 2026" in text
     assert gr.CELL_SUSPECT not in html.split("Hourly methane by station")[0]   # no H2S grid drawn
     assert "suspect sensor" in html
@@ -2062,8 +2064,9 @@ def test_urgent_and_liveness_emails_carry_html(monkeypatch):
                           {"h2s_ppb": 72, "ch4_ppm": 500}, SENT, True, h2s_averaged=True)
     assert [r["flag"] for r in rows] == ["EXCEEDANCE", "anomaly"]
     html = gr.render_urgent_html(rows, [], thresholds={"h2s_ppb": 72, "ch4_ppm": 500}, link="https://d.example/")
-    assert "suspect sensor · source: ERR" in html and "89,090 ppm" in html and gr.FOOTER_SLOT in html
-    assert "The feed labels that value ERR (suspect sensor)." in html
+    assert "source: ERR" in html and "suspect sensor" not in html
+    assert "89,090 ppm" in html and gr.FOOTER_SLOT in html
+    assert "The feed labels that value ERR." in html
     live = gr.render_liveness_html("2026-07-02T13:00Z", 3, 3, "https://d.example/")
     assert "No new perimeter readings for 3 day(s)." in live and "NOT an exceedance" in live
     assert "Jul 2, 2026, 9:00 AM ET (13:00 UTC)" in live

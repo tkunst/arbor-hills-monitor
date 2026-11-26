@@ -683,7 +683,7 @@ behavior, update its entry here in the same PR.
   client from those rows. **TEST rows (ADR 039 addendum):** `classify_reading` reports a
   `_Text = TEST` value as a sentinel (anomaly, never an exceedance) and
   `reading_to_measurements` drops it; an urgent/watch reason ends `(source label: X)` when
-  the feed prints a word beside the value, `(suspect sensor; source label: ERR)` for `ERR`.
+  the feed prints a word beside the value (e.g. `(source label: ERR)`).
 - `gfl_air_watcher.py` — daily poll of the GFL air feed: incremental OBJECTID
   cursor (in the `GFL Air` tab), readings → Measurements (`basis=measured`),
   same-day exceedance alerts via its own classifier. Gated on `gfl_air.enabled`.
@@ -752,7 +752,7 @@ behavior, update its entry here in the same PR.
   episodes, an hour-by-station grid per gas (bucketed past 36 hours, byte budget 85 KB),
   the latest reading per station, and "How to read this alert". Suspect sensors come from
   `gfl_air.suspect_sensors` (ET-dated periods mirroring the perimeter-air dataset's
-  data-quality note) plus ERR-labelled values; BDL values never show a number; a max that
+  data-quality note); BDL and ERR values show only the source's label box; a max that
   is not a listed episode peak carries its station and time. Also the HTML parts of the
   urgent and liveness emails (`urgent_rows`, `render_urgent_html`, `render_liveness_html`).
   Reuses `digest_render`'s tokens, logo and `FOOTER_SLOT`; sent via
