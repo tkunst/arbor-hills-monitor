@@ -153,7 +153,8 @@ def _event_id(station: str, opened_iso: str, seq: int) -> str:
 # THE episode state machine — per (station, gas), open/close, cross-run peak. Pure.
 # ---------------------------------------------------------------------------
 
-def _close_record(station: str, gas: str, ep: dict, cleared_at: str, cleared_value) -> dict:
+def _close_record(station: str, gas: str, ep: dict, cleared_at: str, cleared_value,
+                  cleared_text: str = "") -> dict:
     return {
         "station": station, "gas": gas,
         "event_id": ep.get("event_id", ""),
@@ -161,6 +162,7 @@ def _close_record(station: str, gas: str, ep: dict, cleared_at: str, cleared_val
         "opened_at": ep.get("opened_at", ""), "opened_value": ep.get("opened_value"),
         "peak_value": ep.get("peak_value"), "peak_at": ep.get("peak_at", ""),
         "cleared_at": cleared_at, "cleared_value": cleared_value,
+        "cleared_text": cleared_text,      # the source's label for that value (e.g. BDL)
         "duration_hours": _duration_hours(ep.get("opened_at", ""), cleared_at),
         "n_over": int(ep.get("n_over", 0)),
         "source": _CJ_SOURCE.get(gas, ""),
@@ -241,7 +243,7 @@ def process_episodes(readings: list[dict], watch_thresholds: dict, sentinels: di
                         ep["peak_value"] = val
                         ep["peak_at"] = when
                 else:
-                    closed.append(_close_record(st, gas, ep, when, val))
+                    closed.append(_close_record(st, gas, ep, when, val, gc.gas_text(r, gas)))
                     del state[key]
     opened = [{"station": st, "gas": gas, **ep} for (st, gas, ep) in opened_refs]
     return EpisodeResult(state=state, opened=opened, closed=closed)

@@ -699,21 +699,19 @@ behavior, update its entry here in the same PR.
   replacing the old per-station CH4-40 watch) runs a per-`(station, gas)`
   open/close episode state machine (state JSON in the `GFL Air` tab's column O;
   a legacy array reads as empty → fail-safe re-derive). Per daily run it emails
-  the `watch_alert_recipients` list (+ `GFL_AIR_WATCH_RECIPIENTS_EXTRA`) at most
-  ONE consolidated SCREENING (open) email (all six monitors' verbatim readings
-  for both gases, flagged STRICTLY above; ±2h context per episode, keyed by event_id since
-  2026-11-26; station coords) and ONE
-  CLOSEOUT (close) email (start/peak/return/duration per episode); a
-  continuing-only run sends nothing (no re-alert). Each closed episode also
-  appends a row to the "Perimeter Action-Level Episodes" tab (the RCA-tracking
-  log). **These are SCREENING alerts on PUBLIC HOURLY data, NOT CJ exceedance
-  determinations** — the CJ levels are 15-min rolling averages from ~1-min
-  sampling; the feed is hourly. Mandatory legal framing (party = "Arbor Hills
-  Landfill, Inc. (AHL)" not GFL; "hourly value exceeded the numerical benchmark…
-  verification vs the 15-min rolling avg is needed"; 48h = CORRECTION not the RCA;
-  ¶5.5(D)/(E); HISTORICAL subject tag; methane %-flammable only if ≥5%). NEVER
-  mixed into the full-list exceedance/anomaly email (`include_watch=False`
-  always). Empty `watch_alert_recipients` = display-only (rollback lever); a gas
+  the `watch_alert_recipients` list (+ `GFL_AIR_WATCH_RECIPIENTS_EXTRA`) ONE
+  daily-run SCREENING email when any episode opened or closed (layout C since
+  2026-11-26 — see the `gfl_air_render.py` entry and ADR 075; before that, a
+  screening email plus a closeout email); a continuing-only run sends nothing (no
+  re-alert). Each closed episode also appends a row to the "Perimeter
+  Action-Level Episodes" tab (the RCA-tracking log). **These are SCREENING alerts
+  on PUBLIC HOURLY data, NOT CJ exceedance determinations** — the CJ levels are
+  15-min rolling averages from ~1-min sampling; the feed is hourly. Required
+  wording is listed in ADR 075 §4 (party = "Arbor Hills Landfill, Inc. (AHL)" not
+  GFL; not a formal determination; returned below ≠ correction; HISTORICAL subject
+  tag; methane %-flammable only if ≥5%). NEVER mixed into the full-list
+  exceedance/anomaly email (`include_watch=False` always). Empty
+  `watch_alert_recipients` = display-only (rollback lever); a gas
   absent from `watch_thresholds` = display-only. The EXCEEDANCE tier (CH4 500 /
   H2S 72-24hr-avg) is untouched. Episode state committed like the cursor; emails
   best-effort (no retry, matching the exceedance email). See ADR 039 (+ ADR 014's
@@ -748,6 +746,17 @@ behavior, update its entry here in the same PR.
   `station_prefix` is DROPPED with a CONFIG WARNING (never rendered as a
   fact about the source). A mismatch is never invisible. See ADR 039's
   2026-10-23 addendum.
+- `gfl_air_render.py` — Stream E layout C (ADR 075, 2026-11-26): ONE daily-run SCREENING
+  email (plain text + HTML from one content model) replacing ADR 039's screening +
+  closeout pair, sent iff an episode opened or closed; lists opened / closed / still-open
+  episodes, an hour-by-station grid per gas (bucketed past 36 hours, byte budget 85 KB),
+  the latest reading per station, and "How to read this alert". Suspect sensors come from
+  `gfl_air.suspect_sensors` (ET-dated periods mirroring the perimeter-air dataset's
+  data-quality note) plus ERR-labelled values; BDL values never show a number; a max that
+  is not a listed episode peak carries its station and time. Also the HTML parts of the
+  urgent and liveness emails (`urgent_rows`, `render_urgent_html`, `render_liveness_html`).
+  Reuses `digest_render`'s tokens, logo and `FOOTER_SLOT`; sent via
+  `email_alerts.send_email(html=...)`.
 - `gfl_air_hourly_capture.py` — ADR 026 addendum (2026-10-06): a SEPARATE
   hourly durable-capture job alongside the daily Stream E poll above, shrinking
   the window in which a reading could sit in GFL's feed (and be silently

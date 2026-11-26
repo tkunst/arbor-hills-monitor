@@ -104,6 +104,7 @@ module, and update that entry in the same PR.
 - `pfas_client.py` / `pfas_watcher.py` — EGLE PFAS page-watch (ADR 012).
 - `gfl_air_client.py` / `gfl_air_watcher.py` — Stream E: GFL perimeter-air feed, alerts, screening episodes (ADR 014, 039).
 - `gfl_air_episodes.py` / `gfl_air_emails.py` / `gfl_air_liveness.py` — Stream E's pure halves; station roster.
+- `gfl_air_render.py` — Stream E daily-run screening email, layout C (text + HTML), plus the urgent/liveness HTML parts (ADR 075).
 - `gfl_air_hourly_capture.py` — hourly durable capture of the air feed (ADR 026).
 - `gfl_feed_snapshot.py` — monthly full snapshot of the air feed + change detection (ADR 063).
 - `ridgewood_client.py` / `ridgewood_archiver.py` — Stream G: Ridge Wood H2S reports (ADR 016).
