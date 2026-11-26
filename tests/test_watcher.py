@@ -232,3 +232,28 @@ def test_old_queued_record_without_document_date_still_loads():
     rec = {"date_filed": "2026-11-20", "document_name": "x", "doc_type": "evidence",
            "severity": "routine", "risks": [], "key_data_point": "k", "link": "l"}
     assert w._record_to_item(rec)["metadata"]["document_date"] == ""
+
+
+# --- urgent items are recapped in two consecutive Sunday digests ------------
+
+def test_carry_over_keeps_first_exposure_and_drops_second():
+    fresh = {"document_name": "new urgent", "urgent_sent_at": "2026-11-24T14:05:00"}
+    shown_once = {"document_name": "last week's urgent", "digest_exposures": 1}
+    kept = w._carry_over_urgent_recap([fresh, shown_once])
+    assert kept == [dict(fresh, digest_exposures=1)]
+
+
+def test_carry_over_item_appears_in_exactly_two_digests():
+    queue = [{"document_name": "u"}]
+    appearances = 0
+    for _ in range(4):           # four Sundays
+        if queue:
+            appearances += 1
+        queue = w._carry_over_urgent_recap(queue)
+    assert appearances == w.URGENT_RECAP_DIGESTS == 2
+
+
+def test_carry_over_does_not_mutate_input():
+    rec = {"document_name": "u"}
+    w._carry_over_urgent_recap([rec])
+    assert "digest_exposures" not in rec

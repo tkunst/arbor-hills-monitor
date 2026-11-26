@@ -429,7 +429,7 @@ def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None
     if not items and not urgent_recap:
         return "\n".join(lines + ["No new Arbor Hills (N2688) documents this period."])
     if urgent_recap:
-        lines.append("URGENT ITEMS FROM EARLIER:")
+        lines.append("URGENT ITEMS FROM THE PAST TWO WEEKS:")
         for it in _newest_first(urgent_recap):
             p, m = it["parsed"], it["metadata"]
             sent_at = m.get("urgent_sent_at", "")

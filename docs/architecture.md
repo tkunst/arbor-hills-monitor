@@ -395,6 +395,12 @@ behavior, update its entry here in the same PR.
   Each line prints that date; a Date Filed fallback is labeled `filed …`.
   Records queued before the field existed load with `document_date` blank.
   Hand-curated and WDS records have no `document_date` and fall back.
+  **Urgent recap, two exposures (2026-11-26, Trisha):** after each Sunday
+  digest run, `watcher._carry_over_urgent_recap()` keeps an urgent-recap record
+  for one more Sunday (`digest_exposures` counter, `URGENT_RECAP_DIGESTS = 2`),
+  so every urgent item appears in two consecutive digests under "URGENT ITEMS
+  FROM THE PAST TWO WEEKS". An attempted-but-unsent digest still counts, as it
+  already does for `pending_digest`.
   **coder:keydatapoint-guard (2026-10-17):** `is_urgent()` is now the bool of
   one `_urgency_decision()`, whose reasons `urgency_reason()` joins, so the two
   can't drift. `format_urgent_body(..., cfg)` prints "Urgent because: …" next
