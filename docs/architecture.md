@@ -419,6 +419,15 @@ behavior, update its entry here in the same PR.
   behind an "…and N more" line so Gmail's ~102 KB clip never hides the footer;
   the urgent recap is never trimmed and the text part lists everything.
   Subject keeps its "Arbor Hills N2688 digest" prefix; em-dash → colon.
+- `site_pages.py` — the digest's "New at Arbor Hills Monitor" box (2026-11-26,
+  Trisha). On each Sunday digest the watcher fetches both sites' sitemaps
+  (`digest_new_pages.sites`) and lists URLs absent from `_meta.digest_site_urls`,
+  each by its page's `<h1>` (else `<title>`) and meta description; policy-site
+  pages carry the design system's disclosure sentence. Only sitemap URLs count,
+  so drafts never show. The baseline moves only after the digest is SENT
+  (`watcher._next_site_baseline`); a site whose sitemap fails keeps its old
+  baseline and lists nothing; the first run only saves a baseline; new pages
+  alone never trigger a digest. `_META_CELL_ROWS` grew 8 → 10 for the new key.
   **coder:keydatapoint-guard (2026-10-17):** `is_urgent()` is now the bool of
   one `_urgency_decision()`, whose reasons `urgency_reason()` joins, so the two
   can't drift. `format_urgent_body(..., cfg)` prints "Urgent because: …" next

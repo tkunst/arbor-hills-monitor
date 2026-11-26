@@ -137,10 +137,20 @@ def _long_date(d: date) -> str:
 # --------------------------------------------------------------------------- #
 
 def render_text(items: list[dict], urgent_recap: list[dict] | None = None,
-                announcement: str = "", send_date: date | None = None) -> str:
+                announcement: str = "", send_date: date | None = None,
+                new_pages: list[dict] | None = None, labels: dict | None = None) -> str:
     lines: list[str] = []
     if announcement:
         lines += ["ANNOUNCEMENT:", *[f"  {ln}" if ln else "" for ln in announcement.strip().splitlines()], ""]
+    if new_pages:
+        lines.append("NEW AT ARBOR HILLS MONITOR:")
+        for site, pages in _pages_by_site(new_pages, labels):
+            host, disclosure = (labels or {}).get(site, (site, ""))
+            lines.append(f"  {host}" + (f" ({disclosure})" if disclosure else ""))
+            for p in pages:
+                lines += [f"  - {p['title']}", *([f"      {p['desc']}"] if p.get("desc") else []),
+                          f"      {p['url']}"]
+        lines.append("")
     if not items and not urgent_recap:
         return "\n".join(lines + ["No new Arbor Hills (N2688) documents this period."])
     head = "Arbor Hills Monitor weekly digest"
@@ -205,19 +215,52 @@ def _masthead(subline: str, send_date: date | None) -> str:
 <tr><td style="padding:0 28px;"><div style="border-top:2px solid {MON_MARK};font-size:1px;line-height:1px;">&nbsp;</div></td></tr>"""
 
 
-def _announcement_box(announcement: str) -> str:
-    if not announcement:
+def _pages_by_site(new_pages, labels):
+    order = list((labels or {}).keys())
+    sites = order + [p["site"] for p in new_pages if p["site"] not in order]
+    seen, out = set(), []
+    for site in sites:
+        if site in seen:
+            continue
+        seen.add(site)
+        pages = [p for p in new_pages if p["site"] == site]
+        if pages:
+            out.append((site, pages))
+    return out
+
+
+def _new_pages_html(new_pages, labels) -> str:
+    blocks = []
+    for site, pages in _pages_by_site(new_pages, labels):
+        host, disclosure = (labels or {}).get(site, (site, ""))
+        disc = (f'<div style="font-family:{SERIF};font-size:14px;line-height:21px;font-style:italic;color:{MON_MUTED};">{e(disclosure)}</div>'
+                if disclosure else "")
+        items = "".join(
+            f'''<div style="padding-top:9px;">
+          {_link(p["url"], e(p["title"]) + " &rarr;", f"font-family:{SERIF};font-size:16px;line-height:23px;font-weight:bold;color:{MON_LINK};text-decoration:none;")}
+          {f'<div style="font-family:{SERIF};font-size:15px;line-height:23px;color:{MON_FG};">{e(p["desc"])}</div>' if p.get("desc") else ""}
+        </div>''' for p in pages)
+        blocks.append(f'''<div style="padding-top:12px;">
+        <div style="font-family:{SANS};font-size:13px;line-height:20px;font-weight:bold;color:{MON_FG};">{e(host)}</div>
+        {disc}{items}
+      </div>''')
+    return "".join(blocks)
+
+
+def _announcement_box(announcement: str, new_pages=None, labels=None) -> str:
+    if not announcement and not new_pages:
         return ""
+    label = "Announcement &middot; New at Arbor Hills Monitor" if new_pages else "Announcement"
     paras = "".join(
         f'<div style="font-family:{SERIF};font-size:15px;line-height:23px;color:{MON_FG};padding-top:6px;">{_linkify(e(ln))}</div>'
-        for ln in announcement.strip().splitlines() if ln.strip())
+        for ln in (announcement or "").strip().splitlines() if ln.strip())
     return f"""
 <tr><td style="padding:22px 28px 4px 28px;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
     <td width="4" bgcolor="{MON_LINK}" style="background:{MON_LINK};width:4px;font-size:1px;line-height:1px;">&nbsp;</td>
     <td bgcolor="{ADV_TINT}" style="background:{ADV_TINT};padding:12px 16px 14px 16px;">
-      {_series_label("Announcement")}
-      {paras}
+      {_series_label(label)}
+      {paras}{_new_pages_html(new_pages or [], labels)}
     </td>
   </tr></table>
 </td></tr>"""
@@ -281,10 +324,11 @@ def _preheader(text: str) -> str:
             + "&#8199;&#65279;&#847; " * 30 + "</div>")
 
 
-def _page(items, urgent_recap, announcement, send_date, shown_sections) -> str:
+def _page(items, urgent_recap, announcement, send_date, shown_sections,
+          new_pages=None, labels=None) -> str:
     counts = count_line(items, urgent_recap)
     rows = _masthead(e(counts) + ".", send_date)
-    rows += _announcement_box(announcement)
+    rows += _announcement_box(announcement, new_pages, labels)
     for key, label, its, hidden in shown_sections:
         rows += _section(key, label, its, hidden)
     rows += f"""
@@ -308,20 +352,21 @@ def _page(items, urgent_recap, announcement, send_date, shown_sections) -> str:
 
 def render_html(items: list[dict], urgent_recap: list[dict] | None = None,
                 announcement: str = "", send_date: date | None = None,
-                budget: int = HTML_BUDGET_BYTES) -> str:
+                budget: int = HTML_BUDGET_BYTES, new_pages: list[dict] | None = None,
+                labels: dict | None = None) -> str:
     """The HTML body, with FOOTER_SLOT where the per-recipient footer goes.
     Trims the oldest rows (routine, then notable, then deadlines and notices,
     then correspondence; never the urgent recap) to stay under `budget` bytes,
     so Gmail never clips off the footer."""
     secs = [[k, label, list(its), 0] for k, label, its in sections(items, urgent_recap)]
-    out = _page(items, urgent_recap, announcement, send_date, secs)
+    out = _page(items, urgent_recap, announcement, send_date, secs, new_pages, labels)
     for key in ("routine", "notable", "deadlines", "correspondence"):
         sec = next((s for s in secs if s[0] == key), None)
         while sec and sec[2] and len(out.encode("utf-8")) > budget:
             drop = max(1, len(sec[2]) // 4)
             sec[2] = sec[2][:-drop]          # newest first, so the oldest go
             sec[3] += drop
-            out = _page(items, urgent_recap, announcement, send_date, secs)
+            out = _page(items, urgent_recap, announcement, send_date, secs, new_pages, labels)
     return out
 
 

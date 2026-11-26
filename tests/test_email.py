@@ -193,7 +193,7 @@ def test_send_digest_passes_urgent_recap_through_and_resolves_recipients(monkeyp
     seen = {}
     monkeypatch.setattr(
         ea, "format_digest_body",
-        lambda items, urgent_recap=None, announcement="", send_date=None: seen.update(items=items, urgent_recap=urgent_recap) or "body",
+        lambda items, urgent_recap=None, announcement="", send_date=None, **kw: seen.update(items=items, urgent_recap=urgent_recap) or "body",
     )
     sent = []
     monkeypatch.setattr(ea, "send_email",

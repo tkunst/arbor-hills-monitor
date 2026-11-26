@@ -257,3 +257,12 @@ def test_carry_over_does_not_mutate_input():
     rec = {"document_name": "u"}
     w._carry_over_urgent_recap([rec])
     assert "digest_exposures" not in rec
+
+
+# --- "New at Arbor Hills Monitor" baseline moves only after a sent digest ----
+
+def test_site_baseline_moves_only_when_digest_sent():
+    old, new = {"m": ["a"]}, {"m": ["a", "b"]}
+    assert w._next_site_baseline(old, new, True) == new
+    assert w._next_site_baseline(old, new, False) == old      # not sent: keep, list again next week
+    assert w._next_site_baseline(old, None, True) == old      # step failed: keep
