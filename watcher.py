@@ -100,6 +100,23 @@ def _urgent_recap_record(parsed, d: dict, link: str, sent_at: str) -> dict:
     }
 
 
+# Each urgent item is recapped in this many Sunday digests (Trisha,
+# 2026-11-26: two exposures, i.e. urgent items from the past two weeks).
+URGENT_RECAP_DIGESTS = 2
+
+
+def _carry_over_urgent_recap(records: list[dict]) -> list[dict]:
+    """Pure: after a Sunday digest run, count one more digest appearance on
+    each recap record and keep only those not yet shown URGENT_RECAP_DIGESTS
+    times. Records queued before this counter existed count as zero."""
+    kept = []
+    for rec in records:
+        shown = int(rec.get("digest_exposures", 0) or 0) + 1
+        if shown < URGENT_RECAP_DIGESTS:
+            kept.append(dict(rec, digest_exposures=shown))
+    return kept
+
+
 def _record_to_item(rec: dict) -> dict:
     parsed = SimpleNamespace(
         doc_type=rec["doc_type"],
@@ -517,6 +534,7 @@ def run() -> int:
         # list, unchanged. Sent when there are new documents OR urgent items to
         # recap (a week with only a recapped urgent item and nothing new is not
         # an empty digest); still no email at all on a genuinely quiet week.
+        # Each urgent item is recapped in two consecutive digests.
         if state["pending_digest"] or state["pending_urgent_recap"]:
             items = [_record_to_item(r) for r in state["pending_digest"]]
             recap_items = [_record_to_item(r) for r in state["pending_urgent_recap"]]
@@ -532,7 +550,10 @@ def run() -> int:
                 on.record_send_failure(sheets, "Sunday digest", "not sent (SMTP or recipients)",
                                        {}, "", _now())
             state["pending_digest"] = []
-            state["pending_urgent_recap"] = []
+            # Urgent items stay queued for a second Sunday (two exposures);
+            # like pending_digest above, a digest that was attempted but not
+            # sent still counts, so a broken SMTP setup can't pile them up.
+            state["pending_urgent_recap"] = _carry_over_urgent_recap(state["pending_urgent_recap"])
             sw.write_meta(sheets, sheet_id, state)
             print(f"[watcher] sent Sunday digest ({len(items)} item(s), "
                   f"{len(recap_items)} urgent recap item(s)).")
