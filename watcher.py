@@ -117,6 +117,13 @@ def _carry_over_urgent_recap(records: list[dict]) -> list[dict]:
     return kept
 
 
+def _next_site_baseline(current: dict, computed, digest_sent) -> dict:
+    """Pure: the "New at Arbor Hills Monitor" baseline moves to `computed` only
+    when the digest actually went out (send_digest returned True) and the
+    new-pages step produced one; otherwise it stays, so no page is lost."""
+    return computed if (digest_sent is True and computed is not None) else current
+
+
 def _record_to_item(rec: dict) -> dict:
     parsed = SimpleNamespace(
         doc_type=rec["doc_type"],
@@ -538,8 +545,18 @@ def run() -> int:
         if state["pending_digest"] or state["pending_urgent_recap"]:
             items = [_record_to_item(r) for r in state["pending_digest"]]
             recap_items = [_record_to_item(r) for r in state["pending_urgent_recap"]]
+            # "New at Arbor Hills Monitor": pages new to either site's sitemap
+            # since the last SENT digest. Best-effort; never costs the digest.
             try:
-                digest_sent = ea.send_digest(items, cfg, urgent_recap=recap_items)
+                import site_pages
+                new_pages, site_baseline = site_pages.find_new_pages(
+                    cfg, state.get("digest_site_urls") or {})
+            except Exception as pe:  # noqa: BLE001
+                print(f"[watcher] new-pages step skipped: {type(pe).__name__}")
+                new_pages, site_baseline = [], None
+            try:
+                digest_sent = ea.send_digest(items, cfg, urgent_recap=recap_items,
+                                             new_pages=new_pages)
             except Exception as de:
                 # Record it for the owner weekly email, then fail the run as
                 # before (the queue is kept and retried next Sunday).
@@ -554,6 +571,10 @@ def run() -> int:
             # like pending_digest above, a digest that was attempted but not
             # sent still counts, so a broken SMTP setup can't pile them up.
             state["pending_urgent_recap"] = _carry_over_urgent_recap(state["pending_urgent_recap"])
+            # Move the site baseline only once the digest actually went out,
+            # so a page is never dropped by a skipped or failed send.
+            state["digest_site_urls"] = _next_site_baseline(
+                state.get("digest_site_urls") or {}, site_baseline, digest_sent)
             sw.write_meta(sheets, sheet_id, state)
             print(f"[watcher] sent Sunday digest ({len(items)} item(s), "
                   f"{len(recap_items)} urgent recap item(s)).")

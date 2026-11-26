@@ -73,6 +73,21 @@ digest_announcement:
     Arbor Hills Monitor just launched an interactive landfill capacity tool:
     https://policy.arborhillsmonitor.org/capacity/
     Let us know if you have questions! corrections@arborhillsmonitor.org
+# Sunday digest "New at Arbor Hills Monitor" box (site_pages.py): lists pages
+# new to either site's sitemap since the last digest that went out, each by its
+# main heading and meta description. First run only saves a baseline.
+digest_new_pages:
+  enabled: true
+  sites:
+    - key: monitor
+      label: "arborhillsmonitor.org"
+      sitemap: "https://arborhillsmonitor.org/sitemap.xml"
+      disclosure: ""
+    - key: policy
+      label: "policy.arborhillsmonitor.org"
+      sitemap: "https://policy.arborhillsmonitor.org/sitemap.xml"
+      # Design system: any Monitor link to the policy site carries this.
+      disclosure: "The policy site is a resident's views, separate from the automated monitor."
 anthropic_model: "claude-sonnet-5"
 # Output cap for the classification call. Generous enough that measurements[]
 # on a multi-well WOI report isn't truncated mid-JSON. If a doc ever fails with

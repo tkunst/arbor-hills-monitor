@@ -726,13 +726,16 @@ _META_DEFAULTS = {
     # dates, an error class, and while failing the already-emailed change
     # (public EGLE row text + file names). Written by watcher.run.
     "county_plans_health": {},
+    # site_pages.py: {site key: [sitemap URLs]} as of the last SENT Sunday
+    # digest, the baseline for its "New at Arbor Hills Monitor" box.
+    "digest_site_urls": {},
 }
 
 # write_meta overwrites this many _meta rows every time (live keys first, blanks
 # after) so a key removed from _META_DEFAULTS can't leave a stale orphan row
 # behind. Comfortably above the historical max key count (was 5). Only ever grow
 # this; never shrink it below the largest key set the tab has held.
-_META_CELL_ROWS = 8
+_META_CELL_ROWS = 10
 
 
 # ---------------------------------------------------------------------------

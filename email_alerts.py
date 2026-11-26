@@ -383,7 +383,8 @@ from digest_render import digest_date  # noqa: E402,F401  (re-exported for calle
 
 
 def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None,
-                       announcement: str = "", send_date=None) -> str:
+                       announcement: str = "", send_date=None, new_pages=None,
+                       labels=None) -> str:
     """The digest's PLAIN-TEXT body. items / urgent_recap: [{parsed, metadata,
     link}]; recap metadata also carries 'urgent_sent_at'. Rendered by
     digest_render.render_text, which holds the section rules (layout B,
@@ -396,7 +397,7 @@ def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None
     got the same-day [URGENT] email, so for them this is the first sighting."""
     import digest_render
     return digest_render.render_text(items, urgent_recap, announcement=announcement,
-                                     send_date=send_date)
+                                     send_date=send_date, new_pages=new_pages, labels=labels)
 
 
 # ---------------------------------------------------------------------------
@@ -912,7 +913,8 @@ def route_hand_curated_urgent_or_digest(
     return sent
 
 
-def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = None) -> bool:
+def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = None,
+                new_pages: list[dict] | None = None) -> bool:
     """The weekly digest goes to resolve_recipients(cfg) PLUS anyone in
     DIGEST_RECIPIENTS_EXTRA (comma/semicolon-separated env, private — not
     committed to this PUBLIC repo's config.yml). This is a DIGEST-ONLY
@@ -928,6 +930,7 @@ def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = 
     section inside the body is what surfaces the urgent items.
 
     Sent as plain text plus HTML (digest_render, layout B, 2026-11-26).
+    new_pages: site_pages.find_new_pages() output, shown in the top box.
 
     Returns send_email's result (False = nothing handed to SMTP), so the
     watcher can record a skipped digest for the owner weekly email."""
@@ -938,9 +941,12 @@ def send_digest(items: list[dict], cfg: dict, urgent_recap: list[dict] | None = 
     recipients = merge_extra_recipients(resolve_recipients(cfg), "DIGEST_RECIPIENTS_EXTRA")
     announcement = active_digest_announcement(cfg)
     send_date = _detroit_today()
-    body = format_digest_body(items, urgent_recap, announcement=announcement, send_date=send_date)
+    import site_pages
+    labels = site_pages.site_labels(cfg)
+    body = format_digest_body(items, urgent_recap, announcement=announcement, send_date=send_date,
+                              new_pages=new_pages, labels=labels)
     html_body = digest_render.render_html(items, urgent_recap, announcement=announcement,
-                                          send_date=send_date)
+                                          send_date=send_date, new_pages=new_pages, labels=labels)
     return send_email(subject, body, cfg, recipients=recipients, html=html_body,
                       footer_show_address=False)
 
