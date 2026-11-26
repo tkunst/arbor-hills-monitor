@@ -57,6 +57,7 @@ def run() -> int:
         sent = ea.route_hand_curated_urgent_or_digest(
             document_name=d["document_name"],
             date_filed=d["date_filed"],
+            document_date=d.get("document_date") or d.get("doc_date") or "",
             doc_type=d["doc_type"],
             severity=d["severity"],
             risks=d.get("risks") or [],
