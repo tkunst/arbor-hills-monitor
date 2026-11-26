@@ -378,6 +378,28 @@ def format_urgent_body(parsed, metadata: dict, link: str, cfg: dict | None = Non
     )
 
 
+def digest_date(metadata: dict) -> str:
+    """The date the digest shows and sorts by: the date printed on the document
+    (`document_date`, ADR 065), else nSITE's Date Filed. Both are ISO strings,
+    so they sort as text."""
+    return metadata.get("document_date") or metadata.get("date_filed") or ""
+
+
+def _digest_date_label(metadata: dict) -> str:
+    """Printed date for one digest line. A fallback to Date Filed is labeled
+    "filed ..." so a reader never mistakes a filing date for the document's."""
+    if metadata.get("document_date"):
+        return metadata["document_date"]
+    filed = metadata.get("date_filed") or ""
+    return f"filed {filed}" if filed else ""
+
+
+def _newest_first(items: list[dict]) -> list[dict]:
+    """Sort digest items newest first by digest_date(). Stable, so items with
+    the same date keep their queue order; an item with no date sorts last."""
+    return sorted(items, key=lambda it: digest_date(it["metadata"]), reverse=True)
+
+
 def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None,
                        announcement: str = "") -> str:
     """items: [{parsed, metadata, link}]. Procedural items (deadlines and notices) first.
@@ -396,7 +418,10 @@ def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None
     function) gets pinned to its OWN "CORRESPONDENCE & ENFORCEMENT" section,
     right after the urgent recap and before the ordinary procedural/other
     split — the rescue this feature exists for: such an item no longer
-    renders in "OTHER NEW DOCUMENTS" at all (pulled out, not also-listed)."""
+    renders in "OTHER NEW DOCUMENTS" at all (pulled out, not also-listed).
+
+    Every section lists its items newest first by digest_date() (the document's
+    own date, else Date Filed), and each line prints that date."""
     lines = []
     if announcement:
         # Trisha-set promo/notice (config `digest_announcement`), rendered first.
@@ -405,20 +430,21 @@ def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None
         return "\n".join(lines + ["No new Arbor Hills (N2688) documents this period."])
     if urgent_recap:
         lines.append("URGENT ITEMS FROM EARLIER:")
-        for it in urgent_recap:
+        for it in _newest_first(urgent_recap):
             p, m = it["parsed"], it["metadata"]
             sent_at = m.get("urgent_sent_at", "")
             lines.append(f"  - Sent {sent_at}  {m.get('document_name','')}")
             lines.append(f"      {p.key_data_point}")
             lines.append(f"      {it['link']}")
         lines.append("")
+    items = _newest_first(items)
     correspondence = [it for it in items if getattr(it["parsed"], "is_correspondence", False)]
     remaining = [it for it in items if not getattr(it["parsed"], "is_correspondence", False)]
     if correspondence:
         lines.append("CORRESPONDENCE & ENFORCEMENT (EGLE letter under a generic filing title):")
         for it in correspondence:
             p, m = it["parsed"], it["metadata"]
-            lines.append(f"  - {m.get('date_filed','')}  {m.get('document_name','')}")
+            lines.append(f"  - {_digest_date_label(m)}  {m.get('document_name','')}")
             lines.append(f"      {p.key_data_point}")
             lines.append(f"      {it['link']}")
         lines.append("")
@@ -429,7 +455,7 @@ def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None
         lines.append("DEADLINES AND NOTICES:")
         for it in procedural:
             p, m = it["parsed"], it["metadata"]
-            lines.append(f"  - {m.get('date_filed','')}  {m.get('document_name','')}")
+            lines.append(f"  - {_digest_date_label(m)}  {m.get('document_name','')}")
             lines.append(f"      {p.key_data_point}")
             lines.append(f"      {it['link']}")
         lines.append("")
@@ -439,7 +465,7 @@ def format_digest_body(items: list[dict], urgent_recap: list[dict] | None = None
             p, m = it["parsed"], it["metadata"]
             risks = ", ".join(p.risks) or "-"
             lines.append(
-                f"  - {m.get('date_filed','')}  [{p.doc_type}/{p.severity}/{risks}]  "
+                f"  - {_digest_date_label(m)}  [{p.doc_type}/{p.severity}/{risks}]  "
                 f"{m.get('document_name','')}"
             )
             lines.append(f"      {p.key_data_point}")

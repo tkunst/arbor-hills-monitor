@@ -69,6 +69,9 @@ def _now_utc() -> datetime:
 def _digest_record(parsed, d: dict, link: str) -> dict:
     return {
         "date_filed": d["date_filed"],
+        # The date printed on the document itself (may be blank). The digest
+        # shows and sorts by it, falling back to date_filed when blank.
+        "document_date": d.get("document_date") or "",
         "document_name": d["document_name"],
         "doc_type": parsed.doc_type,
         "severity": parsed.severity,
@@ -86,6 +89,7 @@ def _digest_record(parsed, d: dict, link: str) -> dict:
 def _urgent_recap_record(parsed, d: dict, link: str, sent_at: str) -> dict:
     return {
         "date_filed": d["date_filed"],
+        "document_date": d.get("document_date") or "",
         "document_name": d["document_name"],
         "doc_type": parsed.doc_type,
         "severity": parsed.severity,
@@ -105,7 +109,8 @@ def _record_to_item(rec: dict) -> dict:
         summary=rec.get("key_data_point", ""),
         is_correspondence=rec.get("is_correspondence", False),
     )
-    meta = {"date_filed": rec["date_filed"], "document_name": rec["document_name"]}
+    meta = {"date_filed": rec["date_filed"], "document_name": rec["document_name"],
+            "document_date": rec.get("document_date", "")}
     if "urgent_sent_at" in rec:
         meta["urgent_sent_at"] = rec["urgent_sent_at"]
     return {"parsed": parsed, "metadata": meta, "link": rec["link"]}

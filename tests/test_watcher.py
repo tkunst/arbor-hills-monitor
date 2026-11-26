@@ -216,3 +216,19 @@ def test_write_meta_failure_after_successful_send_propagates_not_swallowed(monke
     # a later successful write_meta in the same run (e.g. the next doc, or
     # the unconditional end-of-run write) can still persist it.
     assert len(state["pending_urgent_recap"]) == 1
+
+
+# --- the digest record carries the document's own date ----------------------
+
+def test_digest_record_carries_document_date_through_to_item():
+    d = dict(_doc_meta(), title_was_generic=False, document_date="2026-09-25")
+    rec = w._digest_record(_parsed_with_text("plain text"), d, "http://x")
+    assert rec["document_date"] == "2026-09-25"
+    assert w._record_to_item(rec)["metadata"]["document_date"] == "2026-09-25"
+
+
+def test_old_queued_record_without_document_date_still_loads():
+    # Records queued before this field existed have no document_date key.
+    rec = {"date_filed": "2026-11-20", "document_name": "x", "doc_type": "evidence",
+           "severity": "routine", "risks": [], "key_data_point": "k", "link": "l"}
+    assert w._record_to_item(rec)["metadata"]["document_date"] == ""

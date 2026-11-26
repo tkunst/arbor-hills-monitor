@@ -388,6 +388,13 @@ behavior, update its entry here in the same PR.
   corrective-action/enforcement letter gets pinned to its own
   "CORRESPONDENCE & ENFORCEMENT" digest section instead of the ordinary soft
   line — absorbs the retired `schedule-title-overrides.md` handoff's Option A.
+  **Digest dates (2026-11-26, Trisha):** every digest section lists items
+  newest first by `digest_date()`: the date printed on the document
+  (`document_date`, now carried on each queued digest/recap record by
+  `watcher._digest_record`/`_urgent_recap_record`), else nSITE's Date Filed.
+  Each line prints that date; a Date Filed fallback is labeled `filed …`.
+  Records queued before the field existed load with `document_date` blank.
+  Hand-curated and WDS records have no `document_date` and fall back.
   **coder:keydatapoint-guard (2026-10-17):** `is_urgent()` is now the bool of
   one `_urgency_decision()`, whose reasons `urgency_reason()` joins, so the two
   can't drift. `format_urgent_body(..., cfg)` prints "Urgent because: …" next
