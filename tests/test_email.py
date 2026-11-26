@@ -721,3 +721,50 @@ def test_send_digest_includes_active_announcement(monkeypatch):
                         lambda subj, body, c, recipients=None: bodies.append(body))
     ea.send_digest([], _ann_cfg())
     assert bodies and bodies[0].startswith("ANNOUNCEMENT:\n  Launch note")
+
+
+# --- digest prints and sorts by the document's own date ---------------------
+
+def _dated_item(name, date_filed, document_date=""):
+    it = _item(document_name=name, date_filed=date_filed)
+    if document_date:
+        it["metadata"]["document_date"] = document_date
+    return it
+
+
+def test_digest_date_prefers_document_date_and_falls_back_to_filed():
+    assert ea.digest_date({"document_date": "2026-09-25", "date_filed": "2026-11-20"}) == "2026-09-25"
+    assert ea.digest_date({"document_date": "", "date_filed": "2026-11-20"}) == "2026-11-20"
+    assert ea.digest_date({}) == ""
+
+
+def test_format_digest_body_prints_document_date_not_filed_date():
+    body = ea.format_digest_body([_dated_item("RCA", "2026-11-20", "2026-09-25")])
+    assert "  - 2026-09-25  [" in body
+    assert "2026-11-20" not in body
+
+
+def test_format_digest_body_labels_a_filed_date_fallback():
+    body = ea.format_digest_body([_dated_item("No dateline", "2026-11-20")])
+    assert "  - filed 2026-11-20  [" in body
+
+
+def test_format_digest_body_sorts_newest_first_by_document_date():
+    items = [
+        _dated_item("Old letter, filed late", "2026-11-23", "2026-08-04"),
+        _dated_item("Newest", "2026-10-28", "2026-11-23"),
+        _dated_item("Undated", "2026-09-30"),
+    ]
+    body = ea.format_digest_body(items)
+    # Document dates win over filing dates; the undated one sorts by its
+    # filing date (2026-09-30), between the other two.
+    assert body.index("Newest") < body.index("Undated") < body.index("Old letter, filed late")
+
+
+def test_format_digest_body_sorts_urgent_recap_newest_first():
+    older = _recap_item(document_name="Older urgent")
+    older["metadata"]["document_date"] = "2026-03-13"
+    newer = _recap_item(document_name="Newer urgent")
+    newer["metadata"]["document_date"] = "2026-04-08"
+    body = ea.format_digest_body([], [older, newer])
+    assert body.index("Newer urgent") < body.index("Older urgent")
