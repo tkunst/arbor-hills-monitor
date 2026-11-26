@@ -829,7 +829,7 @@ def send_urgent_alert(parsed, metadata: dict, link: str, cfg: dict) -> bool:
 def route_hand_curated_urgent_or_digest(
     *, document_name: str, date_filed: str, doc_type: str, severity: str,
     risks: list | None, key_data_point: str, link: str, cfg: dict, state: dict,
-    sent_at: str,
+    sent_at: str, document_date: str = "",
 ) -> bool:
     """Route a hand-curated document (dedupe-curate intake — never runs through
     egle_doc_parser.parse_document(), so it has no `measurements`/`full_text`)
@@ -884,9 +884,10 @@ def route_hand_curated_urgent_or_digest(
     metadata = {"document_name": document_name, "date_filed": date_filed}
     record = {
         "date_filed": date_filed, "document_name": document_name,
-        # A hand-curated record's one date is the hand-entered document date
-        # (Hand-Curated Files doc_date), so the digest shows it unlabeled.
-        "document_date": date_filed,
+        # The Hand-Curated Files doc_date, when the dispatcher passes it. Not
+        # inferred from date_filed: dispatchers have passed the curation day
+        # there, and the digest labels a date_filed fallback "filed ...".
+        "document_date": document_date or "",
         "doc_type": doc_type, "severity": severity, "risks": list(risks or []),
         "key_data_point": key_data_point, "link": link,
     }

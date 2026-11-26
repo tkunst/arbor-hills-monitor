@@ -458,7 +458,7 @@ def test_route_hand_curated_not_urgent_queues_to_pending_digest(monkeypatch):
     assert sent == []  # no email attempted at all for a non-urgent doc
     assert len(state["pending_digest"]) == 1
     assert state["pending_digest"][0]["document_name"] == "Test Doc"
-    assert state["pending_digest"][0]["document_date"] == "2026-09-20"   # hand-entered doc date
+    assert state["pending_digest"][0]["document_date"] == ""   # not inferred from date_filed
     assert "urgent_sent_at" not in state["pending_digest"][0]
     assert state["pending_urgent_recap"] == []
 
@@ -770,3 +770,11 @@ def test_format_digest_body_sorts_urgent_recap_newest_first():
     newer["metadata"]["document_date"] = "2026-04-08"
     body = ea.format_digest_body([], [older, newer])
     assert body.index("Newer urgent") < body.index("Older urgent")
+
+
+def test_route_hand_curated_carries_passed_document_date(monkeypatch):
+    monkeypatch.setattr(ea, "send_email", lambda *a, **k: True)
+    state = {}
+    ea.route_hand_curated_urgent_or_digest(**_hc_kwargs(state=state, date_filed="2026-11-26",
+                                                        document_date="2016-09"))
+    assert state["pending_digest"][0]["document_date"] == "2016-09"
