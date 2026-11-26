@@ -583,15 +583,11 @@ def classify_reading(row: dict, thresholds: dict, sentinels: Optional[dict] = No
         thr = thresholds.get(cfgkey)
         wthr = watch.get(cfgkey)
         # The source's word label for this value (e.g. ERR), shown verbatim beside a
-        # flagged value so a reader sees what the feed itself says about it; ERR is called
-        # a suspect sensor reading. Alerting is unchanged (fail-safe: an ERR-labelled value
-        # above a level still alerts).
+        # flagged value so a reader sees what the feed itself says about it. Alerting is
+        # unchanged (fail-safe: an ERR-labelled value above a level still alerts).
         _txt = gas_text(row, key)
         _lab = (f" (source label: {_txt})"
                 if _txt and not _txt.replace(".", "", 1).lstrip("-").isdigit() else "")
-        if _txt.upper() == "ERR":
-            # Trisha 2026-11-26: the feed's ERR label marks a suspect sensor reading.
-            _lab = f" (suspect sensor; source label: {_txt})"
         if thr is not None and val >= float(thr):
             result[key] = (val, "exceedance")
             result["reasons"].append(f"{field}={val:g} >= action level {float(thr):g}{_lab}")
