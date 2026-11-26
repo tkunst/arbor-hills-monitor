@@ -1023,6 +1023,19 @@ gfl_air:
     h2s_ppb: 999
     ch4_ppm: 99999
   alert_on_sentinel: true
+  # Suspect-sensor periods shown in the screening email (lilac in the grid, "suspect sensor"
+  # in the latest-reading table, never a max) — ADR 075. SAME rule and periods as the
+  # perimeter-air dataset's data-quality note (site/data/perimeter-air, updated 2026-11-20;
+  # Trisha 2026-11-26): a constant non-zero H2S value for months, or a constant 0.0 for more
+  # than a year while neighboring stations vary. start inclusive, end exclusive, in
+  # America/Detroit local time ('YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM'). Update this list
+  # whenever the data-quality note changes. (A value the feed labels ERR is always suspect.)
+  suspect_sensors:
+    - {station: MS-1, gas: h2s, start: "2025-05-28", end: "2026-05-29", note: "constant 3.0 or 3.1 ppb from May 28, 2025 to May 28, 2026"}
+    - {station: MS-2, gas: h2s, start: "2025-06-30", end: "2026-09-25", note: "constant 0.0 ppb from June 30, 2025 to September 24, 2026"}
+    - {station: MS-3, gas: h2s, start: "2025-07-15", end: "2025-10-17", note: "constant 5.4 ppb from July 15 to October 16, 2025"}
+    - {station: MS-5, gas: h2s, start: "2025-05-28", end: "2026-09-16", note: "constant 0.0 ppb from May 28, 2025 to September 16, 2026"}
+    - {station: MS-6, gas: h2s, start: "2025-05-28", end: "2026-09-29T11:00", note: "constant 3.0 to 3.2 ppb from May 28, 2025 to 10 a.m. September 29, 2026"}
   # Anti-stampede: if one poll yields more new readings than this (e.g. the source
   # reinserts the whole table, bumping every OBJECTID), re-baseline instead of
   # blasting the case file (mirrors wds.max_new_wds_alerts_per_run /

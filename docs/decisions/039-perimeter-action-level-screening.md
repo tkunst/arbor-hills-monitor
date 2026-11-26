@@ -1,5 +1,7 @@
 # ADR 039: Consolidated perimeter action-level screening — per-(station,gas) open/close episodes on the CJ enforceable levels
 
+> **Superseded in part (2026-11-26) by [ADR 075](075-perimeter-alert-email-layout-c.md):** §4's two emails per run became one daily-run email (layout C, HTML + text); §2's mandatory-wording list and the 2026-09-11 benchmark-reference addendum are replaced by ADR 075 §4. The episode engine, thresholds and episode log below are unchanged.
+
 **Status:** accepted (2026-09-10) · **Stream E** (`gfl_air`) · ships to the live path
 (`gfl_air.enabled: true`), opened as a **draft PR for Trisha's review** — it changes
 outbound alert emails, so it is not auto-merged (overnight-coder Step 8).

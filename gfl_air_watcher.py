@@ -107,22 +107,9 @@ from gfl_air_emails import (  # noqa: F401 — pure move; re-exported for caller
     h2s_average_alert_lines,
     _levels_line,
     format_alert_body,
-    _rounds_to_benchmark,
-    _ch4_pct,
-    _gas_word,
-    _date_span_et,
-    _coord_str,
-    _wind_str,
-    _context_table,
-    _screening_disclaimer_lines,
-    _identity_block,
-    _cj_implications_lines,
-    _benchmark_definition_lines,
-    _benchmark_reference_lines,
-    _subject,
-    format_screening_email,
-    format_closeout_email,
 )
+from gfl_air_render import (render_liveness_html, render_run_email,  # noqa: F401 — layout C (ADR 075)
+                             render_urgent_html, suspect_periods, urgent_rows)
 from gfl_air_liveness import (  # noqa: F401 — pure move; re-exported for callers + tests
     _AS_OF_FMT,
     _parse_as_of,
@@ -200,7 +187,8 @@ def _check_liveness(sheets, sheet_id: str, cfg: dict, link: str,
                    f"no new readings in {stale_days} day(s)")
         body = format_liveness_body(newest, stale_days, max_stale_days, link)
         try:
-            ea.send_email(subject, body, cfg)
+            ea.send_email(subject, body, cfg,
+                          html=render_liveness_html(newest, stale_days, max_stale_days, link))
             sw.set_gfl_air_stale_marker(sheets, sheet_id, newest)   # once per episode
             print(f"[gfl-air]   liveness: STALE alert emailed (newest={newest}, "
                   f"{stale_days}d >= {max_stale_days}d); marker set.")
@@ -553,10 +541,11 @@ def run() -> int:
 
     # H2S exceedance alerting is the rolling per-station average (the 72 ppb level IS a
     # 24-hr-average level; ADR 014 decision 4) — NOT the instantaneous readings, which
-    # alert_lines dropped above when averaging is on. Computed server-side in one query;
+    # alert_lines dropped above when averaging is on. Exact 24-hour row window (ADR 014 2026-11-26);
     # a failed query is skip-and-warn (best-effort), NEVER read as 0 ppb. Independent of
     # the OBJECTID poll batch: it always looks back a true now-window, so a missed/off-
     # schedule poll doesn't skew it. CH4 stays instantaneous (handled in alert_lines).
+    avg_lines: list[str] = []
     if h2s_averaged:
         try:
             avgs = gc.fetch_h2s_window_avg(cfg_gfl, h2s_avg_window_hours, station_prefix=prefix)
@@ -580,11 +569,18 @@ def run() -> int:
             tag = "GFL air anomaly"
         subject = f"[{tag}] Arbor Hills GFL perimeter air: {len(lines)} flagged reading(s)"
         try:
+            # Plain text (format_alert_body) + the layout-C HTML part (ADR 075).
+            html_body = render_urgent_html(
+                urgent_rows(readings, thresholds, sentinels, alert_on_sentinel, h2s_averaged),
+                avg_lines, thresholds=thresholds, link=link,
+                h2s_window_hours=h2s_avg_window_hours, total_lines=len(lines),
+                max_rows=_MAX_ALERT_LINES)
             ea.send_email(subject,
                           format_alert_body(lines, has_exceedance, has_watch, link,
                                             thresholds, watch_thresholds,
                                             h2s_averaged=h2s_averaged,
-                                            h2s_window_hours=h2s_avg_window_hours), cfg)
+                                            h2s_window_hours=h2s_avg_window_hours), cfg,
+                          html=html_body)
             print(f"[gfl-air]   emailed: {subject}")
         except Exception as e:  # noqa: BLE001 — alert best-effort; readings recorded
             print(f"[gfl-air]   readings recorded but alert email FAILED: {e}")
@@ -599,12 +595,6 @@ def run() -> int:
             link, watch_recipients, cfg_gfl, roster)
 
     return 0
-
-
-def _open_episode_from_state(key: str, ep: dict) -> dict:
-    """A state-map entry (keyed 'station|gas') as a flat dict for the email helpers."""
-    station, _, gas = key.partition("|")
-    return {"station": station, "gas": gas, **ep}
 
 
 def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds,
@@ -636,12 +626,8 @@ def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds
 
     result = process_episodes(readings, watch_thresholds, sentinels, prev_state,
                               station_prefix=prefix)
-    # "Continuing" = episodes open BOTH before and after this run (not newly opened).
-    prev_keys = set(prev_state)
-    opened_keys = {_episode_key(o["station"], o["gas"]) for o in result.opened}
-    continuing = [_open_episode_from_state(k, result.state[k])
-                  for k in sorted(result.state)
-                  if k in prev_keys and k not in opened_keys]
+    # Episodes still open after this run (carried over or new) are reported by the run
+    # email from result.state (gfl_air_render._episodes).
 
     if not result.opened and not result.closed:
         # Elevated-but-nothing-new (continuing only) or all-quiet — no re-alert. Still
@@ -709,52 +695,25 @@ def _run_action_level_episodes(sheets, sheet_id, cfg, readings, watch_thresholds
         print("[gfl-air]   ROSTER MISMATCH: roster station(s) unaccounted for this "
               f"run: {', '.join(missing)} ({why})")
 
-    # SCREENING (open) email — one consolidated email listing all monitors + the
-    # newly-detected + continuing episodes. Best-effort.
-    if result.opened:
-        opened_isos = [o.get("opened_at", "") for o in result.opened]
-        hist = is_historical(opened_isos, now_utc)
-        # ±2h context PER EPISODE (keyed by event_id), centred on that episode's first
-        # value above — not one window per station, which gave a station's second episode
-        # the first one's hours (2026-11-26). Same-centre episodes share one fetch.
-        context: dict = {}
-        fetched: dict = {}
-        for o in result.opened:
-            center = _iso_to_epoch_ms(o.get("opened_at", ""))
-            if center is None:
-                continue
-            k = (o["station"], center)
-            if k not in fetched:
-                try:
-                    fetched[k] = gc.fetch_station_window(cfg_gfl, o["station"], center, 2)
-                except Exception as e:  # noqa: BLE001 — context is best-effort
-                    print(f"[gfl-air]   ±2h context for {o['station']} unavailable: {e}")
-                    fetched[k] = None
-            if fetched[k] is not None:
-                context[o.get("event_id", "")] = fetched[k]
-        subject, body = format_screening_email(
-            result.opened, continuing, monitor_rows, watch_thresholds, link=link,
-            retrieved_iso=retrieved_iso, coords=coords, context=context, historical=hist,
-            expected_stations=roster, registry_available=registry_available)
-        try:
-            ea.send_email(subject, body, cfg, recipients=watch_recipients)
-            print(f"[gfl-air]   SCREENING emailed: {subject}")
-        except Exception as e:  # noqa: BLE001 — best-effort; state already committed
-            print(f"[gfl-air]   SCREENING email FAILED (episode(s) tracked): {e}")
-
-    # CLOSEOUT (close) email — one consolidated closeout per run. Best-effort.
-    if result.closed:
-        close_isos = [c.get("cleared_at", "") for c in result.closed]
-        hist = is_historical(close_isos, now_utc)
-        subject, body = format_closeout_email(
-            result.closed, link=link, retrieved_iso=retrieved_iso,
-            coords=coords, historical=hist)
-        try:
-            ea.send_email(subject, body, cfg, recipients=watch_recipients)
-            print(f"[gfl-air]   CLOSEOUT emailed: {subject}")
-        except Exception as e:  # noqa: BLE001 — best-effort; log row already written
-            print(f"[gfl-air]   CLOSEOUT email FAILED (episode(s) logged): {e}")
-
+    # ONE daily-run SCREENING email (layout C, ADR 075 — replaces ADR 039's separate
+    # screening + closeout emails): every episode that opened, closed, or is still open,
+    # an hour-by-station grid, the latest reading per station, plain text + HTML from the
+    # same content. Sent iff >= 1 episode opened or closed (a continuing-only run is
+    # silent, as before). Best-effort: state + log rows are already committed above.
+    event_isos = ([o.get("opened_at", "") for o in result.opened]
+                  + [c.get("cleared_at", "") for c in result.closed])
+    subject, text, html_body = render_run_email(
+        opened=result.opened, closed=result.closed, state_after=result.state,
+        readings=readings, monitor_rows=monitor_rows, watch_thresholds=watch_thresholds,
+        sentinels=sentinels, retrieved_iso=retrieved_iso, coords=coords, roster=roster,
+        registry_available=registry_available,
+        historical=is_historical(event_isos, now_utc),
+        periods=suspect_periods(cfg_gfl), prefix=prefix, link=link)
+    try:
+        ea.send_email(subject, text, cfg, recipients=watch_recipients, html=html_body)
+        print(f"[gfl-air]   SCREENING emailed: {subject}")
+    except Exception as e:  # noqa: BLE001 — best-effort; state + log rows already committed
+        print(f"[gfl-air]   SCREENING email FAILED (episode(s) tracked and logged): {e}")
 
 if __name__ == "__main__":
     sys.exit(main())
