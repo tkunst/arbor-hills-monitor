@@ -2118,7 +2118,7 @@ def test_exceedance_line_shows_the_source_label_verbatim():
     # The alert still fires (fail-safe), and the line now says what the source printed.
     r = _reading(1, "MS-2", 0.0, 89090.0, DAY0, h2s_text="BDL", ch4_text="ERR")
     lines, has_exc, _ = gw.alert_lines([r], {"h2s_ppb": 72, "ch4_ppm": 500}, SENT, True)
-    assert has_exc and "CH4=89090 >= action level 500 (source label: ERR)" in lines[0]
+    assert has_exc and "CH4=89090 >= action level 500 (suspect sensor; source label: ERR)" in lines[0]
     # A numeric label (the feed's rounded copy of the value) adds nothing.
     r2 = _reading(2, "MS-2", 0.0, 511.4, DAY0, h2s_text="BDL", ch4_text="511")
     lines2, _, _ = gw.alert_lines([r2], {"h2s_ppb": 72, "ch4_ppm": 500}, SENT, True)
