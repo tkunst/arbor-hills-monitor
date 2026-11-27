@@ -42,7 +42,7 @@ worst state wins) so the HTML stays under `HTML_BUDGET_BYTES` (85 KB, below Gmai
   `[HISTORICAL <gas> SCREENING ALERT — NOT A LIVE INCIDENT]`. Then "Arbor Hills perimeter —
   hourly value(s) above CJ benchmark[, then returned below] — stations — ET dates, ET".
 - **Lede:** "This N-hour run covered A to B." (N counted from the run's hours), episodes
-  opened / returned below / still above, and "Highest: X ppb H2S, Y ppm methane."
+  opened / returned below / still above, and "Max: X ppb H2S, Y ppm methane."
   (H2S first; "H2S below detection limit" when every H2S reading was BDL).
 - **Box at the top:** the title "Automated screening alert — public hourly data" only.
 - **Hour grid** per gas with an episode: amber above the benchmark, pale blue at or
@@ -89,6 +89,9 @@ Removed or changed by Trisha:
 - "The values below are…" became "The values are…"; no word "own" anywhere.
 - Standardized on "benchmark" for the CJ action levels everywhere, including the grid title
   "not above benchmark" (briefly "not above limit"; Trisha 2026-11-26).
+- Standardized on "Max" for the run summary too ("Max: X ppb H2S, Y ppm methane.", was
+  "Highest:"), matching the grid titles. ERR-labelled values stay out of every max
+  (Trisha 2026-11-26).
 - "How to read" was reworded for brevity by a copy pass, every number and citation kept.
 
 ### 5. Data-quality rules
