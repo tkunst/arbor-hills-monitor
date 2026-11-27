@@ -48,7 +48,7 @@ worst state wins) so the HTML stays under `HTML_BUDGET_BYTES` (85 KB, below Gmai
 - **Hour grid** per gas with an episode: amber above the benchmark, pale blue at or
   below, lilac suspect sensor, mid grey (#b8bec4) no data; one row per roster station,
   cells aligned by hour. Title "Hourly <gas> by station · Max V". A gas with no episode
-  gets "Hourly <gas> by station: not above limit · Max V" (or "· all readings below
+  gets "Hourly <gas> by station: not above benchmark · Max V" (or "· all readings below
   detection limit" for H2S, with any station that sent no value named).
 - **Episodes:** "MS-4 · methane · peak 87 ppm" with "returned below"/"still above" and
   "duration N hr" boxes; one line: "Above 40 ppm from <date, time> (V). Peak V at <time>.
@@ -87,6 +87,8 @@ Removed or changed by Trisha:
 - "(¶def T)" style citations read "(Consent Judgment, definition T)".
 - The full disclaimer moved from the top to "How to read this alert"; benchmarks lead it.
 - "The values below are…" became "The values are…"; no word "own" anywhere.
+- Standardized on "benchmark" for the CJ action levels everywhere, including the grid title
+  "not above benchmark" (briefly "not above limit"; Trisha 2026-11-26).
 - "How to read" was reworded for brevity by a copy pass, every number and citation kept.
 
 ### 5. Data-quality rules
