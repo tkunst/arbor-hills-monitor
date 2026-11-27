@@ -13,7 +13,7 @@ Layout (chosen by Trisha 2026-11-26 from the mockups in session AHM-AlertsRedesi
     "[Methane SCREENING ALERT]" or "[H2S + Methane SCREENING ALERT]"; old data gets
     "[HISTORICAL <gas> SCREENING ALERT — NOT A LIVE INCIDENT]".
   * Lede: run length + window, episodes opened / returned below / still above, and the
-    run's highest H2S and methane.
+    run's max H2S and methane ("Max:"; Trisha 2026-11-26 standardized on "max").
   * A title-only "Automated screening alert — public hourly data" box.
   * One hour-by-station grid per gas with an episode (amber above the benchmark, light
     blue at or below, lilac suspect sensor, grey no data); a gas with no episode gets a
@@ -341,11 +341,11 @@ def _highest_phrase(m: dict) -> str:
             parts.append(f"{num(b[0])} {unit(g)} {_GAS_LABEL[g]}")
         elif g == "h2s":
             parts.append("H2S below detection limit")
-    return f"Highest: {', '.join(parts)}." if parts else ""
+    return f"Max: {', '.join(parts)}." if parts else ""
 
 
 def lede_text(m: dict) -> tuple[str, str]:
-    """(first sentence, counts sentence + highest)."""
+    """(first sentence, counts sentence + max)."""
     h = m["hours"]
     first = (f"This {len(h)}-hour run covered {et_short(h[0])} to {et_short(h[-1])}." if h else
              "This run had no readings.")
@@ -688,8 +688,8 @@ def _latest_table(m: dict) -> str:
 
 def render_html(m: dict) -> str:
     a, b = lede_text(m)
-    counts, highest = b.split(" Highest:", 1) if " Highest:" in b else (b, "")
-    lede = f"{e(a)} <b>{e(counts)}</b>" + (f" Highest:{e(highest)}" if highest else "")
+    counts, mx = b.split(" Max:", 1) if " Max:" in b else (b, "")
+    lede = f"{e(a)} <b>{e(counts)}</b>" + (f" Max:{e(mx)}" if mx else "")
     eyebrow = "Perimeter air &middot; screening alert &middot; daily run"
     rows = f"""
 <tr><td style="padding:22px 28px 0 28px;">
@@ -868,7 +868,7 @@ def render_urgent_html(rows: list[dict], avg_lines: list[str], *, thresholds: di
                 best = (p["val"], p["gas"], r["station"], r["iso"], p["text"])
     n_exc = len(exc) + len(avg_lines)
     if best:
-        lede = (f"<b>{n_exc} flagged reading(s) at or above a perimeter action level</b>. Highest: "
+        lede = (f"<b>{n_exc} flagged reading(s) at or above a perimeter action level</b>. Max: "
                 f"<b>{e(num(best[0]))} {unit(best[1])}</b> {e(_GAS_LABEL[best[1]])} at {e(best[2])}, "
                 f"{e(et_short(best[3]))}.")
         if best[4].upper() == "ERR":

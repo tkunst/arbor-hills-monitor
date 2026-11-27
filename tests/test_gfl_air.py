@@ -2104,3 +2104,13 @@ def test_scoped_test_gfl_air_preview_is_read_only_and_finds_last_episode(monkeyp
     subj, text, html = sst.build_gfl_air_preview(cfg, "owner@example.com", now=now)
     assert len(calls) == 2 and subj.startswith("[TEST] ") and "Methane SCREENING ALERT" in subj
     assert text.startswith("[TEST - replay") and gr.FOOTER_SLOT in html
+
+
+def test_run_summary_says_max_and_err_never_sets_it():
+    latest = _quiet()
+    latest["MS-4"] = _r(4, "MS-4", 0.0, 900.0, BATCH_MS, h2s_text="BDL", ch4_text="ERR")   # ERR: no max
+    latest["MS-3"] = _elev(3, "MS-3", 0.0, 45.0, BATCH_MS)
+    rows = gw._monitor_rows(latest, WT, SENT, registry=_registry())
+    _, text, html = _email([_opened("MS-3", "ch4", 45.0, BATCH_MS)], rows, latest)
+    assert "Max: H2S below detection limit, 45 ppm methane." in text and "Highest" not in text + html
+    assert "900" not in text.split("EPISODES")[0]
