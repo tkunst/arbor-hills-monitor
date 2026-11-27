@@ -1889,7 +1889,7 @@ def test_run_email_bdl_hidden_suspect_flagged_and_max_rules():
     assert "suspect sensor" in line["MS-2"]
     assert "source: ERR" in line["MS-4"] and "9" not in line["MS-4"].split("|")[0] and "suspect" not in line["MS-4"]
     # H2S max: MS-5's 8 ppb (not the ERR 9, not BDL 2.3); not an episode peak -> station + time
-    assert "Hourly H2S by station: not above limit · Max 8 ppb (MS-5," in text
+    assert "Hourly H2S by station: not above benchmark · Max 8 ppb (MS-5," in text
     assert "Stuck sensor noted: MS-2 H2S; details" in text and "ERR" not in text.split("Suspect sensors:")[1]
     assert "Suspect sensors: MS-2 H2S: constant 0.0 ppb from June 30, 2025 to September 24, 2026" in text
     assert gr.CELL_SUSPECT not in html.split("Hourly methane by station")[0]   # no H2S grid drawn

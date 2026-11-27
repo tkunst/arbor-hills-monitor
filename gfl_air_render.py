@@ -17,7 +17,7 @@ Layout (chosen by Trisha 2026-11-26 from the mockups in session AHM-AlertsRedesi
   * A title-only "Automated screening alert — public hourly data" box.
   * One hour-by-station grid per gas with an episode (amber above the benchmark, light
     blue at or below, lilac suspect sensor, grey no data); a gas with no episode gets a
-    one-line "not above limit" heading with its max.
+    one-line "not above benchmark" heading with its max.
   * Episodes: station · gas · peak, with "returned below" / "still above" and duration
     boxes, and one short line (first above, peak if later, back at or below) + map link.
   * Latest reading per station (no ▲; BDL shows only its label; suspect sensors say so).
@@ -368,7 +368,7 @@ def grid_title(m: dict, gas: str) -> tuple[str, str]:
         if b and (b[1], gas, b[2]) not in m["peaks"]:
             tail = f"({b[1]}, {et_short(b[2])})"
         return title, tail
-    title = f"Hourly {_GAS_LABEL[gas]} by station: not above limit"
+    title = f"Hourly {_GAS_LABEL[gas]} by station: not above benchmark"
     b = m["maxes"][gas]
     if b:
         title += f" · Max {num(b[0])} {unit(gas)}"
